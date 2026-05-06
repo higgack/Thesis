@@ -15,17 +15,19 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      REF: ${{ github.ref_name }}
+      SHA: ${{ github.sha }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.run_id }}
     steps:
       - name: Notify start
         env:
           TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT: ${{ secrets.TELEGRAM_OWNER_ID }}
-          REF: ${{ github.ref_name }}
-          SHA: ${{ github.sha }}
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          MSG=$(echo "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '🔄 배포 시작\n%s @ %s\n%s' "$REF" "$SHA" "$MSG")
+          SHORT_SHA=$(echo "$SHA" | cut -c1-7)
+          TEXT=$(printf '🔄 배포 시작\n%s @ %s' "$REF" "$SHORT_SHA")
           curl -sS "https://api.telegram.org/bot${TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT}" \
             --data-urlencode "text=${TEXT}" > /dev/null || true
@@ -54,20 +56,15 @@ jobs:
               exit 1
             fi
             docker compose logs --tail=20 || true
-        env:
-          REF: ${{ github.ref_name }}
 
       - name: Notify success
         if: success()
         env:
           TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT: ${{ secrets.TELEGRAM_OWNER_ID }}
-          REF: ${{ github.ref_name }}
-          SHA: ${{ github.sha }}
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          MSG=$(echo "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '✅ 배포 완료\n%s @ %s\n%s' "$REF" "$SHA" "$MSG")
+          SHORT_SHA=$(echo "$SHA" | cut -c1-7)
+          TEXT=$(printf '✅ 배포 완료\n%s @ %s' "$REF" "$SHORT_SHA")
           curl -sS "https://api.telegram.org/bot${TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT}" \
             --data-urlencode "text=${TEXT}" > /dev/null || true
@@ -77,12 +74,10 @@ jobs:
         env:
           TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT: ${{ secrets.TELEGRAM_OWNER_ID }}
-          REF: ${{ github.ref_name }}
-          SHA: ${{ github.sha }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
         run: |
-          TEXT=$(printf '❌ 배포 실패\n%s @ %s\n로그: https://github.com/%s/actions/runs/%s' "$REF" "$SHA" "$REPO" "$RUN_ID")
+          SHORT_SHA=$(echo "$SHA" | cut -c1-7)
+          URL="https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          TEXT=$(printf '❌ 배포 실패\n%s @ %s\n로그: %s' "$REF" "$SHORT_SHA" "$URL")
           curl -sS "https://api.telegram.org/bot${TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT}" \
             --data-urlencode "text=${TEXT}" > /dev/null || true
