@@ -20,13 +20,15 @@ jobs:
         env:
           TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT: ${{ secrets.TELEGRAM_OWNER_ID }}
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          MSG=$(echo "${{ github.event.head_commit.message }}" | head -1)
+          MSG=$(echo "$COMMIT_MSG" | head -1)
+          TEXT=$(printf '🔄 배포 시작\n%s @ %s\n%s' "$REF" "$SHA" "$MSG")
           curl -sS "https://api.telegram.org/bot${TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT}" \
-            --data-urlencode "text=🔄 배포 시작
-${{ github.ref_name }} @ ${{ github.sha }}
-${MSG}" > /dev/null || true
+            --data-urlencode "text=${TEXT}" > /dev/null || true
 
       - name: SSH deploy
         uses: appleboy/ssh-action@v1.2.0
@@ -37,11 +39,12 @@ ${MSG}" > /dev/null || true
           timeout: 60s
           command_timeout: 20m
           script_stop: true
+          envs: REF
           script: |
             set -euo pipefail
             cd ~/Thesis
             git fetch origin
-            git checkout -B "${{ github.ref_name }}" "origin/${{ github.ref_name }}"
+            git checkout -B "$REF" "origin/$REF"
             docker compose up -d --build
             sleep 10
             STATUS=$(docker inspect -f '{{.State.Status}}' thesis-bot-1 2>/dev/null || echo missing)
@@ -51,28 +54,35 @@ ${MSG}" > /dev/null || true
               exit 1
             fi
             docker compose logs --tail=20 || true
+        env:
+          REF: ${{ github.ref_name }}
 
       - name: Notify success
         if: success()
         env:
           TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT: ${{ secrets.TELEGRAM_OWNER_ID }}
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          MSG=$(echo "${{ github.event.head_commit.message }}" | head -1)
+          MSG=$(echo "$COMMIT_MSG" | head -1)
+          TEXT=$(printf '✅ 배포 완료\n%s @ %s\n%s' "$REF" "$SHA" "$MSG")
           curl -sS "https://api.telegram.org/bot${TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT}" \
-            --data-urlencode "text=✅ 배포 완료
-${{ github.ref_name }} @ ${{ github.sha }}
-${MSG}" > /dev/null || true
+            --data-urlencode "text=${TEXT}" > /dev/null || true
 
       - name: Notify failure
         if: failure()
         env:
           TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT: ${{ secrets.TELEGRAM_OWNER_ID }}
+          REF: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         run: |
+          TEXT=$(printf '❌ 배포 실패\n%s @ %s\n로그: https://github.com/%s/actions/runs/%s' "$REF" "$SHA" "$REPO" "$RUN_ID")
           curl -sS "https://api.telegram.org/bot${TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT}" \
-            --data-urlencode "text=❌ 배포 실패
-${{ github.ref_name }} @ ${{ github.sha }}
-로그: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" > /dev/null || true
+            --data-urlencode "text=${TEXT}" > /dev/null || true
