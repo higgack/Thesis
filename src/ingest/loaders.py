@@ -89,10 +89,32 @@ def _xml_field(xml: str, tag: str, skip_first: bool = False) -> str | None:
 
 
 def load_pdf(path: Path) -> tuple[str, str, str | None]:
-    reader = PdfReader(str(path))
-    pages = [p.extract_text() or "" for p in reader.pages]
-    title = reader.metadata.title if reader.metadata and reader.metadata.title else path.stem
-    return (title or path.stem)[:200], "\n\n".join(pages).strip(), None
+    """Extract text from a PDF. Tries PyMuPDF first (handles complex layouts,
+    embedded fonts, and image-text overlays better) and falls back to pypdf."""
+    title = path.stem
+    body = ""
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(str(path))
+        meta_title = (doc.metadata or {}).get("title")
+        if meta_title and meta_title.strip():
+            title = meta_title.strip()
+        body = "\n\n".join(page.get_text("text") or "" for page in doc).strip()
+        doc.close()
+    except Exception:
+        body = ""
+
+    if not body:
+        try:
+            reader = PdfReader(str(path))
+            pages = [p.extract_text() or "" for p in reader.pages]
+            body = "\n\n".join(pages).strip()
+            if reader.metadata and reader.metadata.title:
+                title = reader.metadata.title
+        except Exception:
+            pass
+
+    return (title or path.stem)[:200], body, None
 
 
 async def load_pdf_async(path: Path) -> tuple[str, str, str | None]:
