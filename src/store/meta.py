@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS documents (
     type TEXT NOT NULL,
     title TEXT,
     summary TEXT,
-    notion_page_id TEXT,
+    obsidian_path TEXT,
     ingested_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_docs_ingested ON documents(ingested_at DESC);
@@ -37,15 +37,15 @@ def _conn():
 
 
 def upsert_doc(doc_id: str, source: str, doc_type: str, title: str,
-               summary: str, notion_page_id: str | None) -> None:
+               summary: str, obsidian_path: str | None) -> None:
     with _conn() as c:
         c.execute(
-            """INSERT INTO documents(id, source, type, title, summary, notion_page_id, ingested_at)
+            """INSERT INTO documents(id, source, type, title, summary, obsidian_path, ingested_at)
                VALUES(?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                  title=excluded.title, summary=excluded.summary,
-                 notion_page_id=excluded.notion_page_id""",
-            (doc_id, source, doc_type, title, summary, notion_page_id,
+                 obsidian_path=excluded.obsidian_path""",
+            (doc_id, source, doc_type, title, summary, obsidian_path,
              datetime.utcnow().isoformat()),
         )
 

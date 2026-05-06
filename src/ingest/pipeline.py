@@ -1,14 +1,17 @@
 import hashlib
 import logging
+import re
 from pathlib import Path
 
 from .. import config
-from ..store import meta, vector, notion
+from ..store import meta, vector, obsidian
 from .chunker import split
-from .loaders import load_url, load_pdf
+from .loaders import load_url, load_pdf, load_arxiv
 from .summarize import summarize
 
 log = logging.getLogger(__name__)
+
+_ARXIV_IN_PDF = re.compile(r"arXiv:\s*(\d{4}\.\d{4,5})", re.IGNORECASE)
 
 
 def _doc_id(source: str) -> str:
@@ -30,7 +33,18 @@ async def ingest_pdf(path: Path, source_label: str) -> dict:
     title, body, hint = load_pdf(path)
     if not body:
         return {"status": "empty", "title": title}
-    return await _ingest("pdf", source_label, title, body, hint)
+    if hint is None and (m := _ARXIV_IN_PDF.search(body[:5000])):
+        try:
+            ax_title, ax_body, ax_hint = await load_arxiv(m.group(1))
+            if ax_hint:
+                hint = ax_hint
+            if ax_title and (not title or title == path.stem):
+                title = ax_title
+            log.info("PDF detected as arXiv:%s, using free abstract", m.group(1))
+        except Exception as e:
+            log.warning("arxiv enrich failed: %s", e)
+    doc_type = "paper" if hint else "pdf"
+    return await _ingest(doc_type, source_label, title, body, hint)
 
 
 async def ingest_text(text: str, label: str = "text") -> dict:
@@ -65,17 +79,17 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
         })
     await vector.add_chunks(doc_id, items)
 
-    notion_page_id = None
-    if notion.enabled():
+    obsidian_path = None
+    if obsidian.enabled():
         try:
-            notion_page_id = await notion.create_page(
-                title=title, source=source, doc_type=doc_type,
-                summary=summary, doc_id=doc_id, body=body,
+            obsidian_path = await obsidian.write_note(
+                doc_type=doc_type, title=title, source=source,
+                summary=summary, body=body, doc_id=doc_id,
             )
         except Exception as e:
-            log.exception("notion sync failed: %s", e)
+            log.exception("obsidian sync failed: %s", e)
 
-    meta.upsert_doc(doc_id, source, doc_type, title, summary, notion_page_id)
+    meta.upsert_doc(doc_id, source, doc_type, title, summary, obsidian_path)
     return {
         "status": "ok",
         "doc_id": doc_id,
@@ -83,6 +97,6 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
         "type": doc_type,
         "chunks": len(chunks),
         "summary_chars": len(summary),
-        "notion_page_id": notion_page_id,
+        "obsidian_path": obsidian_path,
         "summary_source": "hint" if hint and config.HINT_SUMMARY_MIN_CHARS <= len(hint) <= config.HINT_SUMMARY_MAX_CHARS else "llm",
     }

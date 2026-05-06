@@ -11,8 +11,8 @@ TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "").strip() or None
 GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
-NOTION_TOKEN = os.getenv("NOTION_TOKEN", "").strip() or None
-NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "").strip() or None
+OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH", "").strip() or None
+OBSIDIAN_GIT_REMOTE = os.getenv("OBSIDIAN_GIT_REMOTE", "").strip() or None
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "./data")).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)

@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential libxml2-dev libxslt1-dev \
+    build-essential libxml2-dev libxslt1-dev git \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./

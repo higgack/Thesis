@@ -9,9 +9,9 @@ from telegram.ext import (
 )
 
 from . import config
-from .store import meta, vector
+from .store import meta, vector, obsidian
 from .ingest import pipeline
-from .agent import answer as agent_answer
+from .agent import answer as agent_answer, papersearch
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,9 +37,10 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "Second Brain 봇이에요.\n"
-        "• 채널에 링크/PDF/유튜브/텍스트를 올리면 자동 수집·요약\n"
+        "• 채널에 링크/PDF/유튜브/텍스트를 올리면 자동 수집·요약 → Obsidian\n"
         "• 여기 DM으로 자연어 질문 (Gemini Flash)\n"
-        "• 비싼 모델로 깊게 답: /deep <질문> (Gemini Pro)\n"
+        "• /find <검색어> - 논문 검색 (Semantic Scholar)\n"
+        "• /deep <질문> - 어려운 질문은 Gemini Pro로\n"
         "• /stats /recent /forget <id>"
     )
 
@@ -74,6 +75,42 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ok = meta.delete(doc_id)
     await update.message.reply_text(
         f"{'삭제됨' if ok else '메타 없음'} · 청크 {n}개 제거"
+    )
+
+
+async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /find <검색어>")
+        return
+    await _typing(update, ctx)
+    try:
+        results = await papersearch.search(q, limit=5)
+    except Exception as e:
+        log.exception("papersearch failed")
+        await update.message.reply_text(f"⚠️ 검색 실패: {e}")
+        return
+    if not results:
+        await update.message.reply_text("결과 없음")
+        return
+    blocks = []
+    for i, p in enumerate(results, 1):
+        authors = ", ".join(p["authors"]) or "?"
+        venue = p.get("venue") or ""
+        year = p.get("year") or ""
+        snippet = (p["abstract"] or "(no abstract)")[:240].replace("\n", " ")
+        link = p["url"] or "(no link)"
+        blocks.append(
+            f"*{i}. {p['title']}*\n"
+            f"_{authors} · {venue} {year}_\n"
+            f"{snippet}…\n"
+            f"{link}"
+        )
+    text = "\n\n".join(blocks) + "\n\n저장하려면 위 링크를 그대로 보내세요."
+    await update.message.reply_text(
+        text, parse_mode="Markdown", disable_web_page_preview=True,
     )
 
 
@@ -194,6 +231,7 @@ def _format_results(results: list[dict]) -> str:
 
 def main():
     meta.init()
+    obsidian.init()
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
@@ -202,6 +240,7 @@ def main():
     app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("deep", cmd_deep))
+    app.add_handler(CommandHandler("find", cmd_find))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
     app.add_handler(MessageHandler(

@@ -5,6 +5,7 @@ primary_region = "nrt"
 
 [env]
   DATA_DIR = "/data"
+  OBSIDIAN_VAULT_PATH = "/data/vault"
 
 [[mounts]]
   source = "rag_data"
