@@ -20,6 +20,16 @@ logging.basicConfig(
 log = logging.getLogger("bot")
 
 URL_RE = re.compile(r"https?://\S+")
+_MD_BOLD_RE = re.compile(r"\*\*([^\*\n]{1,200}?)\*\*")
+_MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+
+
+def _strip_markdown(text: str) -> str:
+    """Telegram reply_text uses no parse_mode, so any markdown chars from
+    the model leak through. Strip the common ones."""
+    text = _MD_BOLD_RE.sub(r"\1", text)
+    text = _MD_HEADING_RE.sub("", text)
+    return text
 
 
 def _is_owner(update: Update) -> bool:
@@ -126,13 +136,14 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
         log.exception("agent failed")
         await update.message.reply_text(f"⚠️ 오류: {e}")
         return
+    body = _strip_markdown(result["text"])
     suffix_lines = []
     if result["sources"]:
         suffix_lines.append("📚 " + ", ".join(result["sources"][:5]))
     if result["tool_calls"]:
         suffix_lines.append(f"🔧 {' → '.join(result['tool_calls'])}")
     suffix = ("\n\n" + "\n".join(suffix_lines)) if suffix_lines else ""
-    await update.message.reply_text(f"{result['text']}{suffix}")
+    await update.message.reply_text(f"{body}{suffix}")
 
 
 async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
