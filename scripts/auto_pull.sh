@@ -38,7 +38,7 @@ SHORT=$(echo "$REMOTE" | cut -c1-7)
 notify "🔄 자동 배포 시작 ${SHORT}"
 
 if git pull --ff-only origin "$BRANCH" >>"$LOG" 2>&1 \
-    && docker compose up -d --build >>"$LOG" 2>&1; then
+    && docker compose --profile local-api up -d --build >>"$LOG" 2>&1; then
     sleep 5
     STATUS=$(docker inspect -f '{{.State.Status}}' thesis-bot-1 2>/dev/null || echo missing)
     if [ "$STATUS" = "running" ]; then
