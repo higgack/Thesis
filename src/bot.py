@@ -39,9 +39,35 @@ def _extract_mermaid(text: str) -> tuple[str, list[str]]:
     return cleaned, blocks
 
 
-def _mermaid_image_url(code: str) -> str:
-    encoded = base64.b64encode(code.strip().encode("utf-8")).decode("ascii")
-    return f"https://mermaid.ink/img/{encoded}?type=png&bgColor=white"
+async def _render_mermaid_png(code: str) -> bytes:
+    """Render a Mermaid diagram to PNG bytes, trying kroki POST first
+    (most lenient parser, no URL length limit) and falling back to
+    mermaid.ink GET."""
+    import httpx
+    code = code.strip()
+
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+            r = await c.post(
+                "https://kroki.io/mermaid/png",
+                content=code.encode("utf-8"),
+                headers={"Content-Type": "text/plain"},
+            )
+            if r.status_code == 200 and r.headers.get(
+                "content-type", ""
+            ).startswith("image/"):
+                return r.content
+            log.warning("kroki failed: %d %s",
+                        r.status_code, r.text[:200])
+    except Exception as e:
+        log.warning("kroki render failed: %s", e)
+
+    encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
+    url = f"https://mermaid.ink/img/{encoded}?type=png&bgColor=white"
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+        r = await c.get(url)
+        r.raise_for_status()
+        return r.content
 
 
 def _enforce_format(text: str) -> str:
@@ -214,13 +240,16 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
     await update.message.reply_text(f"{body}{suffix}")
     for code in mermaid_blocks:
         try:
+            png = await _render_mermaid_png(code)
             await update.message.reply_photo(
-                photo=_mermaid_image_url(code),
+                photo=png,
                 caption="🧩 다이어그램",
             )
         except Exception as e:
             log.warning("mermaid render failed: %s", e)
-            await update.message.reply_text(f"(다이어그램 렌더 실패)\n{code[:500]}")
+            await update.message.reply_text(
+                f"(다이어그램 렌더 실패: {_explain_error(e)})\n\n{code[:500]}"
+            )
 
 
 def _explain_error(e: BaseException, max_len: int = 280) -> str:
