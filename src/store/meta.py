@@ -71,6 +71,18 @@ def recent(limit: int = 10) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def search_title(substring: str, limit: int = 20) -> list[dict]:
+    """Case-insensitive title substring search for /forget_search."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, source, type, title FROM documents "
+            "WHERE title LIKE ? COLLATE NOCASE "
+            "ORDER BY ingested_at DESC LIMIT ?",
+            (f"%{substring}%", limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def count() -> int:
     with _conn() as c:
         return c.execute("SELECT COUNT(*) FROM documents").fetchone()[0]

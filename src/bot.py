@@ -111,6 +111,38 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    query = " ".join(ctx.args).strip()
+    if not query:
+        await update.message.reply_text("사용법: /forget_search <제목 일부>")
+        return
+    matches = meta.search_title(query, limit=20)
+    if not matches:
+        await update.message.reply_text(f"매칭 없음: '{query}'")
+        return
+    if len(matches) > 5:
+        preview = "\n".join(
+            f"  • `{m['id']}` [{m['type']}] {m['title'][:60]}"
+            for m in matches[:8]
+        )
+        await update.message.reply_text(
+            f"⚠️ {len(matches)}개 매칭 — 너무 많아서 자동 삭제 안 함.\n"
+            f"더 구체적인 검색어로 다시 시도하거나 `/forget <id>` 직접 사용:\n{preview}",
+            parse_mode="Markdown",
+        )
+        return
+    forgotten = []
+    for m in matches:
+        n = vector.delete_doc(m["id"])
+        meta.delete(m["id"])
+        forgotten.append(f"  ✅ {m['title'][:60]} ({n} chunks)")
+    await update.message.reply_text(
+        f"삭제 완료 · {len(forgotten)}건\n" + "\n".join(forgotten)
+    )
+
+
 async def cmd_deep(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -245,6 +277,7 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(CommandHandler("forget", cmd_forget))
+    app.add_handler(CommandHandler("forget_search", cmd_forget_search))
     app.add_handler(CommandHandler("deep", cmd_deep))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
