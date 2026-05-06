@@ -3,9 +3,8 @@ services:
     image: aiogram/telegram-bot-api:latest
     profiles: ["local-api"]
     restart: unless-stopped
+    env_file: .env
     environment:
-      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
-      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
       TELEGRAM_LOCAL: "1"
     volumes:
       - tg-bot-api-data:/var/lib/telegram-bot-api
