@@ -6,7 +6,7 @@ from pathlib import Path
 from .. import config
 from ..store import meta, vector, obsidian
 from .chunker import split
-from .loaders import load_url, load_pdf, load_arxiv
+from .loaders import load_url, load_pdf_async, load_arxiv
 from .summarize import summarize
 
 log = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ async def ingest_url(url: str) -> dict:
 async def ingest_pdf(path: Path, source_label: str) -> dict:
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
-    title, body, hint = load_pdf(path)
+    title, body, hint = await load_pdf_async(path)
     if not body:
         return {"status": "empty", "title": title}
     if hint is None and (m := _ARXIV_IN_PDF.search(body[:5000])):

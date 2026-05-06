@@ -1,3 +1,4 @@
+import asyncio
 import re
 from pathlib import Path
 import httpx
@@ -31,8 +32,11 @@ async def load_url(url: str) -> tuple[str, str, str | None]:
         r = await c.get(url)
         r.raise_for_status()
         html = r.text
-    extracted = trafilatura.extract(html, include_comments=False, include_tables=True,
-                                    favor_recall=True) or ""
+    return await asyncio.to_thread(_parse_html, url, html)
+
+
+def _parse_html(url: str, html: str) -> tuple[str, str, str | None]:
+    extracted = trafilatura.extract(html, include_comments=False) or ""
     meta = trafilatura.extract_metadata(html)
     title = (meta.title if meta and meta.title else url)[:200]
     hint = (meta.description if meta and meta.description else None)
@@ -89,3 +93,7 @@ def load_pdf(path: Path) -> tuple[str, str, str | None]:
     pages = [p.extract_text() or "" for p in reader.pages]
     title = reader.metadata.title if reader.metadata and reader.metadata.title else path.stem
     return (title or path.stem)[:200], "\n\n".join(pages).strip(), None
+
+
+async def load_pdf_async(path: Path) -> tuple[str, str, str | None]:
+    return await asyncio.to_thread(load_pdf, path)
