@@ -173,6 +173,35 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    noisy = meta.find_noise()
+    if not noisy:
+        await update.message.reply_text("정리할 노이즈 없음 ✨")
+        return
+    args = [a.lower() for a in (ctx.args or [])]
+    if "confirm" in args:
+        n_chunks = 0
+        for r in noisy:
+            n_chunks += vector.delete_doc(r["id"])
+            meta.delete(r["id"])
+        await update.message.reply_text(
+            f"✅ 노이즈 {len(noisy)}건 / 청크 {n_chunks}개 제거 완료"
+        )
+        return
+    preview = "\n".join(
+        f"  • `{r['id']}` {(r['title'] or r['source'])[:55]}"
+        for r in noisy[:15]
+    )
+    more = f"\n... 외 {len(noisy)-15}건" if len(noisy) > 15 else ""
+    await update.message.reply_text(
+        f"노이즈 후보 {len(noisy)}건 (text 타입, 본문 짧음):\n{preview}{more}\n\n"
+        f"전부 삭제하려면: `/cleanup confirm`",
+        parse_mode="Markdown",
+    )
+
+
 async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -253,6 +282,8 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
     raw, mermaid_blocks = _extract_mermaid(result["text"])
     body = _strip_markdown(raw)
     suffix_lines = []
+    if result.get("warning"):
+        suffix_lines.append(result["warning"])
     if result["sources"]:
         suffix_lines.append("📚 " + ", ".join(result["sources"][:5]))
     if result["tool_calls"]:
@@ -373,6 +404,7 @@ def main():
     app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("forget_search", cmd_forget_search))
+    app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("deep", cmd_deep))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))

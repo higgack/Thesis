@@ -2,12 +2,18 @@
 
 The model decides which tools to call based on the user's natural-language
 message. Loop is bounded by MAX_STEPS to keep cost predictable."""
+import json
 import logging
+import re
+
 from google import genai
 from google.genai import types
 
 from .. import config
+from ..llm.gemini import complete
 from .tools import TOOL_DISPATCH, TOOL_DECLARATIONS
+
+_AUDIT_JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
 
 log = logging.getLogger(__name__)
 
@@ -212,10 +218,49 @@ async def run(message: str, deep: bool = False) -> dict:
     text = ""
     if final.candidates and final.candidates[0].content:
         text = _extract_text(final.candidates[0].content).strip()
+    text = text or "도구 호출 한도에 도달했지만 답변을 만들 수 없었습니다."
     return {
-        "text": text or "도구 호출 한도에 도달했지만 답변을 만들 수 없었습니다.",
+        "text": text,
         "sources": sources,
         "tool_calls": tool_calls,
         "steps": MAX_STEPS,
         "model": model,
+        "warning": await _verify(message, text, sources),
     }
+
+
+async def _verify(question: str, answer: str, sources: list[str]) -> str | None:
+    """Audit the answer with a cheap Gemini call. Return a short warning
+    string when confidence is low, otherwise None. Failures are swallowed
+    silently — verification is best-effort and must never block a reply."""
+    if not answer or len(answer) < 50:
+        return None
+    if not sources:
+        return "⚠️ 출처 없음 — 답변 근거가 약합니다."
+    prompt = (
+        f"질문: {question}\n\n"
+        f"답변:\n{answer[:1800]}\n\n"
+        f"인용 출처: {', '.join(sources[:6])}\n\n"
+        "이 답변이 위 출처로 충분히 뒷받침되는가? JSON으로 응답:\n"
+        '{"confidence": 1-10, "issue": "문제점 한 줄, 8 이상이면 빈 문자열"}'
+    )
+    try:
+        resp = await complete(
+            model=config.SUMMARY_MODEL,
+            system="You are a careful answer auditor. Output only JSON.",
+            user=prompt,
+            max_tokens=200,
+            temperature=0.0,
+        )
+        m = _AUDIT_JSON_RE.search(resp)
+        if not m:
+            return None
+        data = json.loads(m.group(0))
+        conf = int(data.get("confidence", 10))
+        if conf >= 7:
+            return None
+        issue = (data.get("issue") or "")[:140]
+        return f"⚠️ 신뢰도 {conf}/10 — {issue}"
+    except Exception as e:
+        log.warning("verify failed: %s", e)
+        return None

@@ -83,6 +83,20 @@ def search_title(substring: str, limit: int = 20) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def find_noise(min_summary_chars: int = 200) -> list[dict]:
+    """Return text-type docs likely to be noise: short summaries, often
+    accidental hashtags / questions saved by mistake."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, source, type, title, summary FROM documents "
+            "WHERE type = 'text' "
+            "AND length(coalesce(summary, '')) < ? "
+            "ORDER BY ingested_at DESC",
+            (min_summary_chars,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def count() -> int:
     with _conn() as c:
         return c.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
