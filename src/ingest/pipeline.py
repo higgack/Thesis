@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import re
@@ -79,23 +80,27 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
     log.info("ingest %s %s (%d chars, hint=%s)",
              doc_type, source, len(body), bool(hint))
 
-    summary = await summarize(title, body, hint=hint)
     chunks = split(body)
+    chunk_items = [{
+        "id": f"{doc_id}:{i}",
+        "text": c,
+        "kind": "chunk",
+        "idx": i,
+    } for i, c in enumerate(chunks)]
 
-    items = [{
+    # Summary (Gemini text gen) and chunk embedding (Gemini embed) hit
+    # different endpoints — run them in parallel.
+    summary, _ = await asyncio.gather(
+        summarize(title, body, hint=hint),
+        vector.add_chunks(doc_id, chunk_items),
+    )
+
+    await vector.add_chunks(doc_id, [{
         "id": f"{doc_id}:s",
         "text": f"[요약] {title}\n{summary}",
         "kind": "summary",
         "idx": -1,
-    }]
-    for i, c in enumerate(chunks):
-        items.append({
-            "id": f"{doc_id}:{i}",
-            "text": c,
-            "kind": "chunk",
-            "idx": i,
-        })
-    await vector.add_chunks(doc_id, items)
+    }])
 
     obsidian_path = None
     if obsidian.enabled():

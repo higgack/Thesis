@@ -11,7 +11,11 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
-_INGEST_LOCK = asyncio.Lock()
+# Allow up to 3 concurrent ingests. Each ingest internally parallelizes
+# summary + chunk embedding (different Gemini endpoints), so 3 in-flight
+# stays well under per-model RPM caps while ~3x'ing throughput on bulk
+# drops. Drop to 1 if 429s start appearing.
+_INGEST_SEM = asyncio.Semaphore(3)
 _INGEST_RETRY_QUEUE: list[dict] = []
 
 from . import config
@@ -434,10 +438,10 @@ def _explain_error(e: BaseException, max_len: int = 280) -> str:
 
 
 async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
-    """Serialize ingests with a global lock — when the user drops 5 files at
-    once we don't want 5 concurrent Gemini embed/summary chains slamming the
-    same model. Each file waits for the previous to finish."""
-    async with _INGEST_LOCK:
+    """Cap concurrent ingests via semaphore. Up to 3 files may run in
+    parallel; the 4th waits. Keeps Gemini below RPM caps while letting
+    bulk file drops finish ~3x faster."""
+    async with _INGEST_SEM:
         return await _ingest_message_locked(msg, ctx, notify_chat_id)
 
 
@@ -544,14 +548,14 @@ def _format_results(results: list[dict]) -> str:
 
 
 async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
-    """Drain one queued ingest per tick, with the same global lock as live
-    ingests so we never run two in parallel."""
+    """Drain one queued ingest per tick, sharing the same semaphore as live
+    ingests so total concurrent ingests stays bounded."""
     if not _INGEST_RETRY_QUEUE:
         return
     item = _INGEST_RETRY_QUEUE.pop(0)
     chat_id = item["chat_id"]
     title = item.get("file_name") or item.get("url") or "(unknown)"
-    async with _INGEST_LOCK:
+    async with _INGEST_SEM:
         try:
             if item["kind"] == "doc":
                 file = await ctx.bot.get_file(item["file_id"])
