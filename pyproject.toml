@@ -5,7 +5,7 @@ description = "Personal Telegram RAG knowledge base"
 requires-python = ">=3.11"
 dependencies = [
     "python-telegram-bot[ext]>=21.6",
-    "anthropic>=0.39.0",
+    "google-genai>=1.0.0",
     "openai>=1.54.0",
     "chromadb>=0.5.20",
     "trafilatura>=1.12.0",

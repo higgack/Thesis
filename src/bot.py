@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 
 from telegram import Update
-from telegram.constants import ChatAction, ChatType
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ContextTypes, filters,
 )
@@ -38,7 +38,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Second Brain 봇이에요.\n"
         "• 채널에 링크/PDF/유튜브/텍스트를 올리면 자동 수집·요약\n"
-        "• 여기 DM으로 자연어 질문\n"
+        "• 여기 DM으로 자연어 질문 (Gemini Flash)\n"
+        "• 비싼 모델로 깊게 답: /deep <질문> (Gemini Pro)\n"
         "• /stats /recent /forget <id>"
     )
 
@@ -74,6 +75,26 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"{'삭제됨' if ok else '메타 없음'} · 청크 {n}개 제거"
     )
+
+
+async def cmd_deep(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    text = " ".join(ctx.args).strip()
+    if not text:
+        await update.message.reply_text("사용법: /deep <질문>")
+        return
+    await _typing(update, ctx)
+    try:
+        result = await agent_answer.answer(text, deep=True)
+    except Exception as e:
+        log.exception("deep answer failed")
+        await update.message.reply_text(f"⚠️ 오류: {e}")
+        return
+    suffix = ""
+    if result["sources"]:
+        suffix = "\n\n📚 " + ", ".join(result["sources"][:5])
+    await update.message.reply_text(f"{result['text']}{suffix}")
 
 
 async def on_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -180,6 +201,7 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(CommandHandler("forget", cmd_forget))
+    app.add_handler(CommandHandler("deep", cmd_deep))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
     app.add_handler(MessageHandler(

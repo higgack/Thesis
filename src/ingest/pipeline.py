@@ -18,19 +18,19 @@ def _doc_id(source: str) -> str:
 async def ingest_url(url: str) -> dict:
     if existing := meta.find_by_source(url):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
-    title, body = await load_url(url)
+    title, body, hint = await load_url(url)
     if not body:
         return {"status": "empty", "title": title}
-    return await _ingest("url", url, title, body)
+    return await _ingest("url", url, title, body, hint)
 
 
 async def ingest_pdf(path: Path, source_label: str) -> dict:
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
-    title, body = load_pdf(path)
+    title, body, hint = load_pdf(path)
     if not body:
         return {"status": "empty", "title": title}
-    return await _ingest("pdf", source_label, title, body)
+    return await _ingest("pdf", source_label, title, body, hint)
 
 
 async def ingest_text(text: str, label: str = "text") -> dict:
@@ -38,14 +38,16 @@ async def ingest_text(text: str, label: str = "text") -> dict:
     if existing := meta.find_by_source(src):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     title = text.strip().splitlines()[0][:80] if text.strip() else label
-    return await _ingest("text", src, title, text)
+    return await _ingest("text", src, title, text, None)
 
 
-async def _ingest(doc_type: str, source: str, title: str, body: str) -> dict:
+async def _ingest(doc_type: str, source: str, title: str, body: str,
+                  hint: str | None) -> dict:
     doc_id = _doc_id(source)
-    log.info("ingest %s %s (%d chars)", doc_type, source, len(body))
+    log.info("ingest %s %s (%d chars, hint=%s)",
+             doc_type, source, len(body), bool(hint))
 
-    summary = await summarize(title, body)
+    summary = await summarize(title, body, hint=hint)
     chunks = split(body)
 
     items = [{
@@ -82,4 +84,5 @@ async def _ingest(doc_type: str, source: str, title: str, body: str) -> dict:
         "chunks": len(chunks),
         "summary_chars": len(summary),
         "notion_page_id": notion_page_id,
+        "summary_source": "hint" if hint and config.HINT_SUMMARY_MIN_CHARS <= len(hint) <= config.HINT_SUMMARY_MAX_CHARS else "llm",
     }

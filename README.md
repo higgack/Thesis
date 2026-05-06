@@ -2,7 +2,7 @@
 
 개인용 RAG 지식 저장소. 텔레그램 채널 [t.me/substackNoahsummary](https://t.me/substackNoahsummary)에 올린
 링크/PDF/유튜브/텍스트를 자동 수집·요약해 벡터DB와 Notion에 저장하고,
-봇과 1:1 대화로 질의하면 토큰 최소 RAG로 답변합니다.
+봇과 1:1 대화로 질의하면 **Gemini 기반 초저가 RAG**로 답변합니다.
 
 ## 아키텍처
 
@@ -15,29 +15,38 @@
                   (URL/PDF/YT/txt)
                        │
                        ▼
-                 chunk + summarize (Haiku, 1회성)
+                ┌──hint 있나?(arXiv abstract / og:description)──┐
+                │ yes → 요약 LLM 스킵 (무료)                       │
+                │ no  → Gemini 2.5 Flash-Lite로 1회 요약           │
+                └──────────────────────────────────────────────────┘
                        │
                        ▼
-                 OpenAI text-embedding-3-small
+                 OpenAI text-embedding-3-small ($0.02/MTok)
 
 [User DM] --(question)--> [Bot]
                             │
+                            ▼
+                Hybrid retrieve top-5 (Chroma dense + BM25)
+                summary-first 컨텍스트
+                            │
                 ┌───────────┴───────────┐
                 ▼                       ▼
-         Hermes router (Haiku)   prompt cache hit
-         답할 수 있나? / RAG필요?         │
-                │                       ▼
-                ▼               Sonnet final answer
-         Hybrid retrieve top-5
-         + summary-first 컨텍스트
+         Gemini 2.5 Flash         /deep → Gemini 2.5 Pro
+         (기본, 매우 저렴)          (어려운 질문에만)
 ```
 
-## 토큰 절약 핵심 4가지
+## 비용 절감 핵심 6가지
 
-1. **수집 시점 1회 요약**: 긴 문서를 저장할 때만 Haiku로 요약. 이후 모든 질의는 요약을 우선 컨텍스트로 사용.
-2. **요약-우선 검색**: 벡터DB에 (요약 청크 + 원문 청크)를 함께 넣고, 요약을 먼저 top-K로 가져와 사용. 부족할 때만 원문 청크.
-3. **Hermes 라우터**: 저렴한 Haiku가 "메모리만으로 답 가능 / RAG 필요 / 잡담" 분류 → 불필요한 RAG 차단.
-4. **Anthropic prompt caching**: 시스템 프롬프트와 라우터 프롬프트를 캐시해 반복 호출 시 입력 비용 90% 절감.
+1. **Gemini 전면 사용**: 요약·답변 모두 Gemini Flash 계열. Claude/GPT 동급 대비 5~10배 저렴.
+2. **소스별 무료 요약**: arXiv는 Atom API의 abstract, 일반 웹은 og:description / meta description을 그대로 요약으로 사용 → **요약 LLM 호출 자체를 스킵**.
+3. **수집 시점 1회 요약**: hint가 없을 때만 Flash-Lite로 1회 요약. 이후 모든 질의는 요약 우선.
+4. **요약-우선 검색**: 벡터DB에 (요약 청크 + 원문 청크)를 함께 넣고 요약을 먼저 검색 → 답변 컨텍스트가 작음.
+5. **단일 사용자라 라우터 제거**: 항상 RAG 직행. 분류용 LLM 호출 제거.
+6. **2-tier 답변 모델**: 기본은 Flash, 어려운 질문만 `/deep`으로 Pro. 평소 답변 비용 ~90% 절감.
+
+## 예상 비용 (참고)
+
+월 100문서 수집 + 200질의 기준 **약 $1**, 월 500문서 헤비 사용 기준 **약 $5** (단가는 변동 가능).
 
 ## 실행 (로컬 개발)
 
@@ -50,7 +59,7 @@ docker compose up --build
 
 ```bash
 fly launch --no-deploy
-fly secrets set TELEGRAM_BOT_TOKEN=... ANTHROPIC_API_KEY=... \
+fly secrets set TELEGRAM_BOT_TOKEN=... GOOGLE_API_KEY=... \
   OPENAI_API_KEY=... NOTION_TOKEN=... NOTION_DATABASE_ID=... \
   TELEGRAM_OWNER_ID=...
 fly volumes create rag_data --size 1
@@ -61,8 +70,9 @@ fly deploy
 
 1. 봇을 채널에 admin으로 추가 (메시지 읽기 권한 필요)
 2. 채널에 URL/PDF/유튜브/텍스트를 올리면 자동 수집
-3. 봇과 DM으로 자연어 질문 → 답변
+3. 봇과 DM으로 자연어 질문 → 답변 (Gemini Flash)
 4. 명령어:
+   - `/deep <질문>` - 어려운 질문은 Gemini Pro로 깊게
    - `/stats` - 저장된 문서 수, 청크 수
    - `/recent` - 최근 수집 10개
    - `/forget <id>` - 특정 문서 삭제

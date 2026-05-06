@@ -8,6 +8,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 _YOUTUBE_RE = re.compile(
     r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([\w-]{11})"
 )
+_ARXIV_RE = re.compile(r"arxiv\.org/(?:abs|pdf)/([\w.\-]+)")
 
 
 def is_youtube(url: str) -> str | None:
@@ -15,11 +16,16 @@ def is_youtube(url: str) -> str | None:
     return m.group(1) if m else None
 
 
-async def load_url(url: str) -> tuple[str, str]:
-    """Returns (title, text)."""
+async def load_url(url: str) -> tuple[str, str, str | None]:
+    """Returns (title, text, hint_summary).
+
+    hint_summary is a free, source-provided abstract / og:description that
+    can replace LLM summarization when good enough."""
     yt = is_youtube(url)
     if yt:
         return await load_youtube(yt, url)
+    if m := _ARXIV_RE.search(url):
+        return await load_arxiv(m.group(1))
     async with httpx.AsyncClient(timeout=30, follow_redirects=True,
                                  headers={"User-Agent": "Mozilla/5.0 SecondBrain"}) as c:
         r = await c.get(url)
@@ -29,10 +35,21 @@ async def load_url(url: str) -> tuple[str, str]:
                                     favor_recall=True) or ""
     meta = trafilatura.extract_metadata(html)
     title = (meta.title if meta and meta.title else url)[:200]
-    return title, extracted.strip()
+    hint = (meta.description if meta and meta.description else None)
+    return title, extracted.strip(), hint
 
 
-async def load_youtube(video_id: str, url: str) -> tuple[str, str]:
+async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
+    title = f"YouTube {video_id}"
+    description = None
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True,
+                                     headers={"User-Agent": "Mozilla/5.0"}) as c:
+            r = await c.get(f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json")
+            if r.status_code == 200:
+                title = r.json().get("title", title)
+    except Exception:
+        pass
     try:
         transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
         try:
@@ -41,13 +58,34 @@ async def load_youtube(video_id: str, url: str) -> tuple[str, str]:
             t = next(iter(transcripts))
         entries = t.fetch()
         text = "\n".join(e["text"] for e in entries)
-        return f"YouTube {video_id}", text.strip()
+        return title, text.strip(), description
     except Exception as e:
-        return f"YouTube {video_id}", f"[transcript unavailable: {e}]"
+        return title, f"[transcript unavailable: {e}]", description
 
 
-def load_pdf(path: Path) -> tuple[str, str]:
+async def load_arxiv(arxiv_id: str) -> tuple[str, str, str | None]:
+    """Use the arXiv Atom API: free, structured, abstract included."""
+    api = f"https://export.arxiv.org/api/query?id_list={arxiv_id}"
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True,
+                                 headers={"User-Agent": "SecondBrain"}) as c:
+        r = await c.get(api)
+        r.raise_for_status()
+        xml = r.text
+    title = _xml_field(xml, "title", skip_first=True) or f"arXiv:{arxiv_id}"
+    abstract = _xml_field(xml, "summary", skip_first=True) or ""
+    return title.strip()[:200], abstract.strip(), abstract.strip() or None
+
+
+def _xml_field(xml: str, tag: str, skip_first: bool = False) -> str | None:
+    pattern = re.compile(fr"<{tag}>(.*?)</{tag}>", re.DOTALL)
+    matches = pattern.findall(xml)
+    if skip_first and len(matches) > 1:
+        return matches[1]
+    return matches[0] if matches else None
+
+
+def load_pdf(path: Path) -> tuple[str, str, str | None]:
     reader = PdfReader(str(path))
     pages = [p.extract_text() or "" for p in reader.pages]
     title = reader.metadata.title if reader.metadata and reader.metadata.title else path.stem
-    return (title or path.stem)[:200], "\n\n".join(pages).strip()
+    return (title or path.stem)[:200], "\n\n".join(pages).strip(), None
