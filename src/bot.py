@@ -12,6 +12,7 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 
 _INGEST_LOCK = asyncio.Lock()
+_INGEST_RETRY_QUEUE: list[dict] = []
 
 from . import config
 from .store import meta, vector, obsidian
@@ -397,35 +398,56 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
         return await _ingest_message_locked(msg, ctx, notify_chat_id)
 
 
+async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
+    file = await ctx.bot.get_file(msg.document.file_id)
+    dest = Path(config.DATA_DIR) / "files" / msg.document.file_name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    await file.download_to_drive(custom_path=dest)
+    label = f"tg-doc:{msg.document.file_unique_id}:{msg.document.file_name}"
+    suffix = dest.suffix.lower()
+    if suffix == ".pdf":
+        return await pipeline.ingest_pdf(dest, label)
+    if suffix == ".pptx":
+        return await pipeline.ingest_pptx(dest, label)
+    if suffix == ".docx":
+        return await pipeline.ingest_docx(dest, label)
+    if suffix in {".ppt", ".doc"}:
+        return {"status": "error",
+                "error": f"{suffix} (구버전 포맷)은 지원 안 됩니다. {suffix}x로 변환해서 다시 보내주세요."}
+    content = dest.read_text(encoding="utf-8", errors="ignore")
+    return await pipeline.ingest_text(content, label)
+
+
+def _is_retryable(e: BaseException) -> bool:
+    s = f"{type(e).__name__} {e}"
+    return any(m in s for m in (
+        *_OVERLOAD_MARKERS,
+        "Timeout", "ReadError", "ConnectError", "RemoteProtocolError",
+    ))
+
+
 async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
     text = msg.text or msg.caption or ""
     results = []
 
     if msg.document:
         try:
-            file = await ctx.bot.get_file(msg.document.file_id)
-            dest = Path(config.DATA_DIR) / "files" / msg.document.file_name
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            await file.download_to_drive(custom_path=dest)
-            label = f"tg-doc:{msg.document.file_unique_id}:{msg.document.file_name}"
-            suffix = dest.suffix.lower()
-            if suffix == ".pdf":
-                results.append(await pipeline.ingest_pdf(dest, label))
-            elif suffix == ".pptx":
-                results.append(await pipeline.ingest_pptx(dest, label))
-            elif suffix == ".docx":
-                results.append(await pipeline.ingest_docx(dest, label))
-            elif suffix in {".ppt", ".doc"}:
-                results.append({
-                    "status": "error",
-                    "error": f"{suffix} (구버전 포맷)은 지원 안 됩니다. {suffix}x로 변환해서 다시 보내주세요.",
-                })
-            else:
-                content = dest.read_text(encoding="utf-8", errors="ignore")
-                results.append(await pipeline.ingest_text(content, label))
+            results.append(await _ingest_doc_attachment(msg, ctx))
         except Exception as e:
             log.exception("file ingest failed")
-            results.append({"status": "error", "error": _explain_error(e)})
+            if _is_retryable(e):
+                _INGEST_RETRY_QUEUE.append({
+                    "kind": "doc",
+                    "file_id": msg.document.file_id,
+                    "file_unique_id": msg.document.file_unique_id,
+                    "file_name": msg.document.file_name,
+                    "chat_id": notify_chat_id,
+                    "attempts": 0,
+                })
+                results.append({"status": "queued",
+                                "title": msg.document.file_name})
+            else:
+                results.append({"status": "error", "error": _explain_error(e)})
 
     urls, plain = _extract_urls(text)
     for url in urls:
@@ -433,7 +455,17 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
             results.append(await pipeline.ingest_url(url))
         except Exception as e:
             log.exception("url ingest failed: %s", url)
-            results.append({"status": "error", "error": _explain_error(e), "source": url})
+            if _is_retryable(e):
+                _INGEST_RETRY_QUEUE.append({
+                    "kind": "url",
+                    "url": url,
+                    "chat_id": notify_chat_id,
+                    "attempts": 0,
+                })
+                results.append({"status": "queued", "title": url})
+            else:
+                results.append({"status": "error",
+                                "error": _explain_error(e), "source": url})
 
     if plain and not msg.document and len(plain) >= 80:
         try:
@@ -461,9 +493,57 @@ def _format_results(results: list[dict]) -> str:
             lines.append(f"♻️ 이미 있음: {r['title']}")
         elif s == "empty":
             lines.append(f"⚠️ 본문 비어있음: {r.get('title', '')}")
+        elif s == "queued":
+            lines.append(f"⏳ 재시도 대기 (자동): {r.get('title', '')}")
         else:
             lines.append(f"❌ {r.get('error', 'error')}")
     return "\n".join(lines)
+
+
+async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
+    """Drain one queued ingest per tick, with the same global lock as live
+    ingests so we never run two in parallel."""
+    if not _INGEST_RETRY_QUEUE:
+        return
+    item = _INGEST_RETRY_QUEUE.pop(0)
+    chat_id = item["chat_id"]
+    title = item.get("file_name") or item.get("url") or "(unknown)"
+    async with _INGEST_LOCK:
+        try:
+            if item["kind"] == "doc":
+                file = await ctx.bot.get_file(item["file_id"])
+                dest = Path(config.DATA_DIR) / "files" / item["file_name"]
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                await file.download_to_drive(custom_path=dest)
+                label = f"tg-doc:{item['file_unique_id']}:{item['file_name']}"
+                suffix = dest.suffix.lower()
+                if suffix == ".pdf":
+                    r = await pipeline.ingest_pdf(dest, label)
+                elif suffix == ".pptx":
+                    r = await pipeline.ingest_pptx(dest, label)
+                elif suffix == ".docx":
+                    r = await pipeline.ingest_docx(dest, label)
+                else:
+                    content = dest.read_text(encoding="utf-8", errors="ignore")
+                    r = await pipeline.ingest_text(content, label)
+            elif item["kind"] == "url":
+                r = await pipeline.ingest_url(item["url"])
+            else:
+                return
+        except Exception as e:
+            item["attempts"] += 1
+            if item["attempts"] >= _MAX_RETRY_ATTEMPTS or not _is_retryable(e):
+                await ctx.bot.send_message(
+                    chat_id,
+                    f"⚠️ ingest 재시도 포기 — {title[:80]}\n{_explain_error(e)}",
+                )
+                return
+            log.info("ingest retry %d/%d: %s",
+                     item["attempts"], _MAX_RETRY_ATTEMPTS, title[:80])
+            _INGEST_RETRY_QUEUE.append(item)
+            return
+    summary = _format_results([r])
+    await ctx.bot.send_message(chat_id, f"⏰ ingest 재시도\n{summary}")
 
 
 def main():
@@ -514,6 +594,12 @@ def main():
             interval=_RETRY_INTERVAL_SECONDS,
             first=30,
             name="retry_pending",
+        )
+        app.job_queue.run_repeating(
+            _retry_pending_ingest,
+            interval=120,
+            first=60,
+            name="retry_pending_ingest",
         )
 
     log.info("bot starting")
