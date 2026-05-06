@@ -7,6 +7,7 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_OWNER_ID = int(os.environ["TELEGRAM_OWNER_ID"])
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "").strip() or None
+TELEGRAM_BASE_URL = os.getenv("TELEGRAM_BASE_URL", "").strip() or None
 
 GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
 

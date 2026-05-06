@@ -279,7 +279,18 @@ def _format_results(results: list[dict]) -> str:
 def main():
     meta.init()
     obsidian.init()
-    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+    builder = Application.builder().token(config.TELEGRAM_BOT_TOKEN)
+    if config.TELEGRAM_BASE_URL:
+        base = config.TELEGRAM_BASE_URL.rstrip("/")
+        # base ends with "/bot"; file URL is "/file/bot" on the same host
+        file_base = base.replace("/bot", "/file/bot")
+        builder = (
+            builder.base_url(base)
+            .base_file_url(file_base)
+            .local_mode(True)
+        )
+        log.info("Telegram local mode at %s", base)
+    app = builder.build()
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
