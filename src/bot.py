@@ -20,9 +20,30 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
-URL_RE = re.compile(r"https?://\S+")
+URL_RE = re.compile(r"https?://[^\s\)\]<>\"']+")
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s\)]+)\)")
+_URL_TRAILING_RE = re.compile(r"[).,;:!?\]]+$")
 _MD_BOLD_RE = re.compile(r"\*\*([^\*\n]{1,200}?)\*\*")
 _MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+
+
+def _extract_urls(text: str) -> tuple[list[str], str]:
+    """Pull markdown-link and plain URLs out of `text`, return cleaned URLs
+    plus the leftover text with URL syntax stripped. Trailing closing-paren
+    and other punctuation that gets glued onto a URL are removed."""
+    urls: list[str] = []
+
+    def _take_md_link(m: "re.Match[str]") -> str:
+        urls.append(_URL_TRAILING_RE.sub("", m.group(2)))
+        return m.group(1)
+
+    cleaned = _MD_LINK_RE.sub(_take_md_link, text)
+    for raw in URL_RE.findall(cleaned):
+        url = _URL_TRAILING_RE.sub("", raw)
+        if url and url not in urls:
+            urls.append(url)
+    text_no_urls = URL_RE.sub("", cleaned).strip()
+    return urls, text_no_urls
 _MERMAID_BLOCK_RE = re.compile(r"```mermaid\s*\n(.*?)\n```", re.DOTALL)
 _NUMBERED_SECTION_RE = re.compile(
     r"^(\s*)(\d+)\.\s+(.{3,100}?)[:：]?\s*$", re.MULTILINE
@@ -291,15 +312,15 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
             log.exception("file ingest failed")
             results.append({"status": "error", "error": _explain_error(e)})
 
-    for url in URL_RE.findall(text):
+    urls, plain = _extract_urls(text)
+    for url in urls:
         try:
             results.append(await pipeline.ingest_url(url))
         except Exception as e:
             log.exception("url ingest failed: %s", url)
             results.append({"status": "error", "error": _explain_error(e), "source": url})
 
-    plain = URL_RE.sub("", text).strip()
-    if plain and not msg.document:
+    if plain and not msg.document and len(plain) >= 80:
         try:
             results.append(await pipeline.ingest_text(plain, f"tg-msg:{msg.message_id}"))
         except Exception as e:
