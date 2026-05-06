@@ -3,13 +3,19 @@
 Each tool is async, returns a JSON-serializable dict, and is wrapped by a
 FunctionDeclaration in TOOL_DECLARATIONS for the model."""
 import logging
+from urllib.parse import urlparse
+
+from google import genai
 from google.genai import types
 
+from .. import config
 from ..store import meta, vector
 from ..ingest import pipeline
 from . import retrieve, papersearch
 
 log = logging.getLogger(__name__)
+
+_search_client = genai.Client(api_key=config.GOOGLE_API_KEY)
 
 
 async def search_my_brain(query: str, k: int = 5) -> dict:
@@ -60,6 +66,47 @@ async def recent_docs(limit: int = 10) -> dict:
     return {"items": items, "count": len(items)}
 
 
+async def web_search(query: str) -> dict:
+    """Live Google search via Gemini grounding.
+
+    A separate Gemini call with only google_search enabled returns a brief
+    factual summary plus grounding metadata. Wrapped as a custom tool so the
+    outer agent (which uses function_declarations) can call it; Gemini API
+    refuses to mix built-in google_search with function_declarations in the
+    same request, hence the indirection."""
+    resp = await _search_client.aio.models.generate_content(
+        model=config.ANSWER_MODEL,
+        contents=query,
+        config=types.GenerateContentConfig(
+            system_instruction=(
+                "You are a search assistant. Use Google Search to fetch the "
+                "most recent factual information. Reply in Korean, in 3-7 "
+                "concise bullet points. Always include source domain in "
+                "brackets at end of each bullet, e.g., [bloomberg.com]."
+            ),
+            tools=[types.Tool(google_search=types.GoogleSearch())],
+            temperature=0.1,
+            max_output_tokens=1024,
+        ),
+    )
+    text = ""
+    sources: list[dict] = []
+    if resp.candidates and resp.candidates[0]:
+        cand = resp.candidates[0]
+        if cand.content and cand.content.parts:
+            text = "".join(p.text or "" for p in cand.content.parts if p.text)
+        gm = getattr(cand, "grounding_metadata", None)
+        if gm and getattr(gm, "grounding_chunks", None):
+            for chunk in gm.grounding_chunks:
+                web = getattr(chunk, "web", None)
+                if web and getattr(web, "uri", None):
+                    sources.append({
+                        "url": web.uri,
+                        "title": getattr(web, "title", "") or "",
+                    })
+    return {"answer": text.strip(), "sources": sources, "count": len(sources)}
+
+
 async def compare_papers(topic: str, limit: int = 30,
                          type_filter: str = "") -> dict:
     """Cross-document overview: gather many summaries at once."""
@@ -92,6 +139,7 @@ TOOL_DISPATCH = {
     "ingest_url": ingest_url,
     "recent_docs": recent_docs,
     "compare_papers": compare_papers,
+    "web_search": web_search,
 }
 
 
@@ -195,6 +243,26 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                 ),
             },
             required=["topic"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="web_search",
+        description=(
+            "Search the live web (Google Search via Gemini grounding) for "
+            "current/factual information. Use when the user asks about "
+            "최신/요즘/지금/오늘/recent/latest news, prices, market data, "
+            "company announcements, or anything not present in the saved "
+            "brain. Returns a short factual summary with source domains."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(
+                    type=types.Type.STRING,
+                    description="Search query in Korean or English.",
+                ),
+            },
+            required=["query"],
         ),
     ),
 ])

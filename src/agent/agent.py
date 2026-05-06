@@ -24,13 +24,13 @@ _SYSTEM = """당신은 사용자의 개인 세컨드브레인 에이전트입니
 - search_papers: arXiv/Semantic Scholar 외부 논문 검색
 - ingest_url: 새 URL을 저장소에 영구 보관
 - recent_docs: 최근 저장한 문서 목록
-- google_search (Gemini 내장): 일반 웹 검색. 최신 뉴스/시세/동향, 저장 자료에 없는 사실 확인.
+- web_search: 일반 웹 검색 (Google grounding). 최신 뉴스/시세/동향/오늘 발표 등 저장 자료에 없는 사실 확인.
 
 # 의사결정
 1. "X편 비교해줘 / 전체 정리해줘 / 종합 리뷰" 같이 다수 자료 통합이면 compare_papers를 호출하되 limit은 충분히 크게 (30 이상).
 2. 평범한 단일 질문이면 search_my_brain 먼저 호출.
 3. "찾아줘 / 어떤 논문 / 새로운 / 추천해줘" 등 발견 의도면 search_papers.
-4. 저장된 자료에 답이 없거나 "최신/지금/오늘/요즘"이 들어간 질문이면 google_search 활용.
+4. 저장된 자료에 답이 없거나 "최신/지금/오늘/요즘"이 들어간 질문이면 web_search 호출.
 5. URL이 있고 "학습/저장/기억/넣어/추가" 같은 명령조면 ingest_url 호출.
 6. URL이 있어도 단순 질문이면 ingest 하지 말고 답변에 집중.
 7. 도구 호출은 질의당 최대 3~4회까지. 의미 없는 반복 호출 금지.
@@ -63,7 +63,7 @@ _SYSTEM = """당신은 사용자의 개인 세컨드브레인 에이전트입니
 - 출처는 항목 끝 [짧은 제목 또는 도메인]. 같은 출처 여러 항목에 반복 인용 OK.
 - 5~10개 핵심 항목 정도로 압축.
 - 다양한 출처에서 인용 (한 자료에만 의존하지 말 것).
-- google_search 결과는 출처 끝에 [도메인]으로 인용 (예: [techcrunch.com]).
+- web_search 결과는 출처 끝에 [도메인]으로 인용 (예: [techcrunch.com]).
 
 # 솔직성
 - 자료가 부족하면 솔직히 말하고, 무엇을 더 저장하면 좋을지 제안.
@@ -114,6 +114,15 @@ def _harvest_sources(name: str, result: dict, sources: list[str]) -> None:
             t = p.get("title")
             if t and t not in sources:
                 sources.append(t)
+    elif name == "web_search":
+        from urllib.parse import urlparse
+        for src in result.get("sources", []):
+            url = src.get("url", "")
+            title = src.get("title", "")
+            domain = urlparse(url).netloc.replace("www.", "") if url else ""
+            label = f"{title} [{domain}]" if title and domain else (title or domain)
+            if label and label not in sources:
+                sources.append(label)
 
 
 async def run(message: str, deep: bool = False) -> dict:
@@ -126,10 +135,7 @@ async def run(message: str, deep: bool = False) -> dict:
 
     cfg = types.GenerateContentConfig(
         system_instruction=_SYSTEM,
-        tools=[
-            TOOL_DECLARATIONS,
-            types.Tool(google_search=types.GoogleSearch()),
-        ],
+        tools=[TOOL_DECLARATIONS],
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         temperature=0.2,
         max_output_tokens=2048,
