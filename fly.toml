@@ -1,0 +1,15 @@
+app = "substacknoah-secondbrain"
+primary_region = "nrt"
+
+[build]
+
+[env]
+  DATA_DIR = "/data"
+
+[[mounts]]
+  source = "rag_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
