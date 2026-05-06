@@ -26,7 +26,7 @@ async def add_chunks(doc_id: str, chunks: list[dict]) -> None:
 
 
 async def query(text: str, k: int = 5, kind: str | None = None) -> list[dict]:
-    vec = (await embed([text]))[0]
+    vec = (await embed([text], task_type="RETRIEVAL_QUERY"))[0]
     where = {"kind": kind} if kind else None
     res = _collection.query(query_embeddings=[vec], n_results=k, where=where)
     if not res["ids"] or not res["ids"][0]:

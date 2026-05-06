@@ -26,7 +26,7 @@
         └─────────────────────────────────────────────┘
                        │
                        ▼
-              OpenAI text-embedding-3-small
+              Gemini gemini-embedding-001
 
 [User DM "질문"] → Hybrid retrieve (Chroma + BM25) → Gemini Flash 답변
 [/find <q>]      → Semantic Scholar 검색 → 후보 5개 표시
@@ -87,7 +87,7 @@ docker compose up --build
 ```bash
 fly launch --no-deploy
 fly secrets set TELEGRAM_BOT_TOKEN=... GOOGLE_API_KEY=... \
-  OPENAI_API_KEY=... TELEGRAM_OWNER_ID=... \
+  TELEGRAM_OWNER_ID=... \
   OBSIDIAN_GIT_REMOTE='https://x-access-token:PAT@github.com/<you>/second-brain-vault.git'
 fly volumes create rag_data --size 1
 fly deploy

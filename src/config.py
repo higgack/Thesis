@@ -9,7 +9,6 @@ TELEGRAM_OWNER_ID = int(os.environ["TELEGRAM_OWNER_ID"])
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "").strip() or None
 
 GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
-OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
 OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH", "").strip() or None
 OBSIDIAN_GIT_REMOTE = os.getenv("OBSIDIAN_GIT_REMOTE", "").strip() or None
@@ -22,7 +21,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "gemini-2.5-flash-lite")
 ANSWER_MODEL = os.getenv("ANSWER_MODEL", "gemini-2.5-flash")
 DEEP_MODEL = os.getenv("DEEP_MODEL", "gemini-2.5-pro")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "gemini-embedding-001")
 
 CHUNK_TOKENS = 500
 CHUNK_OVERLAP = 60
