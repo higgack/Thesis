@@ -164,7 +164,65 @@ def load_pdf(path: Path) -> tuple[str, str, str | None]:
         except Exception:
             pass
 
+    if len(body) < 200:
+        ocr_text = _ocr_pdf_pages(path)
+        if ocr_text:
+            body = ocr_text
+
     return (title or path.stem)[:200], body, None
+
+
+def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150) -> str:
+    """Render each page to PNG and ask Gemini Vision to extract text.
+
+    Used as a last resort when PyMuPDF and pypdf both return empty text
+    (image-only / scanned PDFs). Cost per page is roughly $0.001 on
+    gemini-2.5-flash-lite, so a 50-page PDF is about $0.05."""
+    try:
+        import fitz  # PyMuPDF
+        from google import genai
+        from google.genai import types
+        from .. import config
+    except Exception:
+        return ""
+
+    try:
+        doc = fitz.open(str(path))
+    except Exception:
+        return ""
+
+    client = genai.Client(api_key=config.GOOGLE_API_KEY)
+    prompt = (
+        "이 페이지의 모든 텍스트를 그대로 추출하세요. "
+        "단락/제목/표 구조를 유지하고, 설명이나 코멘트 없이 텍스트만 출력하세요."
+    )
+
+    pages_out: list[str] = []
+    for i, page in enumerate(doc, 1):
+        if i > max_pages:
+            pages_out.append(f"-- Page {i}+ truncated --")
+            break
+        try:
+            pix = page.get_pixmap(dpi=dpi)
+            img_bytes = pix.tobytes("png")
+            resp = client.models.generate_content(
+                model=config.SUMMARY_MODEL,
+                contents=[
+                    types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
+                    types.Part.from_text(text=prompt),
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    max_output_tokens=2048,
+                ),
+            )
+            text = (resp.text or "").strip()
+            if text:
+                pages_out.append(f"-- Page {i} --\n{text}")
+        except Exception as e:
+            pages_out.append(f"-- Page {i} --\n[OCR error: {type(e).__name__}: {e}]")
+    doc.close()
+    return "\n\n".join(pages_out).strip()
 
 
 async def load_pdf_async(path: Path) -> tuple[str, str, str | None]:
