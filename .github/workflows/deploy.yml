@@ -14,7 +14,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 50
     env:
       REF: ${{ github.ref_name }}
       SHA: ${{ github.sha }}
@@ -39,7 +39,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           timeout: 60s
-          command_timeout: 20m
+          command_timeout: 45m
           script_stop: true
           envs: REF
           script: |
