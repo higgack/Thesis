@@ -12,10 +12,14 @@ def _tokenize(text: str) -> list[str]:
 
 
 async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
-    """Summary-first retrieval: prefer summary chunks, fall back to raw chunks
-    only when needed. Combines dense + BM25 lexical scores."""
-    summary_hits = await vector.query(query, k=k, kind="summary")
-    chunk_hits = await vector.query(query, k=k, kind="chunk")
+    """Summary-first retrieval with document diversity.
+
+    Returns at most one hit per source document to give the answer model
+    a wider variety of sources instead of multiple chunks from the same
+    paper. Combines dense embedding + BM25 lexical scores."""
+    over = max(k * 3, 15)
+    summary_hits = await vector.query(query, k=over, kind="summary")
+    chunk_hits = await vector.query(query, k=over, kind="chunk")
 
     dense = {h["id"]: (1.0 - h["distance"], h) for h in summary_hits + chunk_hits}
 
@@ -38,15 +42,14 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
                 })
 
     ranked = sorted(dense.values(), key=lambda x: x[0], reverse=True)
-    summaries = [h for s, h in ranked if h["metadata"]["kind"] == "summary"][:k]
-    chunks = [h for s, h in ranked if h["metadata"]["kind"] == "chunk"][:k]
 
-    seen = set()
-    out = []
-    for h in summaries + chunks:
-        if h["id"] in seen:
+    seen_docs: set[str] = set()
+    out: list[dict] = []
+    for _, h in ranked:
+        doc_id = h["metadata"].get("doc_id")
+        if doc_id in seen_docs:
             continue
-        seen.add(h["id"])
+        seen_docs.add(doc_id)
         out.append(h)
         if len(out) >= k:
             break
