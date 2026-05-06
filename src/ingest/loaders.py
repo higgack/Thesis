@@ -17,6 +17,15 @@ def is_youtube(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+_JS_PLACEHOLDER_PATTERNS = (
+    "javascript is not available",
+    "please enable javascript",
+    "you need to enable javascript",
+    "javascript이 비활성화",
+)
+_MIN_BODY_CHARS = 200
+
+
 async def load_url(url: str) -> tuple[str, str, str | None]:
     """Returns (title, text, hint_summary).
 
@@ -27,12 +36,53 @@ async def load_url(url: str) -> tuple[str, str, str | None]:
         return await load_youtube(yt, url)
     if m := _ARXIV_RE.search(url):
         return await load_arxiv(m.group(1))
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True,
-                                 headers={"User-Agent": "Mozilla/5.0 SecondBrain"}) as c:
-        r = await c.get(url)
+    title, body, hint = "", "", None
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True,
+                                     headers={"User-Agent": "Mozilla/5.0 SecondBrain"}) as c:
+            r = await c.get(url)
+            r.raise_for_status()
+            html = r.text
+        title, body, hint = await asyncio.to_thread(_parse_html, url, html)
+    except Exception:
+        pass
+
+    if _is_js_placeholder(body):
+        try:
+            j_title, j_body, j_hint = await _load_via_jina(url)
+            if j_body and len(j_body) >= _MIN_BODY_CHARS:
+                title = j_title or title
+                body = j_body
+                hint = j_hint or hint
+        except Exception:
+            pass
+
+    return title or url[:200], body, hint
+
+
+def _is_js_placeholder(body: str) -> bool:
+    if len(body) < _MIN_BODY_CHARS:
+        return True
+    low = body.lower()
+    return any(p in low for p in _JS_PLACEHOLDER_PATTERNS)
+
+
+async def _load_via_jina(url: str) -> tuple[str, str, str | None]:
+    """r.jina.ai renders JS and returns clean markdown. Free, no auth."""
+    api_url = f"https://r.jina.ai/{url}"
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True,
+                                 headers={"Accept": "text/plain"}) as c:
+        r = await c.get(api_url)
         r.raise_for_status()
-        html = r.text
-    return await asyncio.to_thread(_parse_html, url, html)
+        text = r.text
+    title = ""
+    body = text
+    if "Markdown Content:" in text:
+        head, body = text.split("Markdown Content:", 1)
+        body = body.strip()
+        if "Title:" in head:
+            title = head.split("Title:", 1)[1].split("\n", 1)[0].strip()
+    return title, body, None
 
 
 def _parse_html(url: str, html: str) -> tuple[str, str, str | None]:
