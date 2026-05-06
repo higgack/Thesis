@@ -60,7 +60,7 @@ async def recent_docs(limit: int = 10) -> dict:
     return {"items": items, "count": len(items)}
 
 
-async def compare_papers(topic: str, limit: int = 20,
+async def compare_papers(topic: str, limit: int = 30,
                          type_filter: str = "") -> dict:
     """Cross-document overview: gather many summaries at once."""
     hits = await vector.query(topic, k=limit * 2, kind="summary")
@@ -183,7 +183,7 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                 ),
                 "limit": types.Schema(
                     type=types.Type.INTEGER,
-                    description="Max documents to gather (1-30). Default 20.",
+                    description="Max documents to gather (1-50). Default 30. Use larger values when the user wants comprehensive coverage.",
                 ),
                 "type_filter": types.Schema(
                     type=types.Type.STRING,
