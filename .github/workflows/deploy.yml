@@ -1,0 +1,78 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - 'claude/**'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Notify start
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TELEGRAM_OWNER_ID }}
+        run: |
+          MSG=$(echo "${{ github.event.head_commit.message }}" | head -1)
+          curl -sS "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${CHAT}" \
+            --data-urlencode "text=🔄 배포 시작
+${{ github.ref_name }} @ ${{ github.sha }}
+${MSG}" > /dev/null || true
+
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          timeout: 60s
+          command_timeout: 20m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd ~/Thesis
+            git fetch origin
+            git checkout -B "${{ github.ref_name }}" "origin/${{ github.ref_name }}"
+            docker compose up -d --build
+            sleep 10
+            STATUS=$(docker inspect -f '{{.State.Status}}' thesis-bot-1 2>/dev/null || echo missing)
+            if [ "$STATUS" != "running" ]; then
+              echo "Container status: $STATUS"
+              docker compose logs --tail=80 || true
+              exit 1
+            fi
+            docker compose logs --tail=20 || true
+
+      - name: Notify success
+        if: success()
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TELEGRAM_OWNER_ID }}
+        run: |
+          MSG=$(echo "${{ github.event.head_commit.message }}" | head -1)
+          curl -sS "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${CHAT}" \
+            --data-urlencode "text=✅ 배포 완료
+${{ github.ref_name }} @ ${{ github.sha }}
+${MSG}" > /dev/null || true
+
+      - name: Notify failure
+        if: failure()
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TELEGRAM_OWNER_ID }}
+        run: |
+          curl -sS "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${CHAT}" \
+            --data-urlencode "text=❌ 배포 실패
+${{ github.ref_name }} @ ${{ github.sha }}
+로그: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" > /dev/null || true
