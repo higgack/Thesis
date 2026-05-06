@@ -244,6 +244,12 @@ async def cmd_deep(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _run_agent(update, ctx, text, deep=True)
 
 
+_OVERLOAD_MARKERS = ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "high demand", "overloaded")
+_MAX_RETRY_ATTEMPTS = 5
+_RETRY_INTERVAL_SECONDS = 90
+_RETRY_QUEUE: list[dict] = []
+
+
 async def on_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post
     if not msg:
@@ -251,6 +257,60 @@ async def on_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if config.TELEGRAM_CHANNEL_ID and str(msg.chat.id) != config.TELEGRAM_CHANNEL_ID:
         return
     await _ingest_message(msg, ctx, notify_chat_id=config.TELEGRAM_OWNER_ID)
+
+
+def _is_overload(exc: BaseException) -> bool:
+    s = f"{type(exc).__name__} {exc}"
+    return any(m in s for m in _OVERLOAD_MARKERS)
+
+
+async def _send_agent_reply(send, result):
+    raw, mermaid_blocks = _extract_mermaid(result["text"])
+    body = _strip_markdown(raw)
+    suffix_lines = []
+    if result.get("warning"):
+        suffix_lines.append(result["warning"])
+    if result.get("sources"):
+        suffix_lines.append("📚 " + ", ".join(result["sources"][:5]))
+    if result.get("tool_calls"):
+        suffix_lines.append(f"🔧 {' → '.join(result['tool_calls'])}")
+    suffix = ("\n\n" + "\n".join(suffix_lines)) if suffix_lines else ""
+    await send(f"{body}{suffix}")
+    return mermaid_blocks
+
+
+async def _retry_pending(ctx: ContextTypes.DEFAULT_TYPE):
+    if not _RETRY_QUEUE:
+        return
+    item = _RETRY_QUEUE.pop(0)
+    try:
+        result = await agent.run(item["text"], deep=item["deep"])
+    except Exception as e:
+        item["attempts"] += 1
+        if item["attempts"] >= _MAX_RETRY_ATTEMPTS or not _is_overload(e):
+            await ctx.bot.send_message(
+                item["chat_id"],
+                f"⚠️ 재시도 포기 — {_explain_error(e)}\n원래 질문을 다시 보내주세요.",
+            )
+            return
+        log.info("queued retry %d/%d for chat %s",
+                 item["attempts"], _MAX_RETRY_ATTEMPTS, item["chat_id"])
+        _RETRY_QUEUE.append(item)
+        return
+    chat_id = item["chat_id"]
+
+    async def _send(text):
+        await ctx.bot.send_message(chat_id, f"⏰ 재시도 성공\n\n{text}")
+
+    mermaid_blocks = await _send_agent_reply(_send, result)
+    for code in mermaid_blocks:
+        try:
+            png = await _render_mermaid_png(code)
+            await ctx.bot.send_photo(chat_id, photo=png, caption="🧩 다이어그램")
+        except Exception:
+            pass
+
+
 
 
 async def on_private(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -276,6 +336,18 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
     try:
         result = await agent.run(text, deep=deep)
     except Exception as e:
+        if _is_overload(e):
+            _RETRY_QUEUE.append({
+                "chat_id": update.effective_chat.id,
+                "text": text,
+                "deep": deep,
+                "attempts": 0,
+            })
+            await update.message.reply_text(
+                "⏳ Gemini 일시 과부하 — 자동으로 재시도 중입니다 (최대 약 7~8분).\n"
+                "별도로 다시 보내실 필요 없어요."
+            )
+            return
         log.exception("agent failed")
         await update.message.reply_text(f"⚠️ {_explain_error(e)}")
         return
@@ -411,6 +483,14 @@ def main():
     app.add_handler(MessageHandler(
         filters.ChatType.PRIVATE & ~filters.COMMAND, on_private
     ))
+
+    if app.job_queue:
+        app.job_queue.run_repeating(
+            _retry_pending,
+            interval=_RETRY_INTERVAL_SECONDS,
+            first=30,
+            name="retry_pending",
+        )
 
     log.info("bot starting")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
