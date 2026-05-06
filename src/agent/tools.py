@@ -107,10 +107,10 @@ async def web_search(query: str) -> dict:
     return {"answer": text.strip(), "sources": sources, "count": len(sources)}
 
 
-async def compare_papers(topic: str, limit: int = 30,
+async def compare_papers(topic: str, limit: int = 50,
                          type_filter: str = "") -> dict:
     """Cross-document overview: gather many summaries at once."""
-    limit = max(1, min(int(limit), 100))
+    limit = max(1, min(int(limit), 80))
     hits = await vector.query(topic, k=limit * 2, kind="summary")
     seen = set()
     bundles = []
@@ -232,7 +232,7 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                 ),
                 "limit": types.Schema(
                     type=types.Type.INTEGER,
-                    description="Max documents to gather (1-100). Default 30. Use larger values when the user wants comprehensive coverage.",
+                    description="Max documents to gather (1-80). Default 50. Beyond 50 the model starts skipping middle entries, so prefer 30-50.",
                 ),
                 "type_filter": types.Schema(
                     type=types.Type.STRING,
