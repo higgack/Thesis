@@ -1,3 +1,4 @@
+import base64
 import logging
 import re
 from pathlib import Path
@@ -22,11 +23,25 @@ log = logging.getLogger("bot")
 URL_RE = re.compile(r"https?://\S+")
 _MD_BOLD_RE = re.compile(r"\*\*([^\*\n]{1,200}?)\*\*")
 _MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+_MERMAID_BLOCK_RE = re.compile(r"```mermaid\s*\n(.*?)\n```", re.DOTALL)
 _NUMBERED_SECTION_RE = re.compile(
     r"^(\s*)(\d+)\.\s+(.{3,100}?)[:：]?\s*$", re.MULTILINE
 )
 _SECTION_EMOJIS = ["📌", "🔹", "🔸", "⚙️", "🧪", "💡", "📊", "🎯", "⚡", "🔧"]
 _SEP = "━" * 22
+
+
+def _extract_mermaid(text: str) -> tuple[str, list[str]]:
+    """Pull every ```mermaid``` block out so we can render it as a photo
+    instead of leaking the raw code to the user."""
+    blocks = [m.group(1).strip() for m in _MERMAID_BLOCK_RE.finditer(text)]
+    cleaned = _MERMAID_BLOCK_RE.sub("", text).strip()
+    return cleaned, blocks
+
+
+def _mermaid_image_url(code: str) -> str:
+    encoded = base64.b64encode(code.strip().encode("utf-8")).decode("ascii")
+    return f"https://mermaid.ink/img/{encoded}?type=png&bgColor=white"
 
 
 def _enforce_format(text: str) -> str:
@@ -188,7 +203,8 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
         log.exception("agent failed")
         await update.message.reply_text(f"⚠️ {_explain_error(e)}")
         return
-    body = _strip_markdown(result["text"])
+    raw, mermaid_blocks = _extract_mermaid(result["text"])
+    body = _strip_markdown(raw)
     suffix_lines = []
     if result["sources"]:
         suffix_lines.append("📚 " + ", ".join(result["sources"][:5]))
@@ -196,6 +212,15 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
         suffix_lines.append(f"🔧 {' → '.join(result['tool_calls'])}")
     suffix = ("\n\n" + "\n".join(suffix_lines)) if suffix_lines else ""
     await update.message.reply_text(f"{body}{suffix}")
+    for code in mermaid_blocks:
+        try:
+            await update.message.reply_photo(
+                photo=_mermaid_image_url(code),
+                caption="🧩 다이어그램",
+            )
+        except Exception as e:
+            log.warning("mermaid render failed: %s", e)
+            await update.message.reply_text(f"(다이어그램 렌더 실패)\n{code[:500]}")
 
 
 def _explain_error(e: BaseException, max_len: int = 280) -> str:
