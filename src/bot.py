@@ -11,7 +11,7 @@ from telegram.ext import (
 from . import config
 from .store import meta, vector, obsidian
 from .ingest import pipeline
-from .agent import answer as agent_answer, papersearch
+from .agent import agent
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,9 +37,12 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "Second Brain 봇이에요.\n"
-        "• 채널에 링크/PDF/유튜브/텍스트를 올리면 자동 수집·요약 → Obsidian\n"
-        "• 여기 DM으로 자연어 질문 (Gemini Flash)\n"
-        "• /find <검색어> - 논문 검색 (Semantic Scholar)\n"
+        "• 채널에 링크/PDF/유튜브/텍스트 → 자동 수집·요약·Obsidian 동기화\n"
+        "• 여기 DM에 자연어로 무엇이든 말씀하세요. 봇이 알아서 도구를 골라요:\n"
+        "  - 저장된 자료에서 답하기\n"
+        "  - arXiv/Semantic Scholar 검색\n"
+        "  - URL을 학습/저장\n"
+        "  - 최근 저장 목록\n"
         "• /deep <질문> - 어려운 질문은 Gemini Pro로\n"
         "• /stats /recent /forget <id>"
     )
@@ -78,42 +81,6 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_owner(update):
-        return
-    q = " ".join(ctx.args).strip()
-    if not q:
-        await update.message.reply_text("사용법: /find <검색어>")
-        return
-    await _typing(update, ctx)
-    try:
-        results = await papersearch.search(q, limit=5)
-    except Exception as e:
-        log.exception("papersearch failed")
-        await update.message.reply_text(f"⚠️ 검색 실패: {e}")
-        return
-    if not results:
-        await update.message.reply_text("결과 없음")
-        return
-    blocks = []
-    for i, p in enumerate(results, 1):
-        authors = ", ".join(p["authors"]) or "?"
-        venue = p.get("venue") or ""
-        year = p.get("year") or ""
-        snippet = (p["abstract"] or "(no abstract)")[:240].replace("\n", " ")
-        link = p["url"] or "(no link)"
-        blocks.append(
-            f"*{i}. {p['title']}*\n"
-            f"_{authors} · {venue} {year}_\n"
-            f"{snippet}…\n"
-            f"{link}"
-        )
-    text = "\n\n".join(blocks) + "\n\n저장하려면 위 링크를 그대로 보내세요."
-    await update.message.reply_text(
-        text, parse_mode="Markdown", disable_web_page_preview=True,
-    )
-
-
 async def cmd_deep(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -121,17 +88,7 @@ async def cmd_deep(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text:
         await update.message.reply_text("사용법: /deep <질문>")
         return
-    await _typing(update, ctx)
-    try:
-        result = await agent_answer.answer(text, deep=True)
-    except Exception as e:
-        log.exception("deep answer failed")
-        await update.message.reply_text(f"⚠️ 오류: {e}")
-        return
-    suffix = ""
-    if result["sources"]:
-        suffix = "\n\n📚 " + ", ".join(result["sources"][:5])
-    await update.message.reply_text(f"{result['text']}{suffix}")
+    await _run_agent(update, ctx, text, deep=True)
 
 
 async def on_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -150,24 +107,32 @@ async def on_private(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not msg:
         return
 
-    if msg.document or msg.text and URL_RE.search(msg.text or ""):
+    if msg.document:
         await _ingest_message(msg, ctx, notify_chat_id=msg.chat.id)
         return
 
     text = msg.text or ""
     if not text.strip():
         return
+    await _run_agent(update, ctx, text, deep=False)
+
+
+async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
+                     text: str, deep: bool) -> None:
     await _typing(update, ctx)
     try:
-        result = await agent_answer.answer(text)
+        result = await agent.run(text, deep=deep)
     except Exception as e:
-        log.exception("answer failed")
-        await msg.reply_text(f"⚠️ 오류: {e}")
+        log.exception("agent failed")
+        await update.message.reply_text(f"⚠️ 오류: {e}")
         return
-    suffix = ""
+    suffix_lines = []
     if result["sources"]:
-        suffix = "\n\n📚 " + ", ".join(result["sources"][:5])
-    await msg.reply_text(f"{result['text']}{suffix}")
+        suffix_lines.append("📚 " + ", ".join(result["sources"][:5]))
+    if result["tool_calls"]:
+        suffix_lines.append(f"🔧 {' → '.join(result['tool_calls'])}")
+    suffix = ("\n\n" + "\n".join(suffix_lines)) if suffix_lines else ""
+    await update.message.reply_text(f"{result['text']}{suffix}")
 
 
 async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
@@ -240,7 +205,6 @@ def main():
     app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("deep", cmd_deep))
-    app.add_handler(CommandHandler("find", cmd_find))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
     app.add_handler(MessageHandler(
