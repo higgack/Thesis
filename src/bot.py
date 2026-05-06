@@ -22,14 +22,34 @@ log = logging.getLogger("bot")
 URL_RE = re.compile(r"https?://\S+")
 _MD_BOLD_RE = re.compile(r"\*\*([^\*\n]{1,200}?)\*\*")
 _MD_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+_NUMBERED_SECTION_RE = re.compile(
+    r"^(\s*)(\d+)\.\s+(.{3,100}?)[:：]?\s*$", re.MULTILINE
+)
+_SECTION_EMOJIS = ["📌", "🔹", "🔸", "⚙️", "🧪", "💡", "📊", "🎯", "⚡", "🔧"]
+_SEP = "━" * 22
+
+
+def _enforce_format(text: str) -> str:
+    """Strip stray markdown and beautify numbered sections with separators.
+    Telegram is plain-text (no parse_mode), so we use unicode glyphs for the
+    visual hierarchy the model is supposed to produce but sometimes skips."""
+    text = _MD_BOLD_RE.sub(r"\1", text)
+    text = _MD_HEADING_RE.sub("", text)
+    counter = [0]
+
+    def replace(m: "re.Match[str]") -> str:
+        indent, num, title = m.group(1), m.group(2), m.group(3).rstrip(":：").strip()
+        if any(ch in title for ch in "•|") or "  " in title:
+            return m.group(0)
+        emoji = _SECTION_EMOJIS[counter[0] % len(_SECTION_EMOJIS)]
+        counter[0] += 1
+        return f"\n{indent}{_SEP}\n{indent}{emoji} {num}. {title}\n{indent}{_SEP}"
+
+    return _NUMBERED_SECTION_RE.sub(replace, text)
 
 
 def _strip_markdown(text: str) -> str:
-    """Telegram reply_text uses no parse_mode, so any markdown chars from
-    the model leak through. Strip the common ones."""
-    text = _MD_BOLD_RE.sub(r"\1", text)
-    text = _MD_HEADING_RE.sub("", text)
-    return text
+    return _enforce_format(text)
 
 
 def _is_owner(update: Update) -> bool:
