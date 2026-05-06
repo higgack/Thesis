@@ -207,6 +207,49 @@ async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_dedupe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    groups = meta.find_duplicates()
+    if not groups:
+        await update.message.reply_text("중복 없음 ✨")
+        return
+    args = [a.lower() for a in (ctx.args or [])]
+    if "confirm" in args:
+        deleted = 0
+        chunks_removed = 0
+        for g in groups:
+            keeper = max(g, key=lambda d: len(d.get("summary") or ""))
+            for d in g:
+                if d["id"] == keeper["id"]:
+                    continue
+                chunks_removed += vector.delete_doc(d["id"])
+                meta.delete(d["id"])
+                deleted += 1
+        await update.message.reply_text(
+            f"✅ 중복 {deleted}건 / 청크 {chunks_removed}개 제거 완료\n"
+            f"(각 그룹에서 본문이 가장 긴 것 1개만 유지)"
+        )
+        return
+    lines: list[str] = []
+    total_dups = 0
+    for g in groups[:8]:
+        total_dups += len(g) - 1
+        title = (g[0].get("title") or g[0].get("source") or "")[:55]
+        lines.append(f"\n중복 {len(g)}건 — {title}")
+        for d in g:
+            chars = len(d.get("summary") or "")
+            lines.append(f"  • `{d['id']}` [{d['type']}] {chars}자")
+    more = f"\n\n... 외 {len(groups)-8}그룹" if len(groups) > 8 else ""
+    total = sum(len(g) - 1 for g in groups)
+    await update.message.reply_text(
+        f"중복 {len(groups)}그룹 / 삭제 후보 {total}건\n"
+        + "".join(lines) + more +
+        f"\n\n각 그룹에서 본문 가장 긴 것 1개만 남기고 삭제: `/dedupe confirm`",
+        parse_mode="Markdown",
+    )
+
+
 async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -581,6 +624,7 @@ def main():
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("forget_search", cmd_forget_search))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
+    app.add_handler(CommandHandler("dedupe", cmd_dedupe))
     app.add_handler(CommandHandler("deep", cmd_deep))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))

@@ -1,7 +1,25 @@
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from .. import config
+
+
+_TITLE_NORMALIZE_RE = re.compile(r"[\s\-_.,;:()\[\]/\\!?'\"`~@#%^&*+=<>{}|]+")
+_TITLE_NOISE_RE = re.compile(
+    r"\b(pdf|html|aspx|docx|pptx|hwp|ko|kr|en|net|com|naver|daum|tistory)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_title(t: str) -> str:
+    if not t:
+        return ""
+    t = t.lower()
+    t = _TITLE_NOISE_RE.sub("", t)
+    t = _TITLE_NORMALIZE_RE.sub(" ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
 
 _DB_PATH = config.DATA_DIR / "meta.db"
 
@@ -81,6 +99,24 @@ def search_title(substring: str, limit: int = 20) -> list[dict]:
             (f"%{substring}%", limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def find_duplicates() -> list[list[dict]]:
+    """Group docs whose normalized titles match. Each returned list has 2+
+    docs sharing essentially the same title."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, source, type, title, summary, ingested_at "
+            "FROM documents"
+        ).fetchall()
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        d = dict(r)
+        key = _normalize_title(d.get("title") or "")
+        if len(key) < 4:
+            continue
+        groups.setdefault(key, []).append(d)
+    return [g for g in groups.values() if len(g) >= 2]
 
 
 def find_noise(min_summary_chars: int = 200) -> list[dict]:
