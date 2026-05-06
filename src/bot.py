@@ -146,8 +146,18 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
             dest.parent.mkdir(parents=True, exist_ok=True)
             await file.download_to_drive(custom_path=dest)
             label = f"tg-doc:{msg.document.file_unique_id}:{msg.document.file_name}"
-            if dest.suffix.lower() == ".pdf":
+            suffix = dest.suffix.lower()
+            if suffix == ".pdf":
                 results.append(await pipeline.ingest_pdf(dest, label))
+            elif suffix == ".pptx":
+                results.append(await pipeline.ingest_pptx(dest, label))
+            elif suffix == ".docx":
+                results.append(await pipeline.ingest_docx(dest, label))
+            elif suffix in {".ppt", ".doc"}:
+                results.append({
+                    "status": "error",
+                    "error": f"{suffix} (구버전 포맷)은 지원 안 됩니다. {suffix}x로 변환해서 다시 보내주세요.",
+                })
             else:
                 content = dest.read_text(encoding="utf-8", errors="ignore")
                 results.append(await pipeline.ingest_text(content, label))

@@ -6,7 +6,7 @@ from pathlib import Path
 from .. import config
 from ..store import meta, vector, obsidian
 from .chunker import split
-from .loaders import load_url, load_pdf_async, load_arxiv
+from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async
 from .summarize import summarize
 
 log = logging.getLogger(__name__)
@@ -45,6 +45,24 @@ async def ingest_pdf(path: Path, source_label: str) -> dict:
             log.warning("arxiv enrich failed: %s", e)
     doc_type = "paper" if hint else "pdf"
     return await _ingest(doc_type, source_label, title, body, hint)
+
+
+async def ingest_pptx(path: Path, source_label: str) -> dict:
+    if existing := meta.find_by_source(source_label):
+        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    title, body, hint = await load_pptx_async(path)
+    if not body:
+        return {"status": "empty", "title": title}
+    return await _ingest("pptx", source_label, title, body, hint)
+
+
+async def ingest_docx(path: Path, source_label: str) -> dict:
+    if existing := meta.find_by_source(source_label):
+        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    title, body, hint = await load_docx_async(path)
+    if not body:
+        return {"status": "empty", "title": title}
+    return await _ingest("docx", source_label, title, body, hint)
 
 
 async def ingest_text(text: str, label: str = "text") -> dict:

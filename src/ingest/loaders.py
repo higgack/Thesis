@@ -97,3 +97,61 @@ def load_pdf(path: Path) -> tuple[str, str, str | None]:
 
 async def load_pdf_async(path: Path) -> tuple[str, str, str | None]:
     return await asyncio.to_thread(load_pdf, path)
+
+
+def load_pptx(path: Path) -> tuple[str, str, str | None]:
+    from pptx import Presentation
+    prs = Presentation(str(path))
+    parts: list[str] = []
+    title_guess = path.stem
+    for i, slide in enumerate(prs.slides, 1):
+        slide_lines: list[str] = []
+        for shape in slide.shapes:
+            text = getattr(shape, "text", "") or ""
+            if text.strip():
+                slide_lines.append(text.strip())
+            if getattr(shape, "has_table", False):
+                for row in shape.table.rows:
+                    cells = [c.text.strip() for c in row.cells if c.text and c.text.strip()]
+                    if cells:
+                        slide_lines.append(" | ".join(cells))
+        if getattr(slide, "has_notes_slide", False):
+            notes = (slide.notes_slide.notes_text_frame.text or "").strip()
+            if notes:
+                slide_lines.append(f"[Notes] {notes}")
+        if i == 1 and slide_lines:
+            first = slide_lines[0].splitlines()[0].strip()
+            if 3 <= len(first) <= 120:
+                title_guess = first
+        if slide_lines:
+            parts.append(f"Slide {i}:\n" + "\n".join(slide_lines))
+    body = "\n\n".join(parts).strip()
+    return title_guess[:200], body, None
+
+
+async def load_pptx_async(path: Path) -> tuple[str, str, str | None]:
+    return await asyncio.to_thread(load_pptx, path)
+
+
+def load_docx(path: Path) -> tuple[str, str, str | None]:
+    from docx import Document
+    doc = Document(str(path))
+    paragraphs: list[str] = []
+    for p in doc.paragraphs:
+        t = p.text.strip()
+        if t:
+            paragraphs.append(t)
+    for tbl in doc.tables:
+        for row in tbl.rows:
+            cells = [c.text.strip() for c in row.cells if c.text and c.text.strip()]
+            if cells:
+                paragraphs.append(" | ".join(cells))
+    title_guess = path.stem
+    if paragraphs and 3 <= len(paragraphs[0]) <= 120:
+        title_guess = paragraphs[0]
+    body = "\n\n".join(paragraphs).strip()
+    return title_guess[:200], body, None
+
+
+async def load_docx_async(path: Path) -> tuple[str, str, str | None]:
+    return await asyncio.to_thread(load_docx, path)
