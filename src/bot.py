@@ -186,7 +186,7 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
         result = await agent.run(text, deep=deep)
     except Exception as e:
         log.exception("agent failed")
-        await update.message.reply_text(f"⚠️ 오류: {e}")
+        await update.message.reply_text(f"⚠️ {_explain_error(e)}")
         return
     body = _strip_markdown(result["text"])
     suffix_lines = []
@@ -196,6 +196,15 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
         suffix_lines.append(f"🔧 {' → '.join(result['tool_calls'])}")
     suffix = ("\n\n" + "\n".join(suffix_lines)) if suffix_lines else ""
     await update.message.reply_text(f"{body}{suffix}")
+
+
+def _explain_error(e: BaseException, max_len: int = 280) -> str:
+    """Pretty-print an exception with type + first line of message."""
+    cause = e
+    while getattr(cause, "__cause__", None):
+        cause = cause.__cause__
+    msg = str(cause).strip().splitlines()[0] if str(cause).strip() else "(no message)"
+    return f"{type(cause).__name__}: {msg}"[:max_len]
 
 
 async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
@@ -226,14 +235,14 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
                 results.append(await pipeline.ingest_text(content, label))
         except Exception as e:
             log.exception("file ingest failed")
-            results.append({"status": "error", "error": str(e)})
+            results.append({"status": "error", "error": _explain_error(e)})
 
     for url in URL_RE.findall(text):
         try:
             results.append(await pipeline.ingest_url(url))
         except Exception as e:
             log.exception("url ingest failed: %s", url)
-            results.append({"status": "error", "error": str(e), "source": url})
+            results.append({"status": "error", "error": _explain_error(e), "source": url})
 
     plain = URL_RE.sub("", text).strip()
     if plain and not msg.document:
@@ -241,7 +250,7 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
             results.append(await pipeline.ingest_text(plain, f"tg-msg:{msg.message_id}"))
         except Exception as e:
             log.exception("text ingest failed")
-            results.append({"status": "error", "error": str(e)})
+            results.append({"status": "error", "error": _explain_error(e)})
 
     if not results:
         return

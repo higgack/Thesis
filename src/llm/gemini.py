@@ -6,7 +6,7 @@ from .. import config
 _client = genai.Client(api_key=config.GOOGLE_API_KEY)
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8))
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
 async def complete(
     model: str,
     system: str,
