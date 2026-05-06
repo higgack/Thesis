@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 import re
@@ -8,6 +9,9 @@ from telegram.constants import ChatAction
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ContextTypes, filters,
 )
+from telegram.request import HTTPXRequest
+
+_INGEST_LOCK = asyncio.Lock()
 
 from . import config
 from .store import meta, vector, obsidian
@@ -386,6 +390,14 @@ def _explain_error(e: BaseException, max_len: int = 280) -> str:
 
 
 async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
+    """Serialize ingests with a global lock — when the user drops 5 files at
+    once we don't want 5 concurrent Gemini embed/summary chains slamming the
+    same model. Each file waits for the previous to finish."""
+    async with _INGEST_LOCK:
+        return await _ingest_message_locked(msg, ctx, notify_chat_id)
+
+
+async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
     text = msg.text or msg.caption or ""
     results = []
 
@@ -457,7 +469,19 @@ def _format_results(results: list[dict]) -> str:
 def main():
     meta.init()
     obsidian.init()
-    builder = Application.builder().token(config.TELEGRAM_BOT_TOKEN)
+    request = HTTPXRequest(
+        connect_timeout=15.0,
+        read_timeout=180.0,
+        write_timeout=180.0,
+        pool_timeout=15.0,
+        connection_pool_size=8,
+    )
+    builder = (
+        Application.builder()
+        .token(config.TELEGRAM_BOT_TOKEN)
+        .request(request)
+        .get_updates_request(request)
+    )
     if config.TELEGRAM_BASE_URL:
         base = config.TELEGRAM_BASE_URL.rstrip("/")
         # base ends with "/bot"; file URL is "/file/bot" on the same host
