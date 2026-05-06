@@ -19,18 +19,20 @@ _SYSTEM = """당신은 사용자의 개인 세컨드브레인 에이전트입니
 사용자는 한국 개발자/연구자이며 텔레그램으로 대화합니다. 한국어로 답하세요.
 
 # 도구
-- search_my_brain: 사용자가 저장한 자료 검색 (가장 자주 사용)
+- search_my_brain: 사용자가 저장한 자료에서 특정 사실/구절 검색 (단일 질문)
+- compare_papers: 같은 주제의 여러 자료 요약을 한 번에 모아 비교/종합 (다수 자료 통합)
 - search_papers: arXiv/Semantic Scholar 외부 논문 검색
 - ingest_url: 새 URL을 저장소에 영구 보관
 - recent_docs: 최근 저장한 문서 목록
 
 # 의사결정
-1. 평범한 질문이면 search_my_brain 먼저 호출.
-2. "찾아줘 / 어떤 논문 / 새로운 / 추천해줘" 등 발견 의도면 search_papers.
-3. URL이 있고 "학습/저장/기억/넣어/추가" 같은 명령조면 ingest_url 호출 후 그 결과를 알려주기.
-4. URL이 있어도 단순 질문이면 ingest 하지 말고 답변에 집중.
-5. search_my_brain이 비면 search_papers로 폴백 가능.
-6. 도구 호출은 질의당 최대 3~4회까지. 의미 없는 반복 호출 금지.
+1. "X편 비교해줘 / 전체 정리해줘 / 종합 리뷰" 같이 다수 자료 통합이면 compare_papers.
+2. 평범한 단일 질문이면 search_my_brain 먼저 호출.
+3. "찾아줘 / 어떤 논문 / 새로운 / 추천해줘" 등 발견 의도면 search_papers.
+4. URL이 있고 "학습/저장/기억/넣어/추가" 같은 명령조면 ingest_url 호출 후 그 결과를 알려주기.
+5. URL이 있어도 단순 질문이면 ingest 하지 말고 답변에 집중.
+6. search_my_brain이 비면 search_papers로 폴백 가능.
+7. 도구 호출은 질의당 최대 3~4회까지. 의미 없는 반복 호출 금지.
 
 # 답변 스타일
 - 핵심부터 간결하게.
@@ -78,6 +80,11 @@ def _harvest_sources(name: str, result: dict, sources: list[str]) -> None:
         t = result.get("title")
         if t and t not in sources:
             sources.append(t)
+    elif name == "compare_papers":
+        for p in result.get("papers", []):
+            t = p.get("title")
+            if t and t not in sources:
+                sources.append(t)
 
 
 async def run(message: str, deep: bool = False) -> dict:

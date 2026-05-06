@@ -60,11 +60,37 @@ async def recent_docs(limit: int = 10) -> dict:
     return {"items": items, "count": len(items)}
 
 
+async def compare_papers(topic: str, limit: int = 20,
+                         type_filter: str = "") -> dict:
+    """Cross-document overview: gather many summaries at once."""
+    hits = await vector.query(topic, k=limit * 2, kind="summary")
+    seen = set()
+    bundles = []
+    for h in hits:
+        doc_id = h["metadata"]["doc_id"]
+        if doc_id in seen:
+            continue
+        seen.add(doc_id)
+        doc = meta.get_doc(doc_id) or {}
+        if type_filter and doc.get("type") != type_filter:
+            continue
+        bundles.append({
+            "doc_id": doc_id,
+            "title": doc.get("title", ""),
+            "type": doc.get("type", ""),
+            "summary": doc.get("summary", "")[:1500] or h["text"][:1500],
+        })
+        if len(bundles) >= limit:
+            break
+    return {"papers": bundles, "count": len(bundles)}
+
+
 TOOL_DISPATCH = {
     "search_my_brain": search_my_brain,
     "search_papers": search_papers,
     "ingest_url": ingest_url,
     "recent_docs": recent_docs,
+    "compare_papers": compare_papers,
 }
 
 
@@ -136,6 +162,38 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                     description="How many to return (1-30). Default 10.",
                 ),
             },
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="compare_papers",
+        description=(
+            "Pull MANY relevant document summaries at once for cross-document "
+            "synthesis: comparison tables, comprehensive overviews, literature "
+            "reviews. Use when the user asks to compare/integrate/summarize "
+            "ACROSS many saved papers ('하이브리드 본딩 논문 전체 정리해줘', "
+            "'X와 Y 분야 차이 비교해줘'). For a single specific question, prefer "
+            "search_my_brain."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "topic": types.Schema(
+                    type=types.Type.STRING,
+                    description="Topic / theme to gather around.",
+                ),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max documents to gather (1-30). Default 20.",
+                ),
+                "type_filter": types.Schema(
+                    type=types.Type.STRING,
+                    description=(
+                        "Optional document type filter: 'paper', 'pdf', 'url',"
+                        " 'youtube', 'text'. Empty for all types."
+                    ),
+                ),
+            },
+            required=["topic"],
         ),
     ),
 ])
