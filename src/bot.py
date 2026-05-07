@@ -402,6 +402,7 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     out = header
     LIMIT = 3800  # safety margin under Telegram 4096
     truncated = 0
+    import json as _json
     for i, m in enumerate(matches[:cap]):
         title = (m.get("title") or "(제목 없음)")[:70]
         ingested = (m.get("ingested_at") or "")[:10]
@@ -416,9 +417,24 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             loc_bits.append(f"🆔 {source[:50]}")
         if obs:
             loc_bits.append(f"📁 {obs[:60]}")
+        meta_bits = []
+        meta_raw = m.get("metadata")
+        if meta_raw:
+            try:
+                md = _json.loads(meta_raw)
+            except Exception:
+                md = {}
+            if md.get("company"):
+                meta_bits.append(f"🏢 {md['company']}")
+            if md.get("tags"):
+                meta_bits.append("🏷️ " + ", ".join(md["tags"][:5]))
+            if md.get("report_date"):
+                meta_bits.append(f"📅 {md['report_date']}")
         item = f"\n\n📄 {title} ({ingested})"
         if loc_bits:
             item += f"\n   {' · '.join(loc_bits)}"
+        if meta_bits:
+            item += f"\n   {' · '.join(meta_bits)}"
         if summary:
             item += f"\n   {summary}"
         if len(out) + len(item) > LIMIT:

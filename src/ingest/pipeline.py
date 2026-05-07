@@ -130,6 +130,60 @@ async def ingest_text(text: str, label: str = "text") -> dict:
     return await _ingest("text", src, title, text, None)
 
 
+_META_EXTRACT_PROMPT = (
+    "Extract structured metadata from this document. Output JSON only:\n"
+    '{"company": "주 분석/언급 대상 회사명 한 개 (모호하면 빈 문자열)",\n'
+    ' "tags": ["반도체"|"AI"|"바이오"|"방산"|"로봇"|"보고서"|"뉴스"|"실적"|'
+    '"분석"|"차트"|"공시"|"인터뷰"|"리포트" 등 적절한 1~5개],\n'
+    ' "report_date": "본문 내 발행일 YYYY.MM 형태, 없으면 빈 문자열"}\n\n'
+    "Rules:\n"
+    "- company는 정확한 회사명만. 삼성전자/삼성전기/삼성SDI 구분.\n"
+    "- 산업 동향/매크로/일반 분석이면 company는 빈 문자열.\n"
+    "- 다국적/해외 기업도 OK (예: NVIDIA, TSMC, ARM).\n"
+    "- tags는 일반 카테고리 + 핵심 주제."
+)
+
+
+async def _extract_metadata(title: str, body: str, doc_type: str) -> dict:
+    """One Flash-Lite call to tag each ingested doc with company name,
+    topic tags, and report date. Cost ≈ ₩0.5/doc. Failures return {}
+    so they never block ingest."""
+    if len(body) < 100:
+        return {}
+    sample = (body[:1500] + "\n...\n" + body[-300:]) if len(body) > 2000 else body
+    user_msg = (
+        f"Title: {title}\n"
+        f"Type: {doc_type}\n"
+        f"Body:\n{sample}"
+    )
+    try:
+        from ..llm.gemini import complete
+        import json as _json
+        import re as _re
+        resp = await complete(
+            model=config.SUMMARY_MODEL,
+            system="You extract structured metadata. Output JSON only.",
+            user=f"{_META_EXTRACT_PROMPT}\n\n{user_msg}",
+            max_tokens=300,
+            temperature=0.0,
+        )
+        match = _re.search(r"\{.*\}", resp, _re.DOTALL)
+        if match:
+            data = _json.loads(match.group(0))
+            company = (data.get("company") or "").strip()
+            tags = data.get("tags") or []
+            if not isinstance(tags, list):
+                tags = []
+            return {
+                "company": company or None,
+                "tags": [t.strip() for t in tags if isinstance(t, str) and t.strip()][:8],
+                "report_date": (data.get("report_date") or "").strip() or None,
+            }
+    except Exception as e:
+        log.warning("metadata extract failed: %s", e)
+    return {}
+
+
 async def _ingest(doc_type: str, source: str, title: str, body: str,
                   hint: str | None) -> dict:
     doc_id = _doc_id(source)
@@ -144,10 +198,12 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
         "idx": i,
     } for i, c in enumerate(chunks)]
 
-    # Summary (Gemini text gen) and chunk embedding (Gemini embed) hit
+    # Summary (Gemini text gen), chunk embedding (Gemini embed), and
+    # metadata extraction (Gemini text gen, separate prompt) hit
     # different endpoints — run them in parallel.
-    summary, _ = await asyncio.gather(
+    summary, metadata, _ = await asyncio.gather(
         summarize(title, body, hint=hint),
+        _extract_metadata(title, body, doc_type),
         vector.add_chunks(doc_id, chunk_items),
     )
 
@@ -168,7 +224,8 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
         except Exception as e:
             log.exception("obsidian sync failed: %s", e)
 
-    meta.upsert_doc(doc_id, source, doc_type, title, summary, obsidian_path)
+    meta.upsert_doc(doc_id, source, doc_type, title, summary, obsidian_path,
+                    metadata=metadata or None)
     return {
         "status": "ok",
         "doc_id": doc_id,

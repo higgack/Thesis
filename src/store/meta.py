@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS documents (
     title TEXT,
     summary TEXT,
     obsidian_path TEXT,
-    ingested_at TEXT NOT NULL
+    ingested_at TEXT NOT NULL,
+    metadata TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_docs_ingested ON documents(ingested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_docs_source ON documents(source);
@@ -41,6 +42,11 @@ CREATE INDEX IF NOT EXISTS idx_docs_source ON documents(source);
 def init():
     with _conn() as c:
         c.executescript(_SCHEMA)
+        # Migrate older DBs that pre-date the metadata column.
+        try:
+            c.execute("SELECT metadata FROM documents LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE documents ADD COLUMN metadata TEXT")
 
 
 @contextmanager
@@ -55,16 +61,21 @@ def _conn():
 
 
 def upsert_doc(doc_id: str, source: str, doc_type: str, title: str,
-               summary: str, obsidian_path: str | None) -> None:
+               summary: str, obsidian_path: str | None,
+               metadata: dict | None = None) -> None:
+    import json as _json
+    metadata_json = _json.dumps(metadata, ensure_ascii=False) if metadata else None
     with _conn() as c:
         c.execute(
-            """INSERT INTO documents(id, source, type, title, summary, obsidian_path, ingested_at)
-               VALUES(?,?,?,?,?,?,?)
+            """INSERT INTO documents(id, source, type, title, summary,
+                                     obsidian_path, ingested_at, metadata)
+               VALUES(?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                  title=excluded.title, summary=excluded.summary,
-                 obsidian_path=excluded.obsidian_path""",
+                 obsidian_path=excluded.obsidian_path,
+                 metadata=excluded.metadata""",
             (doc_id, source, doc_type, title, summary, obsidian_path,
-             datetime.utcnow().isoformat()),
+             datetime.utcnow().isoformat(), metadata_json),
         )
 
 
@@ -102,10 +113,12 @@ def last_ingested_at() -> str | None:
 
 def search_title(substring: str, limit: int = 20) -> list[dict]:
     """Case-insensitive title substring search. Returns full doc rows so
-    callers don't need a follow-up get_doc per result."""
+    callers don't need a follow-up get_doc per result. Includes metadata
+    JSON when present."""
     with _conn() as c:
         rows = c.execute(
-            "SELECT id, source, type, title, summary, obsidian_path, ingested_at "
+            "SELECT id, source, type, title, summary, obsidian_path, "
+            "       ingested_at, metadata "
             "FROM documents "
             "WHERE title LIKE ? COLLATE NOCASE "
             "ORDER BY ingested_at DESC LIMIT ?",
