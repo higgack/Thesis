@@ -2,6 +2,7 @@ import asyncio
 import base64
 import logging
 import re
+from datetime import datetime
 from pathlib import Path
 
 from telegram import Update
@@ -11,12 +12,10 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
-# Allow up to 3 concurrent ingests. Each ingest internally parallelizes
-# summary + chunk embedding (different Gemini endpoints), so 3 in-flight
-# stays well under per-model RPM caps while ~3x'ing throughput on bulk
-# drops. Drop to 1 if 429s start appearing.
 _INGEST_SEM = asyncio.Semaphore(3)
 _INGEST_RETRY_QUEUE: list[dict] = []
+_INGEST_FAILED: list[dict] = []  # in-memory; reset on bot restart
+_FAILED_MAX = 200
 
 from . import config
 from .store import meta, vector, obsidian
@@ -176,6 +175,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "  - 최근 저장 목록\n"
         "• /deep <질문> - 어려운 질문은 Gemini Pro로\n"
         "• /find <제목 일부> - 답변 출처 원본 (URL/Obsidian) 찾기\n"
+        "• /failed - 실패한 ingest / 본문 비어있던 URL 목록\n"
+        "• /queue - 자동 재시도 대기 중인 항목\n"
         "• /stats /recent /forget <id>"
     )
 
@@ -330,6 +331,61 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         out += item
     if truncated:
         out += f"\n\n…(나머지 {truncated}개는 길이 제한으로 생략. 키워드를 좁혀 다시 시도)"
+    await update.message.reply_text(out, disable_web_page_preview=True)
+
+
+async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Show recent ingest failures (errors + empty bodies). The list is
+    in-memory and clears on bot restart. '/failed clear' resets it."""
+    if not _is_owner(update):
+        return
+    if ctx.args and ctx.args[0] == "clear":
+        n = len(_INGEST_FAILED)
+        _INGEST_FAILED.clear()
+        await update.message.reply_text(f"실패 목록 비웠음 ({n}건)")
+        return
+    if not _INGEST_FAILED:
+        await update.message.reply_text("실패 / 빈본문 없음 ✨")
+        return
+    out = f"❌ 실패/빈본문 누적 {len(_INGEST_FAILED)}건 (최근순)"
+    LIMIT = 3800
+    truncated = 0
+    recent = list(reversed(_INGEST_FAILED[-50:]))
+    for i, r in enumerate(recent):
+        ts = (r.get("ts", "")[:16]).replace("T", " ")
+        title = r.get("title", "(unknown)")[:90]
+        status = r.get("status", "error")
+        detail = r.get("detail", "")[:120]
+        icon = "❌" if status == "error" else "⚠️"
+        item = f"\n\n{icon} {ts}\n   {title}"
+        if detail and detail != title:
+            item += f"\n   {detail}"
+        if len(out) + len(item) > LIMIT:
+            truncated = len(recent) - i
+            break
+        out += item
+    if truncated:
+        out += f"\n\n…(나머지 {truncated}개 생략)"
+    out += "\n\n비우려면: /failed clear"
+    await update.message.reply_text(out, disable_web_page_preview=True)
+
+
+async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Items currently waiting in the auto-retry queue (503/timeout
+    failures). They re-attempt every 2 minutes."""
+    if not _is_owner(update):
+        return
+    if not _INGEST_RETRY_QUEUE:
+        await update.message.reply_text("재시도 큐 비어있음 ✨")
+        return
+    out = f"🔁 재시도 큐 {len(_INGEST_RETRY_QUEUE)}건 (2분 간격 자동)"
+    for item in _INGEST_RETRY_QUEUE[:25]:
+        kind = item.get("kind", "?")
+        title = item.get("file_name") or item.get("url") or "(unknown)"
+        attempts = item.get("attempts", 0)
+        out += f"\n• [{kind}] {title[:80]} (시도 {attempts}회)"
+    if len(_INGEST_RETRY_QUEUE) > 25:
+        out += f"\n... 외 {len(_INGEST_RETRY_QUEUE) - 25}건"
     await update.message.reply_text(out, disable_web_page_preview=True)
 
 
@@ -602,7 +658,10 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
     urls, plain = _collect_message_urls(msg)
     for url in urls:
         try:
-            results.append(await pipeline.ingest_url(url))
+            r = await pipeline.ingest_url(url)
+            r.setdefault("source", url)
+            r.setdefault("title", url)
+            results.append(r)
         except Exception as e:
             log.exception("url ingest failed: %s", url)
             if _is_retryable(e):
@@ -633,6 +692,18 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
         log.exception("notify failed")
 
 
+def _record_failure(status: str, title: str, detail: str = "") -> None:
+    """Append to in-memory failure log so /failed can review later."""
+    _INGEST_FAILED.append({
+        "status": status,
+        "title": (title or "(unknown)")[:140],
+        "detail": (detail or "")[:200],
+        "ts": datetime.utcnow().isoformat(),
+    })
+    if len(_INGEST_FAILED) > _FAILED_MAX:
+        del _INGEST_FAILED[0]
+
+
 def _format_results(results: list[dict]) -> str:
     lines = []
     for r in results:
@@ -642,10 +713,14 @@ def _format_results(results: list[dict]) -> str:
         elif s == "duplicate":
             lines.append(f"♻️ 이미 있음: {r['title']}")
         elif s == "empty":
-            lines.append(f"⚠️ 본문 비어있음: {r.get('title', '')}")
+            label = r.get("title") or r.get("source", "")
+            _record_failure("empty", label, r.get("source", ""))
+            lines.append(f"⚠️ 본문 비어있음: {label}")
         elif s == "queued":
             lines.append(f"⏳ 재시도 대기 (자동): {r.get('title', '')}")
         else:
+            label = r.get("title") or r.get("source", "")
+            _record_failure("error", label, r.get("error", ""))
             lines.append(f"❌ {r.get('error', 'error')}")
     return "\n".join(lines)
 
@@ -731,6 +806,8 @@ def main():
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("forget_search", cmd_forget_search))
     app.add_handler(CommandHandler("find", cmd_find))
+    app.add_handler(CommandHandler("failed", cmd_failed))
+    app.add_handler(CommandHandler("queue", cmd_queue))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
     app.add_handler(CommandHandler("deep", cmd_deep))
