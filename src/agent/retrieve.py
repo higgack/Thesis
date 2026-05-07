@@ -1,12 +1,27 @@
 import json
 import logging
+import math
 import re
+from datetime import datetime
 
 from rank_bm25 import BM25Okapi
 
 from .. import config
 from ..llm.gemini import complete
-from ..store import vector
+from ..store import meta, vector
+
+
+def _recency_factor(ingested_at_iso: str) -> float:
+    """Soft exponential decay so recent docs outrank stale ones with the
+    same semantic relevance. Important for time-sensitive material like
+    brokerage reports where last week's view supersedes last year's.
+    0d → 1.0, 6mo → ~0.72, 1yr → ~0.62, 2yr+ → ~0.56."""
+    try:
+        ts = datetime.fromisoformat(ingested_at_iso)
+    except Exception:
+        return 1.0
+    days = max(0.0, (datetime.utcnow() - ts).total_seconds() / 86400.0)
+    return 0.55 + 0.45 * math.exp(-days / 180.0)
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +105,20 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
                     "id": cid, "text": docs[doc_idx],
                     "metadata": all_chunks[doc_idx][2], "distance": 1.0 - n,
                 })
+
+    recency_cache: dict[str, float] = {}
+    for cid in list(dense.keys()):
+        s, h = dense[cid]
+        doc_id = h["metadata"].get("doc_id")
+        if not doc_id:
+            continue
+        if doc_id not in recency_cache:
+            d = meta.get_doc(doc_id)
+            recency_cache[doc_id] = (
+                _recency_factor(d["ingested_at"])
+                if d and d.get("ingested_at") else 1.0
+            )
+        dense[cid] = (s * recency_cache[doc_id], h)
 
     ranked = sorted(dense.values(), key=lambda x: x[0], reverse=True)
 
