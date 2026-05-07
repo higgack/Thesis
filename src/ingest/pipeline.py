@@ -94,18 +94,29 @@ async def ingest_audio(audio_bytes: bytes, source_label: str, caption: str = "",
 
 async def ingest_image(img_bytes: bytes, source_label: str, caption: str = "",
                        mime_type: str = "image/jpeg") -> dict:
-    """Standalone photo: caption-first, OCR fallback. If caption is long
-    enough we skip the LLM call entirely (free path)."""
+    """Standalone photo: caption-first, OCR fallback.
+
+    Default: caption ≥ 80 chars uses caption only (free path).
+    Override: include "[OCR]" anywhere in the caption to force Vision
+    OCR alongside the caption — useful when the caption is a long
+    analyst note but the image itself is a chart/table whose numbers
+    matter (caption + OCR text are concatenated)."""
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     caption = (caption or "").strip()
-    if len(caption) >= 80:
-        body = caption
+    force_ocr = "[OCR]" in caption.upper()
+    if caption:
+        # strip the tag from the stored body
+        caption_clean = caption.replace("[OCR]", "").replace("[ocr]", "").strip()
+    else:
+        caption_clean = caption
+    if len(caption_clean) >= 80 and not force_ocr:
+        body = caption_clean
     else:
         ocr_text = await ocr_image_async(img_bytes, mime_type=mime_type)
-        if not ocr_text and not caption:
+        if not ocr_text and not caption_clean:
             return {"status": "empty", "title": "image"}
-        body = (caption + "\n\n" + ocr_text).strip() if caption else ocr_text
+        body = (caption_clean + "\n\n" + ocr_text).strip() if caption_clean else ocr_text
     first = body.strip().splitlines()[0] if body.strip() else "image"
     title = first[:80]
     return await _ingest("image", source_label, title, body, None)

@@ -250,6 +250,41 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Ingest velocity, type breakdown, rough cost band so the user
+    can spot anomalies (sudden surge, drop) at a glance."""
+    if not _is_owner(update):
+        return
+    s = meta.usage_stats()
+    chunks = vector.chunk_count()
+    queue_len = len(_INGEST_RETRY_QUEUE)
+    failed_len = len(_INGEST_FAILED)
+
+    types_line = ", ".join(f"{t}:{c}" for t, c in s["types"][:8]) or "-"
+    # Rough cost — text/url ≈ ₩4, pdf/pptx/xlsx ≈ ₩6, audio ≈ ₩55, image ≈ ₩2.
+    cost_table = {
+        "text": 4, "url": 5, "pdf": 6, "paper": 6,
+        "pptx": 6, "docx": 5, "xlsx": 5, "image": 2, "audio": 55,
+    }
+    cost_24h = sum(cost_table.get(t, 4) * 1 for t, _ in s["types"]) * (s["last_24h"] / max(s["total"], 1))
+    out = (
+        "📊 봇 사용 현황\n"
+        f"\n총 문서: {s['total']}개  /  청크: {chunks}개"
+        f"\n\n📥 ingest 속도"
+        f"\n  • 24h: {s['last_24h']}건"
+        f"\n  • 7d:  {s['last_7d']}건"
+        f"\n  • 30d: {s['last_30d']}건"
+        f"\n\n📂 type별 분포"
+        f"\n  {types_line}"
+        f"\n\n📚 가장 최근 학습"
+        f"\n  {s['latest_title'][:80]}"
+        f"\n  {s['latest_at'][:16].replace('T', ' ')}"
+        f"\n\n🔁 retry 큐: {queue_len}건"
+        f"\n❌ failed 누적: {failed_len}건"
+    )
+    await update.message.reply_text(out)
+
+
 async def cmd_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -1217,6 +1252,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("usage", cmd_usage))
     app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("forget_search", cmd_forget_search))

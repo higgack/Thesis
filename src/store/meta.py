@@ -151,6 +151,42 @@ def count() -> int:
         return c.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
 
 
+def usage_stats() -> dict:
+    """Aggregate stats for the /usage command: totals, ingest velocity,
+    type breakdown, latest doc."""
+    with _conn() as c:
+        total = c.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        last_24h = c.execute(
+            "SELECT COUNT(*) FROM documents "
+            "WHERE ingested_at >= datetime('now', '-1 day')"
+        ).fetchone()[0]
+        last_7d = c.execute(
+            "SELECT COUNT(*) FROM documents "
+            "WHERE ingested_at >= datetime('now', '-7 days')"
+        ).fetchone()[0]
+        last_30d = c.execute(
+            "SELECT COUNT(*) FROM documents "
+            "WHERE ingested_at >= datetime('now', '-30 days')"
+        ).fetchone()[0]
+        type_rows = c.execute(
+            "SELECT type, COUNT(*) c FROM documents "
+            "GROUP BY type ORDER BY c DESC"
+        ).fetchall()
+        latest = c.execute(
+            "SELECT title, ingested_at FROM documents "
+            "ORDER BY ingested_at DESC LIMIT 1"
+        ).fetchone()
+    return {
+        "total": total,
+        "last_24h": last_24h,
+        "last_7d": last_7d,
+        "last_30d": last_30d,
+        "types": [(r["type"], r["c"]) for r in type_rows],
+        "latest_title": latest["title"] if latest else "(none)",
+        "latest_at": latest["ingested_at"] if latest else "",
+    }
+
+
 def delete(doc_id: str) -> bool:
     with _conn() as c:
         cur = c.execute("DELETE FROM documents WHERE id=?", (doc_id,))
