@@ -12,6 +12,17 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
+from . import config
+from .store import meta, vector, obsidian
+from .ingest import pipeline
+from .agent import agent
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+log = logging.getLogger("bot")
+
 _INGEST_SEM = asyncio.Semaphore(3)
 _INGEST_RETRY_QUEUE: list[dict] = []
 _INGEST_FAILED: list[dict] = []
@@ -63,17 +74,6 @@ def _persist_failed_log() -> None:
         )
     except Exception:
         log.exception("failed log persist failed")
-
-from . import config
-from .store import meta, vector, obsidian
-from .ingest import pipeline
-from .agent import agent
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
-log = logging.getLogger("bot")
 
 URL_RE = re.compile(r"https?://[^\s\)\]<>\"']+")
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s\)]+)\)")
