@@ -595,11 +595,59 @@ async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
         return await pipeline.ingest_docx(dest, label)
     if suffix == ".xlsx":
         return await pipeline.ingest_xlsx(dest, label)
+    if suffix in _AUDIO_SUFFIX_MIME:
+        return await pipeline.ingest_audio(
+            dest.read_bytes(), label,
+            caption=msg.caption or "",
+            mime_type=_AUDIO_SUFFIX_MIME[suffix],
+        )
     if suffix in {".ppt", ".doc", ".xls"}:
         return {"status": "error",
                 "error": f"{suffix} (구버전 포맷)은 지원 안 됩니다. {suffix}x로 변환해서 다시 보내주세요."}
     content = dest.read_text(encoding="utf-8", errors="ignore")
     return await pipeline.ingest_text(content, label)
+
+
+_AUDIO_SUFFIX_MIME = {
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".flac": "audio/flac",
+    ".aac": "audio/aac",
+}
+
+
+async def _ingest_voice_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
+    """Telegram voice note (msg.voice) — OGG/Opus."""
+    import io
+    voice = msg.voice
+    file = await ctx.bot.get_file(voice.file_id)
+    bio = io.BytesIO()
+    await file.download_to_memory(out=bio)
+    label = f"tg-voice:{voice.file_unique_id}"
+    return await pipeline.ingest_audio(
+        bio.getvalue(), label, caption=msg.caption or "",
+        mime_type=voice.mime_type or "audio/ogg",
+    )
+
+
+async def _ingest_audio_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
+    """Telegram audio (msg.audio) — uploaded music/audio file."""
+    import io
+    audio = msg.audio
+    file = await ctx.bot.get_file(audio.file_id)
+    bio = io.BytesIO()
+    await file.download_to_memory(out=bio)
+    label = f"tg-audio:{audio.file_unique_id}"
+    title_hint = (audio.title or audio.file_name or "").strip()
+    caption_part = (msg.caption or "").strip()
+    full_caption = "\n".join(p for p in [title_hint, caption_part] if p)
+    return await pipeline.ingest_audio(
+        bio.getvalue(), label, caption=full_caption,
+        mime_type=audio.mime_type or "audio/mpeg",
+    )
 
 
 async def _ingest_photo_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
@@ -655,6 +703,20 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
             log.exception("photo ingest failed")
             results.append({"status": "error", "error": _explain_error(e)})
 
+    if msg.voice:
+        try:
+            results.append(await _ingest_voice_attachment(msg, ctx))
+        except Exception as e:
+            log.exception("voice ingest failed")
+            results.append({"status": "error", "error": _explain_error(e)})
+
+    if msg.audio:
+        try:
+            results.append(await _ingest_audio_attachment(msg, ctx))
+        except Exception as e:
+            log.exception("audio ingest failed")
+            results.append({"status": "error", "error": _explain_error(e)})
+
     urls, plain = _collect_message_urls(msg)
     for url in urls:
         try:
@@ -676,7 +738,8 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
                 results.append({"status": "error",
                                 "error": _explain_error(e), "source": url})
 
-    if plain and not msg.document and not msg.photo and len(plain) >= 80:
+    if (plain and not msg.document and not msg.photo
+            and not msg.voice and not msg.audio and len(plain) >= 80):
         try:
             results.append(await pipeline.ingest_text(plain, f"tg-msg:{msg.message_id}"))
         except Exception as e:

@@ -7,7 +7,7 @@ from pathlib import Path
 from .. import config
 from ..store import meta, vector, obsidian
 from .chunker import split
-from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async, load_xlsx_async, ocr_image_async
+from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async, load_xlsx_async, ocr_image_async, transcribe_audio_async
 from .summarize import summarize
 
 log = logging.getLogger(__name__)
@@ -73,6 +73,23 @@ async def ingest_xlsx(path: Path, source_label: str) -> dict:
     if not body:
         return {"status": "empty", "title": title}
     return await _ingest("xlsx", source_label, title, body, hint)
+
+
+async def ingest_audio(audio_bytes: bytes, source_label: str, caption: str = "",
+                       mime_type: str = "audio/ogg") -> dict:
+    """Voice note / audio file → Gemini STT → text ingest. Caption is
+    prepended to the transcript so any user-provided context survives."""
+    if existing := meta.find_by_source(source_label):
+        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    transcript = await transcribe_audio_async(audio_bytes, mime_type=mime_type)
+    if not transcript:
+        return {"status": "empty", "title": "audio"}
+    caption = (caption or "").strip()
+    body = (caption + "\n\n" + transcript).strip() if caption else transcript
+    first_line = body.strip().splitlines()[0] if body.strip() else ""
+    title = (caption.splitlines()[0][:80] if caption
+             else first_line[:80] if first_line else "음성 메모")
+    return await _ingest("audio", source_label, title, body, None)
 
 
 async def ingest_image(img_bytes: bytes, source_label: str, caption: str = "",

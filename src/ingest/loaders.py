@@ -269,6 +269,43 @@ async def ocr_image_async(img_bytes: bytes, mime_type: str = "image/jpeg") -> st
     return await asyncio.to_thread(_ocr_image, img_bytes, mime_type)
 
 
+def _transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
+    """Gemini Audio STT. Used for Telegram voice notes and uploaded audio
+    files. Cost ~₩50 per audio hour on gemini-2.5-flash-lite. Inline byte
+    limit is ~20MB; longer recordings should be split client-side."""
+    try:
+        from google import genai
+        from google.genai import types
+        from .. import config
+    except Exception:
+        return ""
+    client = genai.Client(api_key=config.GOOGLE_API_KEY)
+    prompt = (
+        "이 오디오를 그대로 받아쓰기 하세요. 화자가 여럿이면 단락으로 "
+        "구분하고, 들리는 언어 그대로(한국어/영어 등) 출력하세요. "
+        "설명/코멘트 없이 받아쓰기 텍스트만 출력하세요."
+    )
+    try:
+        resp = client.models.generate_content(
+            model=config.SUMMARY_MODEL,
+            contents=[
+                types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
+                types.Part.from_text(text=prompt),
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=8192,
+            ),
+        )
+        return (resp.text or "").strip()
+    except Exception:
+        return ""
+
+
+async def transcribe_audio_async(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
+    return await asyncio.to_thread(_transcribe_audio, audio_bytes, mime_type)
+
+
 async def _load_pdf_from_bytes(data: bytes, source_url: str) -> tuple[str, str, str | None]:
     """When a URL fetch returns PDF bytes (brokerage shortlinks like
     bbn.kiwoom.com → PDF redirect), save to a temp file and reuse the
