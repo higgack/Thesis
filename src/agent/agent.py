@@ -227,7 +227,7 @@ async def run(message: str, deep: bool = False) -> dict:
         tools=[TOOL_DECLARATIONS],
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         temperature=0.2,
-        max_output_tokens=2048,
+        max_output_tokens=4096,
     )
 
     for step in range(MAX_STEPS):
@@ -272,7 +272,7 @@ async def run(message: str, deep: bool = False) -> dict:
         config=types.GenerateContentConfig(
             system_instruction=_SYSTEM,
             temperature=0.2,
-            max_output_tokens=2048,
+            max_output_tokens=4096,
         ),
     )
     text = ""
