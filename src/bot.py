@@ -465,6 +465,21 @@ async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
     return await pipeline.ingest_text(content, label)
 
 
+async def _ingest_photo_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
+    """Standalone photo (screenshot, table capture). Caption ≥80 chars
+    skips OCR; otherwise Gemini Vision extracts text."""
+    import io
+    photo = msg.photo[-1]  # largest size
+    file = await ctx.bot.get_file(photo.file_id)
+    bio = io.BytesIO()
+    await file.download_to_memory(out=bio)
+    label = f"tg-photo:{photo.file_unique_id}"
+    return await pipeline.ingest_image(
+        bio.getvalue(), label, caption=msg.caption or "",
+        mime_type="image/jpeg",
+    )
+
+
 def _is_retryable(e: BaseException) -> bool:
     s = f"{type(e).__name__} {e}"
     return any(m in s for m in (
@@ -496,6 +511,13 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
             else:
                 results.append({"status": "error", "error": _explain_error(e)})
 
+    if msg.photo:
+        try:
+            results.append(await _ingest_photo_attachment(msg, ctx))
+        except Exception as e:
+            log.exception("photo ingest failed")
+            results.append({"status": "error", "error": _explain_error(e)})
+
     urls, plain = _extract_urls(text)
     for url in urls:
         try:
@@ -514,7 +536,7 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
                 results.append({"status": "error",
                                 "error": _explain_error(e), "source": url})
 
-    if plain and not msg.document and len(plain) >= 80:
+    if plain and not msg.document and not msg.photo and len(plain) >= 80:
         try:
             results.append(await pipeline.ingest_text(plain, f"tg-msg:{msg.message_id}"))
         except Exception as e:

@@ -7,7 +7,7 @@ from pathlib import Path
 from .. import config
 from ..store import meta, vector, obsidian
 from .chunker import split
-from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async
+from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async, ocr_image_async
 from .summarize import summarize
 
 log = logging.getLogger(__name__)
@@ -64,6 +64,25 @@ async def ingest_docx(path: Path, source_label: str) -> dict:
     if not body:
         return {"status": "empty", "title": title}
     return await _ingest("docx", source_label, title, body, hint)
+
+
+async def ingest_image(img_bytes: bytes, source_label: str, caption: str = "",
+                       mime_type: str = "image/jpeg") -> dict:
+    """Standalone photo: caption-first, OCR fallback. If caption is long
+    enough we skip the LLM call entirely (free path)."""
+    if existing := meta.find_by_source(source_label):
+        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    caption = (caption or "").strip()
+    if len(caption) >= 80:
+        body = caption
+    else:
+        ocr_text = await ocr_image_async(img_bytes, mime_type=mime_type)
+        if not ocr_text and not caption:
+            return {"status": "empty", "title": "image"}
+        body = (caption + "\n\n" + ocr_text).strip() if caption else ocr_text
+    first = body.strip().splitlines()[0] if body.strip() else "image"
+    title = first[:80]
+    return await _ingest("image", source_label, title, body, None)
 
 
 async def ingest_text(text: str, label: str = "text") -> dict:

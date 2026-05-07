@@ -229,6 +229,43 @@ async def load_pdf_async(path: Path) -> tuple[str, str, str | None]:
     return await asyncio.to_thread(load_pdf, path)
 
 
+def _ocr_image(img_bytes: bytes, mime_type: str = "image/jpeg") -> str:
+    """Extract text from a single image via Gemini Vision. Used for
+    standalone photos (screenshots, table captures, news clippings).
+    Cost is ~$0.0003 per image on gemini-2.5-flash-lite."""
+    try:
+        from google import genai
+        from google.genai import types
+        from .. import config
+    except Exception:
+        return ""
+    client = genai.Client(api_key=config.GOOGLE_API_KEY)
+    prompt = (
+        "이 이미지에 포함된 모든 텍스트를 그대로 추출하세요. "
+        "표는 마크다운 표 형식으로 변환하고, 단락/제목 구조를 유지하세요. "
+        "설명이나 코멘트 없이 텍스트만 출력하세요."
+    )
+    try:
+        resp = client.models.generate_content(
+            model=config.SUMMARY_MODEL,
+            contents=[
+                types.Part.from_bytes(data=img_bytes, mime_type=mime_type),
+                types.Part.from_text(text=prompt),
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=2048,
+            ),
+        )
+        return (resp.text or "").strip()
+    except Exception:
+        return ""
+
+
+async def ocr_image_async(img_bytes: bytes, mime_type: str = "image/jpeg") -> str:
+    return await asyncio.to_thread(_ocr_image, img_bytes, mime_type)
+
+
 def load_pptx(path: Path) -> tuple[str, str, str | None]:
     from pptx import Presentation
     prs = Presentation(str(path))
