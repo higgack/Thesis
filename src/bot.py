@@ -236,7 +236,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "  - 최근 저장 목록\n"
         "• /deep <질문> - 어려운 질문은 Gemini Pro로\n"
         "• /find <제목 일부> - 답변 출처 원본 (URL/Obsidian) 찾기\n"
-        "• /failed - 실패한 ingest / 본문 비어있던 URL 목록\n"
+        "• /failed - 실패한 ingest 목록 (/failed retry: 일괄 자동 재시도)\n"
         "• /queue - 자동 재시도 대기 중인 항목\n"
         "• /stats /recent /forget <id>"
     )
@@ -396,8 +396,10 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Show recent ingest failures (errors + empty bodies). The list is
-    in-memory and clears on bot restart. '/failed clear' resets it."""
+    """Show recent ingest failures (errors + empty bodies). Persisted to
+    disk so /failed survives bot restart.
+    '/failed clear' empties the list. '/failed retry' moves entries that
+    have a saved retry payload back into the auto-retry queue."""
     if not _is_owner(update):
         return
     if ctx.args and ctx.args[0] == "clear":
@@ -405,6 +407,29 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         _INGEST_FAILED.clear()
         _persist_failed_log()
         await update.message.reply_text(f"실패 목록 비웠음 ({n}건)")
+        return
+    if ctx.args and ctx.args[0] == "retry":
+        retried = 0
+        kept: list[dict] = []
+        chat_id = update.effective_chat.id
+        for entry in _INGEST_FAILED:
+            payload = entry.get("retry")
+            if payload:
+                payload = dict(payload)
+                payload["attempts"] = 0
+                payload["chat_id"] = chat_id
+                _INGEST_RETRY_QUEUE.append(payload)
+                retried += 1
+            else:
+                kept.append(entry)
+        _INGEST_FAILED.clear()
+        _INGEST_FAILED.extend(kept)
+        _persist_retry_queue()
+        _persist_failed_log()
+        msg = f"🔁 retry queue로 {retried}건 재등록\n2분 간격으로 자동 처리됩니다."
+        if kept:
+            msg += f"\n\n♻️ retry 정보 없는 {len(kept)}건은 그대로 — 채널 스크롤로 직접 다시 보내주세요."
+        await update.message.reply_text(msg)
         return
     if not _INGEST_FAILED:
         await update.message.reply_text("실패 / 빈본문 없음 ✨")
@@ -428,7 +453,7 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         out += item
     if truncated:
         out += f"\n\n…(나머지 {truncated}개 생략)"
-    out += "\n\n비우려면: /failed clear"
+    out += "\n\n명령: /failed retry (자동 재시도)  ·  /failed clear (목록 비우기)"
     await update.message.reply_text(out, disable_web_page_preview=True)
 
 
@@ -794,55 +819,135 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
                 results.append({"status": "error", "error": _explain_error(e)})
 
     if msg.photo:
+        photo = msg.photo[-1]
+        photo_retry = {
+            "kind": "photo",
+            "file_id": photo.file_id,
+            "file_unique_id": photo.file_unique_id,
+            "caption": msg.caption or "",
+        }
         try:
-            results.append(await _ingest_photo_attachment(msg, ctx))
+            r = await _ingest_photo_attachment(msg, ctx)
+            if r.get("status") in ("empty", "error"):
+                r["retry_payload"] = photo_retry
+            results.append(r)
         except Exception as e:
             log.exception("photo ingest failed")
-            results.append({"status": "error", "error": _explain_error(e)})
+            if _is_retryable(e):
+                _INGEST_RETRY_QUEUE.append({
+                    **photo_retry, "chat_id": notify_chat_id, "attempts": 0,
+                })
+                _persist_retry_queue()
+                results.append({"status": "queued", "title": "photo"})
+            else:
+                results.append({"status": "error",
+                                "error": _explain_error(e),
+                                "retry_payload": photo_retry})
 
     if msg.voice:
+        voice = msg.voice
+        voice_retry = {
+            "kind": "voice",
+            "file_id": voice.file_id,
+            "file_unique_id": voice.file_unique_id,
+            "mime_type": voice.mime_type or "audio/ogg",
+            "caption": msg.caption or "",
+        }
         try:
-            results.append(await _ingest_voice_attachment(msg, ctx))
+            r = await _ingest_voice_attachment(msg, ctx)
+            if r.get("status") in ("empty", "error"):
+                r["retry_payload"] = voice_retry
+            results.append(r)
         except Exception as e:
             log.exception("voice ingest failed")
-            results.append({"status": "error", "error": _explain_error(e)})
+            if _is_retryable(e):
+                _INGEST_RETRY_QUEUE.append({
+                    **voice_retry, "chat_id": notify_chat_id, "attempts": 0,
+                })
+                _persist_retry_queue()
+                results.append({"status": "queued", "title": "voice"})
+            else:
+                results.append({"status": "error",
+                                "error": _explain_error(e),
+                                "retry_payload": voice_retry})
 
     if msg.audio:
+        audio = msg.audio
+        audio_retry = {
+            "kind": "audio",
+            "file_id": audio.file_id,
+            "file_unique_id": audio.file_unique_id,
+            "file_name": audio.file_name or "",
+            "title": audio.title or "",
+            "mime_type": audio.mime_type or "audio/mpeg",
+            "caption": msg.caption or "",
+        }
         try:
-            results.append(await _ingest_audio_attachment(msg, ctx))
+            r = await _ingest_audio_attachment(msg, ctx)
+            if r.get("status") in ("empty", "error"):
+                r["retry_payload"] = audio_retry
+            results.append(r)
         except Exception as e:
             log.exception("audio ingest failed")
-            results.append({"status": "error", "error": _explain_error(e)})
+            if _is_retryable(e):
+                _INGEST_RETRY_QUEUE.append({
+                    **audio_retry, "chat_id": notify_chat_id, "attempts": 0,
+                })
+                _persist_retry_queue()
+                results.append({"status": "queued",
+                                "title": audio.file_name or "audio"})
+            else:
+                results.append({"status": "error",
+                                "error": _explain_error(e),
+                                "retry_payload": audio_retry})
 
     urls, plain = _collect_message_urls(msg)
     for url in urls:
+        url_retry = {"kind": "url", "url": url}
         try:
             r = await pipeline.ingest_url(url)
             r.setdefault("source", url)
             r.setdefault("title", url)
+            if r.get("status") in ("empty", "error"):
+                r["retry_payload"] = url_retry
             results.append(r)
         except Exception as e:
             log.exception("url ingest failed: %s", url)
             if _is_retryable(e):
                 _INGEST_RETRY_QUEUE.append({
-                    "kind": "url",
-                    "url": url,
-                    "chat_id": notify_chat_id,
-                    "attempts": 0,
+                    **url_retry, "chat_id": notify_chat_id, "attempts": 0,
                 })
                 _persist_retry_queue()
                 results.append({"status": "queued", "title": url})
             else:
                 results.append({"status": "error",
-                                "error": _explain_error(e), "source": url})
+                                "error": _explain_error(e),
+                                "source": url, "retry_payload": url_retry})
 
     if (plain and not msg.document and not msg.photo
             and not msg.voice and not msg.audio and len(plain) >= 80):
+        text_retry = {
+            "kind": "text",
+            "text": plain,
+            "label": f"tg-msg:{msg.message_id}",
+        }
         try:
-            results.append(await pipeline.ingest_text(plain, f"tg-msg:{msg.message_id}"))
+            r = await pipeline.ingest_text(plain, f"tg-msg:{msg.message_id}")
+            if r.get("status") in ("empty", "error"):
+                r["retry_payload"] = text_retry
+            results.append(r)
         except Exception as e:
             log.exception("text ingest failed")
-            results.append({"status": "error", "error": _explain_error(e)})
+            if _is_retryable(e):
+                _INGEST_RETRY_QUEUE.append({
+                    **text_retry, "chat_id": notify_chat_id, "attempts": 0,
+                })
+                _persist_retry_queue()
+                results.append({"status": "queued", "title": plain[:60]})
+            else:
+                results.append({"status": "error",
+                                "error": _explain_error(e),
+                                "retry_payload": text_retry})
 
     if not results:
         return
@@ -853,14 +958,20 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
         log.exception("notify failed")
 
 
-def _record_failure(status: str, title: str, detail: str = "") -> None:
-    """Append to in-memory failure log + persist so /failed survives restart."""
-    _INGEST_FAILED.append({
+def _record_failure(status: str, title: str, detail: str = "",
+                    retry_payload: dict | None = None) -> None:
+    """Append to in-memory failure log + persist so /failed survives
+    restart. retry_payload (kind/file_id/url/text/...) lets
+    /failed retry re-enqueue the item automatically."""
+    entry: dict = {
         "status": status,
         "title": (title or "(unknown)")[:140],
         "detail": (detail or "")[:200],
         "ts": datetime.utcnow().isoformat(),
-    })
+    }
+    if retry_payload:
+        entry["retry"] = retry_payload
+    _INGEST_FAILED.append(entry)
     if len(_INGEST_FAILED) > _FAILED_MAX:
         del _INGEST_FAILED[0]
     _persist_failed_log()
@@ -876,13 +987,15 @@ def _format_results(results: list[dict]) -> str:
             lines.append(f"♻️ 이미 있음: {r['title']}")
         elif s == "empty":
             label = r.get("title") or r.get("source", "")
-            _record_failure("empty", label, r.get("source", ""))
+            _record_failure("empty", label, r.get("source", ""),
+                            retry_payload=r.get("retry_payload"))
             lines.append(f"⚠️ 본문 비어있음: {label}")
         elif s == "queued":
             lines.append(f"⏳ 재시도 대기 (자동): {r.get('title', '')}")
         else:
             label = r.get("title") or r.get("source", "")
-            _record_failure("error", label, r.get("error", ""))
+            _record_failure("error", label, r.get("error", ""),
+                            retry_payload=r.get("retry_payload"))
             lines.append(f"❌ {r.get('error', 'error')}")
     return "\n".join(lines)
 
@@ -895,10 +1008,11 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
     item = _INGEST_RETRY_QUEUE.pop(0)
     _persist_retry_queue()
     chat_id = item["chat_id"]
-    title = item.get("file_name") or item.get("url") or "(unknown)"
+    title = item.get("file_name") or item.get("url") or item.get("text", "")[:60] or "(unknown)"
     async with _INGEST_SEM:
         try:
-            if item["kind"] == "doc":
+            kind = item["kind"]
+            if kind == "doc":
                 file = await ctx.bot.get_file(item["file_id"])
                 dest = Path(config.DATA_DIR) / "files" / item["file_name"]
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -911,19 +1025,64 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                     r = await pipeline.ingest_pptx(dest, label)
                 elif suffix == ".docx":
                     r = await pipeline.ingest_docx(dest, label)
+                elif suffix == ".xlsx":
+                    r = await pipeline.ingest_xlsx(dest, label)
+                elif suffix in _AUDIO_SUFFIX_MIME:
+                    r = await pipeline.ingest_audio(
+                        dest.read_bytes(), label,
+                        mime_type=_AUDIO_SUFFIX_MIME[suffix],
+                    )
                 else:
                     content = dest.read_text(encoding="utf-8", errors="ignore")
                     r = await pipeline.ingest_text(content, label)
-            elif item["kind"] == "url":
+            elif kind == "url":
                 r = await pipeline.ingest_url(item["url"])
+            elif kind == "photo":
+                import io as _io
+                file = await ctx.bot.get_file(item["file_id"])
+                bio = _io.BytesIO()
+                await file.download_to_memory(out=bio)
+                label = f"tg-photo:{item['file_unique_id']}"
+                r = await pipeline.ingest_image(
+                    bio.getvalue(), label,
+                    caption=item.get("caption", ""),
+                    mime_type="image/jpeg",
+                )
+            elif kind in ("voice", "audio"):
+                import io as _io
+                file = await ctx.bot.get_file(item["file_id"])
+                bio = _io.BytesIO()
+                await file.download_to_memory(out=bio)
+                if kind == "voice":
+                    label = f"tg-voice:{item['file_unique_id']}"
+                    cap = item.get("caption", "")
+                else:
+                    label = f"tg-audio:{item['file_unique_id']}"
+                    parts = [item.get("title", ""), item.get("caption", "")]
+                    cap = "\n".join(p for p in parts if p)
+                r = await pipeline.ingest_audio(
+                    bio.getvalue(), label, caption=cap,
+                    mime_type=item.get("mime_type", "audio/ogg"),
+                )
+            elif kind == "text":
+                r = await pipeline.ingest_text(
+                    item["text"], item.get("label", "tg-msg-retry"),
+                )
             else:
                 return
         except Exception as e:
             item["attempts"] += 1
             if item["attempts"] >= _MAX_RETRY_ATTEMPTS or not _is_retryable(e):
+                # Persist to /failed so the user can /failed retry later.
+                payload = {k: v for k, v in item.items() if k != "chat_id"}
+                _record_failure(
+                    "error", title[:140], _explain_error(e),
+                    retry_payload=payload,
+                )
                 await ctx.bot.send_message(
                     chat_id,
-                    f"⚠️ ingest 재시도 포기 — {title[:80]}\n{_explain_error(e)}",
+                    f"⚠️ ingest 재시도 포기 — {title[:80]}\n{_explain_error(e)}\n"
+                    "/failed retry 로 다시 시도할 수 있습니다.",
                 )
                 return
             log.info("ingest retry %d/%d: %s",
