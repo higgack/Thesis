@@ -175,6 +175,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "  - URL을 학습/저장\n"
         "  - 최근 저장 목록\n"
         "• /deep <질문> - 어려운 질문은 Gemini Pro로\n"
+        "• /find <제목 일부> - 답변 출처 원본 (URL/Obsidian) 찾기\n"
         "• /stats /recent /forget <id>"
     )
 
@@ -282,6 +283,44 @@ async def cmd_dedupe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"\n\n각 그룹에서 본문 가장 긴 것 1개만 남기고 삭제: `/dedupe confirm`",
         parse_mode="Markdown",
     )
+
+
+async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Locate a saved doc by title fragment, return source URL / Obsidian
+    path / first-line summary so the user can jump back to the original."""
+    if not _is_owner(update):
+        return
+    query = " ".join(ctx.args).strip()
+    if not query:
+        await update.message.reply_text("사용법: /find <제목 일부>")
+        return
+    matches = meta.search_title(query, limit=20)
+    if not matches:
+        await update.message.reply_text(f"매칭 없음: '{query}'")
+        return
+    cap = 8
+    header = f"🔍 '{query}' — {len(matches)}개 매칭"
+    if len(matches) > cap:
+        header += f" (상위 {cap}개 표시)"
+    lines = [header]
+    for m in matches[:cap]:
+        doc = meta.get_doc(m["id"]) or {}
+        title = (doc.get("title") or "(제목 없음)")[:80]
+        ingested = (doc.get("ingested_at") or "")[:10]
+        source = doc.get("source") or ""
+        obs = doc.get("obsidian_path") or ""
+        summary = (doc.get("summary") or "").strip().splitlines()[0][:180] if doc.get("summary") else ""
+        lines.append("")
+        lines.append(f"📄 {title}  ({ingested})")
+        if source.startswith(("http://", "https://")):
+            lines.append(f"   📎 {source}")
+        elif source:
+            lines.append(f"   🆔 {source[:80]}")
+        if obs:
+            lines.append(f"   📁 {obs}")
+        if summary:
+            lines.append(f"   {summary}")
+    await update.message.reply_text("\n".join(lines), disable_web_page_preview=True)
 
 
 async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -679,6 +718,7 @@ def main():
     app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("forget_search", cmd_forget_search))
+    app.add_handler(CommandHandler("find", cmd_find))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
     app.add_handler(CommandHandler("deep", cmd_deep))
