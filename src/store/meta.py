@@ -90,10 +90,12 @@ def recent(limit: int = 10) -> list[dict]:
 
 
 def search_title(substring: str, limit: int = 20) -> list[dict]:
-    """Case-insensitive title substring search for /forget_search."""
+    """Case-insensitive title substring search. Returns full doc rows so
+    callers don't need a follow-up get_doc per result."""
     with _conn() as c:
         rows = c.execute(
-            "SELECT id, source, type, title FROM documents "
+            "SELECT id, source, type, title, summary, obsidian_path, ingested_at "
+            "FROM documents "
             "WHERE title LIKE ? COLLATE NOCASE "
             "ORDER BY ingested_at DESC LIMIT ?",
             (f"%{substring}%", limit),

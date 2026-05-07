@@ -304,12 +304,11 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         header += f" (상위 {cap}개 표시)"
     lines = [header]
     for m in matches[:cap]:
-        doc = meta.get_doc(m["id"]) or {}
-        title = (doc.get("title") or "(제목 없음)")[:80]
-        ingested = (doc.get("ingested_at") or "")[:10]
-        source = doc.get("source") or ""
-        obs = doc.get("obsidian_path") or ""
-        summary = (doc.get("summary") or "").strip().splitlines()[0][:180] if doc.get("summary") else ""
+        title = (m.get("title") or "(제목 없음)")[:80]
+        ingested = (m.get("ingested_at") or "")[:10]
+        source = m.get("source") or ""
+        obs = m.get("obsidian_path") or ""
+        summary = (m.get("summary") or "").strip().splitlines()[0][:180] if m.get("summary") else ""
         lines.append("")
         lines.append(f"📄 {title}  ({ingested})")
         if source.startswith(("http://", "https://")):
