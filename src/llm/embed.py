@@ -24,9 +24,10 @@ def _is_overloaded(exc: BaseException) -> bool:
     return any(m in s for m in _OVERLOAD_MARKERS)
 
 
-async def embed(texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:
-    if not texts:
-        return []
+_BATCH_LIMIT = 100  # Gemini embed_content hard cap per request
+
+
+async def _embed_one(texts: list[str], task_type: str) -> list[list[float]]:
     last_err: BaseException | None = None
     for attempt in range(6):
         try:
@@ -45,3 +46,15 @@ async def embed(texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list
             await asyncio.sleep(wait)
     assert last_err is not None
     raise last_err
+
+
+async def embed(texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:
+    if not texts:
+        return []
+    if len(texts) <= _BATCH_LIMIT:
+        return await _embed_one(texts, task_type)
+    out: list[list[float]] = []
+    for i in range(0, len(texts), _BATCH_LIMIT):
+        batch = texts[i:i + _BATCH_LIMIT]
+        out.extend(await _embed_one(batch, task_type))
+    return out
