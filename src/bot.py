@@ -14,8 +14,55 @@ from telegram.request import HTTPXRequest
 
 _INGEST_SEM = asyncio.Semaphore(3)
 _INGEST_RETRY_QUEUE: list[dict] = []
-_INGEST_FAILED: list[dict] = []  # in-memory; reset on bot restart
+_INGEST_FAILED: list[dict] = []
 _FAILED_MAX = 200
+
+# Persist these two so a hang/restart doesn't lose state.
+_RETRY_QUEUE_PATH = config.DATA_DIR / "retry_queue.json"
+_FAILED_LOG_PATH = config.DATA_DIR / "failed_log.json"
+
+
+def _load_persisted_state() -> None:
+    """Restore retry queue + failed log from disk on startup."""
+    import json
+    try:
+        if _RETRY_QUEUE_PATH.exists():
+            data = json.loads(_RETRY_QUEUE_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                _INGEST_RETRY_QUEUE.extend(data)
+                log.info("restored %d items to retry queue", len(data))
+    except Exception:
+        log.exception("retry queue load failed")
+    try:
+        if _FAILED_LOG_PATH.exists():
+            data = json.loads(_FAILED_LOG_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                _INGEST_FAILED.extend(data[-_FAILED_MAX:])
+                log.info("restored %d failed entries", len(_INGEST_FAILED))
+    except Exception:
+        log.exception("failed log load failed")
+
+
+def _persist_retry_queue() -> None:
+    import json
+    try:
+        _RETRY_QUEUE_PATH.write_text(
+            json.dumps(_INGEST_RETRY_QUEUE, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        log.exception("retry queue persist failed")
+
+
+def _persist_failed_log() -> None:
+    import json
+    try:
+        _FAILED_LOG_PATH.write_text(
+            json.dumps(_INGEST_FAILED, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        log.exception("failed log persist failed")
 
 from . import config
 from .store import meta, vector, obsidian
@@ -80,7 +127,21 @@ def _collect_message_urls(msg) -> tuple[list[str], str]:
                 if u and u not in urls:
                     urls.append(u)
 
-    urls = [u for u in urls if not _INTERNAL_TG_RE.match(u)][:_MAX_URLS_PER_MSG]
+    urls = [u for u in urls if not _INTERNAL_TG_RE.match(u)]
+
+    is_forward = bool(
+        getattr(msg, "forward_origin", None)
+        or getattr(msg, "forward_from_chat", None)
+        or getattr(msg, "forward_from", None)
+    )
+    # Forwarded automation digest (e.g. Noahsummary) tends to bundle 50+
+    # URLs per message — let those ride as plain text, the URLs survive
+    # inside the body string. Hand-curated forwards (broker reports
+    # with 1~4 links) keep their URL ingest path.
+    if is_forward and len(urls) >= _MAX_URLS_PER_MSG:
+        urls = []
+    else:
+        urls = urls[:_MAX_URLS_PER_MSG]
     return urls, plain
 _MERMAID_BLOCK_RE = re.compile(r"```mermaid\s*\n(.*?)\n```", re.DOTALL)
 _NUMBERED_SECTION_RE = re.compile(
@@ -311,8 +372,8 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ingested = (m.get("ingested_at") or "")[:10]
         source = m.get("source") or ""
         obs = m.get("obsidian_path") or ""
-        summary_first = (m.get("summary") or "").strip().splitlines()[0] if m.get("summary") else ""
-        summary = summary_first[:130]
+        summary_full = (m.get("summary") or "").strip() if m.get("summary") else ""
+        summary = summary_full[:500]
         loc_bits = []
         if source.startswith(("http://", "https://")):
             loc_bits.append(f"📎 {source[:80]}")
@@ -342,6 +403,7 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if ctx.args and ctx.args[0] == "clear":
         n = len(_INGEST_FAILED)
         _INGEST_FAILED.clear()
+        _persist_failed_log()
         await update.message.reply_text(f"실패 목록 비웠음 ({n}건)")
         return
     if not _INGEST_FAILED:
@@ -507,13 +569,23 @@ async def on_private(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not msg:
         return
 
-    if msg.document:
+    # Attachments — always ingest, never reach agent.
+    if msg.document or msg.photo or msg.voice or msg.audio:
         await _ingest_message(msg, ctx, notify_chat_id=msg.chat.id)
         return
 
-    text = msg.text or ""
-    if not text.strip():
+    text = (msg.text or msg.caption or "").strip()
+    if not text:
         return
+
+    # Treat anything with a URL or 200+ chars of body as a "save this"
+    # signal — ingest first, no agent prompt asking '저장하시겠습니까?'.
+    # Short queries fall through to the agent for a normal answer.
+    urls, plain = _collect_message_urls(msg)
+    if urls or len(plain) >= 200:
+        await _ingest_message(msg, ctx, notify_chat_id=msg.chat.id)
+        return
+
     await _run_agent(update, ctx, text, deep=False)
 
 
@@ -572,12 +644,36 @@ def _explain_error(e: BaseException, max_len: int = 280) -> str:
     return f"{type(cause).__name__}: {msg}"[:max_len]
 
 
+_INGEST_TIMEOUT_SEC = 900  # 15 minutes per message — large PDFs with OCR can take this long
+
+
 async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
-    """Cap concurrent ingests via semaphore. Up to 3 files may run in
-    parallel; the 4th waits. Keeps Gemini below RPM caps while letting
-    bulk file drops finish ~3x faster."""
+    """Cap concurrent ingests via semaphore + per-message timeout.
+    Up to 3 messages run in parallel; the 4th waits. 15 min timeout
+    prevents one stuck PDF from hanging the whole bot."""
     async with _INGEST_SEM:
-        return await _ingest_message_locked(msg, ctx, notify_chat_id)
+        try:
+            return await asyncio.wait_for(
+                _ingest_message_locked(msg, ctx, notify_chat_id),
+                timeout=_INGEST_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            label = "(unknown)"
+            if msg.document and msg.document.file_name:
+                label = msg.document.file_name
+            elif msg.text:
+                label = msg.text.strip().splitlines()[0][:80]
+            log.warning("ingest timeout (%ds) for %s", _INGEST_TIMEOUT_SEC, label)
+            _record_failure("timeout", label, f"ingest exceeded {_INGEST_TIMEOUT_SEC}s")
+            try:
+                await ctx.bot.send_message(
+                    notify_chat_id,
+                    f"⚠️ ingest timeout (15분 초과): {label[:60]}\n"
+                    "자료가 너무 크거나 OCR 처리 지연. 같은 자료 다시 보내면 재시도됩니다.",
+                )
+            except Exception:
+                log.exception("timeout notify failed")
+            return None
 
 
 async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
@@ -691,6 +787,7 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
                     "chat_id": notify_chat_id,
                     "attempts": 0,
                 })
+                _persist_retry_queue()
                 results.append({"status": "queued",
                                 "title": msg.document.file_name})
             else:
@@ -733,6 +830,7 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
                     "chat_id": notify_chat_id,
                     "attempts": 0,
                 })
+                _persist_retry_queue()
                 results.append({"status": "queued", "title": url})
             else:
                 results.append({"status": "error",
@@ -756,7 +854,7 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
 
 
 def _record_failure(status: str, title: str, detail: str = "") -> None:
-    """Append to in-memory failure log so /failed can review later."""
+    """Append to in-memory failure log + persist so /failed survives restart."""
     _INGEST_FAILED.append({
         "status": status,
         "title": (title or "(unknown)")[:140],
@@ -765,6 +863,7 @@ def _record_failure(status: str, title: str, detail: str = "") -> None:
     })
     if len(_INGEST_FAILED) > _FAILED_MAX:
         del _INGEST_FAILED[0]
+    _persist_failed_log()
 
 
 def _format_results(results: list[dict]) -> str:
@@ -794,6 +893,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
     if not _INGEST_RETRY_QUEUE:
         return
     item = _INGEST_RETRY_QUEUE.pop(0)
+    _persist_retry_queue()
     chat_id = item["chat_id"]
     title = item.get("file_name") or item.get("url") or "(unknown)"
     async with _INGEST_SEM:
@@ -829,6 +929,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             log.info("ingest retry %d/%d: %s",
                      item["attempts"], _MAX_RETRY_ATTEMPTS, title[:80])
             _INGEST_RETRY_QUEUE.append(item)
+            _persist_retry_queue()
             return
     summary = _format_results([r])
     await ctx.bot.send_message(chat_id, f"⏰ ingest 재시도\n{summary}")
@@ -894,6 +995,7 @@ def main():
             name="retry_pending_ingest",
         )
 
+    _load_persisted_state()
     log.info("bot starting")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
