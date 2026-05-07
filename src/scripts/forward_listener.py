@@ -25,11 +25,22 @@ from telethon.errors import FloodWaitError
 from .. import config
 
 
-def _bot_username() -> str:
+def _forward_target() -> str:
+    """Where to mirror new messages.
+
+    FORWARD_TARGET takes precedence so users can pipe everything into
+    their own knowledge channel (where the bot is admin, so channel_post
+    triggers ingest naturally and the user keeps a visible archive).
+    Falls back to BOT_USERNAME (DM mode) for backward compatibility."""
+    target = os.getenv("FORWARD_TARGET", "").strip().lstrip("@")
+    if target:
+        return target
     name = os.getenv("BOT_USERNAME", "").strip().lstrip("@")
     if not name:
         sys.exit(
-            "BOT_USERNAME not set. Add it to .env (just the username, no @)."
+            "Neither FORWARD_TARGET nor BOT_USERNAME is set in .env.\n"
+            "  Set FORWARD_TARGET=<your_channel_username> to forward into\n"
+            "  a channel (recommended), or BOT_USERNAME=<bot> for DM mode."
         )
     return name
 
@@ -55,7 +66,7 @@ async def _resolve_channel(client: TelegramClient, channel: str):
 async def run(channel: str) -> None:
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
-    bot_username = _bot_username()
+    target_name = _forward_target()
 
     session_path = config.DATA_DIR / "import_session"
     client = TelegramClient(str(session_path), api_id, api_hash)
@@ -63,20 +74,20 @@ async def run(channel: str) -> None:
 
     try:
         src = await _resolve_channel(client, channel)
-        bot = await client.get_entity(bot_username)
+        target = await _resolve_channel(client, target_name)
     except Exception as e:
         sys.exit(
-            f"Could not resolve channel '{channel}' or bot '@{bot_username}': {e}"
+            f"Could not resolve channel '{channel}' or target '{target_name}': {e}"
         )
 
     print(f"listening: {getattr(src, 'title', channel)}")
-    print(f"forwarding to: @{bot_username}")
+    print(f"forwarding to: {getattr(target, 'title', None) or target_name}")
     print("running... Ctrl+C to stop\n")
 
     @client.on(events.NewMessage(chats=src))
     async def handler(event):
         try:
-            await event.message.forward_to(bot)
+            await event.message.forward_to(target)
             print(f"  forwarded msg {event.message.id}")
         except FloodWaitError as e:
             print(f"  flood wait {e.seconds}s")
