@@ -42,6 +42,9 @@ async def load_url(url: str) -> tuple[str, str, str | None]:
                                      headers={"User-Agent": "Mozilla/5.0 SecondBrain"}) as c:
             r = await c.get(url)
             r.raise_for_status()
+            ct = r.headers.get("content-type", "").lower()
+            if "application/pdf" in ct or r.content[:5] == b"%PDF-":
+                return await _load_pdf_from_bytes(r.content, str(r.url))
             html = r.text
         title, body, hint = await asyncio.to_thread(_parse_html, url, html)
     except Exception:
@@ -264,6 +267,29 @@ def _ocr_image(img_bytes: bytes, mime_type: str = "image/jpeg") -> str:
 
 async def ocr_image_async(img_bytes: bytes, mime_type: str = "image/jpeg") -> str:
     return await asyncio.to_thread(_ocr_image, img_bytes, mime_type)
+
+
+async def _load_pdf_from_bytes(data: bytes, source_url: str) -> tuple[str, str, str | None]:
+    """When a URL fetch returns PDF bytes (brokerage shortlinks like
+    bbn.kiwoom.com → PDF redirect), save to a temp file and reuse the
+    standard PDF extractor instead of trying to parse PDF as HTML."""
+    import tempfile
+    from urllib.parse import urlparse, unquote
+    parsed = urlparse(source_url)
+    fname = unquote(Path(parsed.path).name) or "document"
+    if not fname.lower().endswith(".pdf"):
+        fname = (fname or "document") + ".pdf"
+    tmpdir = Path(tempfile.mkdtemp(prefix="urlpdf_"))
+    tmp_path = tmpdir / fname
+    try:
+        tmp_path.write_bytes(data)
+        return await load_pdf_async(tmp_path)
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+            tmpdir.rmdir()
+        except Exception:
+            pass
 
 
 def load_pptx(path: Path) -> tuple[str, str, str | None]:
