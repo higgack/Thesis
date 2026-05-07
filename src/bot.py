@@ -538,6 +538,28 @@ def _is_overload(exc: BaseException) -> bool:
     return any(m in s for m in _OVERLOAD_MARKERS)
 
 
+def _format_sources_with_url(titles: list[str], cap: int = 5) -> str:
+    """Look up each cited doc title in meta and append the source URL
+    if it is an http(s) link, so the user can click straight from the
+    bot reply to the original article. Limits to `cap` items."""
+    formatted: list[str] = []
+    for title in titles[:cap]:
+        try:
+            matches = meta.search_title(title, limit=1)
+        except Exception:
+            matches = []
+        url = ""
+        if matches:
+            src = matches[0].get("source") or ""
+            if src.startswith(("http://", "https://")):
+                url = src
+        if url:
+            formatted.append(f"{title} → {url}")
+        else:
+            formatted.append(title)
+    return "\n  • " + "\n  • ".join(formatted) if formatted else ""
+
+
 async def _send_agent_reply(send, result):
     raw, mermaid_blocks = _extract_mermaid(result["text"])
     body = _strip_markdown(raw)
@@ -545,7 +567,7 @@ async def _send_agent_reply(send, result):
     if result.get("warning"):
         suffix_lines.append(result["warning"])
     if result.get("sources"):
-        suffix_lines.append("📚 " + ", ".join(result["sources"][:5]))
+        suffix_lines.append("📚 출처:" + _format_sources_with_url(result["sources"]))
     if result.get("tool_calls"):
         suffix_lines.append(f"🔧 {' → '.join(result['tool_calls'])}")
     suffix = ("\n\n" + "\n".join(suffix_lines)) if suffix_lines else ""
@@ -641,7 +663,7 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
     if result.get("warning"):
         suffix_lines.append(result["warning"])
     if result["sources"]:
-        suffix_lines.append("📚 " + ", ".join(result["sources"][:5]))
+        suffix_lines.append("📚 출처:" + _format_sources_with_url(result["sources"]))
     if result["tool_calls"]:
         suffix_lines.append(f"🔧 {' → '.join(result['tool_calls'])}")
     suffix = ("\n\n" + "\n".join(suffix_lines)) if suffix_lines else ""

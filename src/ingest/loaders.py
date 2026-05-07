@@ -26,6 +26,14 @@ _JS_PLACEHOLDER_PATTERNS = (
 _MIN_BODY_CHARS = 200
 
 
+# Hosts that block bot/datacenter access — skip the fetch entirely so
+# the user gets the recovery guidance (📋 본문 복사 / 스크린샷) instantly
+# instead of waiting 30+ seconds for a TCP timeout.
+_BLOCKED_HOSTS = (
+    "linkedin.com", "facebook.com", "instagram.com", "story.kakao.com",
+)
+
+
 async def load_url(url: str) -> tuple[str, str, str | None]:
     """Returns (title, text, hint_summary).
 
@@ -36,6 +44,13 @@ async def load_url(url: str) -> tuple[str, str, str | None]:
         return await load_youtube(yt, url)
     if m := _ARXIV_RE.search(url):
         return await load_arxiv(m.group(1))
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc.lower()
+        if any(h in host for h in _BLOCKED_HOSTS):
+            return "", "", None  # short-circuit; downstream will say empty
+    except Exception:
+        pass
     title, body, hint = "", "", None
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True,
@@ -115,9 +130,23 @@ async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
             t = next(iter(transcripts))
         entries = t.fetch()
         text = "\n".join(e["text"] for e in entries)
-        return title, text.strip(), description
+        if text.strip():
+            return title, text.strip(), description
     except Exception as e:
-        return title, f"[transcript unavailable: {e}]", description
+        log_msg = f"transcript unavailable: {e}"
+    else:
+        log_msg = "transcript empty"
+
+    # Captions missing/empty — fall back to jina.ai Reader so the
+    # title + description (and any visible page text) still gets
+    # captured instead of dropping the doc entirely.
+    try:
+        j_title, j_body, j_hint = await _load_via_jina(url)
+        if j_body:
+            return (j_title or title), j_body, (j_hint or description)
+    except Exception:
+        pass
+    return title, f"[{log_msg}]", description
 
 
 async def load_arxiv(arxiv_id: str) -> tuple[str, str, str | None]:
