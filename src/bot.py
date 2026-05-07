@@ -53,6 +53,36 @@ def _extract_urls(text: str) -> tuple[list[str], str]:
             urls.append(url)
     text_no_urls = URL_RE.sub("", cleaned).strip()
     return urls, text_no_urls
+
+
+_INTERNAL_TG_RE = re.compile(r"^https?://t\.me/", re.IGNORECASE)
+_MAX_URLS_PER_MSG = 5
+
+
+def _collect_message_urls(msg) -> tuple[list[str], str]:
+    """Plain text URLs + markdown links + Telegram text_link entities
+    + inline-keyboard URL buttons. Drops t.me internal links, dedups,
+    caps at _MAX_URLS_PER_MSG so spammy channels can't trigger runaway
+    ingestion."""
+    text = msg.text or msg.caption or ""
+    urls, plain = _extract_urls(text)
+
+    for ent_list in (msg.entities or [], msg.caption_entities or []):
+        for ent in ent_list:
+            u = getattr(ent, "url", None)
+            if getattr(ent, "type", None) == "text_link" and u and u not in urls:
+                urls.append(u)
+
+    rm = getattr(msg, "reply_markup", None)
+    if rm and getattr(rm, "inline_keyboard", None):
+        for row in rm.inline_keyboard:
+            for btn in row:
+                u = getattr(btn, "url", None)
+                if u and u not in urls:
+                    urls.append(u)
+
+    urls = [u for u in urls if not _INTERNAL_TG_RE.match(u)][:_MAX_URLS_PER_MSG]
+    return urls, plain
 _MERMAID_BLOCK_RE = re.compile(r"```mermaid\s*\n(.*?)\n```", re.DOTALL)
 _NUMBERED_SECTION_RE = re.compile(
     r"^(\s*)(\d+)\.\s+(.{3,100}?)[:：]?\s*$", re.MULTILINE
@@ -518,7 +548,7 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
             log.exception("photo ingest failed")
             results.append({"status": "error", "error": _explain_error(e)})
 
-    urls, plain = _extract_urls(text)
+    urls, plain = _collect_message_urls(msg)
     for url in urls:
         try:
             results.append(await pipeline.ingest_url(url))
