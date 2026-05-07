@@ -348,3 +348,36 @@ def load_docx(path: Path) -> tuple[str, str, str | None]:
 
 async def load_docx_async(path: Path) -> tuple[str, str, str | None]:
     return await asyncio.to_thread(load_docx, path)
+
+
+def load_xlsx(path: Path) -> tuple[str, str, str | None]:
+    """Flatten each sheet to '| col1 | col2 | ...' rows. Skips empty
+    cells and rows so a wide model with sparse data doesn't waste tokens.
+    Caps rows per sheet at 1500 to keep huge ledgers under control."""
+    from openpyxl import load_workbook
+    wb = load_workbook(filename=str(path), read_only=True, data_only=True)
+    parts: list[str] = []
+    MAX_ROWS_PER_SHEET = 1500
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        sheet_lines: list[str] = []
+        for i, row in enumerate(ws.iter_rows(values_only=True)):
+            if i >= MAX_ROWS_PER_SHEET:
+                sheet_lines.append(f"... ({MAX_ROWS_PER_SHEET}+ rows truncated)")
+                break
+            cells = [
+                str(c).strip() for c in row
+                if c is not None and str(c).strip()
+            ]
+            if cells:
+                sheet_lines.append(" | ".join(cells))
+        if sheet_lines:
+            parts.append(f"## Sheet: {sheet_name}\n" + "\n".join(sheet_lines))
+    wb.close()
+    body = "\n\n".join(parts).strip()
+    title_guess = path.stem
+    return title_guess[:200], body, None
+
+
+async def load_xlsx_async(path: Path) -> tuple[str, str, str | None]:
+    return await asyncio.to_thread(load_xlsx, path)

@@ -537,7 +537,9 @@ async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
         return await pipeline.ingest_pptx(dest, label)
     if suffix == ".docx":
         return await pipeline.ingest_docx(dest, label)
-    if suffix in {".ppt", ".doc"}:
+    if suffix == ".xlsx":
+        return await pipeline.ingest_xlsx(dest, label)
+    if suffix in {".ppt", ".doc", ".xls"}:
         return {"status": "error",
                 "error": f"{suffix} (구버전 포맷)은 지원 안 됩니다. {suffix}x로 변환해서 다시 보내주세요."}
     content = dest.read_text(encoding="utf-8", errors="ignore")

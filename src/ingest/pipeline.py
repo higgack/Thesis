@@ -7,7 +7,7 @@ from pathlib import Path
 from .. import config
 from ..store import meta, vector, obsidian
 from .chunker import split
-from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async, ocr_image_async
+from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async, load_xlsx_async, ocr_image_async
 from .summarize import summarize
 
 log = logging.getLogger(__name__)
@@ -64,6 +64,15 @@ async def ingest_docx(path: Path, source_label: str) -> dict:
     if not body:
         return {"status": "empty", "title": title}
     return await _ingest("docx", source_label, title, body, hint)
+
+
+async def ingest_xlsx(path: Path, source_label: str) -> dict:
+    if existing := meta.find_by_source(source_label):
+        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    title, body, hint = await load_xlsx_async(path)
+    if not body:
+        return {"status": "empty", "title": title}
+    return await _ingest("xlsx", source_label, title, body, hint)
 
 
 async def ingest_image(img_bytes: bytes, source_label: str, caption: str = "",
