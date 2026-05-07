@@ -421,7 +421,7 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not query:
         await update.message.reply_text("사용법: /find <제목 일부>")
         return
-    matches = meta.search_title(query, limit=30)
+    matches = meta.search_broad(query, limit=30)
     if not matches:
         await update.message.reply_text(f"매칭 없음: '{query}'")
         return

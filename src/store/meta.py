@@ -127,6 +127,29 @@ def search_title(substring: str, limit: int = 20) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def search_broad(substring: str, limit: int = 30) -> list[dict]:
+    """Wider net than search_title — also looks in summary and metadata
+    JSON (which holds company name + tags + report_date). Used by /find
+    so a query like '몰리브덴' or '데이터센터 전력' matches even when the
+    keyword sits in the body rather than the title. Title matches are
+    sorted first; everything else falls back to ingested_at DESC."""
+    pat = f"%{substring}%"
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, source, type, title, summary, obsidian_path, "
+            "       ingested_at, metadata, "
+            "       CASE WHEN title LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END AS rank "
+            "FROM documents "
+            "WHERE title    LIKE ? COLLATE NOCASE "
+            "   OR summary  LIKE ? COLLATE NOCASE "
+            "   OR metadata LIKE ? COLLATE NOCASE "
+            "ORDER BY rank ASC, ingested_at DESC "
+            "LIMIT ?",
+            (pat, pat, pat, pat, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def find_duplicates() -> list[list[dict]]:
     """Group docs whose normalized titles match. Each returned list has 2+
     docs sharing essentially the same title."""
