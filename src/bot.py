@@ -213,6 +213,31 @@ def _strip_markdown(text: str) -> str:
     return _enforce_format(text)
 
 
+# Lightweight stripper for command output (summary/title/detail fields).
+# Telegram renders messages as plain text, so any markdown the source
+# happens to use shows up as raw `**`, `##`, `*` characters and hurts
+# readability. _enforce_format above is too heavy for these fields
+# (it adds section separators), so we use a minimal pass instead.
+_MD_BOLD2_RE_ = re.compile(r"\*\*([^\*\n]{1,300}?)\*\*")
+_MD_ITALIC_RE_ = re.compile(r"(?<!\*)\*([^\*\n]+?)\*(?!\*)")
+_MD_CODE_INLINE_RE_ = re.compile(r"`([^`\n]+?)`")
+_MD_HEADER_RE_ = re.compile(r"^#{1,6}\s*", re.MULTILINE)
+_MD_LIST_STAR_RE_ = re.compile(r"^(\s*)\*\s+", re.MULTILINE)
+_BLANK_LINES_RE_ = re.compile(r"\n{3,}")
+
+
+def _clean_text(text: str) -> str:
+    if not text:
+        return text or ""
+    text = _MD_BOLD2_RE_.sub(r"\1", text)
+    text = _MD_ITALIC_RE_.sub(r"\1", text)
+    text = _MD_CODE_INLINE_RE_.sub(r"\1", text)
+    text = _MD_HEADER_RE_.sub("", text)
+    text = _MD_LIST_STAR_RE_.sub(r"\1• ", text)
+    text = _BLANK_LINES_RE_.sub("\n\n", text)
+    return text.strip()
+
+
 def _is_owner(update: Update) -> bool:
     user = update.effective_user
     return bool(user and user.id == config.TELEGRAM_OWNER_ID)
@@ -288,12 +313,19 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
-    items = meta.recent(10)
+    n = 10
+    if ctx.args and ctx.args[0].isdigit():
+        n = max(1, min(int(ctx.args[0]), 50))
+    items = meta.recent(n)
     if not items:
         await update.message.reply_text("아직 비어있어요.")
         return
-    lines = [f"`{r['id']}` [{r['type']}] {r['title']}" for r in items]
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    lines = [f"📚 최근 {len(items)}개 학습"]
+    for r in items:
+        title = _clean_text(r.get("title") or "(제목 없음)")[:90]
+        ingested = (r.get("ingested_at") or "")[:10]
+        lines.append(f"\n[{r['type']}]  {title}\n  {ingested}  ·  id {r['id']}")
+    await update.message.reply_text("\n".join(lines))
 
 
 async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -328,14 +360,13 @@ async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
     preview = "\n".join(
-        f"  • `{r['id']}` {(r['title'] or r['source'])[:55]}"
+        f"  • {r['id']}  {_clean_text(r.get('title') or r.get('source') or '')[:55]}"
         for r in noisy[:15]
     )
     more = f"\n... 외 {len(noisy)-15}건" if len(noisy) > 15 else ""
     await update.message.reply_text(
         f"노이즈 후보 {len(noisy)}건 (text 타입, 본문 짧음):\n{preview}{more}\n\n"
-        f"전부 삭제하려면: `/cleanup confirm`",
-        parse_mode="Markdown",
+        f"전부 삭제하려면: /cleanup confirm"
     )
 
 
@@ -367,18 +398,17 @@ async def cmd_dedupe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     total_dups = 0
     for g in groups[:8]:
         total_dups += len(g) - 1
-        title = (g[0].get("title") or g[0].get("source") or "")[:55]
+        title = _clean_text(g[0].get("title") or g[0].get("source") or "")[:55]
         lines.append(f"\n중복 {len(g)}건 — {title}")
         for d in g:
             chars = len(d.get("summary") or "")
-            lines.append(f"  • `{d['id']}` [{d['type']}] {chars}자")
+            lines.append(f"  • {d['id']}  [{d['type']}]  {chars}자")
     more = f"\n\n... 외 {len(groups)-8}그룹" if len(groups) > 8 else ""
     total = sum(len(g) - 1 for g in groups)
     await update.message.reply_text(
         f"중복 {len(groups)}그룹 / 삭제 후보 {total}건\n"
         + "".join(lines) + more +
-        f"\n\n각 그룹에서 본문 가장 긴 것 1개만 남기고 삭제: `/dedupe confirm`",
-        parse_mode="Markdown",
+        f"\n\n각 그룹에서 본문 가장 긴 것 1개만 남기고 삭제: /dedupe confirm"
     )
 
 
@@ -404,11 +434,11 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     truncated = 0
     import json as _json
     for i, m in enumerate(matches[:cap]):
-        title = (m.get("title") or "(제목 없음)")[:70]
+        title = _clean_text((m.get("title") or "(제목 없음)"))[:70]
         ingested = (m.get("ingested_at") or "")[:10]
         source = m.get("source") or ""
         obs = m.get("obsidian_path") or ""
-        summary_full = (m.get("summary") or "").strip() if m.get("summary") else ""
+        summary_full = _clean_text(m.get("summary") or "")
         summary = summary_full[:500]
         loc_bits = []
         if source.startswith(("http://", "https://")):
@@ -491,9 +521,9 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     recent = list(reversed(_INGEST_FAILED[-50:]))
     for i, r in enumerate(recent):
         ts = (r.get("ts", "")[:16]).replace("T", " ")
-        title = r.get("title", "(unknown)")[:90]
+        title = _clean_text(r.get("title", "(unknown)"))[:90]
         status = r.get("status", "error")
-        detail = r.get("detail", "")[:120]
+        detail = _clean_text(r.get("detail", ""))[:120]
         icon = "❌" if status == "error" else "⚠️"
         item = f"\n\n{icon} {ts}\n   {title}"
         if detail and detail != title:
@@ -540,20 +570,19 @@ async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     if len(matches) > 5:
         preview = "\n".join(
-            f"  • `{m['id']}` [{m['type']}] {m['title'][:60]}"
+            f"  • {m['id']}  [{m['type']}]  {_clean_text(m['title'])[:60]}"
             for m in matches[:8]
         )
         await update.message.reply_text(
             f"⚠️ {len(matches)}개 매칭 — 너무 많아서 자동 삭제 안 함.\n"
-            f"더 구체적인 검색어로 다시 시도하거나 `/forget <id>` 직접 사용:\n{preview}",
-            parse_mode="Markdown",
+            f"더 구체적인 검색어로 다시 시도하거나 /forget <id>로 직접:\n{preview}"
         )
         return
     forgotten = []
     for m in matches:
         n = vector.delete_doc(m["id"])
         meta.delete(m["id"])
-        forgotten.append(f"  ✅ {m['title'][:60]} ({n} chunks)")
+        forgotten.append(f"  ✅ {_clean_text(m['title'])[:60]} ({n} chunks)")
     await update.message.reply_text(
         f"삭제 완료 · {len(forgotten)}건\n" + "\n".join(forgotten)
     )
