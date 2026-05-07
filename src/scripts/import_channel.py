@@ -25,12 +25,14 @@ import argparse
 import asyncio
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError
 
 from .. import config
+from ..store import meta
 
 
 def _bot_username() -> str:
@@ -43,7 +45,8 @@ def _bot_username() -> str:
     return name
 
 
-async def run(channel: str, throttle: float, limit: int | None) -> None:
+async def run(channel: str, throttle: float, limit: int | None,
+              since_id: int | None, resume: bool, resume_margin_hours: float) -> None:
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
     bot_username = _bot_username()
@@ -60,15 +63,38 @@ async def run(channel: str, throttle: float, limit: int | None) -> None:
             f"Could not resolve channel '{channel}' or bot '@{bot_username}': {e}"
         )
 
+    iter_kwargs: dict = {"reverse": True, "limit": limit}
+    resume_label = ""
+    if since_id:
+        iter_kwargs["min_id"] = since_id
+        resume_label = f"since msg id {since_id}"
+    elif resume:
+        last = meta.last_ingested_at()
+        if last:
+            try:
+                ts = datetime.fromisoformat(last)
+            except ValueError:
+                ts = None
+            if ts:
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                cutoff = ts - timedelta(hours=resume_margin_hours)
+                iter_kwargs["offset_date"] = cutoff
+                resume_label = f"resume from {cutoff.isoformat()} (last ingest {ts.isoformat()}, margin {resume_margin_hours}h)"
+        if not resume_label:
+            resume_label = "resume requested but DB empty — full history"
+
     print(f"channel: {getattr(src, 'title', channel)}")
     print(f"forwarding to: @{bot_username}")
     print(f"throttle: {throttle}s between messages")
     if limit:
-        print(f"limit: first {limit} messages (oldest first)")
+        print(f"limit: first {limit} messages")
+    if resume_label:
+        print(resume_label)
     print()
 
     forwarded = skipped = errors = 0
-    async for msg in client.iter_messages(src, reverse=True, limit=limit):
+    async for msg in client.iter_messages(src, **iter_kwargs):
         if not (msg.text or msg.media):
             skipped += 1
             continue
@@ -99,11 +125,18 @@ def main() -> None:
                     help="Seconds between forwards (default 2 ≈ 30/min, well under telegram caps)")
     ap.add_argument("--limit", type=int, default=None,
                     help="Optional cap for testing (oldest N messages)")
+    ap.add_argument("--since-id", type=int, default=None,
+                    help="Only forward messages with id > SINCE_ID. Lets you pick up after a partial run.")
+    ap.add_argument("--resume", action="store_true",
+                    help="Auto-resume from the most recently ingested doc time minus a safety margin.")
+    ap.add_argument("--resume-margin-hours", type=float, default=1.0,
+                    help="Safety overlap when --resume is used (default 1.0h).")
     args = ap.parse_args()
     channel = args.channel
     if channel.startswith("https://t.me/") or channel.startswith("t.me/"):
         channel = channel.split("t.me/", 1)[1].rstrip("/")
-    asyncio.run(run(channel, args.throttle, args.limit))
+    asyncio.run(run(channel, args.throttle, args.limit,
+                    args.since_id, args.resume, args.resume_margin_hours))
 
 
 if __name__ == "__main__":

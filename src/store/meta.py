@@ -89,6 +89,17 @@ def recent(limit: int = 10) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def last_ingested_at() -> str | None:
+    """ISO timestamp of the most recently ingested doc, or None if empty.
+    Used by import_channel --resume to pick up where a previous run left
+    off after a hang/restart."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT MAX(ingested_at) AS last FROM documents"
+        ).fetchone()
+        return row["last"] if row and row["last"] else None
+
+
 def search_title(substring: str, limit: int = 20) -> list[dict]:
     """Case-insensitive title substring search. Returns full doc rows so
     callers don't need a follow-up get_doc per result."""
