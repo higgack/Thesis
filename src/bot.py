@@ -302,24 +302,35 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     header = f"🔍 '{query}' — {len(matches)}개 매칭"
     if len(matches) > cap:
         header += f" (상위 {cap}개 표시)"
-    lines = [header]
-    for m in matches[:cap]:
-        title = (m.get("title") or "(제목 없음)")[:80]
+    out = header
+    LIMIT = 3800  # safety margin under Telegram 4096
+    truncated = 0
+    for i, m in enumerate(matches[:cap]):
+        title = (m.get("title") or "(제목 없음)")[:70]
         ingested = (m.get("ingested_at") or "")[:10]
         source = m.get("source") or ""
         obs = m.get("obsidian_path") or ""
-        summary = (m.get("summary") or "").strip().splitlines()[0][:180] if m.get("summary") else ""
-        lines.append("")
-        lines.append(f"📄 {title}  ({ingested})")
+        summary_first = (m.get("summary") or "").strip().splitlines()[0] if m.get("summary") else ""
+        summary = summary_first[:130]
+        loc_bits = []
         if source.startswith(("http://", "https://")):
-            lines.append(f"   📎 {source}")
+            loc_bits.append(f"📎 {source[:80]}")
         elif source:
-            lines.append(f"   🆔 {source[:80]}")
+            loc_bits.append(f"🆔 {source[:50]}")
         if obs:
-            lines.append(f"   📁 {obs}")
+            loc_bits.append(f"📁 {obs[:60]}")
+        item = f"\n\n📄 {title} ({ingested})"
+        if loc_bits:
+            item += f"\n   {' · '.join(loc_bits)}"
         if summary:
-            lines.append(f"   {summary}")
-    await update.message.reply_text("\n".join(lines), disable_web_page_preview=True)
+            item += f"\n   {summary}"
+        if len(out) + len(item) > LIMIT:
+            truncated = cap - i
+            break
+        out += item
+    if truncated:
+        out += f"\n\n…(나머지 {truncated}개는 길이 제한으로 생략. 키워드를 좁혀 다시 시도)"
+    await update.message.reply_text(out, disable_web_page_preview=True)
 
 
 async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
