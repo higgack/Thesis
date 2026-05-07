@@ -16,6 +16,7 @@ services:
       - ./data:/app/data
       - tg-bot-api-data:/var/lib/telegram-bot-api
     restart: unless-stopped
+    mem_limit: 1500m
     dns:
       - 8.8.8.8
       - 1.1.1.1
@@ -33,6 +34,7 @@ services:
     depends_on:
       - bot
     restart: unless-stopped
+    mem_limit: 400m
     dns:
       - 8.8.8.8
       - 1.1.1.1

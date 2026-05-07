@@ -23,7 +23,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
-_INGEST_SEM = asyncio.Semaphore(3)
+_INGEST_SEM = asyncio.Semaphore(2)
 _INGEST_RETRY_QUEUE: list[dict] = []
 _INGEST_FAILED: list[dict] = []
 _FAILED_MAX = 200
