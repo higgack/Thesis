@@ -818,6 +818,36 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
             else:
                 results.append({"status": "error", "error": _explain_error(e)})
 
+        # Korean analyst commentary often ships as a long caption above
+        # the attached IR PDF/XLSX. Keep it as a separate doc so search
+        # can match the analysis even when the PDF body is in English.
+        cap = (msg.caption or "").strip()
+        if len(cap) >= 200:
+            cap_retry = {
+                "kind": "text",
+                "text": cap,
+                "label": f"tg-doc-caption:{msg.message_id}",
+            }
+            try:
+                rcap = await pipeline.ingest_text(
+                    cap, f"tg-doc-caption:{msg.message_id}",
+                )
+                if rcap.get("status") in ("empty", "error"):
+                    rcap["retry_payload"] = cap_retry
+                results.append(rcap)
+            except Exception as e:
+                log.exception("doc caption ingest failed")
+                if _is_retryable(e):
+                    _INGEST_RETRY_QUEUE.append({
+                        **cap_retry, "chat_id": notify_chat_id, "attempts": 0,
+                    })
+                    _persist_retry_queue()
+                    results.append({"status": "queued", "title": cap[:60]})
+                else:
+                    results.append({"status": "error",
+                                    "error": _explain_error(e),
+                                    "retry_payload": cap_retry})
+
     if msg.photo:
         photo = msg.photo[-1]
         photo_retry = {
