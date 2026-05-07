@@ -1007,6 +1007,41 @@ def _record_failure(status: str, title: str, detail: str = "",
     _persist_failed_log()
 
 
+def _empty_url_guidance(source: str) -> str:
+    """Suggest a manual recovery path for URLs the bot can't crawl
+    (auth wall, IP block, JS-only, shortener that points at a
+    restricted PDF). Shown right under the ⚠️ 본문 비어있음 line."""
+    s = (source or "").lower()
+    if any(d in s for d in (
+        "linkedin.com", "facebook.com", "story.kakao.com", "instagram.com",
+    )):
+        return (
+            "🔒 인증 차단 사이트입니다.\n"
+            "  • 글 열어 본문 복사 → 봇 DM에 붙여넣기 (200자+ 자동 학습)\n"
+            "  • 또는 스크린샷 → 봇에 이미지로 (caption 없이) 보내기"
+        )
+    if "x.com" in s or "twitter.com" in s:
+        return (
+            "🔒 X(Twitter) 본문 추출 어려움.\n"
+            "  • 트윗 본문 복사 → 봇 DM에 붙여넣기\n"
+            "  • 또는 스크린샷 → 이미지로 보내기 (OCR 자동)"
+        )
+    if any(d in s for d in (
+        "buly.kr", "vo.la", "zrr.kr", "bit.ly", "shinhansec.com",
+        "kiwoom.com", "nh-securities.com",
+    )):
+        return (
+            "🔒 단축 URL 또는 인증 필요한 호스트.\n"
+            "  • 브라우저에서 URL 열어 PDF 다운로드 → 봇에 첨부\n"
+            "  • 또는 본문 텍스트 복사 → 봇 DM에 붙여넣기"
+        )
+    return (
+        "🔒 본문 추출 실패.\n"
+        "  • URL 열어 본문 복사 → 봇 DM에 붙여넣기 (200자+)\n"
+        "  • 또는 스크린샷 → 이미지로 보내기 (OCR 자동)"
+    )
+
+
 def _format_results(results: list[dict]) -> str:
     lines = []
     for r in results:
@@ -1017,9 +1052,14 @@ def _format_results(results: list[dict]) -> str:
             lines.append(f"♻️ 이미 있음: {r['title']}")
         elif s == "empty":
             label = r.get("title") or r.get("source", "")
-            _record_failure("empty", label, r.get("source", ""),
+            src = r.get("source", "") or label
+            _record_failure("empty", label, src,
                             retry_payload=r.get("retry_payload"))
-            lines.append(f"⚠️ 본문 비어있음: {label}")
+            line = f"⚠️ 본문 비어있음: {label}"
+            guidance = _empty_url_guidance(src)
+            if guidance:
+                line += "\n" + guidance
+            lines.append(line)
         elif s == "queued":
             lines.append(f"⏳ 재시도 대기 (자동): {r.get('title', '')}")
         else:
