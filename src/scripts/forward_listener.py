@@ -34,6 +34,24 @@ def _bot_username() -> str:
     return name
 
 
+async def _resolve_channel(client: TelegramClient, channel: str):
+    if "+" in channel and ("t.me" in channel or channel.startswith("+")):
+        from telethon.tl.functions.messages import (
+            CheckChatInviteRequest, ImportChatInviteRequest,
+        )
+        invite_hash = channel.rsplit("+", 1)[-1].rstrip("/")
+        try:
+            invite = await client(CheckChatInviteRequest(invite_hash))
+            chat = getattr(invite, "chat", None)
+            if chat is not None:
+                return chat
+        except Exception:
+            pass
+        result = await client(ImportChatInviteRequest(invite_hash))
+        return result.chats[0]
+    return await client.get_entity(channel)
+
+
 async def run(channel: str) -> None:
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
@@ -44,7 +62,7 @@ async def run(channel: str) -> None:
     await client.start()
 
     try:
-        src = await client.get_entity(channel)
+        src = await _resolve_channel(client, channel)
         bot = await client.get_entity(bot_username)
     except Exception as e:
         sys.exit(
@@ -73,7 +91,8 @@ def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("usage: python -m src.scripts.forward_listener <channel_username>")
     channel = sys.argv[1]
-    if channel.startswith("https://t.me/") or channel.startswith("t.me/"):
+    if (channel.startswith("https://t.me/") or channel.startswith("t.me/")) \
+            and "+" not in channel:
         channel = channel.split("t.me/", 1)[1].rstrip("/")
     asyncio.run(run(channel))
 

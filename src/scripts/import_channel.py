@@ -45,6 +45,30 @@ def _bot_username() -> str:
     return name
 
 
+async def _resolve_channel(client: TelegramClient, channel: str):
+    """Public username, t.me/<name>, or private invite link (t.me/+HASH).
+
+    For invite links we first try CheckChatInvite (works if already
+    joined). If not joined, we ImportChatInvite to join, then return
+    the channel entity.
+    """
+    if "+" in channel and ("t.me" in channel or channel.startswith("+")):
+        from telethon.tl.functions.messages import (
+            CheckChatInviteRequest, ImportChatInviteRequest,
+        )
+        invite_hash = channel.rsplit("+", 1)[-1].rstrip("/")
+        try:
+            invite = await client(CheckChatInviteRequest(invite_hash))
+            chat = getattr(invite, "chat", None)
+            if chat is not None:
+                return chat  # already a member
+        except Exception:
+            pass
+        result = await client(ImportChatInviteRequest(invite_hash))
+        return result.chats[0]
+    return await client.get_entity(channel)
+
+
 async def run(channel: str, throttle: float, limit: int | None,
               since_id: int | None, resume: bool, resume_margin_hours: float) -> None:
     api_id = int(os.environ["TELEGRAM_API_ID"])
@@ -56,7 +80,7 @@ async def run(channel: str, throttle: float, limit: int | None,
     await client.start()
 
     try:
-        src = await client.get_entity(channel)
+        src = await _resolve_channel(client, channel)
         bot = await client.get_entity(bot_username)
     except Exception as e:
         sys.exit(
@@ -133,7 +157,10 @@ def main() -> None:
                     help="Safety overlap when --resume is used (default 1.0h).")
     args = ap.parse_args()
     channel = args.channel
-    if channel.startswith("https://t.me/") or channel.startswith("t.me/"):
+    # For public channels strip the t.me/ prefix; for invite links
+    # (t.me/+HASH) keep the full URL so _resolve_channel can detect it.
+    if (channel.startswith("https://t.me/") or channel.startswith("t.me/")) \
+            and "+" not in channel:
         channel = channel.split("t.me/", 1)[1].rstrip("/")
     asyncio.run(run(channel, args.throttle, args.limit,
                     args.since_id, args.resume, args.resume_margin_hours))
