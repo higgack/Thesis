@@ -88,9 +88,15 @@ async def run(channel: str) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        sys.exit("usage: python -m src.scripts.forward_listener <channel_username>")
-    channel = sys.argv[1]
+    if len(sys.argv) >= 2:
+        channel = sys.argv[1]
+    else:
+        channel = os.getenv("LISTEN_CHANNEL", "").strip()
+    if not channel:
+        sys.exit(
+            "Channel not provided. Pass as CLI arg or set LISTEN_CHANNEL env var.\n"
+            "  e.g. LISTEN_CHANNEL='https://t.me/+ABCxyz'"
+        )
     if (channel.startswith("https://t.me/") or channel.startswith("t.me/")) \
             and "+" not in channel:
         channel = channel.split("t.me/", 1)[1].rstrip("/")
