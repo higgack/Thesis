@@ -825,8 +825,15 @@ async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
             mime_type=_AUDIO_SUFFIX_MIME[suffix],
         )
     if suffix in {".ppt", ".doc", ".xls"}:
-        return {"status": "error",
-                "error": f"{suffix} (구버전 포맷)은 지원 안 됩니다. {suffix}x로 변환해서 다시 보내주세요."}
+        fname = (msg.document.file_name or dest.name)
+        return {
+            "status": "error",
+            "title": fname,
+            "error": (
+                f"{fname} — {suffix} 구버전 포맷 지원 안 됨. "
+                f"{suffix}x로 변환해서 다시 보내주세요."
+            ),
+        }
     content = dest.read_text(encoding="utf-8", errors="ignore")
     return await pipeline.ingest_text(content, label)
 
