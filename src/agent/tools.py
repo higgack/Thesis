@@ -248,11 +248,15 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
     types.FunctionDeclaration(
         name="web_search",
         description=(
-            "Search the live web (Google Search via Gemini grounding) for "
-            "current/factual information. Use when the user asks about "
-            "최신/요즘/지금/오늘/recent/latest news, prices, market data, "
-            "company announcements, or anything not present in the saved "
-            "brain. Returns a short factual summary with source domains."
+            "Live Google search via Gemini grounding. STRICT GATING: only "
+            "call when the user EXPLICITLY asks for web/external info — "
+            "e.g. '웹/구글/인터넷에서', '검색해줘', '최신 추가해서', "
+            "'외부에서', or clearly time-sensitive phrases like '오늘/방금/"
+            "실시간/지금 시세/현재 주가/오늘 발표'. Do NOT call just because "
+            "the user mentioned a company name or asked a general opinion "
+            "question — try search_my_brain / compare_papers first. Do NOT "
+            "auto-fallback to web_search when the brain returns few results; "
+            "instead say what's missing."
         ),
         parameters=types.Schema(
             type=types.Type.OBJECT,
