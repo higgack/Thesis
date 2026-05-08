@@ -667,6 +667,24 @@ async def cmd_deep(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _run_agent(update, ctx, text, deep=True)
 
 
+# Single-token aliases so the usage guide can render destructive
+# operations as one-tap; the original /dedupe and /cleanup still need
+# 'confirm' typed manually as a guard, so these wrappers replicate
+# that behavior with the arg pre-supplied.
+async def cmd_dedupe_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    ctx.args = ["confirm"]
+    await cmd_dedupe(update, ctx)
+
+
+async def cmd_cleanup_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    ctx.args = ["confirm"]
+    await cmd_cleanup(update, ctx)
+
+
 # Single-token slash aliases for the agent's tools so the usage guide
 # can render them as one-tap commands. Each one rephrases the user's
 # arg into a sentence the routing layer reliably maps to the intended
@@ -1473,7 +1491,9 @@ def main():
     ))
     app.add_handler(CommandHandler("queue", cmd_queue))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
+    app.add_handler(CommandHandler("cleanup_confirm", cmd_cleanup_confirm))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
+    app.add_handler(CommandHandler("dedupe_confirm", cmd_dedupe_confirm))
     app.add_handler(CommandHandler("deep", cmd_deep))
     app.add_handler(CommandHandler("search_my_brain", cmd_search_my_brain))
     app.add_handler(CommandHandler("compare_papers", cmd_compare_papers))
