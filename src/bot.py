@@ -667,6 +667,74 @@ async def cmd_deep(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _run_agent(update, ctx, text, deep=True)
 
 
+# Single-token slash aliases for the agent's tools so the usage guide
+# can render them as one-tap commands. Each one rephrases the user's
+# arg into a sentence the routing layer reliably maps to the intended
+# tool — keeps the agent's rich formatting (sources, recency, emoji
+# suffix) instead of bypassing it with a raw tool call.
+async def cmd_search_my_brain(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /search_my_brain <검색어>")
+        return
+    await _run_agent(update, ctx,
+                     f"내 저장 자료에서 '{q}' 찾아서 정리해줘", deep=False)
+
+
+async def cmd_compare_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /compare_papers <주제>")
+        return
+    await _run_agent(update, ctx,
+                     f"내 저장 자료에서 '{q}' 관련 다수 문서를 통합·비교해서 정리해줘",
+                     deep=False)
+
+
+async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /search_papers <검색어>")
+        return
+    await _run_agent(update, ctx,
+                     f"외부 학술DB에서 '{q}' 관련 최신 논문 찾아줘", deep=False)
+
+
+async def cmd_web_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /web_search <검색어>")
+        return
+    await _run_agent(update, ctx,
+                     f"'{q}' 웹에서 검색해줘", deep=False)
+
+
+async def cmd_ingest_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    url = " ".join(ctx.args).strip()
+    if not url:
+        await update.message.reply_text("사용법: /ingest_url <URL>")
+        return
+    await _run_agent(update, ctx, f"이 URL 학습해줘: {url}", deep=False)
+
+
+async def cmd_recent_docs(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    n = " ".join(ctx.args).strip() or "10"
+    await _run_agent(update, ctx,
+                     f"최근 학습한 문서 {n}개 알려줘", deep=False)
+
+
 _OVERLOAD_MARKERS = ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "high demand", "overloaded")
 _MAX_RETRY_ATTEMPTS = 5
 _RETRY_INTERVAL_SECONDS = 90
@@ -1407,6 +1475,12 @@ def main():
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
     app.add_handler(CommandHandler("deep", cmd_deep))
+    app.add_handler(CommandHandler("search_my_brain", cmd_search_my_brain))
+    app.add_handler(CommandHandler("compare_papers", cmd_compare_papers))
+    app.add_handler(CommandHandler("search_papers", cmd_search_papers))
+    app.add_handler(CommandHandler("web_search", cmd_web_search))
+    app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))
+    app.add_handler(CommandHandler("recent_docs", cmd_recent_docs))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
     app.add_handler(MessageHandler(
