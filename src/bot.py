@@ -156,7 +156,7 @@ _SECTION_EMOJIS = ["📌", "🔹", "🔸", "⚙️", "🧪", "💡", "📊", "�
 _TOOL_EMOJI = {
     "search_my_brain": "🧠",
     "compare_papers": "🧠",
-    "recent_documents": "🧠",
+    "recent_docs": "🧠",
     "search_papers": "📄",
     "web_search": "🌐",
     "ingest_url": "📥",
