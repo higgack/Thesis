@@ -27,10 +27,44 @@ log = logging.getLogger(__name__)
 
 _TOKEN_RE = re.compile(r"[\w가-힣]+", re.UNICODE)
 _RERANK_INDEX_RE = re.compile(r"\[[\d,\s]+\]")
+_EXPAND_JSON_RE = re.compile(r"\[.*?\]", re.DOTALL)
 
 
 def _tokenize(text: str) -> list[str]:
     return [t.lower() for t in _TOKEN_RE.findall(text)]
+
+
+async def expand_query(query: str) -> list[str]:
+    """Spawn 0-2 alternate phrasings that surface different facets of
+    the same question. Cheap Flash-Lite call (~₩0.3) — caller still
+    includes the original. Returns [] when the query is already
+    specific enough so we don't waste tokens on '삼성전기 4분기 OPM'
+    style queries."""
+    if len(query) > 50 or len(query.split()) > 6:
+        return []
+    try:
+        resp = await complete(
+            model=config.SUMMARY_MODEL,
+            system="검색어 확장 도우미. JSON 배열만 출력.",
+            user=(
+                "원본 검색어를 다른 측면을 강조하는 변형 2개로 확장해줘.\n"
+                "예) '삼성전기' → [\"삼성전기 MLCC 실적\", \"삼성전기 IR 코멘트\"]\n"
+                "예) 'HBM 동향' → [\"HBM 공급 양산 일정\", \"HBM 고객사 경쟁\"]\n"
+                "원본은 포함하지 말고 변형만. 이미 충분히 좁으면 [].\n\n"
+                f"원본: {query}\n출력:"
+            ),
+            max_tokens=120,
+            temperature=0.3,
+        )
+        m = _EXPAND_JSON_RE.search(resp)
+        if not m:
+            return []
+        data = json.loads(m.group(0))
+        return [s.strip() for s in data
+                if isinstance(s, str) and s.strip() and s.strip() != query][:2]
+    except Exception as e:
+        log.warning("query expand failed: %s", e)
+        return []
 
 
 async def _gemini_rerank(query: str, candidates: list[dict], k: int) -> list[dict]:

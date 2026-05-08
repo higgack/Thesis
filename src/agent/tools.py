@@ -2,6 +2,7 @@
 
 Each tool is async, returns a JSON-serializable dict, and is wrapped by a
 FunctionDeclaration in TOOL_DECLARATIONS for the model."""
+import asyncio
 import logging
 from urllib.parse import urlparse
 
@@ -19,9 +20,40 @@ _search_client = genai.Client(api_key=config.GOOGLE_API_KEY)
 
 
 async def search_my_brain(query: str, k: int = 5) -> dict:
-    hits = await retrieve.hybrid(query, k=k)
+    """Hybrid retrieval over the user's saved corpus.
+
+    Runs the original query plus up to 2 LLM-generated facet variants
+    in parallel, dedupes by doc_id, and keeps the top-k hits ranked by
+    each variant's existing score. Costs ~₩2/query for vague inputs;
+    specific inputs short-circuit to the original-only path so cost
+    stays at ~₩0.6."""
+    variants = await retrieve.expand_query(query)
+    queries = [query] + variants
+    if len(queries) == 1:
+        all_hits_lists = [await retrieve.hybrid(query, k=k)]
+    else:
+        all_hits_lists = await asyncio.gather(
+            *[retrieve.hybrid(q, k=k) for q in queries],
+            return_exceptions=True,
+        )
+        all_hits_lists = [h for h in all_hits_lists if isinstance(h, list)]
+
+    seen_docs: set[str] = set()
+    merged: list[dict] = []
+    for hits in all_hits_lists:
+        for h in hits:
+            doc_id = h["metadata"]["doc_id"]
+            if doc_id in seen_docs:
+                continue
+            seen_docs.add(doc_id)
+            merged.append(h)
+            if len(merged) >= k:
+                break
+        if len(merged) >= k:
+            break
+
     out = []
-    for h in hits:
+    for h in merged[:k]:
         doc_id = h["metadata"]["doc_id"]
         doc = meta.get_doc(doc_id) or {}
         out.append({
@@ -31,7 +63,7 @@ async def search_my_brain(query: str, k: int = 5) -> dict:
             "kind": h["metadata"]["kind"],
             "snippet": h["text"][:800],
         })
-    return {"hits": out, "count": len(out)}
+    return {"hits": out, "count": len(out), "variants": variants}
 
 
 async def search_papers(query: str, limit: int = 5) -> dict:

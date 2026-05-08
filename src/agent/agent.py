@@ -233,11 +233,28 @@ def _harvest_sources(name: str, result: dict, sources: list[str]) -> None:
                 sources.append(label)
 
 
-async def run(message: str, deep: bool = False) -> dict:
+async def run(message: str, deep: bool = False,
+              history: list[dict] | None = None) -> dict:
+    """Run one agent turn.
+
+    `history` is an optional list of {role: 'user'|'model', text: str}
+    representing the most recent conversation turns. We replay only
+    final user/assistant text (no stale tool calls/results) so the
+    model gets pronoun/topic continuity ('그 회사의 경쟁사는?') without
+    paying tokens to redo old retrievals."""
     model = config.DEEP_MODEL if deep else config.ANSWER_MODEL
-    contents: list[types.Content] = [
+    contents: list[types.Content] = []
+    for turn in (history or []):
+        role = turn.get("role")
+        text = (turn.get("text") or "").strip()
+        if role not in ("user", "model") or not text:
+            continue
+        contents.append(types.Content(
+            role=role, parts=[types.Part.from_text(text=text)]
+        ))
+    contents.append(
         types.Content(role="user", parts=[types.Part.from_text(text=message)])
-    ]
+    )
     sources: list[str] = []
     tool_calls: list[str] = []
 

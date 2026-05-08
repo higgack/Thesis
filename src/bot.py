@@ -32,6 +32,17 @@ _FAILED_MAX = 200
 # Persist these two so a hang/restart doesn't lose state.
 _RETRY_QUEUE_PATH = config.DATA_DIR / "retry_queue.json"
 _FAILED_LOG_PATH = config.DATA_DIR / "failed_log.json"
+_HISTORY_PATH = config.DATA_DIR / "chat_history.json"
+
+# Per-chat conversation memory: keyed by chat_id, holds the most
+# recent user/model text turns so follow-up questions like
+# "그 회사의 경쟁사는?" carry topic context. Tool-call payloads are
+# NOT stored — replaying stale retrievals confuses the model and
+# wastes tokens.
+_HISTORY: dict[int, list[dict]] = {}
+_HISTORY_MAX_TURNS = 3   # 3 user + 3 model = 6 messages
+_HISTORY_USER_CAP = 400
+_HISTORY_MODEL_CAP = 1200
 
 
 def _load_persisted_state() -> None:
@@ -53,6 +64,16 @@ def _load_persisted_state() -> None:
                 log.info("restored %d failed entries", len(_INGEST_FAILED))
     except Exception:
         log.exception("failed log load failed")
+    try:
+        if _HISTORY_PATH.exists():
+            data = json.loads(_HISTORY_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    if isinstance(v, list):
+                        _HISTORY[int(k)] = v
+                log.info("restored chat history for %d chats", len(_HISTORY))
+    except Exception:
+        log.exception("chat history load failed")
 
 
 def _persist_retry_queue() -> None:
@@ -64,6 +85,33 @@ def _persist_retry_queue() -> None:
         )
     except Exception:
         log.exception("retry queue persist failed")
+
+
+def _persist_chat_history() -> None:
+    import json
+    try:
+        _HISTORY_PATH.write_text(
+            json.dumps({str(k): v for k, v in _HISTORY.items()},
+                       ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        log.exception("chat history persist failed")
+
+
+def _record_turn(chat_id: int, role: str, text: str) -> None:
+    """Append one turn to this chat's rolling history. Trims old turns
+    so memory stays bounded; persists to disk so restarts don't drop
+    context."""
+    if not text:
+        return
+    cap = _HISTORY_USER_CAP if role == "user" else _HISTORY_MODEL_CAP
+    h = _HISTORY.setdefault(chat_id, [])
+    h.append({"role": role, "text": text[:cap]})
+    max_msgs = _HISTORY_MAX_TURNS * 2
+    if len(h) > max_msgs:
+        del h[: len(h) - max_msgs]
+    _persist_chat_history()
 
 
 def _persist_failed_log() -> None:
@@ -753,6 +801,18 @@ async def cmd_recent_docs(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                      f"최근 학습한 문서 {n}개 알려줘", deep=False)
 
 
+async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Wipe rolling chat memory for this chat. Useful when topic shifts
+    and stale context is hurting answer quality."""
+    if not _is_owner(update):
+        return
+    chat_id = update.effective_chat.id
+    n = len(_HISTORY.get(chat_id, []))
+    _HISTORY.pop(chat_id, None)
+    _persist_chat_history()
+    await update.message.reply_text(f"대화 메모리 초기화 ({n} 메시지 비움)")
+
+
 _OVERLOAD_MARKERS = ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "high demand", "overloaded")
 _MAX_RETRY_ATTEMPTS = 5
 _RETRY_INTERVAL_SECONDS = 90
@@ -874,8 +934,10 @@ async def on_private(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
                      text: str, deep: bool) -> None:
     await _typing(update, ctx)
+    chat_id = update.effective_chat.id
+    history = list(_HISTORY.get(chat_id, []))
     try:
-        result = await agent.run(text, deep=deep)
+        result = await agent.run(text, deep=deep, history=history)
     except Exception as e:
         if _is_overload(e):
             _RETRY_QUEUE.append({
@@ -903,6 +965,8 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
         suffix_lines.append(_format_tool_calls(result["tool_calls"]))
     suffix = ("\n\n" + "\n".join(suffix_lines)) if suffix_lines else ""
     await update.message.reply_text(f"{body}{suffix}")
+    _record_turn(chat_id, "user", text)
+    _record_turn(chat_id, "model", body)
     for code in mermaid_blocks:
         try:
             png = await _render_mermaid_png(code)
@@ -1501,6 +1565,7 @@ def main():
     app.add_handler(CommandHandler("web_search", cmd_web_search))
     app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))
     app.add_handler(CommandHandler("recent_docs", cmd_recent_docs))
+    app.add_handler(CommandHandler("reset", cmd_reset))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
     app.add_handler(MessageHandler(
