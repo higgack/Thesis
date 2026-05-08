@@ -69,6 +69,15 @@ RECONNECT_DELAY_SEC = 5
 TELETHON_CONN_RETRIES = 1000
 
 
+def _skip_patterns() -> list[str]:
+    """User-defined substrings (case-insensitive) — any match in a
+    message body skips the forward. Configured via INGEST_SKIP_PATTERNS
+    in .env, semicolon-separated. Lets the user filter bot meta-output
+    that the reply_to heuristic doesn't catch in channel contexts."""
+    raw = os.getenv("INGEST_SKIP_PATTERNS", "")
+    return [p.strip().lower() for p in raw.split(";") if p.strip()]
+
+
 async def _client_lifecycle(channel: str, target_name: str,
                             api_id: int, api_hash: str,
                             session_path) -> None:
@@ -97,6 +106,10 @@ async def _client_lifecycle(channel: str, target_name: str,
         print(f"forwarding to: {getattr(target, 'title', None) or target_name}")
         print("running... Ctrl+C to stop\n")
 
+        skip_patterns = _skip_patterns()
+        if skip_patterns:
+            print(f"skip patterns: {skip_patterns}")
+
         @client.on(events.NewMessage(chats=src))
         async def handler(event):
             msg = event.message
@@ -122,6 +135,15 @@ async def _client_lifecycle(channel: str, target_name: str,
                     # If the parent lookup fails (deleted/inaccessible),
                     # err on the side of forwarding rather than blocking.
                     print(f"  reply lookup failed {reply_to_id}: {e}")
+
+            # Pattern-based skip — fires when reply_to chain doesn't
+            # exist (channel context, forwarded posts, edited messages).
+            if skip_patterns and text:
+                lc = text.lower()
+                for pat in skip_patterns:
+                    if pat in lc:
+                        print(f"  skip pattern '{pat}' on {msg.id}")
+                        return
 
             try:
                 await event.message.forward_to(target)

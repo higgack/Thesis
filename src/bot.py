@@ -762,6 +762,31 @@ async def cmd_deep(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _run_agent(update, ctx, text, deep=True)
 
 
+async def cmd_forget_search_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Bulk forget — bypass /forget_search's 5-match safety so junk
+    cleanup (bot meta-output, accidental ingests) is one tap. Typing
+    the long command name acts as the confirmation."""
+    if not _is_owner(update):
+        return
+    query = " ".join(ctx.args).strip()
+    if not query:
+        await update.message.reply_text("사용법: /forget_search_all <키워드>")
+        return
+    matches = meta.search_title(query, limit=500)
+    if not matches:
+        await update.message.reply_text(f"매칭 없음: '{query}'")
+        return
+    forgotten = 0
+    chunks_total = 0
+    for m in matches:
+        chunks_total += vector.delete_doc(m["id"])
+        meta.delete(m["id"])
+        forgotten += 1
+    await update.message.reply_text(
+        f"✅ 일괄 삭제 · {forgotten}건 / 청크 {chunks_total}개 제거"
+    )
+
+
 # Single-token aliases so the usage guide can render destructive
 # operations as one-tap; the original /dedupe and /cleanup still need
 # 'confirm' typed manually as a guard, so these wrappers replicate
@@ -1593,6 +1618,7 @@ def main():
     app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("forget_search", cmd_forget_search))
+    app.add_handler(CommandHandler("forget_search_all", cmd_forget_search_all))
     app.add_handler(CommandHandler("find", cmd_find))
     app.add_handler(CommandHandler("failed", cmd_failed))
     app.add_handler(CommandHandler("failed_retry", cmd_failed_retry))
