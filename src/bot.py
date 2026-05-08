@@ -5,10 +5,11 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler, ContextTypes, filters,
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    ContextTypes, filters,
 )
 from telegram.request import HTTPXRequest
 
@@ -476,41 +477,52 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(out, disable_web_page_preview=True)
 
 
+def _failed_retry_all(chat_id: int) -> str:
+    """Move every failed entry that has a saved retry_payload back into
+    the auto-retry queue. Returns the user-facing summary message."""
+    retried = 0
+    kept: list[dict] = []
+    for entry in _INGEST_FAILED:
+        payload = entry.get("retry")
+        if payload:
+            payload = dict(payload)
+            payload["attempts"] = 0
+            payload["chat_id"] = chat_id
+            _INGEST_RETRY_QUEUE.append(payload)
+            retried += 1
+        else:
+            kept.append(entry)
+    _INGEST_FAILED.clear()
+    _INGEST_FAILED.extend(kept)
+    _persist_retry_queue()
+    _persist_failed_log()
+    msg = f"🔁 retry queue로 {retried}건 재등록\n2분 간격으로 자동 처리됩니다."
+    if kept:
+        msg += f"\n\n♻️ retry 정보 없는 {len(kept)}건은 그대로 — 채널 스크롤로 직접 다시 보내주세요."
+    return msg
+
+
+def _failed_clear_all() -> str:
+    n = len(_INGEST_FAILED)
+    _INGEST_FAILED.clear()
+    _persist_failed_log()
+    return f"실패 목록 비웠음 ({n}건)"
+
+
 async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Show recent ingest failures (errors + empty bodies). Persisted to
-    disk so /failed survives bot restart.
-    '/failed clear' empties the list. '/failed retry' moves entries that
-    have a saved retry payload back into the auto-retry queue."""
+    disk so /failed survives bot restart. Inline buttons let the user
+    retry / clear with one tap. /failed retry and /failed clear still
+    work as text commands too."""
     if not _is_owner(update):
         return
     if ctx.args and ctx.args[0] == "clear":
-        n = len(_INGEST_FAILED)
-        _INGEST_FAILED.clear()
-        _persist_failed_log()
-        await update.message.reply_text(f"실패 목록 비웠음 ({n}건)")
+        await update.message.reply_text(_failed_clear_all())
         return
     if ctx.args and ctx.args[0] == "retry":
-        retried = 0
-        kept: list[dict] = []
-        chat_id = update.effective_chat.id
-        for entry in _INGEST_FAILED:
-            payload = entry.get("retry")
-            if payload:
-                payload = dict(payload)
-                payload["attempts"] = 0
-                payload["chat_id"] = chat_id
-                _INGEST_RETRY_QUEUE.append(payload)
-                retried += 1
-            else:
-                kept.append(entry)
-        _INGEST_FAILED.clear()
-        _INGEST_FAILED.extend(kept)
-        _persist_retry_queue()
-        _persist_failed_log()
-        msg = f"🔁 retry queue로 {retried}건 재등록\n2분 간격으로 자동 처리됩니다."
-        if kept:
-            msg += f"\n\n♻️ retry 정보 없는 {len(kept)}건은 그대로 — 채널 스크롤로 직접 다시 보내주세요."
-        await update.message.reply_text(msg)
+        await update.message.reply_text(
+            _failed_retry_all(update.effective_chat.id)
+        )
         return
     if not _INGEST_FAILED:
         await update.message.reply_text("실패 / 빈본문 없음 ✨")
@@ -534,8 +546,30 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         out += item
     if truncated:
         out += f"\n\n…(나머지 {truncated}개 생략)"
-    out += "\n\n명령: /failed retry (자동 재시도)  ·  /failed clear (목록 비우기)"
-    await update.message.reply_text(out, disable_web_page_preview=True)
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔁 일괄 재시도", callback_data="failed_retry"),
+        InlineKeyboardButton("🗑 비우기", callback_data="failed_clear"),
+    ]])
+    await update.message.reply_text(
+        out, disable_web_page_preview=True, reply_markup=keyboard,
+    )
+
+
+async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle the /failed inline-button taps."""
+    q = update.callback_query
+    if not q:
+        return
+    user = q.from_user
+    if not user or user.id != config.TELEGRAM_OWNER_ID:
+        await q.answer("권한 없음", show_alert=False)
+        return
+    await q.answer()  # dismiss the loading spinner
+    chat_id = q.message.chat.id if q.message else config.TELEGRAM_OWNER_ID
+    if q.data == "failed_retry":
+        await q.edit_message_text(_failed_retry_all(chat_id))
+    elif q.data == "failed_clear":
+        await q.edit_message_text(_failed_clear_all())
 
 
 async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1329,6 +1363,9 @@ def main():
     app.add_handler(CommandHandler("forget_search", cmd_forget_search))
     app.add_handler(CommandHandler("find", cmd_find))
     app.add_handler(CommandHandler("failed", cmd_failed))
+    app.add_handler(CallbackQueryHandler(
+        on_callback_query, pattern=r"^failed_(retry|clear)$"
+    ))
     app.add_handler(CommandHandler("queue", cmd_queue))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
