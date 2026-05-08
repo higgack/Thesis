@@ -1503,6 +1503,16 @@ def _format_results(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
+async def _refresh_dashboard(ctx: ContextTypes.DEFAULT_TYPE):
+    """Regenerate the static dashboard HTML on a tick so ingest-only
+    activity (no Q&As happening) still shows up in the totals."""
+    try:
+        from .dashboard import regenerate as dashboard_regen
+        dashboard_regen.regenerate()
+    except Exception:
+        log.exception("scheduled dashboard refresh failed")
+
+
 async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
     """Drain one queued ingest per tick, sharing the same semaphore as live
     ingests so total concurrent ingests stays bounded."""
@@ -1671,6 +1681,12 @@ def main():
             interval=120,
             first=60,
             name="retry_pending_ingest",
+        )
+        app.job_queue.run_repeating(
+            _refresh_dashboard,
+            interval=60,
+            first=20,
+            name="refresh_dashboard",
         )
 
     _load_persisted_state()
