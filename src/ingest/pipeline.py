@@ -21,10 +21,11 @@ def _doc_id(source: str) -> str:
 
 async def ingest_url(url: str) -> dict:
     if existing := meta.find_by_source(url):
-        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+        return {"status": "duplicate", "doc_id": existing["id"],
+                "title": existing["title"], "source": url}
     title, body, hint = await load_url(url)
     if not body:
-        return {"status": "empty", "title": title}
+        return {"status": "empty", "title": title, "source": url}
     return await _ingest("url", url, title, body, hint)
 
 
