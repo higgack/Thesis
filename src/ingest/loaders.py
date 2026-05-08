@@ -28,9 +28,16 @@ _MIN_BODY_CHARS = 200
 
 # Hosts that block bot/datacenter access — skip the fetch entirely so
 # the user gets the recovery guidance (📋 본문 복사 / 스크린샷) instantly
-# instead of waiting 30+ seconds for a TCP timeout.
+# instead of waiting 30+ seconds for a TCP timeout. Includes:
+#   • social/auth-walled (LinkedIn, Facebook, etc.)
+#   • paywalled financial press (Reuters, Bloomberg, WSJ, FT, etc.)
 _BLOCKED_HOSTS = (
+    # Auth walls — bot can never see the body
     "linkedin.com", "facebook.com", "instagram.com", "story.kakao.com",
+    # English-language paywalls — server returns a stub or login redirect
+    # (한국 매체는 보통 본문 추출되니 제외; 막으면 좋은 자료까지 잃음)
+    "reuters.com", "bloomberg.com", "ft.com", "wsj.com",
+    "economist.com", "nytimes.com", "washingtonpost.com", "barrons.com",
 )
 
 

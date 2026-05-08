@@ -1129,6 +1129,16 @@ def _empty_url_guidance(source: str) -> str:
             "  • 글 열어 본문 복사 → 봇 DM에 붙여넣기 (200자+ 자동 학습)\n"
             "  • 또는 스크린샷 → 봇에 이미지로 (caption 없이) 보내기"
         )
+    if any(d in s for d in (
+        "reuters.com", "bloomberg.com", "ft.com", "wsj.com",
+        "economist.com", "nytimes.com", "washingtonpost.com", "barrons.com",
+    )):
+        return (
+            "🔒 영문 paywall 사이트입니다.\n"
+            "  • 본문 복사 → 봇 DM에 붙여넣기 (구독 중이면 가능)\n"
+            "  • 또는 같은 뉴스 다루는 한국 매체 URL을 대신 전송\n"
+            "  • 또는 스크린샷 → 이미지로 보내기 (OCR 자동)"
+        )
     if "x.com" in s or "twitter.com" in s:
         return (
             "🔒 X(Twitter) 본문 추출 어려움.\n"
