@@ -42,15 +42,17 @@ services:
   # Read-only browser for the permanent Q&A archive. Owner-token gated
   # via DASHBOARD_TOKEN. Runs as its own container so bot redeploys
   # don't interrupt browsing.
-  # Host port is 80 (HTTP default). Earlier we tried 8080 (squatted by
-  # another local service) and 8090 (silently blocked by some Korean
-  # ISPs on outbound). Port 80 is universally allowed.
+  # Host port history: 8080 (squatted by user's other static dashboard),
+  # 8090 (silently blocked outbound by some KR ISP networks), 80
+  # (Chrome auto-upgrades to HTTPS on default ports, fails because we
+  # serve plain HTTP). Settled on 8081 — non-default so browsers leave
+  # it alone, adjacent to the working 8080 so the same ISP rules apply.
   dashboard:
     build: .
     env_file: .env
     command: ["python", "-m", "src.dashboard.app"]
     ports:
-      - "80:8080"
+      - "8081:8080"
     volumes:
       - ./data:/app/data
     depends_on:
