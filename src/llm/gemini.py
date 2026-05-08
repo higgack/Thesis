@@ -51,6 +51,7 @@ async def complete(
     user: str,
     max_tokens: int = 1024,
     temperature: float = 0.2,
+    purpose: str = "unknown",
 ) -> str:
     chain = _chain_for(model)
     last_err: BaseException | None = None
@@ -67,7 +68,7 @@ async def complete(
                         temperature=temperature,
                     ),
                 )
-                cost.record_resp(m, resp)
+                cost.record_resp(m, resp, purpose=purpose)
                 if m != model:
                     log.info("served by fallback model: %s", m)
                 return resp.text or ""

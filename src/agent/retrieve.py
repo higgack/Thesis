@@ -55,6 +55,7 @@ async def expand_query(query: str) -> list[str]:
             ),
             max_tokens=120,
             temperature=0.3,
+            purpose="query",
         )
         m = _EXPAND_JSON_RE.search(resp)
         if not m:
@@ -87,6 +88,7 @@ async def _gemini_rerank(query: str, candidates: list[dict], k: int) -> list[dic
             user=prompt,
             max_tokens=200,
             temperature=0.0,
+            purpose="query",
         )
         match = _RERANK_INDEX_RE.search(resp)
         if not match:

@@ -121,7 +121,7 @@ async def web_search(query: str) -> dict:
             max_output_tokens=1024,
         ),
     )
-    cost.record_resp(config.ANSWER_MODEL, resp)
+    cost.record_resp(config.ANSWER_MODEL, resp, purpose="query")
     text = ""
     sources: list[dict] = []
     if resp.candidates and resp.candidates[0]:

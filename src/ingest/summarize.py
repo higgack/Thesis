@@ -30,4 +30,5 @@ async def _summarize_one(title: str, text: str) -> str:
         user=f"제목: {title}\n\n본문:\n{text}",
         max_tokens=config.SUMMARY_MAX_TOKENS,
         temperature=0.1,
+        purpose="ingest",
     )

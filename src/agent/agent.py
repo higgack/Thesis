@@ -271,7 +271,7 @@ async def run(message: str, deep: bool = False,
         resp = await _client.aio.models.generate_content(
             model=model, contents=contents, config=cfg
         )
-        cost.record_resp(model, resp)
+        cost.record_resp(model, resp, purpose="query")
         cand = resp.candidates[0] if resp.candidates else None
         if not cand or not cand.content:
             break
@@ -313,7 +313,7 @@ async def run(message: str, deep: bool = False,
             max_output_tokens=8192,
         ),
     )
-    cost.record_resp(model, final)
+    cost.record_resp(model, final, purpose="query")
     text = ""
     if final.candidates and final.candidates[0].content:
         text = _extract_text(final.candidates[0].content).strip()
@@ -355,6 +355,7 @@ async def _verify(question: str, answer: str, sources: list[str]) -> str | None:
             user=prompt,
             max_tokens=200,
             temperature=0.0,
+            purpose="query",
         )
         m = _AUDIT_JSON_RE.search(resp)
         if not m:

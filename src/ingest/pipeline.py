@@ -167,6 +167,7 @@ async def _extract_metadata(title: str, body: str, doc_type: str) -> dict:
             user=f"{_META_EXTRACT_PROMPT}\n\n{user_msg}",
             max_tokens=300,
             temperature=0.0,
+            purpose="ingest",
         )
         match = _re.search(r"\{.*\}", resp, _re.DOTALL)
         if match:

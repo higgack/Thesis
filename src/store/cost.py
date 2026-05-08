@@ -43,10 +43,15 @@ def _conn() -> sqlite3.Connection:
             model TEXT NOT NULL,
             in_tokens INTEGER NOT NULL,
             out_tokens INTEGER NOT NULL,
-            cost_krw REAL NOT NULL
+            cost_krw REAL NOT NULL,
+            purpose TEXT NOT NULL DEFAULT 'unknown'
         )
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")
+    # Migrate older DBs that pre-date the purpose column.
+    cols = {row[1] for row in c.execute("PRAGMA table_info(calls)")}
+    if "purpose" not in cols:
+        c.execute("ALTER TABLE calls ADD COLUMN purpose TEXT NOT NULL DEFAULT 'unknown'")
     return c
 
 
@@ -65,18 +70,21 @@ def _normalize(model: str) -> str:
     return model
 
 
-def record(model: str, in_tokens: int = 0, out_tokens: int = 0) -> float:
-    """Persist one call. Returns the KRW cost it added so callers can
-    log / surface it inline. Swallow all errors — billing tracking
-    must never break a user request."""
+def record(model: str, in_tokens: int = 0, out_tokens: int = 0,
+           purpose: str = "unknown") -> float:
+    """Persist one call. `purpose` is a free-form tag used for
+    breakdowns ('ingest' vs 'query', etc.). Returns the KRW cost it
+    added so callers can log / surface it inline. Swallow all errors —
+    billing tracking must never break a user request."""
     try:
         cost = _price_krw(_normalize(model), in_tokens, out_tokens)
         with _conn() as c:
             c.execute(
-                "INSERT INTO calls(ts, model, in_tokens, out_tokens, cost_krw)"
-                " VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO calls(ts, model, in_tokens, out_tokens, cost_krw, purpose)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
                 (datetime.utcnow().isoformat(timespec="seconds"),
-                 _normalize(model), int(in_tokens), int(out_tokens), cost),
+                 _normalize(model), int(in_tokens), int(out_tokens), cost,
+                 purpose or "unknown"),
             )
         return cost
     except Exception:
@@ -84,14 +92,14 @@ def record(model: str, in_tokens: int = 0, out_tokens: int = 0) -> float:
         return 0.0
 
 
-def record_resp(model: str, resp) -> float:
+def record_resp(model: str, resp, purpose: str = "unknown") -> float:
     """Convenience wrapper — pull token counts off a Gemini response."""
     um = getattr(resp, "usage_metadata", None)
     if not um:
         return 0.0
     in_tok = getattr(um, "prompt_token_count", 0) or 0
     out_tok = getattr(um, "candidates_token_count", 0) or 0
-    return record(model, in_tok, out_tok)
+    return record(model, in_tok, out_tok, purpose)
 
 
 def _since(start_iso: str) -> dict:
@@ -102,6 +110,12 @@ def _since(start_iso: str) -> dict:
             (start_iso,),
         )
         rows = cur.fetchall()
+        cur2 = c.execute(
+            "SELECT purpose, SUM(cost_krw), COUNT(*) FROM calls "
+            "WHERE ts >= ? GROUP BY purpose",
+            (start_iso,),
+        )
+        purpose_rows = cur2.fetchall()
     by_model = {}
     total = 0.0
     calls = 0
@@ -114,7 +128,15 @@ def _since(start_iso: str) -> dict:
         }
         total += float(cost or 0.0)
         calls += int(n or 0)
-    return {"by_model": by_model, "total_krw": total, "calls": calls}
+    by_purpose = {
+        (purpose or "unknown"): {
+            "cost": float(cost or 0.0),
+            "calls": int(n or 0),
+        }
+        for purpose, cost, n in purpose_rows
+    }
+    return {"by_model": by_model, "by_purpose": by_purpose,
+            "total_krw": total, "calls": calls}
 
 
 def today_krw() -> dict:

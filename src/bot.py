@@ -368,6 +368,17 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
     cost_breakdown = ("\n" + "\n".join(cost_lines)) if cost_lines else ""
 
+    by_purpose = today.get("by_purpose", {})
+    purpose_lines = []
+    for tag, label in (("ingest", "📥 ingest"), ("query", "💬 query"),
+                       ("unknown", "❓ unknown")):
+        if tag in by_purpose:
+            d = by_purpose[tag]
+            purpose_lines.append(
+                f"    {label}  ₩{d['cost']:,.1f}  ({d['calls']}콜)"
+            )
+    purpose_breakdown = ("\n" + "\n".join(purpose_lines)) if purpose_lines else ""
+
     # Tiny inline bar chart for the last 7 days so trends are visible
     # without leaving the /usage screen.
     daily = cost.daily_breakdown(7)
@@ -396,6 +407,7 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"\n  • 7일:  ₩{week['total_krw']:,.0f}"
         f"\n  • 30일: ₩{month['total_krw']:,.0f}"
         f"{cost_breakdown}"
+        f"{purpose_breakdown}"
         f"\n\n📅 최근 7일 (UTC)\n{daily_block}"
         f"\n\n📚 가장 최근 학습"
         f"\n  {s['latest_title'][:80]}"

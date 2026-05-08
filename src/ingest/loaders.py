@@ -256,7 +256,7 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150) -> str:
                     max_output_tokens=2048,
                 ),
             )
-            _cost.record_resp(config.SUMMARY_MODEL, resp)
+            _cost.record_resp(config.SUMMARY_MODEL, resp, purpose="ingest")
             text = (resp.text or "").strip()
             if text:
                 pages_out.append(f"-- Page {i} --\n{text}")
@@ -299,7 +299,7 @@ def _ocr_image(img_bytes: bytes, mime_type: str = "image/jpeg") -> str:
                 max_output_tokens=2048,
             ),
         )
-        _cost.record_resp(config.SUMMARY_MODEL, resp)
+        _cost.record_resp(config.SUMMARY_MODEL, resp, purpose="ingest")
         return (resp.text or "").strip()
     except Exception:
         return ""
@@ -338,7 +338,7 @@ def _transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
                 max_output_tokens=8192,
             ),
         )
-        _cost.record_resp(config.SUMMARY_MODEL, resp)
+        _cost.record_resp(config.SUMMARY_MODEL, resp, purpose="ingest")
         return (resp.text or "").strip()
     except Exception:
         return ""

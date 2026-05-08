@@ -40,10 +40,12 @@ async def _embed_one(texts: list[str], task_type: str) -> list[list[float]]:
             # embed_content rarely surfaces usage_metadata; fall back
             # to a char-based heuristic so daily cost reflects embedding
             # spend even when the API stays quiet.
-            usd_in = cost.record_resp(config.EMBED_MODEL, resp)
+            purpose = "query" if task_type == "RETRIEVAL_QUERY" else "ingest"
+            usd_in = cost.record_resp(config.EMBED_MODEL, resp, purpose=purpose)
             if usd_in == 0.0:
                 approx_tokens = sum(len(t) for t in texts) // 4
-                cost.record(config.EMBED_MODEL, approx_tokens, 0)
+                cost.record(config.EMBED_MODEL, approx_tokens, 0,
+                            purpose=purpose)
             return [e.values for e in resp.embeddings]
         except Exception as e:
             last_err = e
