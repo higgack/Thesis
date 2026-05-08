@@ -54,54 +54,114 @@ a:hover { text-decoration: underline; }
 """
 
 _INDEX_CSS = _BASE_CSS + """
-.layout { max-width: 980px; margin: 0 auto; padding: 24px 20px 80px; }
+.layout { max-width: 1100px; margin: 0 auto; padding: 28px 22px 80px; }
+header { margin-bottom: 22px; }
 header h1 {
-  font-size: 18px; margin: 0 0 4px 0; color: var(--accent);
+  font-size: 22px; margin: 0 0 4px 0; color: var(--text);
+  display: flex; align-items: center; gap: 8px;
 }
-header .sub { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+header .sub { color: var(--muted); font-size: 13px; }
+
 .stats {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr));
-  gap: 8px; margin-bottom: 24px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(170px,1fr));
+  gap: 10px; margin-bottom: 22px;
 }
-.stats div {
+.stat-card {
   background: var(--panel); border: 1px solid var(--border);
-  border-radius: 6px; padding: 10px 12px; font-size: 12px;
-  color: var(--muted);
+  border-radius: 10px; padding: 14px 16px;
 }
-.stats div b {
-  display: block; color: var(--text); font-size: 16px; margin-top: 2px;
+.stat-card .label {
+  font-size: 11px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.5px; margin-bottom: 6px;
+  display: flex; align-items: center; gap: 6px;
 }
-.day-header {
-  font-size: 13px; color: var(--muted); margin: 24px 0 8px;
-  padding-bottom: 6px; border-bottom: 1px solid var(--border);
-  font-weight: 600; letter-spacing: 0.3px;
+.stat-card .value {
+  font-size: 22px; font-weight: 700; color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
-details {
+.stat-card .sub {
+  font-size: 11px; color: var(--muted); margin-top: 4px;
+}
+
+.controls {
   background: var(--panel); border: 1px solid var(--border);
-  border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;
+  border-radius: 10px; padding: 14px 16px; margin-bottom: 18px;
 }
-details[open] { padding-bottom: 18px; }
-summary {
-  cursor: pointer; list-style: none; outline: none;
+.controls .search-row {
+  display: flex; gap: 10px; margin-bottom: 12px;
 }
-summary::-webkit-details-marker { display: none; }
-summary .row1 {
+.controls input[type=text] {
+  flex: 1; background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); padding: 9px 13px; border-radius: 6px;
+  font-size: 14px; outline: none;
+}
+.controls input[type=text]:focus { border-color: var(--accent); }
+.controls button.reset {
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--muted); padding: 8px 14px; border-radius: 6px;
+  cursor: pointer; font-size: 12px;
+}
+.controls button.reset:hover { color: var(--text); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  cursor: pointer; user-select: none;
+  padding: 5px 11px; border-radius: 14px;
+  font-size: 11px; font-weight: 600;
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--muted); transition: 0.1s;
+}
+.chip:hover { color: var(--text); }
+.chip.active { color: var(--text); border-color: currentColor; }
+.chip.brain.active { color: var(--tool-brain); background: rgba(247,129,102,0.12); }
+.chip.paper.active { color: var(--tool-paper); background: rgba(163,113,247,0.12); }
+.chip.web.active   { color: var(--tool-web); background: rgba(63,185,80,0.12); }
+.chip.ingest.active{ color: var(--tool-ingest); background: rgba(210,153,34,0.12); }
+
+.summary-line {
+  font-size: 12px; color: var(--muted); margin: 16px 4px 8px;
+}
+
+.day-section {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; margin-bottom: 12px; overflow: hidden;
+}
+.day-section > summary {
+  cursor: pointer; list-style: none; padding: 12px 18px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-weight: 600;
+}
+.day-section > summary::-webkit-details-marker { display: none; }
+.day-section > summary::before {
+  content: "▸ "; color: var(--muted); margin-right: 4px; font-size: 11px;
+}
+.day-section[open] > summary::before { content: "▾ "; }
+.day-section .day-count { color: var(--muted); font-weight: 400; font-size: 12px; }
+.day-body { padding: 0 18px 14px; }
+
+.qna-card {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; margin-bottom: 8px;
+}
+.qna-card details { background: transparent; border: 0; padding: 0; }
+.qna-card summary { cursor: pointer; list-style: none; outline: none; }
+.qna-card summary::-webkit-details-marker { display: none; }
+.qna-card .row1 {
   display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
   font-size: 11px; color: var(--muted); margin-bottom: 6px;
 }
-summary .question {
+.qna-card .question {
   font-size: 14px; font-weight: 600; color: var(--text);
   word-break: break-word;
 }
-summary .question a { color: inherit; }
+.qna-card .question a { color: inherit; }
 .tool {
   display: inline-block; padding: 1px 7px; border-radius: 3px;
   font-size: 10px; font-weight: 600;
 }
 .tool-brain { background: rgba(247,129,102,0.15); color: var(--tool-brain); }
 .tool-paper { background: rgba(163,113,247,0.15); color: var(--tool-paper); }
-.tool-web { background: rgba(63,185,80,0.15); color: var(--tool-web); }
-.tool-ingest { background: rgba(210,153,34,0.15); color: var(--tool-ingest); }
+.tool-web   { background: rgba(63,185,80,0.15); color: var(--tool-web); }
+.tool-ingest{ background: rgba(210,153,34,0.15); color: var(--tool-ingest); }
 .tool-other { background: rgba(139,148,158,0.15); color: var(--muted); }
 .warning {
   background: rgba(210,153,34,0.1); border-left: 3px solid var(--tool-ingest);
@@ -118,6 +178,8 @@ summary .question a { color: inherit; }
   color: var(--muted);
 }
 .sources li { padding: 2px 0; }
+
+.qna-card.hidden, .day-section.hidden { display: none; }
 """
 
 _DETAIL_CSS = _BASE_CSS + """
@@ -190,12 +252,100 @@ def _tool_emoji(name: str) -> str:
     return "🔧"
 
 
+_INDEX_JS = """
+(function(){
+  var search = document.getElementById('q');
+  var resetBtn = document.getElementById('reset');
+  var chips = document.querySelectorAll('.chip');
+  var cards = document.querySelectorAll('.qna-card');
+  var sections = document.querySelectorAll('.day-section');
+  var counter = document.getElementById('count');
+
+  // Active filters: empty set = all tools allowed.
+  var activeTools = new Set();
+
+  function apply(){
+    var q = (search.value || '').trim().toLowerCase();
+    var visible = 0;
+    cards.forEach(function(c){
+      var text = c.dataset.text || '';
+      var tools = (c.dataset.tools || '').split(' ');
+      var matchesQuery = !q || text.indexOf(q) !== -1;
+      var matchesTool = activeTools.size === 0 ||
+        tools.some(function(t){ return activeTools.has(t); });
+      var show = matchesQuery && matchesTool;
+      c.classList.toggle('hidden', !show);
+      if (show) visible++;
+    });
+    sections.forEach(function(s){
+      var anyVisible = s.querySelectorAll('.qna-card:not(.hidden)').length > 0;
+      s.classList.toggle('hidden', !anyVisible);
+    });
+    if (counter) counter.textContent = visible;
+  }
+
+  search.addEventListener('input', apply);
+  resetBtn.addEventListener('click', function(){
+    search.value = '';
+    activeTools.clear();
+    chips.forEach(function(c){ c.classList.remove('active'); });
+    apply();
+  });
+  chips.forEach(function(c){
+    c.addEventListener('click', function(){
+      var tool = c.dataset.tool;
+      if (activeTools.has(tool)){
+        activeTools.delete(tool);
+        c.classList.remove('active');
+      } else {
+        activeTools.add(tool);
+        c.classList.add('active');
+      }
+      apply();
+    });
+  });
+})();
+"""
+
+
+def _card_data_text(it: dict) -> str:
+    """Searchable haystack for the JS filter — lowercased, ascii-safe."""
+    parts = [
+        it.get("question") or "",
+        it.get("answer") or "",
+        " ".join(it.get("tools") or []),
+        " ".join(it.get("sources") or []),
+    ]
+    return _esc(" ".join(parts).lower())[:5000]
+
+
+def _card_data_tools(it: dict) -> str:
+    """Space-separated bucket names so the JS filter can match by group."""
+    buckets = set()
+    for t in (it.get("tools") or []):
+        n = t.lower()
+        if "brain" in n or "compare" in n or "recent" in n:
+            buckets.add("brain")
+        elif "paper" in n:
+            buckets.add("paper")
+        elif "web" in n:
+            buckets.add("web")
+        elif "ingest" in n:
+            buckets.add("ingest")
+        else:
+            buckets.add("other")
+    return " ".join(sorted(buckets))
+
+
 def _render_index(rows: list[dict], stats: dict) -> str:
     grouped: dict[str, list[dict]] = {}
     for r in rows:
         day = (r.get("ts") or "")[:10]
         grouped.setdefault(day, []).append(r)
     days_sorted = sorted(grouped.keys(), reverse=True)
+
+    today_calls = stats.get("today_calls", 0)
+    avg_daily = (stats["month_krw"] / 30) if stats.get("month_krw") else 0
 
     parts = [
         "<!DOCTYPE html><html lang='ko'><head>",
@@ -204,15 +354,48 @@ def _render_index(rows: list[dict], stats: dict) -> str:
         "<title>🧠 Second Brain Archive</title>",
         f"<style>{_INDEX_CSS}</style>",
         "</head><body><div class='layout'>",
-        "<header><h1>🧠 Second Brain Archive</h1>",
-        "<div class='sub'>저장된 모든 Q&amp;A — 영구 보관</div></header>",
+        "<header>",
+        "<h1>🧠 Second Brain Archive</h1>",
+        "<div class='sub'>카드 클릭 시 답변 펼침 · 검색창에서 키워드 필터 · 칩으로 도구별 필터</div>",
+        "</header>",
+
         "<div class='stats'>",
-        f"<div>총 Q&amp;A<b>{stats['total_qna']:,}</b></div>",
-        f"<div>학습 문서<b>{stats['docs']:,}</b></div>",
-        f"<div>청크<b>{stats['chunks']:,}</b></div>",
-        f"<div>오늘 비용<b>₩{stats['today_krw']:,.0f}</b></div>",
-        f"<div>30일 비용<b>₩{stats['month_krw']:,.0f}</b></div>",
+        "<div class='stat-card'>",
+        "<div class='label'>📊 총 Q&amp;A</div>",
+        f"<div class='value'>{stats['total_qna']:,}건</div>",
+        f"<div class='sub'>{len(days_sorted)}일에 걸쳐 누적</div>",
         "</div>",
+        "<div class='stat-card'>",
+        "<div class='label'>📚 학습 자료</div>",
+        f"<div class='value'>{stats['docs']:,}개</div>",
+        f"<div class='sub'>청크 {stats['chunks']:,}개</div>",
+        "</div>",
+        "<div class='stat-card'>",
+        "<div class='label'>💰 오늘 비용</div>",
+        f"<div class='value'>₩{stats['today_krw']:,.0f}</div>",
+        f"<div class='sub'>{today_calls}콜</div>",
+        "</div>",
+        "<div class='stat-card'>",
+        "<div class='label'>📅 30일 누적</div>",
+        f"<div class='value'>₩{stats['month_krw']:,.0f}</div>",
+        f"<div class='sub'>일평균 ₩{avg_daily:,.0f}</div>",
+        "</div>",
+        "</div>",
+
+        "<div class='controls'>",
+        "<div class='search-row'>",
+        "<input id='q' type='text' placeholder='질문 / 답변 / 출처 검색...' autocomplete='off'>",
+        "<button id='reset' class='reset' type='button'>초기화</button>",
+        "</div>",
+        "<div class='chips'>",
+        "<span class='chip brain' data-tool='brain'>🧠 brain</span>",
+        "<span class='chip paper' data-tool='paper'>📄 papers</span>",
+        "<span class='chip web' data-tool='web'>🌐 web</span>",
+        "<span class='chip ingest' data-tool='ingest'>📥 ingest</span>",
+        "</div>",
+        "</div>",
+
+        f"<div class='summary-line'>총 <span id='count'>{len(rows)}</span>건의 Q&amp;A 기록</div>",
     ]
 
     if not rows:
@@ -225,8 +408,9 @@ def _render_index(rows: list[dict], stats: dict) -> str:
     for day in days_sorted:
         items = grouped[day]
         parts.append(
-            f"<div class='day-header'>📅 {_esc(day)} "
-            f"<span style='color:var(--muted);font-weight:400'>· {len(items)}건</span></div>"
+            f"<details class='day-section' open>"
+            f"<summary>📅 {_esc(day)}<span class='day-count'>{len(items)}건</span></summary>"
+            f"<div class='day-body'>"
         )
         for it in items:
             tools = it.get("tools") or []
@@ -249,7 +433,10 @@ def _render_index(rows: list[dict], stats: dict) -> str:
                 f"<span style='margin-left:auto'>{_esc(it.get('model'))}</span>"
                 if it.get("model") else ""
             )
+            data_text = _card_data_text(it)
+            data_tools = _card_data_tools(it)
             parts.append(
+                f"<div class='qna-card' data-text=\"{data_text}\" data-tools=\"{data_tools}\">"
                 "<details><summary>"
                 "<div class='row1'>"
                 f"<span>{_esc(it['ts'][11:16])}</span>"
@@ -261,9 +448,11 @@ def _render_index(rows: list[dict], stats: dict) -> str:
                 f"{warn}"
                 f"<div class='answer'>{_esc(it['answer'])}</div>"
                 f"{sources_html}"
-                "</details>"
+                "</details></div>"
             )
+        parts.append("</div></details>")
 
+    parts.append(f"<script>{_INDEX_JS}</script>")
     parts.append("</div></body></html>")
     return "\n".join(parts)
 
@@ -333,11 +522,13 @@ def regenerate() -> None:
             target.mkdir(parents=True, exist_ok=True)
             (base / "index.html").write_text(_PUBLIC_INDEX, encoding="utf-8")
             rows = qna.recent(limit=2000)
+            today = cost.today_krw()
             stats = {
                 "total_qna": qna.count(),
                 "docs": meta_store.count(),
                 "chunks": vector_store.chunk_count(),
-                "today_krw": cost.today_krw()["total_krw"],
+                "today_krw": today["total_krw"],
+                "today_calls": today["calls"],
                 "month_krw": cost.period_krw(30)["total_krw"],
             }
             (target / "index.html").write_text(
