@@ -42,12 +42,14 @@ services:
   # Read-only browser for the permanent Q&A archive. Owner-token gated
   # via DASHBOARD_TOKEN. Runs as its own container so bot redeploys
   # don't interrupt browsing.
+  # Host port is 8090 instead of 8080 because the user already has
+  # another local service squatting on 8080.
   dashboard:
     build: .
     env_file: .env
     command: ["python", "-m", "src.dashboard.app"]
     ports:
-      - "8080:8080"
+      - "8090:8080"
     volumes:
       - ./data:/app/data
     depends_on:
