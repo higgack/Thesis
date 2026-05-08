@@ -63,39 +63,88 @@ async def _resolve_channel(client: TelegramClient, channel: str):
     return await client.get_entity(channel)
 
 
+RECONNECT_DELAY_SEC = 5
+# How many low-level (re)connect attempts Telethon does before giving up
+# inside one client lifecycle. Big number = effectively never.
+TELETHON_CONN_RETRIES = 1000
+
+
+async def _client_lifecycle(channel: str, target_name: str,
+                            api_id: int, api_hash: str,
+                            session_path) -> None:
+    """One full client connection — start, subscribe, run until the
+    socket dies, then return so the outer loop reconnects."""
+    client = TelegramClient(
+        str(session_path), api_id, api_hash,
+        connection_retries=TELETHON_CONN_RETRIES,
+        retry_delay=2,
+        auto_reconnect=True,
+        request_retries=10,
+    )
+    try:
+        await client.start()
+        try:
+            src = await _resolve_channel(client, channel)
+            target = await _resolve_channel(client, target_name)
+        except Exception as e:
+            print(
+                f"resolve failed: {type(e).__name__}: {e} — "
+                f"sleeping {RECONNECT_DELAY_SEC}s before retry"
+            )
+            return
+
+        print(f"listening: {getattr(src, 'title', channel)}")
+        print(f"forwarding to: {getattr(target, 'title', None) or target_name}")
+        print("running... Ctrl+C to stop\n")
+
+        @client.on(events.NewMessage(chats=src))
+        async def handler(event):
+            try:
+                await event.message.forward_to(target)
+                print(f"  forwarded msg {event.message.id}")
+            except FloodWaitError as e:
+                print(f"  flood wait {e.seconds}s")
+                await asyncio.sleep(e.seconds + 1)
+            except Exception as e:
+                print(f"  err {event.message.id}: {type(e).__name__}: {e}")
+
+        await client.run_until_disconnected()
+    finally:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+
 async def run(channel: str) -> None:
+    """Outer loop: reconnect forever so a flaky network or a
+    Telethon-side socket close can never silently drop forwarded
+    messages. Each iteration spins up a fresh TelegramClient with
+    auto_reconnect on, runs until disconnected, then sleeps a short
+    backoff before reconnecting."""
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
     target_name = _forward_target()
-
     session_path = config.DATA_DIR / "import_session"
-    client = TelegramClient(str(session_path), api_id, api_hash)
-    await client.start()
 
-    try:
-        src = await _resolve_channel(client, channel)
-        target = await _resolve_channel(client, target_name)
-    except Exception as e:
-        sys.exit(
-            f"Could not resolve channel '{channel}' or target '{target_name}': {e}"
-        )
-
-    print(f"listening: {getattr(src, 'title', channel)}")
-    print(f"forwarding to: {getattr(target, 'title', None) or target_name}")
-    print("running... Ctrl+C to stop\n")
-
-    @client.on(events.NewMessage(chats=src))
-    async def handler(event):
+    while True:
         try:
-            await event.message.forward_to(target)
-            print(f"  forwarded msg {event.message.id}")
-        except FloodWaitError as e:
-            print(f"  flood wait {e.seconds}s")
-            await asyncio.sleep(e.seconds + 1)
+            await _client_lifecycle(
+                channel, target_name, api_id, api_hash, session_path,
+            )
+            print(
+                f"client disconnected — reconnecting in "
+                f"{RECONNECT_DELAY_SEC}s..."
+            )
+        except KeyboardInterrupt:
+            print("interrupted")
+            raise
         except Exception as e:
-            print(f"  err {event.message.id}: {type(e).__name__}: {e}")
-
-    await client.run_until_disconnected()
+            print(
+                f"client loop error: {type(e).__name__}: {e} — "
+                f"sleeping {RECONNECT_DELAY_SEC}s before retry"
+            )
+        await asyncio.sleep(RECONNECT_DELAY_SEC)
 
 
 def main() -> None:
