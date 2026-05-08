@@ -1048,6 +1048,11 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
         model=result.get("model"),
         warning=result.get("warning"),
     )
+    try:
+        from .dashboard import regenerate as dashboard_regen
+        dashboard_regen.regenerate()
+    except Exception:
+        log.exception("dashboard regen failed")
     for code in mermaid_blocks:
         try:
             png = await _render_mermaid_png(code)
