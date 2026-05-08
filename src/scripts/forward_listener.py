@@ -80,7 +80,14 @@ _BUILTIN_SKIP_PATTERNS = [
     "noah 요약봇 사용 현황",
     "noah 요약봇 사용현황",
     "gemini api 비용 (추정)",
+    "gemini api 사용량",
     "봇 사용 현황",
+    # Schedule / archive announcement messages from other bots
+    "noah의 주식요약 통합 스케줄",
+    "통합 스케줄",
+    "과거 요약 아카이브",
+    "주간 요약 보고서",
+    "범례: 📋 텔레그램",
     # Deploy notifications from any of the user's auto-deploy scripts
     "배포 완료",
     "봇 배포",
