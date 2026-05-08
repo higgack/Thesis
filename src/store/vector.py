@@ -1,7 +1,12 @@
+import logging
+import threading
+
 import chromadb
 from chromadb.config import Settings
 from .. import config
 from ..llm.embed import embed
+
+log = logging.getLogger(__name__)
 
 _client = chromadb.PersistentClient(
     path=str(config.DATA_DIR / "chroma"),
@@ -42,19 +47,13 @@ async def query(text: str, k: int = 5, kind: str | None = None) -> list[dict]:
     return out
 
 
-_BM25_CACHE: dict = {"count": -1, "data": None}
+_BM25_CACHE: dict = {"count": -1, "data": None, "building": False}
+_BM25_LOCK = threading.Lock()
 
 
-def all_documents_text() -> list[tuple[str, str, dict]]:
-    """Return all chunks for BM25 indexing: (id, text, metadata).
-
-    Paginated because an unbounded `_collection.get()` on a large corpus
-    trips Chroma's SQLite bind-parameter limit ("too many SQL
-    variables"). Result is cached in-process keyed by chunk count, so
-    we only rescan when the collection actually grew."""
-    n = _collection.count()
-    if _BM25_CACHE["count"] == n and _BM25_CACHE["data"] is not None:
-        return _BM25_CACHE["data"]
+def _scan_all_chunks() -> list[tuple[str, str, dict]]:
+    """Paginated scan because Chroma's unbounded get() trips SQLite's
+    bind-parameter limit on large corpora."""
     out: list[tuple[str, str, dict]] = []
     BATCH = 500
     offset = 0
@@ -70,9 +69,49 @@ def all_documents_text() -> list[tuple[str, str, dict]]:
         if len(ids) < BATCH:
             break
         offset += BATCH
-    _BM25_CACHE["count"] = n
-    _BM25_CACHE["data"] = out
     return out
+
+
+def _bm25_build_sync() -> None:
+    """Heavy work: pull every chunk + memoize. Runs on a worker thread
+    so the event loop stays responsive."""
+    try:
+        n = _collection.count()
+        log.info("bm25 corpus scan starting (%d chunks)", n)
+        data = _scan_all_chunks()
+        with _BM25_LOCK:
+            _BM25_CACHE["data"] = data
+            _BM25_CACHE["count"] = n
+            _BM25_CACHE["building"] = False
+        log.info("bm25 corpus scan done (%d chunks cached)", len(data))
+    except Exception:
+        with _BM25_LOCK:
+            _BM25_CACHE["building"] = False
+        log.exception("bm25 corpus scan failed")
+
+
+def all_documents_text() -> list[tuple[str, str, dict]] | None:
+    """Cached corpus snapshot for BM25 indexing.
+
+    Returns None if the cache isn't ready yet — caller should fall back
+    to dense-only retrieval. Triggers a background rebuild whenever the
+    chunk count drifts (after ingest) or the cache is empty. Avoids
+    blocking the event loop on multi-thousand-chunk scans."""
+    n = _collection.count()
+    cached = _BM25_CACHE["data"]
+    if cached is not None and _BM25_CACHE["count"] == n:
+        return cached
+    with _BM25_LOCK:
+        if not _BM25_CACHE["building"]:
+            _BM25_CACHE["building"] = True
+            threading.Thread(target=_bm25_build_sync, daemon=True).start()
+    return cached  # may still be a stale snapshot, or None on cold start
+
+
+def warm_bm25_cache() -> None:
+    """Kick off the corpus scan immediately so the very first user query
+    doesn't pay the multi-thousand-chunk tax."""
+    all_documents_text()
 
 
 def delete_doc(doc_id: str) -> int:

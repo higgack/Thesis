@@ -1428,6 +1428,7 @@ def main():
         )
 
     _load_persisted_state()
+    vector.warm_bm25_cache()  # background scan; first query stays fast
     log.info("bot starting")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

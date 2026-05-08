@@ -88,6 +88,9 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
 
     dense = {h["id"]: (1.0 - h["distance"], h) for h in summary_hits + chunk_hits}
 
+    # BM25 is augmentary; if the corpus snapshot isn't cached yet (cold
+    # start), skip it for this query and let the background build catch
+    # up. Dense retrieval alone still answers well.
     all_chunks = vector.all_documents_text()
     if all_chunks:
         ids, docs, _ = zip(*all_chunks)
@@ -105,6 +108,8 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
                     "id": cid, "text": docs[doc_idx],
                     "metadata": all_chunks[doc_idx][2], "distance": 1.0 - n,
                 })
+    else:
+        log.info("bm25 cache cold — dense-only retrieval this turn")
 
     recency_cache: dict[str, float] = {}
     for cid in list(dense.keys()):
