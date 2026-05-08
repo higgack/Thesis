@@ -6,6 +6,7 @@ from google import genai
 from google.genai import types
 
 from .. import config
+from ..store import cost
 
 log = logging.getLogger(__name__)
 _client = genai.Client(api_key=config.GOOGLE_API_KEY)
@@ -36,6 +37,13 @@ async def _embed_one(texts: list[str], task_type: str) -> list[list[float]]:
                 contents=texts,
                 config=types.EmbedContentConfig(task_type=task_type),
             )
+            # embed_content rarely surfaces usage_metadata; fall back
+            # to a char-based heuristic so daily cost reflects embedding
+            # spend even when the API stays quiet.
+            usd_in = cost.record_resp(config.EMBED_MODEL, resp)
+            if usd_in == 0.0:
+                approx_tokens = sum(len(t) for t in texts) // 4
+                cost.record(config.EMBED_MODEL, approx_tokens, 0)
             return [e.values for e in resp.embeddings]
         except Exception as e:
             last_err = e

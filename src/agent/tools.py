@@ -10,7 +10,7 @@ from google import genai
 from google.genai import types
 
 from .. import config
-from ..store import meta, vector
+from ..store import meta, vector, cost
 from ..ingest import pipeline
 from . import retrieve, papersearch
 
@@ -121,6 +121,7 @@ async def web_search(query: str) -> dict:
             max_output_tokens=1024,
         ),
     )
+    cost.record_resp(config.ANSWER_MODEL, resp)
     text = ""
     sources: list[dict] = []
     if resp.candidates and resp.candidates[0]:

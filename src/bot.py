@@ -14,7 +14,7 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 
 from . import config
-from .store import meta, vector, obsidian
+from .store import meta, vector, obsidian, cost
 from .ingest import pipeline
 from .agent import agent
 
@@ -352,12 +352,22 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     failed_len = len(_INGEST_FAILED)
 
     types_line = ", ".join(f"{t}:{c}" for t, c in s["types"][:8]) or "-"
-    # Rough cost — text/url ≈ ₩4, pdf/pptx/xlsx ≈ ₩6, audio ≈ ₩55, image ≈ ₩2.
-    cost_table = {
-        "text": 4, "url": 5, "pdf": 6, "paper": 6,
-        "pptx": 6, "docx": 5, "xlsx": 5, "image": 2, "audio": 55,
-    }
-    cost_24h = sum(cost_table.get(t, 4) * 1 for t, _ in s["types"]) * (s["last_24h"] / max(s["total"], 1))
+
+    today = cost.today_krw()
+    week = cost.period_krw(7)
+    month = cost.period_krw(30)
+    by_today = today["by_model"]
+    cost_lines = []
+    for m in ("gemini-2.5-pro", "gemini-2.5-flash",
+              "gemini-2.5-flash-lite", "gemini-embedding-001"):
+        if m in by_today:
+            d = by_today[m]
+            cost_lines.append(
+                f"    {m.replace('gemini-2.5-', '').replace('gemini-', '')}"
+                f"  ₩{d['cost']:,.1f}  ({d['calls']}콜)"
+            )
+    cost_breakdown = ("\n" + "\n".join(cost_lines)) if cost_lines else ""
+
     out = (
         "📊 봇 사용 현황\n"
         f"\n총 문서: {s['total']}개  /  청크: {chunks}개"
@@ -367,6 +377,11 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"\n  • 30d: {s['last_30d']}건"
         f"\n\n📂 type별 분포"
         f"\n  {types_line}"
+        f"\n\n💰 추정 비용 (Gemini API)"
+        f"\n  • 오늘: ₩{today['total_krw']:,.0f}  ({today['calls']}콜)"
+        f"\n  • 7일:  ₩{week['total_krw']:,.0f}"
+        f"\n  • 30일: ₩{month['total_krw']:,.0f}"
+        f"{cost_breakdown}"
         f"\n\n📚 가장 최근 학습"
         f"\n  {s['latest_title'][:80]}"
         f"\n  {s['latest_at'][:16].replace('T', ' ')}"

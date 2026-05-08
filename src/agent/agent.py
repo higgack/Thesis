@@ -11,6 +11,7 @@ from google.genai import types
 
 from .. import config
 from ..llm.gemini import complete
+from ..store import cost
 from .tools import TOOL_DISPATCH, TOOL_DECLARATIONS
 
 _AUDIT_JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
@@ -270,6 +271,7 @@ async def run(message: str, deep: bool = False,
         resp = await _client.aio.models.generate_content(
             model=model, contents=contents, config=cfg
         )
+        cost.record_resp(model, resp)
         cand = resp.candidates[0] if resp.candidates else None
         if not cand or not cand.content:
             break
@@ -311,6 +313,7 @@ async def run(message: str, deep: bool = False,
             max_output_tokens=8192,
         ),
     )
+    cost.record_resp(model, final)
     text = ""
     if final.candidates and final.candidates[0].content:
         text = _extract_text(final.candidates[0].content).strip()

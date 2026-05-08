@@ -6,6 +6,7 @@ from google import genai
 from google.genai import types
 
 from .. import config
+from ..store import cost
 
 log = logging.getLogger(__name__)
 _client = genai.Client(api_key=config.GOOGLE_API_KEY)
@@ -66,6 +67,7 @@ async def complete(
                         temperature=temperature,
                     ),
                 )
+                cost.record_resp(m, resp)
                 if m != model:
                     log.info("served by fallback model: %s", m)
                 return resp.text or ""

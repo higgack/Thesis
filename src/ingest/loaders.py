@@ -222,6 +222,7 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150) -> str:
         from google import genai
         from google.genai import types
         from .. import config
+        from ..store import cost as _cost
     except Exception:
         return ""
 
@@ -255,6 +256,7 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150) -> str:
                     max_output_tokens=2048,
                 ),
             )
+            _cost.record_resp(config.SUMMARY_MODEL, resp)
             text = (resp.text or "").strip()
             if text:
                 pages_out.append(f"-- Page {i} --\n{text}")
@@ -276,6 +278,7 @@ def _ocr_image(img_bytes: bytes, mime_type: str = "image/jpeg") -> str:
         from google import genai
         from google.genai import types
         from .. import config
+        from ..store import cost as _cost
     except Exception:
         return ""
     client = genai.Client(api_key=config.GOOGLE_API_KEY)
@@ -296,6 +299,7 @@ def _ocr_image(img_bytes: bytes, mime_type: str = "image/jpeg") -> str:
                 max_output_tokens=2048,
             ),
         )
+        _cost.record_resp(config.SUMMARY_MODEL, resp)
         return (resp.text or "").strip()
     except Exception:
         return ""
@@ -313,6 +317,7 @@ def _transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
         from google import genai
         from google.genai import types
         from .. import config
+        from ..store import cost as _cost
     except Exception:
         return ""
     client = genai.Client(api_key=config.GOOGLE_API_KEY)
@@ -333,6 +338,7 @@ def _transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
                 max_output_tokens=8192,
             ),
         )
+        _cost.record_resp(config.SUMMARY_MODEL, resp)
         return (resp.text or "").strip()
     except Exception:
         return ""
