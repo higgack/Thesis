@@ -262,7 +262,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "  - 최근 저장 목록\n"
         "• /deep <질문> - 어려운 질문은 Gemini Pro로\n"
         "• /find <제목 일부> - 답변 출처 원본 (URL/Obsidian) 찾기\n"
-        "• /failed - 실패한 ingest 목록 (/failed retry: 일괄 자동 재시도)\n"
+        "• /failed - 실패한 ingest 목록 (/failed_retry · /failed_clear)\n"
         "• /queue - 자동 재시도 대기 중인 항목\n"
         "• /stats /recent /forget <id>"
     )
@@ -553,6 +553,24 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         out, disable_web_page_preview=True, reply_markup=keyboard,
     )
+
+
+async def cmd_failed_retry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Single-token alias so the usage guide can render as a one-tap
+    command (Telegram only treats `/word` as tappable; `/failed retry`
+    needs the user to type 'retry' manually)."""
+    if not _is_owner(update):
+        return
+    await update.message.reply_text(
+        _failed_retry_all(update.effective_chat.id)
+    )
+
+
+async def cmd_failed_clear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """One-tap alias for /failed clear (see cmd_failed_retry)."""
+    if not _is_owner(update):
+        return
+    await update.message.reply_text(_failed_clear_all())
 
 
 async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1314,7 +1332,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 await ctx.bot.send_message(
                     chat_id,
                     f"⚠️ ingest 재시도 포기 — {title[:80]}\n{_explain_error(e)}\n"
-                    "/failed retry 로 다시 시도할 수 있습니다.",
+                    "/failed_retry 로 다시 시도할 수 있습니다.",
                 )
                 return
             log.info("ingest retry %d/%d: %s",
@@ -1363,6 +1381,8 @@ def main():
     app.add_handler(CommandHandler("forget_search", cmd_forget_search))
     app.add_handler(CommandHandler("find", cmd_find))
     app.add_handler(CommandHandler("failed", cmd_failed))
+    app.add_handler(CommandHandler("failed_retry", cmd_failed_retry))
+    app.add_handler(CommandHandler("failed_clear", cmd_failed_clear))
     app.add_handler(CallbackQueryHandler(
         on_callback_query, pattern=r"^failed_(retry|clear)$"
     ))
