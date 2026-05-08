@@ -125,3 +125,26 @@ def today_krw() -> dict:
 def period_krw(days: int) -> dict:
     start = (datetime.utcnow() - timedelta(days=days)).isoformat(timespec="seconds")
     return _since(start)
+
+
+def daily_breakdown(days: int = 7) -> list[dict]:
+    """Return per-day totals for the last `days` days (newest first).
+
+    Days with no calls show ₩0 / 0 calls so the user sees gaps as gaps,
+    not as missing rows."""
+    today = datetime.utcnow().date()
+    start_iso = (today - timedelta(days=days - 1)).isoformat() + "T00:00:00"
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT substr(ts, 1, 10) AS d, SUM(cost_krw), COUNT(*) "
+            "FROM calls WHERE ts >= ? GROUP BY d",
+            (start_iso,),
+        )
+        seen = {row[0]: (float(row[1] or 0.0), int(row[2] or 0))
+                for row in cur.fetchall()}
+    out = []
+    for i in range(days):
+        d = (today - timedelta(days=i)).isoformat()
+        cost, calls = seen.get(d, (0.0, 0))
+        out.append({"date": d, "cost": cost, "calls": calls})
+    return out

@@ -368,6 +368,20 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
     cost_breakdown = ("\n" + "\n".join(cost_lines)) if cost_lines else ""
 
+    # Tiny inline bar chart for the last 7 days so trends are visible
+    # without leaving the /usage screen.
+    daily = cost.daily_breakdown(7)
+    max_cost = max((d["cost"] for d in daily), default=0.0)
+    daily_lines = []
+    for d in daily:
+        bar_len = int(round((d["cost"] / max_cost) * 20)) if max_cost else 0
+        bar = "█" * bar_len if bar_len else "·"
+        daily_lines.append(
+            f"  {d['date'][5:]}  {bar:<20}  ₩{d['cost']:,.0f}"
+            + (f"  ({d['calls']}콜)" if d["calls"] else "")
+        )
+    daily_block = "\n".join(daily_lines)
+
     out = (
         "📊 봇 사용 현황\n"
         f"\n총 문서: {s['total']}개  /  청크: {chunks}개"
@@ -382,6 +396,7 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"\n  • 7일:  ₩{week['total_krw']:,.0f}"
         f"\n  • 30일: ₩{month['total_krw']:,.0f}"
         f"{cost_breakdown}"
+        f"\n\n📅 최근 7일 (UTC)\n{daily_block}"
         f"\n\n📚 가장 최근 학습"
         f"\n  {s['latest_title'][:80]}"
         f"\n  {s['latest_at'][:16].replace('T', ' ')}"
