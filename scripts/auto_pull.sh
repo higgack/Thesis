@@ -37,8 +37,27 @@ SHORT=$(echo "$REMOTE" | cut -c1-7)
 
 notify "🔄 자동 배포 시작 ${SHORT}"
 
-if git pull --ff-only origin "$BRANCH" >>"$LOG" 2>&1 \
-    && docker compose --profile local-api up -d --build >>"$LOG" 2>&1; then
+# Self-healing compose up: --remove-orphans handles renamed services,
+# and if a stale container is squatting on the canonical name (a known
+# recurring failure when manual + auto deploys race), nuke by name and
+# retry once.
+compose_up() {
+    docker compose --profile local-api up -d --build --remove-orphans \
+        "$@" >>"$LOG" 2>&1
+}
+
+if git pull --ff-only origin "$BRANCH" >>"$LOG" 2>&1; then
+    if ! compose_up; then
+        echo "compose up failed, removing stale containers and retrying" >>"$LOG"
+        docker rm -f thesis-bot-1 thesis-forward-listener-1 \
+            thesis-telegram-bot-api-1 >>"$LOG" 2>&1 || true
+        compose_up || {
+            TAIL=$(tail -15 "$LOG")
+            notify "❌ 배포 실패 ${SHORT}
+${TAIL:0:600}"
+            exit 1
+        }
+    fi
     sleep 5
     STATUS=$(docker inspect -f '{{.State.Status}}' thesis-bot-1 2>/dev/null || echo missing)
     if [ "$STATUS" = "running" ]; then
