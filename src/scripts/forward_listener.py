@@ -99,14 +99,38 @@ async def _client_lifecycle(channel: str, target_name: str,
 
         @client.on(events.NewMessage(chats=src))
         async def handler(event):
+            msg = event.message
+            text = (msg.message or "").strip()
+
+            # Skip user-typed slash commands so they never get learned.
+            if text.startswith("/"):
+                print(f"  skip slash cmd {msg.id}")
+                return
+
+            # Skip a bot's direct reply to a slash command (e.g. Noah
+            # 요약봇 답하는 /usage 출력). Regular bot-posted summaries
+            # aren't reply_to anything, so they pass through.
+            reply_to_id = getattr(msg, "reply_to_msg_id", None)
+            if reply_to_id:
+                try:
+                    parent = await client.get_messages(src, ids=reply_to_id)
+                    parent_text = (getattr(parent, "message", "") or "").strip()
+                    if parent_text.startswith("/"):
+                        print(f"  skip reply-to-cmd {msg.id} → parent {reply_to_id}")
+                        return
+                except Exception as e:
+                    # If the parent lookup fails (deleted/inaccessible),
+                    # err on the side of forwarding rather than blocking.
+                    print(f"  reply lookup failed {reply_to_id}: {e}")
+
             try:
                 await event.message.forward_to(target)
-                print(f"  forwarded msg {event.message.id}")
+                print(f"  forwarded msg {msg.id}")
             except FloodWaitError as e:
                 print(f"  flood wait {e.seconds}s")
                 await asyncio.sleep(e.seconds + 1)
             except Exception as e:
-                print(f"  err {event.message.id}: {type(e).__name__}: {e}")
+                print(f"  err {msg.id}: {type(e).__name__}: {e}")
 
         await client.run_until_disconnected()
     finally:
