@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 
 _S2_API = "https://api.semanticscholar.org/graph/v1/paper/search"
 _S2_FIELDS = "title,abstract,authors.name,year,venue,openAccessPdf,externalIds,url"
-_ARXIV_API = "http://export.arxiv.org/api/query"
+_ARXIV_API = "https://export.arxiv.org/api/query"
 _ATOM_NS = {"a": "http://www.w3.org/2005/Atom",
             "arxiv": "http://arxiv.org/schemas/atom"}
 
@@ -22,7 +22,8 @@ async def _semantic_scholar(query: str, limit: int) -> list[dict]:
     headers = {"User-Agent": "SecondBrainBot"}
     if key := os.getenv("S2_API_KEY", "").strip():
         headers["x-api-key"] = key
-    async with httpx.AsyncClient(timeout=20, headers=headers) as c:
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True,
+                                 headers=headers) as c:
         r = await c.get(_S2_API, params=params)
         r.raise_for_status()
     out = []
@@ -58,7 +59,7 @@ async def _arxiv(query: str, limit: int) -> list[dict]:
         "sortBy": "submittedDate",
         "sortOrder": "descending",
     }
-    async with httpx.AsyncClient(timeout=20,
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True,
                                  headers={"User-Agent": "SecondBrainBot"}) as c:
         r = await c.get(_ARXIV_API, params=params)
         r.raise_for_status()
