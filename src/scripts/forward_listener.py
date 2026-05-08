@@ -69,13 +69,39 @@ RECONNECT_DELAY_SEC = 5
 TELETHON_CONN_RETRIES = 1000
 
 
+# Always-skipped substrings, hardcoded so they ship with the code and
+# don't depend on the user remembering to update INGEST_SKIP_PATTERNS
+# on each new bot meta-message we want to ignore.
+_BUILTIN_SKIP_PATTERNS = [
+    # Our own help text — leading title that only ever appears in /help
+    "second brain 봇 사용법",
+    # /usage outputs from this bot and the user's other dashboards
+    "second brain 사용 현황",
+    "noah 요약봇 사용 현황",
+    "noah 요약봇 사용현황",
+    "gemini api 비용 (추정)",
+    "봇 사용 현황",
+    # Deploy notifications from any of the user's auto-deploy scripts
+    "배포 완료",
+    "봇 배포",
+    "자동 배포 시작",
+]
+
+
 def _skip_patterns() -> list[str]:
-    """User-defined substrings (case-insensitive) — any match in a
-    message body skips the forward. Configured via INGEST_SKIP_PATTERNS
-    in .env, semicolon-separated. Lets the user filter bot meta-output
-    that the reply_to heuristic doesn't catch in channel contexts."""
+    """Substring blocklist — any match in a message body skips the
+    forward. Combines hardcoded baseline (system messages, deploy
+    notifications, our own help text) with INGEST_SKIP_PATTERNS env
+    for the user's per-deployment additions (semicolon-separated)."""
     raw = os.getenv("INGEST_SKIP_PATTERNS", "")
-    return [p.strip().lower() for p in raw.split(";") if p.strip()]
+    extras = [p.strip().lower() for p in raw.split(";") if p.strip()]
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in _BUILTIN_SKIP_PATTERNS + extras:
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
 
 
 async def _client_lifecycle(channel: str, target_name: str,
