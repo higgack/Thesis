@@ -314,11 +314,11 @@ async def _typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await ctx.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
 
 
-_HELP_TEXT = """🧠 SECOND BRAIN 봇 사용법
+_HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 
-【1. 명령어】
+<b>【1. 명령어】</b>
 ▸ 조회·검색
- • /find <키워드>  제목·요약·메타 검색
+ • /find &lt;키워드&gt;  제목·요약·메타 검색
  • /recent [N]  최근 N개 (기본 10)
  • /stats  문서·청크 수
  • /usage  인입속도·큐·비용 (오늘/7일/30일·일별 그래프·모델별·ingest/query)
@@ -330,17 +330,17 @@ _HELP_TEXT = """🧠 SECOND BRAIN 봇 사용법
  • /failed_clear  탭 → 비우기
  • /queue  자동 재시도 대기 (2분 간격)
 ▸ 정리·삭제
- • /forget <id>  특정 문서 삭제
- • /forget_search <키워드>  최대 5건 안전 삭제
- • /forget_search_all <키워드>  안전장치 없이 일괄 삭제
+ • /forget &lt;id&gt;  특정 문서 삭제
+ • /forget_search &lt;키워드&gt;  최대 5건 안전 삭제
+ • /forget_search_all &lt;키워드&gt;  안전장치 없이 일괄 삭제
  • /dedupe·/dedupe_confirm  중복 후보 → 일괄 제거 (긴 본문만 유지)
  • /cleanup·/cleanup_confirm  노이즈 후보 → 일괄 제거
 ▸ 고급
- • /deep <질문>  Pro 모델 (어려운 추론)
+ • /deep &lt;질문&gt;  Pro 모델 (어려운 추론)
 ▸ 시작
  • /start /help
 
-【2. 핵심 원리】
+<b>【2. 핵심 원리】</b>
  • 채널: 무엇이든 → 자동 수집·요약·임베딩·Obsidian
  • DM: 자연어 → 에이전트가 도구 자동 선택
  • 답변마다 (사용 자료 시점: YYYY.MM~YYYY.MM)
@@ -348,9 +348,9 @@ _HELP_TEXT = """🧠 SECOND BRAIN 봇 사용법
  • 메모리: 최근 3턴 자동 ("그 회사 경쟁사는?" 가능)
  • 쿼리 확장: 짧은 질문은 facet 2개로 분해 검색
  • 비용 추적: 모든 Gemini 콜 SQLite 누적
- • Q&A 영구 보관: SQLite + 정적 웹 대시보드 자동
+ • Q&amp;A 영구 보관: SQLite + 정적 웹 대시보드 자동
 
-【3. 답변 출처 도구】
+<b>【3. 답변 출처 도구】</b>
  🧠 search_my_brain  저장 자료 단일 검색
  🧠 compare_papers  저장 자료 다수(50) 통합·비교
  🧠 recent_docs  최근 학습 목록
@@ -359,7 +359,7 @@ _HELP_TEXT = """🧠 SECOND BRAIN 봇 사용법
  📥 ingest_url  URL 학습
  예) 🧠→📄 = 저장+외부 / 🧠→🧠 = A vs B
 
-【4. 자연어 트리거】
+<b>【4. 자연어 트리거】</b>
  🧠 brain — "삼성전기 MLCC 동향"
  🧠 compare — "정리/리뷰/통합/비교/전체"
  📄 papers — "찾아줘/추천/새로운/어떤 논문"
@@ -368,7 +368,7 @@ _HELP_TEXT = """🧠 SECOND BRAIN 봇 사용법
  📥 ingest — "이거 학습해줘 URL" 또는 URL만
  후속 질문 — 대명사 OK
 
-【5. 자료 인입】
+<b>【5. 자료 인입】</b>
  URL/PDF/PPTX/DOCX/XLSX/이미지/음성/YouTube/텍스트 그냥 보내기
  • PDF: 텍스트+OCR fallback (arXiv 자동인식)
  • 이미지: 캡션 ≥80자 캡션만 / 짧으면 OCR / [OCR] 태그 강제 병행
@@ -376,39 +376,39 @@ _HELP_TEXT = """🧠 SECOND BRAIN 봇 사용법
  • YouTube: 자막→Jina fallback
  차단: LinkedIn/FB/IG/카스 + Reuters/Bloomberg/WSJ/FT/Economist/NYT/WaPo/Barrons
 
-【6. 자동 포워딩 (24/7)】
+<b>【6. 자동 포워딩 (24/7)】</b>
  forward-listener: LISTEN_CHANNEL→FORWARD_TARGET 미러링
  Telethon auto-reconnect + Docker restart
  학습 차단 자동:
   • 슬래시 명령 forward 안 함
   • 그 명령 reply도 차단 (reply_to 추적)
   • INGEST_SKIP_PATTERNS env (세미콜론 구분)
- 큰 채널 백필: tmux + python -m src.scripts.import_channel <ch> --resume
+ 큰 채널 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
 
-【7. 메타데이터 자동 추출】
+<b>【7. 메타데이터 자동 추출】</b>
  Flash-Lite ~₩0.5/문서:
   🏢 회사명 (계열사 구분) · 🏷 태그 1~5 · 📅 발행일 YYYY.MM
  → /find·중복알림·답변 출처에 표시
 
-【8. 웹 대시보드】
+<b>【8. 웹 대시보드】</b>
  바로가기: http://34.64.89.160:8082/1e68e9fae4e6fb1f8298bdee768eb73b/
  (위 링크 탭 → 브라우저에서 열림)
  구성:
-  • 통계 카드 4장 (Q&A·학습자료·오늘·30일)
+  • 통계 카드 4장 (Q&amp;A·학습자료·오늘·30일)
   • 검색창 (질문/답변/출처 즉시 필터)
   • 도구 칩 4개 (🧠📄🌐📥) 다중 선택
   • 날짜별 접이식 섹션
   • 카드 클릭 → 답변 펼침 / 제목 → 상세
  봇 답변 시 자동 재생성. 핸드폰 호환 (반응형·다크).
 
-【9. 답변 품질】
+<b>【9. 답변 품질】</b>
  • 자료 시점 표기 필수
  • brain 안 부르고 web만 부르는 routing 금지
  • "최근/요즘"만으로 web X → "웹에서/오늘/실시간" 필요
  • 자료 부족 시 솔직히 "부족"
  • web 결과는 [도메인]으로 인용
 
-【10. 운영 / 비용 / 안정성】
+<b>【10. 운영 / 비용 / 안정성】</b>
  • 동시성 Semaphore(2) · 메모리 bot 1500m / listener 400m
  • 재시도 5회×90s → 영구실패 /failed
  • 영속: retry_queue·failed_log·chat_history·qna.db·cost.db·dashboard
@@ -419,7 +419,7 @@ _HELP_TEXT = """🧠 SECOND BRAIN 봇 사용법
  • SQLite 잠금: import_channel↔listener 동시 X
  • Obsidian: ./data/obsidian/
 
-【11. 트러블슈팅】
+<b>【11. 트러블슈팅】</b>
  • "본문 비어있음" → 차단 도메인/paywall
  • 봇 응답 없음 → docker logs thesis-bot-1
  • 채널 이중 인입 → import_channel↔listener 동시 X
@@ -434,7 +434,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     await update.message.reply_text(
-        _HELP_TEXT, disable_web_page_preview=True,
+        _HELP_TEXT,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
 
