@@ -1160,11 +1160,20 @@ def _format_results(results: list[dict]) -> str:
         elif s == "duplicate":
             lines.append(f"♻️ 이미 있음: {r['title']}")
         elif s == "empty":
-            label = r.get("title") or r.get("source", "")
-            src = r.get("source", "") or label
-            _record_failure("empty", label, src,
+            title = r.get("title", "")
+            src = r.get("source", "") or title
+            # URL이 source에 있으면 그걸 우선 노출 (사용자가 어떤 자료인지
+            # 즉시 알 수 있게). title이 'XX증권' 같은 짧은 페이지 제목이면
+            # 정보가 부족하므로 URL을 같이 보여줌.
+            if src.startswith(("http://", "https://")):
+                shown = src
+                if title and title != src and title not in src:
+                    shown = f"{title}\n   {src}"
+            else:
+                shown = title or src
+            _record_failure("empty", title or src, src,
                             retry_payload=r.get("retry_payload"))
-            line = f"⚠️ 본문 비어있음: {label}"
+            line = f"⚠️ 본문 비어있음: {shown}"
             guidance = _empty_url_guidance(src)
             if guidance:
                 line += "\n" + guidance
