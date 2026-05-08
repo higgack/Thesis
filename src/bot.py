@@ -149,6 +149,23 @@ _NUMBERED_SECTION_RE = re.compile(
     r"^(\s*)(\d+)\.\s+(.{3,100}?)[:：]?\s*$", re.MULTILINE
 )
 _SECTION_EMOJIS = ["📌", "🔹", "🔸", "⚙️", "🧪", "💡", "📊", "🎯", "⚡", "🔧"]
+
+# Per-tool emoji so the user can tell at a glance whether the answer
+# came from their saved RAG store, an external academic DB, the web,
+# etc. Anything not listed falls through to 🔧.
+_TOOL_EMOJI = {
+    "search_my_brain": "🧠",
+    "compare_papers": "🧠",
+    "recent_documents": "🧠",
+    "search_papers": "📄",
+    "web_search": "🌐",
+    "ingest_url": "📥",
+}
+
+
+def _format_tool_calls(calls: list[str]) -> str:
+    parts = [f"{_TOOL_EMOJI.get(c, '🔧')} {c}" for c in calls]
+    return " → ".join(parts)
 _SEP = "━" * 22
 
 
@@ -701,7 +718,7 @@ async def _send_agent_reply(send, result):
     if result.get("sources"):
         suffix_lines.append("📚 출처:" + _format_sources_with_url(result["sources"]))
     if result.get("tool_calls"):
-        suffix_lines.append(f"🔧 {' → '.join(result['tool_calls'])}")
+        suffix_lines.append(_format_tool_calls(result["tool_calls"]))
     suffix = ("\n\n" + "\n".join(suffix_lines)) if suffix_lines else ""
     await send(f"{body}{suffix}")
     return mermaid_blocks
@@ -797,7 +814,7 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
     if result["sources"]:
         suffix_lines.append("📚 출처:" + _format_sources_with_url(result["sources"]))
     if result["tool_calls"]:
-        suffix_lines.append(f"🔧 {' → '.join(result['tool_calls'])}")
+        suffix_lines.append(_format_tool_calls(result["tool_calls"]))
     suffix = ("\n\n" + "\n".join(suffix_lines)) if suffix_lines else ""
     await update.message.reply_text(f"{body}{suffix}")
     for code in mermaid_blocks:
