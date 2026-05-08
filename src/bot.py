@@ -14,7 +14,7 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 
 from . import config
-from .store import meta, vector, obsidian, cost
+from .store import meta, vector, obsidian, cost, qna
 from .ingest import pipeline
 from .agent import agent
 
@@ -1039,6 +1039,15 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
     await update.message.reply_text(f"{body}{suffix}")
     _record_turn(chat_id, "user", text)
     _record_turn(chat_id, "model", body)
+    qna.record(
+        chat_id=chat_id,
+        question=text,
+        answer=body,
+        sources=result.get("sources") or [],
+        tools=result.get("tool_calls") or [],
+        model=result.get("model"),
+        warning=result.get("warning"),
+    )
     for code in mermaid_blocks:
         try:
             png = await _render_mermaid_png(code)
