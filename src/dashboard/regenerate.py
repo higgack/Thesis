@@ -45,15 +45,43 @@ _BASE_CSS = """
   --tool-web: #10b981; --tool-ingest: #f59e0b;
   --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
 }
+[data-theme="dark"] {
+  --bg: #0f1419; --panel: #1a2028; --panel-alt: #141a22;
+  --border: #2a3441; --border-soft: #1f2731;
+  --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+  --primary: #10b981;
+  --tool-brain: #f472b6; --tool-paper: #c084fc;
+  --tool-web: #34d399; --tool-ingest: #fbbf24;
+  --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.4);
+}
 * { box-sizing: border-box; }
 body {
   margin: 0;
   font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
         "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   background: var(--bg); color: var(--text);
+  transition: background-color 0.2s, color 0.2s;
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
+"""
+
+# Inline at the top of <head> so the theme is applied before paint —
+# avoids the white-flash on dark hours. Switches every minute so a tab
+# left open across the 07:00 / 19:00 KST boundary auto-flips.
+_THEME_SWITCHER_JS = """
+(function(){
+  function applyTheme(){
+    var hourStr = new Date().toLocaleString('en-US', {
+      timeZone: 'Asia/Seoul', hour: 'numeric', hour12: false
+    });
+    var h = parseInt(hourStr, 10);
+    var dark = (h >= 19 || h < 7);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  }
+  applyTheme();
+  setInterval(applyTheme, 60000);
+})();
 """
 
 _INDEX_CSS = _BASE_CSS + """
@@ -400,6 +428,7 @@ def _render_index(rows: list[dict], stats: dict) -> str:
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
         "<title>🧠 Second Brain Archive</title>",
         f"<style>{_INDEX_CSS}</style>",
+        f"<script>{_THEME_SWITCHER_JS}</script>",
         "</head><body><div class='layout'>",
         "<header>",
         "<h1>🧠 Second Brain Archive</h1>",
@@ -530,6 +559,7 @@ def _render_detail(item: dict, token_dir: str) -> str:
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
         f"<title>Q&A · {int(item['id'])}</title>",
         f"<style>{_DETAIL_CSS}</style>",
+        f"<script>{_THEME_SWITCHER_JS}</script>",
         "</head><body><main>",
         "<a class='back' href='index.html'>← 목록으로</a>",
         "<div class='meta'>",
