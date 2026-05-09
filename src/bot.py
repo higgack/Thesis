@@ -333,6 +333,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • /forget &lt;id&gt;  특정 문서 삭제
  • /forget_search &lt;키워드&gt;  최대 5건 안전 삭제
  • /forget_search_all &lt;키워드&gt;  안전장치 없이 일괄 삭제
+ • /forget_qna &lt;id&gt;  Q&amp;A 1건 삭제 (대시보드 q-{id}.html의 id)
+ • /forget_qna_search &lt;키워드&gt;  Q&amp;A 일괄 삭제 (질문/답변 매칭)
  • /dedupe·/dedupe_confirm  중복 후보 → 일괄 제거 (긴 본문만 유지)
  • /cleanup·/cleanup_confirm  노이즈 후보 → 일괄 제거
 ▸ 고급
