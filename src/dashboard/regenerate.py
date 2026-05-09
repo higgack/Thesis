@@ -354,15 +354,45 @@ def _card_data_tools(it: dict) -> str:
     return " ".join(sorted(buckets))
 
 
+def _kst_day(ts_iso: str) -> str:
+    """Convert a UTC ISO timestamp ('2026-05-08T15:33:00') to its
+    KST calendar date string. Falls back to the leading 10 chars on
+    anything unparseable."""
+    from datetime import datetime, timedelta, timezone
+    if not ts_iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(ts_iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone(timedelta(hours=9))).date().isoformat()
+    except Exception:
+        return ts_iso[:10]
+
+
+def _kst_hhmm(ts_iso: str) -> str:
+    from datetime import datetime, timedelta, timezone
+    if not ts_iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(ts_iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone(timedelta(hours=9))).strftime("%H:%M")
+    except Exception:
+        return ts_iso[11:16]
+
+
 def _render_index(rows: list[dict], stats: dict) -> str:
     grouped: dict[str, list[dict]] = {}
     for r in rows:
-        day = (r.get("ts") or "")[:10]
+        day = _kst_day(r.get("ts") or "")
         grouped.setdefault(day, []).append(r)
     days_sorted = sorted(grouped.keys(), reverse=True)
 
     today_calls = stats.get("today_calls", 0)
-    avg_daily = (stats["month_krw"] / 30) if stats.get("month_krw") else 0
+    mtd_day = stats.get("mtd_day", 1) or 1
+    avg_daily = (stats["mtd_krw"] / mtd_day) if stats.get("mtd_krw") else 0
 
     parts = [
         "<!DOCTYPE html><html lang='ko'><head>",
@@ -393,9 +423,9 @@ def _render_index(rows: list[dict], stats: dict) -> str:
         f"<div class='sub'>{today_calls}콜</div>",
         "</div>",
         "<div class='stat-card'>",
-        "<div class='label'>📅 30일 누적</div>",
-        f"<div class='value'>₩{stats['month_krw']:,.0f}</div>",
-        f"<div class='sub'>일평균 ₩{avg_daily:,.0f}</div>",
+        f"<div class='label'>📅 이번 달 ({stats['mtd_year']}년 {stats['mtd_month']}월)</div>",
+        f"<div class='value'>₩{stats['mtd_krw']:,.0f}</div>",
+        f"<div class='sub'>{mtd_day}일차 · 일평균 ₩{avg_daily:,.0f}</div>",
         "</div>",
         "</div>",
 
@@ -456,7 +486,7 @@ def _render_index(rows: list[dict], stats: dict) -> str:
                 f"<div class='qna-card' data-text=\"{data_text}\" data-tools=\"{data_tools}\">"
                 "<details><summary>"
                 "<div class='row1'>"
-                f"<span>{_esc(it['ts'][11:16])}</span>"
+                f"<span>{_esc(_kst_hhmm(it['ts']))}</span>"
                 f"{tool_chips}{model_chip}"
                 "</div>"
                 "<div class='question'>"
@@ -503,7 +533,7 @@ def _render_detail(item: dict, token_dir: str) -> str:
         "</head><body><main>",
         "<a class='back' href='index.html'>← 목록으로</a>",
         "<div class='meta'>",
-        f"<span>{_esc(item['ts'][:10])} {_esc(item['ts'][11:16])}</span>",
+        f"<span>{_esc(_kst_day(item['ts']))} {_esc(_kst_hhmm(item['ts']))}</span>",
         model_chip,
         tool_chips,
         "</div>",
@@ -540,13 +570,17 @@ def regenerate() -> None:
             (base / "index.html").write_text(_PUBLIC_INDEX, encoding="utf-8")
             rows = qna.recent(limit=2000)
             today = cost.today_krw()
+            mtd = cost.month_to_date_krw()
             stats = {
                 "total_qna": qna.count(),
                 "docs": meta_store.count(),
                 "chunks": vector_store.chunk_count(),
                 "today_krw": today["total_krw"],
                 "today_calls": today["calls"],
-                "month_krw": cost.period_krw(30)["total_krw"],
+                "mtd_krw": mtd["total_krw"],
+                "mtd_year": mtd["year"],
+                "mtd_month": mtd["month"],
+                "mtd_day": mtd["day"],
             }
             (target / "index.html").write_text(
                 _render_index(rows, stats), encoding="utf-8"

@@ -399,7 +399,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
   • 도구 칩 4개 (🧠📄🌐📥) 다중 선택
   • 날짜별 접이식 섹션
   • 카드 클릭 → 답변 펼침 / 제목 → 상세
- 봇 답변 시 자동 재생성. 핸드폰 호환 (반응형·다크).
+ 봇 답변 시 자동 재생성. 핸드폰 호환.
 
 <b>【9. 답변 품질】</b>
  • 자료 시점 표기 필수
@@ -462,7 +462,7 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     today = cost.today_krw()
     week = cost.period_krw(7)
-    month = cost.period_krw(30)
+    mtd = cost.month_to_date_krw()
     by_today = today["by_model"]
     cost_lines = []
     for m in ("gemini-2.5-pro", "gemini-2.5-flash",
@@ -509,13 +509,14 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"\n  • 30d: {s['last_30d']}건"
         f"\n\n📂 type별 분포"
         f"\n  {types_line}"
-        f"\n\n💰 추정 비용 (Gemini API)"
+        f"\n\n💰 추정 비용 (Gemini API · KST)"
         f"\n  • 오늘: ₩{today['total_krw']:,.0f}  ({today['calls']}콜)"
         f"\n  • 7일:  ₩{week['total_krw']:,.0f}"
-        f"\n  • 30일: ₩{month['total_krw']:,.0f}"
+        f"\n  • 이번 달 ({mtd['year']}년 {mtd['month']}월): "
+        f"₩{mtd['total_krw']:,.0f}  ({mtd['day']}일차)"
         f"{cost_breakdown}"
         f"{purpose_breakdown}"
-        f"\n\n📅 최근 7일 (UTC)\n{daily_block}"
+        f"\n\n📅 최근 7일 (KST)\n{daily_block}"
         f"\n\n📖 모델 용도"
         f"\n  embedding   인입 chunk+summary / 질문 쿼리 임베딩"
         f"\n  flash-lite  인입 요약·메타·OCR·STT / 질문 확장·rerank·verify"

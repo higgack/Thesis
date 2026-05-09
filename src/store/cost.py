@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
 from .. import config
@@ -20,6 +20,11 @@ from .. import config
 log = logging.getLogger(__name__)
 
 USD_TO_KRW = 1400  # rough; ok for back-of-envelope reporting
+
+# All UI-facing aggregates are bucketed by Korean local time so the
+# user's "today" matches their wall clock. Storage stays in UTC ISO
+# strings (ts column) for portability — only the boundaries differ.
+KST = timezone(timedelta(hours=9))
 
 # Gemini 2.5 list price ($/1M tokens). Audio input is billed higher
 # than text but usage_metadata.prompt_token_count rolls them together,
@@ -139,34 +144,62 @@ def _since(start_iso: str) -> dict:
             "total_krw": total, "calls": calls}
 
 
+def _kst_day_start_utc(d) -> datetime:
+    """KST midnight on date `d` expressed in UTC, naive (matches the
+    ts column which is UTC ISO without offset)."""
+    kst_midnight = datetime.combine(d, time.min, tzinfo=KST)
+    return kst_midnight.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def today_krw() -> dict:
-    start = datetime.utcnow().date().isoformat() + "T00:00:00"
-    return _since(start)
+    """KST today (00:00 KST → now)."""
+    today = datetime.now(KST).date()
+    start = _kst_day_start_utc(today)
+    return _since(start.isoformat(timespec="seconds"))
 
 
 def period_krw(days: int) -> dict:
-    start = (datetime.utcnow() - timedelta(days=days)).isoformat(timespec="seconds")
-    return _since(start)
+    """Last `days` complete KST days plus today, e.g. days=7 → last
+    7 KST days inclusive of today."""
+    today = datetime.now(KST).date()
+    start = _kst_day_start_utc(today - timedelta(days=days - 1))
+    return _since(start.isoformat(timespec="seconds"))
+
+
+def month_to_date_krw() -> dict:
+    """Current calendar month in KST: 1st 00:00 KST → now."""
+    today = datetime.now(KST).date()
+    first = today.replace(day=1)
+    start = _kst_day_start_utc(first)
+    out = _since(start.isoformat(timespec="seconds"))
+    out["year"] = today.year
+    out["month"] = today.month
+    out["day"] = today.day
+    return out
 
 
 def daily_breakdown(days: int = 7) -> list[dict]:
-    """Return per-day totals for the last `days` days (newest first).
+    """Per-day KRW totals for the last `days` KST days (newest first).
 
-    Days with no calls show ₩0 / 0 calls so the user sees gaps as gaps,
-    not as missing rows."""
-    today = datetime.utcnow().date()
-    start_iso = (today - timedelta(days=days - 1)).isoformat() + "T00:00:00"
+    Each row is a KST-local date with everything that fell within
+    that 24-hour window. Empty days show ₩0 / 0 calls so gaps are
+    visible rather than missing."""
+    today = datetime.now(KST).date()
+    days_list = [today - timedelta(days=i) for i in range(days)]
+    seen: dict[str, tuple[float, int]] = {}
     with _conn() as c:
-        cur = c.execute(
-            "SELECT substr(ts, 1, 10) AS d, SUM(cost_krw), COUNT(*) "
-            "FROM calls WHERE ts >= ? GROUP BY d",
-            (start_iso,),
-        )
-        seen = {row[0]: (float(row[1] or 0.0), int(row[2] or 0))
-                for row in cur.fetchall()}
-    out = []
-    for i in range(days):
-        d = (today - timedelta(days=i)).isoformat()
-        cost, calls = seen.get(d, (0.0, 0))
-        out.append({"date": d, "cost": cost, "calls": calls})
-    return out
+        for d in days_list:
+            start = _kst_day_start_utc(d).isoformat(timespec="seconds")
+            end = _kst_day_start_utc(d + timedelta(days=1)).isoformat(timespec="seconds")
+            row = c.execute(
+                "SELECT SUM(cost_krw), COUNT(*) FROM calls "
+                "WHERE ts >= ? AND ts < ?",
+                (start, end),
+            ).fetchone()
+            seen[d.isoformat()] = (float(row[0] or 0.0), int(row[1] or 0))
+    return [
+        {"date": d.isoformat(),
+         "cost": seen[d.isoformat()][0],
+         "calls": seen[d.isoformat()][1]}
+        for d in days_list
+    ]
