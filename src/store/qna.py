@@ -122,6 +122,35 @@ def count() -> int:
         return int(cur.fetchone()[0])
 
 
+def delete(qna_id: int) -> int:
+    """Drop one Q&A row by primary key. Returns rows affected."""
+    try:
+        with _conn() as c:
+            cur = c.execute("DELETE FROM qna WHERE id = ?", (int(qna_id),))
+            return cur.rowcount
+    except Exception:
+        log.exception("qna delete failed")
+        return 0
+
+
+def delete_search(keyword: str) -> int:
+    """Bulk-drop rows whose question or answer contains `keyword`
+    (case-insensitive substring). Returns rows affected."""
+    if not keyword:
+        return 0
+    like = f"%{keyword}%"
+    try:
+        with _conn() as c:
+            cur = c.execute(
+                "DELETE FROM qna WHERE question LIKE ? OR answer LIKE ?",
+                (like, like),
+            )
+            return cur.rowcount
+    except Exception:
+        log.exception("qna delete_search failed")
+        return 0
+
+
 def date_buckets(limit_days: int = 60) -> list[dict]:
     """Return [{date, count}] newest first — drives the calendar
     sidebar on the dashboard."""

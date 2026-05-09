@@ -870,6 +870,45 @@ async def cmd_deep(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _run_agent(update, ctx, text, deep=True)
 
 
+async def cmd_forget_qna(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Drop one Q&A row from the archive by id (visible on the
+    dashboard's q-{id}.html detail page). Triggers an immediate
+    dashboard regenerate so the card disappears in the next refresh."""
+    if not _is_owner(update):
+        return
+    if not ctx.args or not ctx.args[0].isdigit():
+        await update.message.reply_text("사용법: /forget_qna <id>")
+        return
+    qid = int(ctx.args[0])
+    n = qna.delete(qid)
+    try:
+        from .dashboard import regenerate as dashboard_regen
+        dashboard_regen.regenerate()
+    except Exception:
+        log.exception("dashboard regen after qna delete failed")
+    await update.message.reply_text(
+        f"{'✅ 삭제됨' if n else '⚠️ 매칭 없음'} · qna #{qid}"
+    )
+
+
+async def cmd_forget_qna_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Bulk-drop Q&A rows whose question or answer contains the
+    keyword. Same regen hook so the dashboard updates immediately."""
+    if not _is_owner(update):
+        return
+    keyword = " ".join(ctx.args).strip()
+    if not keyword:
+        await update.message.reply_text("사용법: /forget_qna_search <키워드>")
+        return
+    n = qna.delete_search(keyword)
+    try:
+        from .dashboard import regenerate as dashboard_regen
+        dashboard_regen.regenerate()
+    except Exception:
+        log.exception("dashboard regen after qna delete_search failed")
+    await update.message.reply_text(f"✅ Q&A {n}건 삭제 · 키워드 '{keyword}'")
+
+
 async def cmd_forget_search_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Bulk forget — bypass /forget_search's 5-match safety so junk
     cleanup (bot meta-output, accidental ingests) is one tap. Typing
@@ -1751,6 +1790,8 @@ def main():
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("forget_search", cmd_forget_search))
     app.add_handler(CommandHandler("forget_search_all", cmd_forget_search_all))
+    app.add_handler(CommandHandler("forget_qna", cmd_forget_qna))
+    app.add_handler(CommandHandler("forget_qna_search", cmd_forget_qna_search))
     app.add_handler(CommandHandler("find", cmd_find))
     app.add_handler(CommandHandler("failed", cmd_failed))
     app.add_handler(CommandHandler("failed_retry", cmd_failed_retry))
