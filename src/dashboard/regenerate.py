@@ -236,6 +236,12 @@ header .sub { color: var(--muted); font-size: 13px; }
   opacity: 0; transform: scale(0.95);
   transition: opacity 0.25s, transform 0.25s;
 }
+
+.footer {
+  margin-top: 32px; padding: 16px 0; text-align: center;
+  font-size: 11px; color: var(--muted);
+  border-top: 1px solid var(--border-soft);
+}
 """
 
 _DETAIL_CSS = _BASE_CSS + """
@@ -577,6 +583,10 @@ def _render_index(rows: list[dict], stats: dict) -> str:
             )
         parts.append("</div></details>")
 
+    parts.append(
+        f"<div class='footer'>생성: {stats['generated_at']} · "
+        f"{stats['total_qna']:,}건 누적 · 무제한 보관</div>"
+    )
     parts.append(f"<script>{_INDEX_JS}</script>")
     parts.append("</div></body></html>")
     return "\n".join(parts)
@@ -650,6 +660,8 @@ def regenerate() -> None:
             rows = qna.recent(limit=2000)
             today = cost.today_krw()
             mtd = cost.month_to_date_krw()
+            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            generated_at = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d %H:%M")
             stats = {
                 "total_qna": qna.count(),
                 "docs": meta_store.count(),
@@ -660,6 +672,7 @@ def regenerate() -> None:
                 "mtd_year": mtd["year"],
                 "mtd_month": mtd["month"],
                 "mtd_day": mtd["day"],
+                "generated_at": generated_at,
             }
             (target / "index.html").write_text(
                 _render_index(rows, stats), encoding="utf-8"
