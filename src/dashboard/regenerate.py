@@ -46,9 +46,9 @@ _BASE_CSS = """
   --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
 }
 [data-theme="dark"] {
-  --bg: #0f1419; --panel: #1a2028; --panel-alt: #141a22;
-  --border: #2a3441; --border-soft: #1f2731;
-  --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+  --bg: #0f172a; --panel: #1e293b; --panel-alt: #172033;
+  --border: #334155; --border-soft: #1e2738;
+  --text: #e2e8f0; --muted: #94a3b8; --accent: #60a5fa;
   --primary: #10b981;
   --tool-brain: #f472b6; --tool-paper: #c084fc;
   --tool-web: #34d399; --tool-ingest: #fbbf24;
