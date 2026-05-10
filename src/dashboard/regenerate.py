@@ -222,6 +222,20 @@ header .sub { color: var(--muted); font-size: 13px; }
 .sources li { padding: 2px 0; }
 
 .qna-card.hidden, .day-section.hidden { display: none; }
+
+.del-btn {
+  cursor: pointer; background: transparent; border: 0;
+  color: var(--muted); font-size: 13px; padding: 2px 7px;
+  border-radius: 4px; opacity: 0.4; transition: 0.1s;
+  margin-left: 6px;
+}
+.del-btn:hover {
+  opacity: 1; color: #ef4444; background: rgba(239,68,68,0.1);
+}
+.qna-card.removing {
+  opacity: 0; transform: scale(0.95);
+  transition: opacity 0.25s, transform 0.25s;
+}
 """
 
 _DETAIL_CSS = _BASE_CSS + """
@@ -306,13 +320,13 @@ _INDEX_JS = """
   var sections = document.querySelectorAll('.day-section');
   var counter = document.getElementById('count');
 
-  // Active filters: empty set = all tools allowed.
   var activeTools = new Set();
 
   function apply(){
     var q = (search.value || '').trim().toLowerCase();
     var visible = 0;
     cards.forEach(function(c){
+      if (c.classList.contains('removed')) return;
       var text = c.dataset.text || '';
       var tools = (c.dataset.tools || '').split(' ');
       var matchesQuery = !q || text.indexOf(q) !== -1;
@@ -323,7 +337,7 @@ _INDEX_JS = """
       if (show) visible++;
     });
     sections.forEach(function(s){
-      var anyVisible = s.querySelectorAll('.qna-card:not(.hidden)').length > 0;
+      var anyVisible = s.querySelectorAll('.qna-card:not(.hidden):not(.removed)').length > 0;
       s.classList.toggle('hidden', !anyVisible);
     });
     if (counter) counter.textContent = visible;
@@ -347,6 +361,37 @@ _INDEX_JS = """
         c.classList.add('active');
       }
       apply();
+    });
+  });
+
+  // Per-card delete: token comes from the URL path so the same value
+  // gates both viewing and editing.
+  var token = location.pathname.split('/').filter(Boolean)[0] || '';
+  document.querySelectorAll('.del-btn').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      var id = btn.dataset.id;
+      if (!id) return;
+      if (!confirm('Q&A #' + id + ' 삭제할까요?')) return;
+      fetch('/' + token + '/q-' + id, {method:'DELETE'})
+        .then(function(r){
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function(){
+          var card = btn.closest('.qna-card');
+          if (!card) return;
+          card.classList.add('removing');
+          setTimeout(function(){
+            card.classList.add('removed');
+            card.classList.add('hidden');
+            apply();
+          }, 250);
+        })
+        .catch(function(err){
+          alert('삭제 실패: ' + err.message);
+        });
     });
   });
 })();
@@ -511,12 +556,16 @@ def _render_index(rows: list[dict], stats: dict) -> str:
             )
             data_text = _card_data_text(it)
             data_tools = _card_data_tools(it)
+            del_btn = (
+                f"<button type='button' class='del-btn' "
+                f"data-id='{int(it['id'])}' title='이 Q&A 삭제'>🗑</button>"
+            )
             parts.append(
                 f"<div class='qna-card' data-text=\"{data_text}\" data-tools=\"{data_tools}\">"
                 "<details><summary>"
                 "<div class='row1'>"
                 f"<span>{_esc(_kst_hhmm(it['ts']))}</span>"
-                f"{tool_chips}{model_chip}"
+                f"{tool_chips}{model_chip}{del_btn}"
                 "</div>"
                 "<div class='question'>"
                 f"<a href='q-{int(it['id'])}.html'>Q. {_esc(it['question'])}</a>"

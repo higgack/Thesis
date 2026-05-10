@@ -39,15 +39,27 @@ services:
       - 8.8.8.8
       - 1.1.1.1
 
-  # The dashboard used to live here as a containerized FastAPI app on
-  # ports 8080/8090/80/8081/8082 — every variant tripped on either
-  # KR-ISP outbound rules, Chrome HTTPS-First, or duplicate name
-  # squatting. The user's other working dashboards are bare
-  # `python3 -m http.server` on the host hitting static files, so
-  # we now mirror that pattern: src/dashboard/regenerate.py rewrites
-  # the static HTML under data/dashboard/<TOKEN>/ on every Q&A, and
-  # the user runs http.server directly on the host (systemd unit or
-  # @reboot cron) on whatever port their network already trusts.
+  # Static-file dashboard with a one-tap delete endpoint. Pure-stdlib
+  # http.server subclass; only DASHBOARD_TOKEN-scoped DELETE writes
+  # back to qna.db. Same image as bot to share deps, but the entry
+  # point is server.py instead of bot.py. Replaces the host-side
+  # systemd unit so containers + dashboard share the same lifecycle
+  # and auto-deploy.
+  dashboard:
+    build: .
+    env_file: .env
+    command: ["python", "-m", "src.dashboard.server"]
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - bot
+    restart: unless-stopped
+    mem_limit: 200m
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
 volumes:
   tg-bot-api-data:

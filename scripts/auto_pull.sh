@@ -50,7 +50,8 @@ if git pull --ff-only origin "$BRANCH" >>"$LOG" 2>&1; then
     if ! compose_up; then
         echo "compose up failed, removing stale containers and retrying" >>"$LOG"
         docker rm -f thesis-bot-1 thesis-forward-listener-1 \
-            thesis-telegram-bot-api-1 >>"$LOG" 2>&1 || true
+            thesis-telegram-bot-api-1 thesis-dashboard-1 \
+            >>"$LOG" 2>&1 || true
         compose_up || {
             TAIL=$(tail -15 "$LOG")
             notify "❌ 배포 실패 ${SHORT}
