@@ -225,12 +225,12 @@ header .sub { color: var(--muted); font-size: 13px; }
 
 .del-btn {
   cursor: pointer; background: transparent; border: 0;
-  color: var(--muted); font-size: 13px; padding: 2px 7px;
-  border-radius: 4px; opacity: 0.4; transition: 0.1s;
+  color: #ef4444; font-size: 16px; padding: 4px 9px;
+  border-radius: 4px; opacity: 0.75; transition: 0.1s;
   margin-left: 6px;
 }
 .del-btn:hover {
-  opacity: 1; color: #ef4444; background: rgba(239,68,68,0.1);
+  opacity: 1; background: rgba(239,68,68,0.15);
 }
 .qna-card.removing {
   opacity: 0; transform: scale(0.95);
