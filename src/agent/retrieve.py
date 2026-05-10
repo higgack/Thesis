@@ -1,7 +1,10 @@
+import asyncio
 import json
 import logging
 import math
+import os
 import re
+import threading
 from datetime import datetime
 
 from rank_bm25 import BM25Okapi
@@ -9,6 +12,62 @@ from rank_bm25 import BM25Okapi
 from .. import config
 from ..llm.gemini import complete
 from ..store import meta, vector
+
+# Local cross-encoder reranker (BGE-reranker-base) — purpose-built for
+# IR rerank, runs on CPU in <300ms for ~25 pairs. Replaces the
+# Flash-Lite prompt-based rerank: same/better Korean quality, no LLM
+# round trip, no per-call cost. Loaded lazily on first use so the
+# model download (~380MB) doesn't block startup; cached under
+# /app/data/hf_cache via HF_HOME so a container rebuild reuses it.
+_LOCAL_RERANKER = None
+_LOCAL_RERANKER_LOCK = threading.Lock()
+_LOCAL_RERANKER_LOAD_FAILED = False
+
+
+def _load_local_reranker():
+    """Lazy singleton. Returns the CrossEncoder or None on failure;
+    callers must fall back to the LLM reranker when None."""
+    global _LOCAL_RERANKER, _LOCAL_RERANKER_LOAD_FAILED
+    if _LOCAL_RERANKER is not None:
+        return _LOCAL_RERANKER
+    if _LOCAL_RERANKER_LOAD_FAILED:
+        return None
+    with _LOCAL_RERANKER_LOCK:
+        if _LOCAL_RERANKER is not None:
+            return _LOCAL_RERANKER
+        if _LOCAL_RERANKER_LOAD_FAILED:
+            return None
+        try:
+            os.environ.setdefault("HF_HOME", "/app/data/hf_cache")
+            from sentence_transformers import CrossEncoder
+            log.info("loading local reranker BAAI/bge-reranker-base ...")
+            _LOCAL_RERANKER = CrossEncoder(
+                "BAAI/bge-reranker-base", max_length=512,
+            )
+            log.info("local reranker ready")
+        except Exception as e:
+            log.warning("local reranker load failed (%s); will use LLM rerank", e)
+            _LOCAL_RERANKER_LOAD_FAILED = True
+            return None
+    return _LOCAL_RERANKER
+
+
+async def _local_rerank(query: str, candidates: list[dict], k: int) -> list[dict] | None:
+    """Cross-encoder ranking. Returns None if the local model isn't
+    available so the caller can fall back to Gemini."""
+    if len(candidates) <= k:
+        return candidates
+    model = await asyncio.to_thread(_load_local_reranker)
+    if model is None:
+        return None
+    try:
+        pairs = [(query, c["text"][:512]) for c in candidates]
+        scores = await asyncio.to_thread(model.predict, pairs)
+        ranked = sorted(zip(scores, candidates), key=lambda x: float(x[0]), reverse=True)
+        return [c for _, c in ranked[:k]]
+    except Exception as e:
+        log.warning("local rerank predict failed (%s); falling back to LLM", e)
+        return None
 
 
 def _recency_factor(ingested_at_iso: str) -> float:
@@ -174,4 +233,7 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
         if len(candidates) >= k * 3:
             break
 
+    local = await _local_rerank(query, candidates, k)
+    if local is not None:
+        return local
     return await _gemini_rerank(query, candidates, k)

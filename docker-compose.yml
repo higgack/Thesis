@@ -12,6 +12,10 @@ services:
   bot:
     build: .
     env_file: .env
+    # HF_HOME inside /app/data so the BGE-reranker download (~380MB)
+    # persists across container rebuilds via the bind mount.
+    environment:
+      HF_HOME: /app/data/hf_cache
     volumes:
       - ./data:/app/data
       - tg-bot-api-data:/var/lib/telegram-bot-api
