@@ -32,7 +32,7 @@ async def ingest_url(url: str) -> dict:
 async def ingest_pdf(path: Path, source_label: str) -> dict:
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
-    title, body, hint = await load_pdf_async(path)
+    title, body, hint, ocr_meta = await load_pdf_async(path)
     if not body:
         return {"status": "empty", "title": title}
     if hint is None and (m := _ARXIV_IN_PDF.search(body[:5000])):
@@ -46,7 +46,45 @@ async def ingest_pdf(path: Path, source_label: str) -> dict:
         except Exception as e:
             log.warning("arxiv enrich failed: %s", e)
     doc_type = "paper" if hint else "pdf"
-    return await _ingest(doc_type, source_label, title, body, hint)
+    result = await _ingest(doc_type, source_label, title, body, hint)
+    # Surface the OCR cap state so bot.py can offer an extend button.
+    if ocr_meta and ocr_meta.get("capped") and result.get("status") == "ok":
+        result["ocr_meta"] = {**ocr_meta, "pdf_path": str(path)}
+    return result
+
+
+async def extend_pdf_ocr(pdf_path: Path, doc_id: str,
+                         start_page: int, end_page: int) -> dict:
+    """Continue Vision OCR on pages [start_page, end_page] of an
+    already-ingested PDF and append the extracted text as new chunks
+    on the same doc. Embeddings are added; summary/Obsidian note are
+    NOT regenerated (the summary captured the document's gist; the
+    new chunks just expand searchable surface area)."""
+    from .loaders import ocr_pdf_pages_async
+    if end_page < start_page:
+        return {"status": "noop", "pages_added": 0, "chunks_added": 0}
+    max_pages = end_page - start_page + 1
+    ocr_text = await ocr_pdf_pages_async(
+        pdf_path, start_page=start_page, max_pages=max_pages,
+    )
+    if not ocr_text:
+        return {"status": "empty", "pages_added": 0, "chunks_added": 0}
+    new_chunks = split(ocr_text)
+    chunk_items = [{
+        "id": f"{doc_id}:ocr-{start_page}:{i}",
+        "text": c,
+        "kind": "chunk",
+        "idx": 10_000 + start_page + i,  # well above the dense-text idx range
+    } for i, c in enumerate(new_chunks)]
+    await vector.add_chunks(doc_id, chunk_items)
+    log.info("extend_pdf_ocr doc=%s pages=%d-%d chunks=%d",
+             doc_id, start_page, end_page, len(chunk_items))
+    return {
+        "status": "ok",
+        "doc_id": doc_id,
+        "pages_added": max_pages,
+        "chunks_added": len(chunk_items),
+    }
 
 
 async def ingest_pptx(path: Path, source_label: str) -> dict:

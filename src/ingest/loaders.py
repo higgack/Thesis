@@ -177,12 +177,26 @@ def _xml_field(xml: str, tag: str, skip_first: bool = False) -> str | None:
     return matches[0] if matches else None
 
 
-def load_pdf(path: Path) -> tuple[str, str, str | None]:
-    """Extract text from a PDF. Tries PyMuPDF first (handles complex layouts,
-    embedded fonts, and image-text overlays better) and falls back to pypdf.
-    When the text-only extract looks sparse for the number of pages
-    (chart/table-heavy brokerage reports etc.), augment with a Vision OCR
-    pass over the first few pages so the numbers in figures don't get lost."""
+# Auto OCR cap for sparse-text (chart-heavy) PDFs. PDFs larger than
+# this trigger an inline-button prompt asking whether to OCR the rest;
+# the user opts in / out per document so we never silently bill ₩200+
+# on a 100-page deep-research report.
+SPARSE_OCR_AUTO_CAP = 20
+
+
+def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
+    """Extract text from a PDF.
+
+    Returns (title, body, hint, ocr_meta). `ocr_meta` is non-None when
+    Vision OCR augmentation ran and was page-capped; bot uses it to
+    offer a "OCR the remaining N pages (~₩X)" inline button.
+
+    Tries PyMuPDF first (handles complex layouts, embedded fonts, and
+    image-text overlays better) and falls back to pypdf. When the
+    text-only extract looks sparse for the number of pages (chart/
+    table-heavy brokerage reports etc.), augments with a Vision OCR
+    pass over the first SPARSE_OCR_AUTO_CAP pages so the numbers in
+    figures don't get lost."""
     title = path.stem
     body = ""
     page_count = 0
@@ -209,27 +223,41 @@ def load_pdf(path: Path) -> tuple[str, str, str | None]:
         except Exception:
             pass
 
+    ocr_meta: dict | None = None
     if not body:
         ocr_text = _ocr_pdf_pages(path)
         if ocr_text:
             body = ocr_text
     elif page_count > 0 and len(body) / max(page_count, 1) < 1500:
-        # Sparse text/page → likely chart/table-heavy. Augment with Vision
-        # OCR on the first few pages so numbers in figures survive. Capped
-        # to keep cost predictable (~₩10/PDF).
-        ocr_text = _ocr_pdf_pages(path, max_pages=8)
+        # Sparse text/page → likely chart/table-heavy. Augment via Vision
+        # OCR, capped so cost stays predictable. If the PDF is bigger
+        # than the cap, surface ocr_meta so the bot can ask whether to
+        # extend coverage.
+        applied = min(page_count, SPARSE_OCR_AUTO_CAP)
+        ocr_text = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP)
         if ocr_text:
             body = body + "\n\n--- Vision OCR augmentation ---\n\n" + ocr_text
+        ocr_meta = {
+            "kind": "sparse",
+            "applied_pages": applied,
+            "total_pages": page_count,
+            "capped": page_count > SPARSE_OCR_AUTO_CAP,
+        }
 
-    return (title or path.stem)[:200], body, None
+    return (title or path.stem)[:200], body, None, ocr_meta
 
 
-def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150) -> str:
+def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150,
+                   start_page: int = 1) -> str:
     """Render each page to PNG and ask Gemini Vision to extract text.
 
     Used as a last resort when PyMuPDF and pypdf both return empty text
-    (image-only / scanned PDFs). Cost per page is roughly $0.001 on
-    gemini-2.5-flash-lite, so a 50-page PDF is about $0.05."""
+    (image-only / scanned PDFs). Cost per page is roughly ₩3 on
+    gemini-2.5-flash-lite, so a 50-page PDF is about ₩150.
+
+    `start_page` (1-indexed inclusive) lets the resumable-OCR flow
+    extend coverage beyond the auto cap by OCR-ing pages
+    [start_page, start_page + max_pages - 1]."""
     try:
         import fitz  # PyMuPDF
         from google import genai
@@ -251,8 +279,11 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150) -> str:
     )
 
     pages_out: list[str] = []
+    end_page = start_page + max_pages - 1
     for i, page in enumerate(doc, 1):
-        if i > max_pages:
+        if i < start_page:
+            continue
+        if i > end_page:
             pages_out.append(f"-- Page {i}+ truncated --")
             break
         try:
@@ -279,8 +310,17 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150) -> str:
     return "\n\n".join(pages_out).strip()
 
 
-async def load_pdf_async(path: Path) -> tuple[str, str, str | None]:
+async def load_pdf_async(path: Path) -> tuple[str, str, str | None, dict | None]:
     return await asyncio.to_thread(load_pdf, path)
+
+
+async def ocr_pdf_pages_async(path: Path, start_page: int, max_pages: int,
+                              dpi: int = 150) -> str:
+    """Async wrapper around _ocr_pdf_pages used by extend_pdf_ocr."""
+    return await asyncio.to_thread(
+        _ocr_pdf_pages, path, max_pages=max_pages, dpi=dpi,
+        start_page=start_page,
+    )
 
 
 def _ocr_image(img_bytes: bytes, mime_type: str = "image/jpeg") -> str:
@@ -364,7 +404,10 @@ async def transcribe_audio_async(audio_bytes: bytes, mime_type: str = "audio/ogg
 async def _load_pdf_from_bytes(data: bytes, source_url: str) -> tuple[str, str, str | None]:
     """When a URL fetch returns PDF bytes (brokerage shortlinks like
     bbn.kiwoom.com → PDF redirect), save to a temp file and reuse the
-    standard PDF extractor instead of trying to parse PDF as HTML."""
+    standard PDF extractor instead of trying to parse PDF as HTML.
+
+    Drops the ocr_meta because the temp file is cleaned up before any
+    user-confirmed extension OCR could run."""
     import tempfile
     from urllib.parse import urlparse, unquote
     parsed = urlparse(source_url)
@@ -375,7 +418,8 @@ async def _load_pdf_from_bytes(data: bytes, source_url: str) -> tuple[str, str, 
     tmp_path = tmpdir / fname
     try:
         tmp_path.write_bytes(data)
-        return await load_pdf_async(tmp_path)
+        title, body, hint, _ocr_meta = await load_pdf_async(tmp_path)
+        return title, body, hint
     finally:
         try:
             tmp_path.unlink(missing_ok=True)

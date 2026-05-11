@@ -2,6 +2,8 @@ import asyncio
 import base64
 import logging
 import re
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -495,7 +497,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 <b>【5. 자료 인입】</b>
  URL/PDF/PPTX/DOCX/XLSX/이미지/음성/YouTube/텍스트 그냥 보내기
  • PDF: 텍스트+OCR fallback (arXiv 자동인식)
-        차트/표 많은 PDF는 Vision OCR 자동 보강
+        차트/표 많은 PDF는 자동 Vision OCR 20p
+        그 이상은 인라인 버튼으로 확인 후 진행
  • 이미지: 캡션 ≥80자 캡션만 / 짧으면 OCR / [OCR] 태그 강제 병행
  • 음성: Gemini STT (캡션 prepend)
  • YouTube: 자막→Jina fallback
@@ -546,6 +549,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • BGE-reranker-base: 로컬 cross-encoder 활성 (LOCAL_RERANKER_ENABLED=1)
  • compare_papers 25개+ 시 Pro/Flash/취소 인라인 버튼으로 확인
    (자동 ₩150 청구 차단, 10분 안 미선택 시 만료)
+ • PDF Vision OCR: 차트/표 자동 20p, 그 이상은 인라인 버튼으로 확인
+   (페이지당 ~₩3 표시 후 승인하면 백그라운드로 추가 청크 학습)
  • 자동 메모리 청소: 5분 주기 gc+malloc_trim (idle 일 때만)
    90% 이상이면 agent 시작 전 즉시 청소, 95% 이상이면 거부
    현황은 /status (RSS·한도·마지막 청소 회수량)
@@ -1605,6 +1610,152 @@ async def _send_pro_confirmation(update: Update, result: dict) -> None:
 
 _PENDING_SHORT_TO_FULL: dict[str, str] = {}
 
+# Resumable Vision OCR — when a sparse-text PDF was capped at the
+# auto-OCR limit (SPARSE_OCR_AUTO_CAP=20), we keep a 10-min handle on
+# the file path + doc_id so the user can opt in to extending coverage
+# via inline buttons. Keyed by the 24-char prefix of a uuid because
+# Telegram callback_data caps at 64 bytes.
+_PENDING_OCR: dict[str, dict] = {}
+_PENDING_OCR_TTL_SEC = 600
+
+
+def _gc_pending_ocr() -> None:
+    now = time.time()
+    expired = [k for k, v in _PENDING_OCR.items()
+               if now - v.get("ts", 0) > _PENDING_OCR_TTL_SEC]
+    for k in expired:
+        _PENDING_OCR.pop(k, None)
+
+
+async def _send_ocr_extend_prompts(ctx: ContextTypes.DEFAULT_TYPE,
+                                   chat_id: int, results: list[dict]) -> None:
+    """For each PDF result with capped Vision OCR, send a follow-up
+    message with inline buttons offering to OCR the rest. Estimate
+    is ~₩3 per Lite Vision page (rendered + extracted text)."""
+    _gc_pending_ocr()
+    for r in results:
+        oc = r.get("ocr_meta")
+        if not oc or not oc.get("capped"):
+            continue
+        applied = int(oc.get("applied_pages", 0))
+        total = int(oc.get("total_pages", 0))
+        remaining = max(0, total - applied)
+        if remaining == 0:
+            continue
+        cost_est = max(10, remaining * 3)
+        short = uuid.uuid4().hex[:24]
+        _PENDING_OCR[short] = {
+            "doc_id": r.get("doc_id"),
+            "pdf_path": oc.get("pdf_path"),
+            "start_page": applied + 1,
+            "end_page": total,
+            "title": r.get("title", ""),
+            "ts": time.time(),
+        }
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                f"📄 나머지 {remaining}p OCR (~₩{cost_est})",
+                callback_data=f"ocr:{short}:go",
+            )],
+            [InlineKeyboardButton(
+                f"✅ {applied}p로 충분",
+                callback_data=f"ocr:{short}:skip",
+            )],
+        ])
+        title_short = (r.get("title") or "PDF")[:80]
+        await ctx.bot.send_message(
+            chat_id,
+            f"📊 {title_short}\n"
+            f"총 {total}p 중 {applied}p OCR 완료 (차트/표 본 자동 OCR).\n"
+            f"딥리서치/장문 리포트라면 나머지도 OCR하면 검색 정확도 ↑.\n"
+            f"10분 안에 선택해주세요.",
+            reply_markup=kb,
+        )
+
+
+async def on_ocr_extend_callback(update: Update,
+                                 ctx: ContextTypes.DEFAULT_TYPE):
+    """Run pipeline.extend_pdf_ocr on user approval. Skip path just
+    edits the message to confirm the no-op."""
+    q = update.callback_query
+    if not q:
+        return
+    user = q.from_user
+    if not user or user.id != config.TELEGRAM_OWNER_ID:
+        await q.answer("권한 없음")
+        return
+    await q.answer()
+    parts = q.data.split(":")
+    if len(parts) != 3 or parts[0] != "ocr":
+        return
+    _, short, decision = parts
+    _gc_pending_ocr()
+    state = _PENDING_OCR.pop(short, None)
+    if not state:
+        try:
+            await q.edit_message_text("⚠️ 확인 요청이 만료됐습니다 (10분 초과).")
+        except Exception:
+            pass
+        return
+    if decision == "skip":
+        try:
+            await q.edit_message_text(
+                (q.message.text or "") + "\n\n→ ✅ 현재 OCR 분량으로 유지"
+            )
+        except Exception:
+            pass
+        return
+    if decision != "go":
+        return
+    try:
+        await q.edit_message_text(
+            (q.message.text or "") +
+            f"\n\n→ 📄 {state['start_page']}-{state['end_page']}p OCR 진행 중..."
+        )
+    except Exception:
+        pass
+    pressure = _mem_pressure()
+    if pressure >= _MEM_REFUSE_THRESHOLD:
+        await q.message.reply_text(
+            f"⚠️ 메모리 부족 — {pressure*100:.0f}% 사용 중. 잠시 후 다시 시도."
+        )
+        return
+    if pressure >= _MEM_CLEANUP_THRESHOLD:
+        try:
+            _run_memory_cleanup(f"pre-ocr {pressure*100:.0f}%")
+        except Exception:
+            pass
+    pdf_path = state.get("pdf_path") or ""
+    if not pdf_path or not Path(pdf_path).exists():
+        await q.message.reply_text(
+            "⚠️ 원본 PDF 파일을 찾을 수 없습니다 (자동 정리됐을 수 있음). "
+            "동일 PDF를 다시 보내주세요."
+        )
+        return
+    typing_task = asyncio.create_task(_sustained_typing(update, ctx))
+    try:
+        try:
+            r = await pipeline.extend_pdf_ocr(
+                Path(pdf_path), state["doc_id"],
+                int(state["start_page"]), int(state["end_page"]),
+            )
+        except Exception as e:
+            log.exception("extend_pdf_ocr failed")
+            await q.message.reply_text(f"⚠️ OCR 확장 실패: {_explain_error(e)}")
+            return
+    finally:
+        typing_task.cancel()
+    title_short = (state.get("title") or "PDF")[:80]
+    if r.get("status") == "ok":
+        await q.message.reply_text(
+            f"✅ {title_short}\n"
+            f"   +{r['pages_added']}p OCR · +{r['chunks_added']} 청크"
+        )
+    else:
+        await q.message.reply_text(
+            f"⚠️ OCR 결과 없음: {title_short}"
+        )
+
 
 async def on_pro_confirmation_callback(update: Update,
                                        ctx: ContextTypes.DEFAULT_TYPE):
@@ -1999,6 +2150,10 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
         await ctx.bot.send_message(notify_chat_id, summary)
     except Exception:
         log.exception("notify failed")
+    try:
+        await _send_ocr_extend_prompts(ctx, notify_chat_id, results)
+    except Exception:
+        log.exception("ocr extend prompts failed")
 
 
 def _record_failure(status: str, title: str, detail: str = "",
@@ -2267,6 +2422,9 @@ def main():
     ))
     app.add_handler(CallbackQueryHandler(
         on_pro_confirmation_callback, pattern=r"^pro:"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        on_ocr_extend_callback, pattern=r"^ocr:"
     ))
     app.add_handler(CommandHandler("queue", cmd_queue))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
