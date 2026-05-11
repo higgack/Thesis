@@ -16,7 +16,7 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 
 from . import config
-from .store import meta, vector, obsidian, cost, qna
+from .store import meta, vector, obsidian, cost, qna, pending as pending_store
 from .ingest import pipeline
 from .agent import agent
 
@@ -585,6 +585,10 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • /failed_clear  탭 → 비우기
  • /queue  자동 재시도 대기 (2분 간격)
  • /recover_orphans  디스크에 있지만 학습 안 된 파일 일괄 재학습
+▸ 보류 결정 (10분 미선택 prompt 자동 보관)
+ • /pending  보류된 OCR 확장 + Pro 합성 후보 목록
+ • /pending_ocr &lt;번호&gt;  보류 OCR 추가 학습
+ • /pending_pro &lt;번호&gt;  보류 질문 Pro 합성
 ▸ 정리·삭제
  • /forget &lt;id&gt;  특정 문서 삭제
  • /forget_search &lt;키워드&gt;  최대 5건 안전 삭제
@@ -1209,6 +1213,128 @@ async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"   /queue 로 진행 상황 확인 가능\n\n"
         f"{preview}{more}"
     )
+
+
+async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """List all pending OCR / Pro decisions saved from expired
+    inline-button prompts. Each item is numbered so the user can
+    trigger /pending_ocr <N> or /pending_pro <N>."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    ocr_items = await asyncio.to_thread(pending_store.list_ocr)
+    pro_items = await asyncio.to_thread(pending_store.list_pro)
+    if not ocr_items and not pro_items:
+        await update.message.reply_text(
+            "📭 검토 대기 항목 없음 — 모든 확인 prompt가 처리됨."
+        )
+        return
+    lines = [f"📋 검토 대기 항목 ({len(ocr_items) + len(pro_items)}개)"]
+    if ocr_items:
+        lines.append(f"\n🔵 OCR 확장 가능 ({len(ocr_items)}개)")
+        for it in ocr_items[:30]:
+            remaining = max(0, it["total_pages"] - it["applied_pages"])
+            est = max(10, remaining * 3)
+            title = (it.get("title") or "(no title)")[:70]
+            lines.append(
+                f"  [{it['id']}] {title}\n"
+                f"        {it['applied_pages']}/{it['total_pages']}p · "
+                f"+{remaining}p 가능 (~₩{est})"
+            )
+        if len(ocr_items) > 30:
+            lines.append(f"  ... 외 {len(ocr_items) - 30}건")
+        lines.append("  → /pending_ocr <번호> 로 확장 시작")
+    if pro_items:
+        lines.append(f"\n🟣 Pro 합성 가능 ({len(pro_items)}개)")
+        for it in pro_items[:30]:
+            est = max(80, it["count"] * 3 + 30)
+            q = (it.get("question") or "")[:70]
+            lines.append(
+                f"  [{it['id']}] \"{q}\"\n"
+                f"        {it['count']}개 자료 · Pro ~₩{est}"
+            )
+        if len(pro_items) > 30:
+            lines.append(f"  ... 외 {len(pro_items) - 30}건")
+        lines.append("  → /pending_pro <번호> 로 Pro 답변 시작")
+    await update.message.reply_text(
+        "\n".join(lines), disable_web_page_preview=True,
+    )
+
+
+async def cmd_pending_ocr(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Trigger OCR extension for a pending row id. Runs in background
+    via the extend_pdf_ocr pipeline call. Removes the row when done."""
+    if not _is_owner(update):
+        return
+    if not ctx.args or not ctx.args[0].isdigit():
+        await update.message.reply_text(
+            "사용법: /pending_ocr <번호>\n/pending 으로 번호 확인."
+        )
+        return
+    row_id = int(ctx.args[0])
+    item = await asyncio.to_thread(pending_store.get_ocr, row_id)
+    if not item:
+        await update.message.reply_text(f"⚠️ pending OCR #{row_id} 찾을 수 없음.")
+        return
+    pdf_path = Path(item["pdf_path"])
+    if not pdf_path.exists():
+        await update.message.reply_text(
+            f"⚠️ 원본 PDF 파일 없음 ({pdf_path.name}). 자료 다시 보내야 함."
+        )
+        pending_store.delete_ocr(row_id)
+        return
+    await _typing(update, ctx)
+    sent = await update.message.reply_text(
+        f"⏳ OCR 확장 진행 중: {item['title'][:80]} "
+        f"({item['applied_pages']+1}-{item['total_pages']}p)"
+    )
+    try:
+        r = await pipeline.extend_pdf_ocr(
+            pdf_path, item["doc_id"],
+            int(item["applied_pages"]) + 1, int(item["total_pages"]),
+        )
+    except Exception as e:
+        log.exception("pending OCR extend failed")
+        await _edit_or_send(
+            ctx, sent.chat.id, sent.message_id,
+            f"⚠️ OCR 확장 실패: {_explain_error(e)}",
+        )
+        return
+    pending_store.delete_ocr(row_id)
+    if r.get("status") == "ok":
+        skip_note = (f" · {r['pages_skipped']}p 텍스트 충분 스킵"
+                     if r.get("pages_skipped") else "")
+        await _edit_or_send(
+            ctx, sent.chat.id, sent.message_id,
+            f"✅ {item['title'][:80]}\n"
+            f"   +{r['pages_ocrd']}p OCR{skip_note} · +{r['chunks_added']} 청크"
+        )
+    else:
+        await _edit_or_send(
+            ctx, sent.chat.id, sent.message_id,
+            f"⚠️ OCR 결과 없음: {item['title'][:80]}",
+        )
+
+
+async def cmd_pending_pro(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Re-run a pending question as a Pro synthesis (deep=True)."""
+    if not _is_owner(update):
+        return
+    if not ctx.args or not ctx.args[0].isdigit():
+        await update.message.reply_text(
+            "사용법: /pending_pro <번호>\n/pending 으로 번호 확인."
+        )
+        return
+    row_id = int(ctx.args[0])
+    item = await asyncio.to_thread(pending_store.get_pro, row_id)
+    if not item:
+        await update.message.reply_text(f"⚠️ pending Pro #{row_id} 찾을 수 없음.")
+        return
+    pending_store.delete_pro(row_id)
+    # Route through the same _run_agent path as a normal /deep question
+    # so memory/pressure guards and reply rendering apply. deep=True
+    # bypasses the Pro confirmation gate (user explicitly asked).
+    await _run_agent(update, ctx, item["question"], deep=True)
 
 
 async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1871,12 +1997,19 @@ _PENDING_OCR: dict[str, dict] = {}
 _PENDING_OCR_TTL_SEC = 600
 
 
-def _gc_pending_ocr() -> None:
+def _gc_pending_ocr() -> list[dict]:
+    """Pop expired OCR-extend prompts and return the popped state
+    dicts so callers can promote them to the persistent /pending
+    list. Returns [] when nothing expired."""
     now = time.time()
-    expired = [k for k, v in _PENDING_OCR.items()
-               if now - v.get("ts", 0) > _PENDING_OCR_TTL_SEC]
-    for k in expired:
-        _PENDING_OCR.pop(k, None)
+    expired_keys = [k for k, v in _PENDING_OCR.items()
+                    if now - v.get("ts", 0) > _PENDING_OCR_TTL_SEC]
+    expired: list[dict] = []
+    for k in expired_keys:
+        v = _PENDING_OCR.pop(k, None)
+        if v:
+            expired.append(v)
+    return expired
 
 
 async def _send_ocr_extend_prompts(ctx: ContextTypes.DEFAULT_TYPE,
@@ -1902,6 +2035,7 @@ async def _send_ocr_extend_prompts(ctx: ContextTypes.DEFAULT_TYPE,
             "start_page": applied + 1,
             "end_page": total,
             "title": r.get("title", ""),
+            "chat_id": chat_id,
             "ts": time.time(),
         }
         kb = InlineKeyboardMarkup([
@@ -2628,6 +2762,46 @@ def _format_results(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
+async def _promote_expired_pending(ctx: ContextTypes.DEFAULT_TYPE):
+    """Move OCR + Pro inline-button prompts that hit their 10-min
+    TTL into the persistent /pending list so the user can decide
+    later. Runs every minute. Skips silently when nothing expired."""
+    from .agent import agent as agent_mod
+    try:
+        ocr_expired = _gc_pending_ocr()
+        for state in ocr_expired:
+            try:
+                pending_store.add_ocr(
+                    chat_id=int(state.get("chat_id") or config.TELEGRAM_OWNER_ID),
+                    doc_id=str(state.get("doc_id") or ""),
+                    title=str(state.get("title") or "")[:200],
+                    pdf_path=str(state.get("pdf_path") or ""),
+                    applied_pages=int(state.get("start_page", 1)) - 1,
+                    total_pages=int(state.get("end_page", 0) or 0),
+                )
+            except Exception:
+                log.exception("promote ocr to pending failed")
+        if ocr_expired:
+            log.info("promoted %d OCR prompts to /pending", len(ocr_expired))
+    except Exception:
+        log.exception("OCR pending promotion failed")
+    try:
+        pro_expired = agent_mod.gc_expired_pending()
+        for state in pro_expired:
+            try:
+                pending_store.add_pro(
+                    chat_id=config.TELEGRAM_OWNER_ID,
+                    question=str(state.get("message") or ""),
+                    count=int(state.get("compare_papers_count", 0) or 0),
+                )
+            except Exception:
+                log.exception("promote pro to pending failed")
+        if pro_expired:
+            log.info("promoted %d Pro prompts to /pending", len(pro_expired))
+    except Exception:
+        log.exception("Pro pending promotion failed")
+
+
 async def _periodic_memory_cleanup(ctx: ContextTypes.DEFAULT_TYPE):
     """Idle-only gc + malloc_trim every 5min. Skip when agent runs
     are active so we don't steal CPU from in-flight answers; the
@@ -2833,6 +3007,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
 def main():
     meta.init()
     obsidian.init()
+    pending_store.init()
     request = HTTPXRequest(
         connect_timeout=15.0,
         read_timeout=180.0,
@@ -2884,6 +3059,9 @@ def main():
     ))
     app.add_handler(CommandHandler("queue", cmd_queue))
     app.add_handler(CommandHandler("recover_orphans", cmd_recover_orphans))
+    app.add_handler(CommandHandler("pending", cmd_pending))
+    app.add_handler(CommandHandler("pending_ocr", cmd_pending_ocr))
+    app.add_handler(CommandHandler("pending_pro", cmd_pending_pro))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("cleanup_confirm", cmd_cleanup_confirm))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
@@ -2920,6 +3098,12 @@ def main():
             interval=60,
             first=20,
             name="refresh_dashboard",
+        )
+        app.job_queue.run_repeating(
+            _promote_expired_pending,
+            interval=60,
+            first=90,
+            name="promote_expired_pending",
         )
         app.job_queue.run_repeating(
             _periodic_memory_cleanup,

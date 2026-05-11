@@ -77,6 +77,20 @@ def peek_pending(state_id: str) -> dict | None:
     Does not consume the state."""
     return _PENDING_RUNS.get(state_id)
 
+
+def gc_expired_pending() -> list[dict]:
+    """Pop every expired pending run and return the popped values
+    so the caller (bot.py) can promote them to the persistent
+    /pending list. Wakes the dict up without consuming live items."""
+    now = time.time()
+    expired: list[dict] = []
+    for k in list(_PENDING_RUNS.keys()):
+        v = _PENDING_RUNS.get(k)
+        if v and now - v.get("ts", 0) > _PENDING_TTL_SEC:
+            _PENDING_RUNS.pop(k, None)
+            expired.append(v)
+    return expired
+
 _SYSTEM = """당신은 사용자의 개인 세컨드브레인 에이전트입니다.
 사용자는 한국 개발자/연구자이며 텔레그램으로 대화합니다. 한국어로 답하세요.
 
