@@ -35,6 +35,59 @@ _ACTIVE_AGENT_RUNS = 0
 _LAST_REPLY_AT: datetime | None = None
 _FAILED_MAX = 200
 
+# Per-ingest tracking — populated while a semaphore slot is actually
+# running work so /status can show filename + elapsed time. Earlier
+# the status only knew "X/2 busy" with no visibility into WHICH file
+# or how long. Critical when the user has just queued multiple 600+
+# chunk PDFs and wants to know "is it still chewing or stuck?".
+_ACTIVE_INGESTS: dict[str, dict] = {}
+
+
+def _ingest_label_from_msg(msg) -> tuple[str, str]:
+    """Best-effort (kind, label) extraction for an incoming Telegram
+    message about to be ingested. Used purely for status display."""
+    if getattr(msg, "document", None):
+        return "doc", (msg.document.file_name or "(no name)")
+    if getattr(msg, "photo", None):
+        return "photo", "photo"
+    if getattr(msg, "voice", None):
+        return "voice", "voice"
+    if getattr(msg, "audio", None):
+        title = (getattr(msg.audio, "title", None) or
+                 getattr(msg.audio, "file_name", None) or "audio")
+        return "audio", title
+    if getattr(msg, "video", None):
+        return "video", "video"
+    text = (getattr(msg, "text", None) or getattr(msg, "caption", None) or "").strip()
+    if text:
+        first_line = text.splitlines()[0][:80]
+        return "text", first_line
+    return "unknown", "(unknown)"
+
+
+def _register_ingest(label: str, kind: str, chat_id: int) -> str:
+    job_id = uuid.uuid4().hex
+    _ACTIVE_INGESTS[job_id] = {
+        "label": label,
+        "kind": kind,
+        "started_at": time.time(),
+        "chat_id": chat_id,
+    }
+    return job_id
+
+
+def _unregister_ingest(job_id: str) -> None:
+    _ACTIVE_INGESTS.pop(job_id, None)
+
+
+def _fmt_elapsed(seconds: float) -> str:
+    s = int(seconds)
+    if s < 60:
+        return f"{s}초"
+    if s < 3600:
+        return f"{s // 60}분 {s % 60:02d}초"
+    return f"{s // 3600}시간 {(s % 3600) // 60}분"
+
 # Memory management — automatic gc + libc malloc_trim so long-running
 # processes hand pages back to the OS instead of inflating until OOM.
 # Container OOM kills were a chronic pain on the e2-small VM; even on
@@ -431,7 +484,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • /find &lt;키워드&gt;  제목·요약·메타 검색
  • /recent [N]  최근 N개 (기본 10)
  • /stats  문서·청크 수
- • /status  봇 상태 (활성 agent·인입·큐·메모리·마지막 청소)
+ • /status  봇 상태 (활성 agent·인입 파일별 경과·큐·메모리·청소)
  • /usage  인입속도·큐·비용 (오늘/7일/30일·일별 그래프·모델별·ingest/query)
 ▸ 대화·메모리
  • /reset  대화 메모리 초기화 (토픽 바뀔 때)
@@ -624,10 +677,29 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
     else:
         cleanup_line = "\n🧹 마지막 메모리 청소: 아직 없음 (5분 주기 자동)"
+    # Active ingest detail — file name + elapsed time per running
+    # slot. Sorted by start time (oldest first) so the user sees
+    # "what's been running longest, is it stuck?" at a glance.
+    active = sorted(
+        _ACTIVE_INGESTS.values(), key=lambda v: v.get("started_at", 0)
+    )
+    now = time.time()
+    ingest_lines = []
+    for i, info in enumerate(active):
+        elapsed = now - info.get("started_at", now)
+        label = (info.get("label") or "(unknown)")[:60]
+        kind = info.get("kind", "")
+        kind_tag = f" [{kind}]" if kind and kind not in ("doc", "text") else ""
+        prefix = "   └─" if i == len(active) - 1 else "   ├─"
+        ingest_lines.append(
+            f"\n{prefix} {label}{kind_tag} ({_fmt_elapsed(elapsed)})"
+        )
+    ingest_detail = "".join(ingest_lines)
+
     out = (
         "🤖 봇 상태\n"
         f"\n💬 활성 agent: {_ACTIVE_AGENT_RUNS}건"
-        f"\n📥 인입 진행: {ingest_busy}/{ingest_capacity}"
+        f"\n📥 인입 진행: {ingest_busy}/{ingest_capacity}{ingest_detail}"
         f"\n🔁 인입 재시도 큐: {len(_INGEST_RETRY_QUEUE)}건"
         f"\n💤 agent 재시도 큐: {len(_RETRY_QUEUE)}건"
         f"\n❌ 영구 실패: {len(_INGEST_FAILED)}건"
@@ -1909,28 +1981,32 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
     Up to 3 messages run in parallel; the 4th waits. 15 min timeout
     prevents one stuck PDF from hanging the whole bot."""
     async with _INGEST_SEM:
+        kind, label = _ingest_label_from_msg(msg)
+        job_id = _register_ingest(label, kind, notify_chat_id)
         try:
             return await asyncio.wait_for(
                 _ingest_message_locked(msg, ctx, notify_chat_id),
                 timeout=_INGEST_TIMEOUT_SEC,
             )
         except asyncio.TimeoutError:
-            label = "(unknown)"
+            label2 = "(unknown)"
             if msg.document and msg.document.file_name:
-                label = msg.document.file_name
+                label2 = msg.document.file_name
             elif msg.text:
-                label = msg.text.strip().splitlines()[0][:80]
-            log.warning("ingest timeout (%ds) for %s", _INGEST_TIMEOUT_SEC, label)
-            _record_failure("timeout", label, f"ingest exceeded {_INGEST_TIMEOUT_SEC}s")
+                label2 = msg.text.strip().splitlines()[0][:80]
+            log.warning("ingest timeout (%ds) for %s", _INGEST_TIMEOUT_SEC, label2)
+            _record_failure("timeout", label2, f"ingest exceeded {_INGEST_TIMEOUT_SEC}s")
             try:
                 await ctx.bot.send_message(
                     notify_chat_id,
-                    f"⚠️ ingest timeout (15분 초과): {label[:60]}\n"
+                    f"⚠️ ingest timeout (15분 초과): {label2[:60]}\n"
                     "자료가 너무 크거나 OCR 처리 지연. 같은 자료 다시 보내면 재시도됩니다.",
                 )
             except Exception:
                 log.exception("timeout notify failed")
             return None
+        finally:
+            _unregister_ingest(job_id)
 
 
 async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
@@ -2365,6 +2441,9 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = item["chat_id"]
     title = item.get("file_name") or item.get("url") or item.get("text", "")[:60] or "(unknown)"
     async with _INGEST_SEM:
+        retry_job_id = _register_ingest(
+            f"[재시도] {title}", item.get("kind", "retry"), chat_id,
+        )
         try:
             kind = item["kind"]
             if kind == "doc":
@@ -2445,6 +2524,8 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             _INGEST_RETRY_QUEUE.append(item)
             _persist_retry_queue()
             return
+        finally:
+            _unregister_ingest(retry_job_id)
     summary = _format_results([r])
     await ctx.bot.send_message(chat_id, f"⏰ ingest 재시도\n{summary}")
 
