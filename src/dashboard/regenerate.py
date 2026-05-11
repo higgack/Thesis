@@ -226,13 +226,39 @@ header .sub { color: var(--muted); font-size: 13px; }
 .qna-card.hidden, .day-section.hidden { display: none; }
 
 .del-btn {
-  cursor: pointer; background: transparent; border: 0;
-  color: #ef4444; font-size: 16px; padding: 4px 9px;
-  border-radius: 4px; opacity: 0.75; transition: 0.1s;
-  margin-left: 6px;
+  /* Tactile button look like the NOAH dashboard — slate-tinted rounded
+     square so the trash icon reads as an actionable control instead
+     of a stray emoji floating on the card edge. Stays neutral grey
+     until hover, then flips to red so accidental hovers don't scream
+     destructive. */
+  cursor: pointer;
+  background: rgba(148, 163, 184, 0.18);  /* slate-400 18% */
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 6px 9px;
+  border-radius: 8px;
+  margin-left: 8px;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s,
+              transform 0.12s;
 }
 .del-btn:hover {
-  opacity: 1; background: rgba(239,68,68,0.15);
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #ef4444;
+  transform: translateY(-1px);
+}
+.del-btn:active { transform: translateY(0); }
+[data-theme="dark"] .del-btn {
+  background: rgba(71, 85, 105, 0.45);  /* slate-700 45% */
+  border-color: rgba(100, 116, 139, 0.55);
+  color: #cbd5e1;
+}
+[data-theme="dark"] .del-btn:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.7);
+  color: #fca5a5;
 }
 .qna-card.removing {
   opacity: 0; transform: scale(0.95);
