@@ -1184,13 +1184,10 @@ async def _send_agent_reply(send, result):
         suffix_lines.append("📚 출처:" + _format_sources_with_url(result["sources"]))
     if result.get("tool_calls"):
         suffix_lines.append(_format_tool_calls(result["tool_calls"]))
-    # Body and suffix go as separate sends so the suffix isn't silently
-    # eaten when body + suffix together exceed Telegram's 4096-char
-    # cap. Each side is also internally chunked when very long.
     await _send_chunked(send, body)
     if suffix_lines:
         await _send_chunked(send, "\n".join(suffix_lines))
-    return mermaid_blocks
+    return body, mermaid_blocks
 
 
 async def _retry_pending(ctx: ContextTypes.DEFAULT_TYPE):
@@ -1216,7 +1213,7 @@ async def _retry_pending(ctx: ContextTypes.DEFAULT_TYPE):
     async def _send(text):
         await ctx.bot.send_message(chat_id, f"⏰ 재시도 성공\n\n{text}")
 
-    mermaid_blocks = await _send_agent_reply(_send, result)
+    _, mermaid_blocks = await _send_agent_reply(_send, result)
     for code in mermaid_blocks:
         try:
             png = await _render_mermaid_png(code)
@@ -1284,17 +1281,12 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
             return
     finally:
         typing_task.cancel()
-    raw, mermaid_blocks = _extract_mermaid(result["text"])
-    body = _strip_markdown(raw)
-    suffix_lines = []
-    if result.get("warning"):
-        suffix_lines.append(result["warning"])
-    if result["sources"]:
-        suffix_lines.append("📚 출처:" + _format_sources_with_url(result["sources"]))
-    if result["tool_calls"]:
-        suffix_lines.append(_format_tool_calls(result["tool_calls"]))
-    suffix = ("\n\n" + "\n".join(suffix_lines)) if suffix_lines else ""
-    await update.message.reply_text(f"{body}{suffix}")
+    # Use the shared sender: applies _annotate_learn_date, lists all
+    # sources (no 15-cap), and chunks long outputs across multiple
+    # Telegram messages so the suffix isn't silently dropped.
+    body, mermaid_blocks = await _send_agent_reply(
+        update.message.reply_text, result,
+    )
     _record_turn(chat_id, "user", text)
     _record_turn(chat_id, "model", body)
     qna.record(
