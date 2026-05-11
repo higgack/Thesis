@@ -182,14 +182,42 @@ _HISTORY_MODEL_CAP = 1200
 
 
 def _load_persisted_state() -> None:
-    """Restore retry queue + failed log from disk on startup."""
+    """Restore retry queue + failed log from disk on startup.
+
+    The retry queue is deduped while loading because the orphan
+    recovery scanner used to re-enqueue files that were already in
+    the queue (bug: it only checked meta.documents, not the queue
+    itself). Older saved queues can be 3-4× bloated, so we collapse
+    duplicates here as well as fix the scanner."""
     import json
     try:
         if _RETRY_QUEUE_PATH.exists():
             data = json.loads(_RETRY_QUEUE_PATH.read_text(encoding="utf-8"))
             if isinstance(data, list):
-                _INGEST_RETRY_QUEUE.extend(data)
-                log.info("restored %d items to retry queue", len(data))
+                seen: set[str] = set()
+                deduped: list[dict] = []
+                for item in data:
+                    key = (
+                        item.get("file_name")
+                        or item.get("path")
+                        or item.get("url")
+                        or (item.get("text", "")[:60] if item.get("text") else None)
+                        or item.get("file_unique_id")
+                    )
+                    if not key:
+                        deduped.append(item)
+                        continue
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    deduped.append(item)
+                _INGEST_RETRY_QUEUE.extend(deduped)
+                dropped = len(data) - len(deduped)
+                if dropped > 0:
+                    log.info("restored %d retry items (%d duplicates dropped)",
+                             len(deduped), dropped)
+                else:
+                    log.info("restored %d items to retry queue", len(deduped))
     except Exception:
         log.exception("retry queue load failed")
     try:
@@ -243,6 +271,20 @@ def _scan_orphan_files() -> list[Path]:
     except Exception:
         log.exception("orphan scan failed: db query")
         return []
+    # Files already queued for retry are NOT orphans yet — re-pushing
+    # them produces N× duplicates on every restart (the bug that
+    # bloated the queue 595 = 152 × ~4 deploys). Treat queued items
+    # as 'known' so the scan only enqueues truly missing files.
+    for item in _INGEST_RETRY_QUEUE:
+        kind = item.get("kind", "")
+        if kind == "local_file":
+            p = item.get("path") or ""
+            if p:
+                known.add(Path(p).name)
+        elif kind == "doc":
+            fn = item.get("file_name") or ""
+            if fn:
+                known.add(fn)
     return sorted(
         (p for name, p in all_files.items() if name not in known),
         key=lambda p: p.name,
