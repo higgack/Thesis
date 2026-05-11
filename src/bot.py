@@ -1976,37 +1976,127 @@ def _explain_error(e: BaseException, max_len: int = 280) -> str:
 _INGEST_TIMEOUT_SEC = 900  # 15 minutes per message — large PDFs with OCR can take this long
 
 
+_LIVE_EDIT_INTERVAL = 15  # seconds between status edits
+
+
+async def _live_status_updater(ctx, chat_id: int, msg_id: int,
+                               label: str, job_id: str) -> None:
+    """Re-render the ⏳ status message every _LIVE_EDIT_INTERVAL
+    seconds so the user can see elapsed time tick forward. Silently
+    swallows Telegram errors (rate limit, message-too-old, etc.) so
+    the background task never crashes ingest."""
+    short_label = label[:80]
+    while True:
+        try:
+            await asyncio.sleep(_LIVE_EDIT_INTERVAL)
+        except asyncio.CancelledError:
+            return
+        info = _ACTIVE_INGESTS.get(job_id)
+        if not info:
+            return
+        elapsed = time.time() - info.get("started_at", time.time())
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=chat_id, message_id=msg_id,
+                text=f"⏳ {short_label}\n   처리 중 ({_fmt_elapsed(elapsed)})",
+            )
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            pass
+
+
 async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
-    """Cap concurrent ingests via semaphore + per-message timeout.
-    Up to 3 messages run in parallel; the 4th waits. 15 min timeout
-    prevents one stuck PDF from hanging the whole bot."""
+    """Cap concurrent ingests via semaphore + per-message timeout
+    + per-message live status bubble.
+
+    Up to 2 messages run in parallel via the semaphore; the rest
+    wait. The 15-min timeout prevents one stuck PDF from hanging
+    the whole bot. While work runs we keep editing a single status
+    message instead of going silent, so the user sees the ingest
+    is alive."""
     async with _INGEST_SEM:
         kind, label = _ingest_label_from_msg(msg)
         job_id = _register_ingest(label, kind, notify_chat_id)
+
+        status_msg_id: int | None = None
         try:
-            return await asyncio.wait_for(
+            sent = await ctx.bot.send_message(
+                notify_chat_id,
+                f"⏳ 학습 시작: {label[:80]}",
+            )
+            status_msg_id = sent.message_id
+            _ACTIVE_INGESTS[job_id]["status_msg_id"] = status_msg_id
+        except Exception:
+            log.exception("status start message failed")
+
+        updater_task = None
+        if status_msg_id:
+            updater_task = asyncio.create_task(
+                _live_status_updater(
+                    ctx, notify_chat_id, status_msg_id, label, job_id,
+                )
+            )
+
+        results: list[dict] | None = None
+        timed_out = False
+        try:
+            results = await asyncio.wait_for(
                 _ingest_message_locked(msg, ctx, notify_chat_id),
                 timeout=_INGEST_TIMEOUT_SEC,
             )
         except asyncio.TimeoutError:
-            label2 = "(unknown)"
-            if msg.document and msg.document.file_name:
-                label2 = msg.document.file_name
-            elif msg.text:
-                label2 = msg.text.strip().splitlines()[0][:80]
-            log.warning("ingest timeout (%ds) for %s", _INGEST_TIMEOUT_SEC, label2)
-            _record_failure("timeout", label2, f"ingest exceeded {_INGEST_TIMEOUT_SEC}s")
-            try:
-                await ctx.bot.send_message(
-                    notify_chat_id,
-                    f"⚠️ ingest timeout (15분 초과): {label2[:60]}\n"
-                    "자료가 너무 크거나 OCR 처리 지연. 같은 자료 다시 보내면 재시도됩니다.",
-                )
-            except Exception:
-                log.exception("timeout notify failed")
-            return None
+            timed_out = True
+            log.warning("ingest timeout (%ds) for %s", _INGEST_TIMEOUT_SEC, label)
+            _record_failure("timeout", label,
+                            f"ingest exceeded {_INGEST_TIMEOUT_SEC}s")
         finally:
+            if updater_task:
+                updater_task.cancel()
+                try:
+                    await updater_task
+                except asyncio.CancelledError:
+                    pass
             _unregister_ingest(job_id)
+
+        # Render the final state into the live message via edit so the
+        # ⏳ bubble becomes the result bubble in place — no scroll-down
+        # cleanup needed.
+        if timed_out:
+            final_text = (
+                f"⚠️ ingest timeout (15분 초과): {label[:60]}\n"
+                "자료가 너무 크거나 OCR 처리 지연. 같은 자료 다시 보내면 재시도됩니다."
+            )
+        elif results:
+            final_text = _format_results(results)
+        else:
+            final_text = f"(빈 결과: {label[:60]})"
+
+        sent_ok = False
+        if status_msg_id:
+            try:
+                await ctx.bot.edit_message_text(
+                    chat_id=notify_chat_id, message_id=status_msg_id,
+                    text=final_text, disable_web_page_preview=True,
+                )
+                sent_ok = True
+            except Exception:
+                # Edit can fail (too old, network) — fall back to new send.
+                log.warning("status final edit failed; sending fresh")
+        if not sent_ok:
+            try:
+                await ctx.bot.send_message(notify_chat_id, final_text)
+            except Exception:
+                log.exception("ingest result notify failed")
+
+        # OCR-extend prompts run after the final result is visible.
+        if results:
+            try:
+                await _send_ocr_extend_prompts(ctx, notify_chat_id, results)
+            except Exception:
+                log.exception("ocr extend prompts failed")
+
+        return results
 
 
 async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
@@ -2294,17 +2384,11 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
                                 "error": _explain_error(e),
                                 "retry_payload": text_retry})
 
-    if not results:
-        return
-    summary = _format_results(results)
-    try:
-        await ctx.bot.send_message(notify_chat_id, summary)
-    except Exception:
-        log.exception("notify failed")
-    try:
-        await _send_ocr_extend_prompts(ctx, notify_chat_id, results)
-    except Exception:
-        log.exception("ocr extend prompts failed")
+    # Caller (_ingest_message) owns the live-edit status message and
+    # the OCR-extend prompts now — return results so the orchestrator
+    # can render them in the single edited bubble instead of as a
+    # second message.
+    return results
 
 
 def _record_failure(status: str, title: str, detail: str = "",
