@@ -299,6 +299,16 @@ async def run(message: str, deep: bool = False,
             ))
         contents.append(types.Content(role="user", parts=response_parts))
 
+        # Upgrade subsequent synthesis to Pro when compare_papers was
+        # used in this turn. Many-document integration (50 summaries)
+        # exceeds what Flash digests cleanly; Pro keeps the structure
+        # intact at the cost of ~₩20 extra on those queries only.
+        if (not deep and model != config.DEEP_MODEL
+                and "compare_papers" in tool_calls):
+            log.info("compare_papers detected — upgrading synthesis model to %s",
+                     config.DEEP_MODEL)
+            model = config.DEEP_MODEL
+
     final = await _client.aio.models.generate_content(
         model=model,
         contents=contents + [types.Content(

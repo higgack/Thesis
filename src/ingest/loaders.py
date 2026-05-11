@@ -179,12 +179,17 @@ def _xml_field(xml: str, tag: str, skip_first: bool = False) -> str | None:
 
 def load_pdf(path: Path) -> tuple[str, str, str | None]:
     """Extract text from a PDF. Tries PyMuPDF first (handles complex layouts,
-    embedded fonts, and image-text overlays better) and falls back to pypdf."""
+    embedded fonts, and image-text overlays better) and falls back to pypdf.
+    When the text-only extract looks sparse for the number of pages
+    (chart/table-heavy brokerage reports etc.), augment with a Vision OCR
+    pass over the first few pages so the numbers in figures don't get lost."""
     title = path.stem
     body = ""
+    page_count = 0
     try:
         import fitz  # PyMuPDF
         doc = fitz.open(str(path))
+        page_count = doc.page_count
         meta_title = (doc.metadata or {}).get("title")
         if meta_title and meta_title.strip():
             title = meta_title.strip()
@@ -196,6 +201,7 @@ def load_pdf(path: Path) -> tuple[str, str, str | None]:
     if not body:
         try:
             reader = PdfReader(str(path))
+            page_count = page_count or len(reader.pages)
             pages = [p.extract_text() or "" for p in reader.pages]
             body = "\n\n".join(pages).strip()
             if reader.metadata and reader.metadata.title:
@@ -203,10 +209,17 @@ def load_pdf(path: Path) -> tuple[str, str, str | None]:
         except Exception:
             pass
 
-    if len(body) < 200:
+    if not body:
         ocr_text = _ocr_pdf_pages(path)
         if ocr_text:
             body = ocr_text
+    elif page_count > 0 and len(body) / max(page_count, 1) < 1500:
+        # Sparse text/page → likely chart/table-heavy. Augment with Vision
+        # OCR on the first few pages so numbers in figures survive. Capped
+        # to keep cost predictable (~₩10/PDF).
+        ocr_text = _ocr_pdf_pages(path, max_pages=8)
+        if ocr_text:
+            body = body + "\n\n--- Vision OCR augmentation ---\n\n" + ocr_text
 
     return (title or path.stem)[:200], body, None
 
