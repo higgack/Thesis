@@ -324,7 +324,68 @@ async def run(message: str, deep: bool = False,
         "step": 0,
         "pro_decision": None,
     }
-    return await _loop(state)
+    result = await _loop(state)
+    return await _enforce_tool_use(state, result)
+
+
+_NUDGE_MESSAGE = (
+    "[자동 시스템 경고] 직전 답변에서 도구를 한 번도 호출하지 않았습니다. "
+    "이 봇은 도구 결과 없는 답변을 허용하지 않습니다. "
+    "지금 즉시 search_my_brain 또는 compare_papers를 호출해 저장된 자료를 "
+    "조회한 뒤 답변하세요. brain에 자료가 없으면 '저장된 자료 부족' 이라고만 "
+    "솔직히 답하세요. 어떠한 추측·일반 지식 답변도 금지."
+)
+
+_REFUSAL_TEXT = (
+    "🔍 저장된 자료에서 이 질문에 대한 직접 자료를 찾지 못했습니다.\n\n"
+    "이 봇은 출처 없는 일반 지식(LLM 사전학습 코퍼스) 답변은 제공하지 않습니다 "
+    "— 검증 불가능하고 정보가 오래됐을 수 있어서요.\n\n"
+    "다음 중 한 가지로 다시 시도해주세요:\n"
+    "• 관련 자료 (URL/PDF/노트)를 봇에 학습시킨 후 같은 질문\n"
+    "• '웹에서 검색해줘' / '구글에서 찾아줘' 명시해서 외부 검색 요청\n"
+    "• 더 구체적인 키워드로 다시 질문 (회사명·기술명·연도 명시)"
+)
+
+
+async def _enforce_tool_use(state: dict, result: dict) -> dict:
+    """Force the agent to ground its answer in tool results.
+
+    Stage B: if the first pass returned with zero tool calls, append a
+    strong system-style nudge to the conversation and rerun the loop.
+    Most violations are 'model thought it knew the answer' rather than
+    'tools are unavailable', so a single explicit reminder usually
+    converts it.
+
+    Stage C: if even the retry refuses to call a tool, replace the
+    text with an honest refusal. We never show the model's
+    pre-training-knowledge answer because the user can't tell it
+    apart from a real brain-backed answer."""
+    # Skip if the loop suspended for Pro confirmation — callback flow
+    # will resume the run later.
+    if result.get("status") == "pending_pro_confirmation":
+        return result
+    if result.get("tool_calls"):
+        return result
+
+    log.info("agent skipped tools — issuing nudge + retry")
+    state["contents"].append(types.Content(
+        role="user", parts=[types.Part.from_text(text=_NUDGE_MESSAGE)],
+    ))
+    state["step"] = 0  # fresh MAX_STEPS budget for the retry
+    result = await _loop(state)
+
+    if result.get("status") == "pending_pro_confirmation":
+        return result
+    if result.get("tool_calls"):
+        return result
+
+    log.warning(
+        "agent refused to call tools even after nudge — serving hard refusal"
+    )
+    result["text"] = _REFUSAL_TEXT
+    # The verify-step warning would just duplicate the refusal — drop it.
+    result["warning"] = None
+    return result
 
 
 async def resume(state_id: str, decision: str) -> dict:
