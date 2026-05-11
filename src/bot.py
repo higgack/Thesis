@@ -1076,6 +1076,43 @@ def _format_sources_with_url(titles: list[str], cap: int = 15) -> str:
     return "\n  • " + "\n  • ".join(formatted) if formatted else ""
 
 
+# Telegram caps a single message at 4096 chars. Long brain answers
+# (compare_papers can produce 3000+ chars body + 2000 chars of sources)
+# get silently dropped by the API if we pack everything into one send.
+# Chunk on paragraph boundaries so each piece reads naturally.
+_TG_CHUNK_LIMIT = 3900
+
+
+def _chunk_for_telegram(text: str, limit: int = _TG_CHUNK_LIMIT) -> list[str]:
+    text = text.strip()
+    if not text:
+        return []
+    if len(text) <= limit:
+        return [text]
+    parts: list[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        # Prefer paragraph boundary, then sentence, then last newline,
+        # then a hard cut as a last resort.
+        slice_at = remaining.rfind("\n\n", 0, limit)
+        if slice_at < int(limit * 0.5):
+            slice_at = remaining.rfind("\n", 0, limit)
+        if slice_at < int(limit * 0.5):
+            slice_at = remaining.rfind(". ", 0, limit)
+        if slice_at < int(limit * 0.5):
+            slice_at = limit
+        parts.append(remaining[:slice_at].rstrip())
+        remaining = remaining[slice_at:].lstrip()
+    if remaining:
+        parts.append(remaining)
+    return parts
+
+
+async def _send_chunked(send, text: str) -> None:
+    for piece in _chunk_for_telegram(text):
+        await send(piece)
+
+
 async def _send_agent_reply(send, result):
     raw, mermaid_blocks = _extract_mermaid(result["text"])
     body = _strip_markdown(raw)
@@ -1086,8 +1123,12 @@ async def _send_agent_reply(send, result):
         suffix_lines.append("📚 출처:" + _format_sources_with_url(result["sources"]))
     if result.get("tool_calls"):
         suffix_lines.append(_format_tool_calls(result["tool_calls"]))
-    suffix = ("\n\n" + "\n".join(suffix_lines)) if suffix_lines else ""
-    await send(f"{body}{suffix}")
+    # Body and suffix go as separate sends so the suffix isn't silently
+    # eaten when body + suffix together exceed Telegram's 4096-char
+    # cap. Each side is also internally chunked when very long.
+    await _send_chunked(send, body)
+    if suffix_lines:
+        await _send_chunked(send, "\n".join(suffix_lines))
     return mermaid_blocks
 
 

@@ -145,6 +145,18 @@ async def compare_papers(topic: str, limit: int = 50,
     """Cross-document overview: gather many summaries at once."""
     limit = max(1, min(int(limit), 80))
     hits = await vector.query(topic, k=limit * 2, kind="summary")
+    # Apply recency factor — newer docs surface first while older
+    # comprehensive analyses still get a fair shot (0.55 floor).
+    # Pure semantic similarity left to itself pulls dense old reports
+    # ahead of recent daily summaries; this is what made queries like
+    # "반도체 강세 이유" cite 2024 reports despite May-2026 ingest.
+    from .retrieve import _recency_factor
+    def _rank(h):
+        doc = meta.get_doc(h["metadata"]["doc_id"]) or {}
+        recency = _recency_factor(doc.get("ingested_at") or "")
+        semantic = 1.0 - float(h.get("distance", 0) or 0)
+        return semantic * recency
+    hits = sorted(hits, key=_rank, reverse=True)
     seen = set()
     bundles = []
     for h in hits:
