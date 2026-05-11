@@ -20,7 +20,10 @@ services:
       - ./data:/app/data
       - tg-bot-api-data:/var/lib/telegram-bot-api
     restart: unless-stopped
-    mem_limit: 1500m
+    # Bumped after VM upgrade e2-small (2GB) → e2-medium (4GB). 2.5GB
+    # gives the bot enough headroom for BM25 cache + BGE-reranker
+    # + ingest bursts without OOM-killing again.
+    mem_limit: 2500m
     dns:
       - 8.8.8.8
       - 1.1.1.1
