@@ -171,7 +171,7 @@ async def compare_papers(topic: str, limit: int = 50,
             "doc_id": doc_id,
             "title": doc.get("title", ""),
             "type": doc.get("type", ""),
-            "summary": doc.get("summary", "")[:800] or h["text"][:800],
+            "summary": doc.get("summary", "")[:1500] or h["text"][:1500],
         })
         if len(bundles) >= limit:
             break
