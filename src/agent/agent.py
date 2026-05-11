@@ -17,6 +17,37 @@ from ..store import cost
 from .tools import TOOL_DISPATCH, TOOL_DECLARATIONS
 
 _AUDIT_JSON_RE = re.compile(r"\{.*?\}", re.DOTALL)
+# Belt-and-suspenders post-processors. The system prompt forbids
+# `[출처명]` citations and the `(사용 자료 시점: ...)` footer line
+# when no tool was called this turn, but Gemini still slips
+# occasionally (the gas-turbine answer shipped both even though the
+# model never called a single tool). Apply deterministic strip so
+# the user never sees fabricated grounding markers.
+_SOURCE_DATE_LINE_RE = re.compile(
+    r"\(\s*사용\s*자료\s*시점[^)\n]*\)\s*\n?"
+)
+# 80-char ceiling on the inside catches '[가스터빈 산업 동향]'
+# style fake source labels without nuking legitimate uses like
+# '1980년대' or short bracketed asides.
+_BRACKET_CITATION_RE = re.compile(r"\[[^\]\n]{1,80}\]")
+_NO_GROUND_NOTICE = (
+    "저장된 자료에서 직접 확인된 내용은 없음 — 일반 지식 기반 답변입니다."
+)
+
+
+def _strip_fake_citations(text: str) -> str:
+    """Scrub `[...]` citation markers and the '(사용 자료 시점: ...)'
+    footer when the answer has no tool grounding, and append the
+    honest 'unsourced' notice if it isn't already present."""
+    if not text:
+        return text
+    cleaned = _SOURCE_DATE_LINE_RE.sub("", text)
+    cleaned = _BRACKET_CITATION_RE.sub("", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).rstrip()
+    if "저장된 자료에서 직접 확인된" not in cleaned[-300:]:
+        cleaned = cleaned + "\n\n" + _NO_GROUND_NOTICE
+    return cleaned
 
 log = logging.getLogger(__name__)
 
@@ -363,8 +394,11 @@ async def _loop(state: dict) -> dict:
 
         calls = _extract_calls(cand.content)
         if not calls:
+            answer = _extract_text(cand.content).strip()
+            if not tool_calls:
+                answer = _strip_fake_citations(answer)
             return {
-                "text": _extract_text(cand.content).strip(),
+                "text": answer,
                 "sources": sources,
                 "tool_calls": tool_calls,
                 "steps": step + 1,
@@ -444,6 +478,8 @@ async def _loop(state: dict) -> dict:
     if final.candidates and final.candidates[0].content:
         text = _extract_text(final.candidates[0].content).strip()
     text = text or "도구 호출 한도에 도달했지만 답변을 만들 수 없었습니다."
+    if not tool_calls:
+        text = _strip_fake_citations(text)
     return {
         "text": text,
         "sources": sources,
