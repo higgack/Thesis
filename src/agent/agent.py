@@ -5,6 +5,8 @@ message. Loop is bounded by MAX_STEPS to keep cost predictable."""
 import json
 import logging
 import re
+import time
+import uuid
 
 from google import genai
 from google.genai import types
@@ -21,6 +23,28 @@ log = logging.getLogger(__name__)
 _client = genai.Client(api_key=config.GOOGLE_API_KEY)
 
 MAX_STEPS = 4
+PRO_THRESHOLD = 25
+
+# Suspended agent runs waiting on a user choice (Pro vs Flash synthesis).
+# Holds `contents`, current model, harvested sources/tool_calls, etc. so
+# we can pick up where we left off after the user taps a button. TTL'd
+# so abandoned prompts don't pile up in memory.
+_PENDING_RUNS: dict[str, dict] = {}
+_PENDING_TTL_SEC = 600
+
+
+def _gc_pending() -> None:
+    now = time.time()
+    expired = [k for k, v in _PENDING_RUNS.items()
+               if now - v.get("ts", 0) > _PENDING_TTL_SEC]
+    for k in expired:
+        _PENDING_RUNS.pop(k, None)
+
+
+def peek_pending(state_id: str) -> dict | None:
+    """Read-only access to a pending run's metadata (for bot UI).
+    Does not consume the state."""
+    return _PENDING_RUNS.get(state_id)
 
 _SYSTEM = """당신은 사용자의 개인 세컨드브레인 에이전트입니다.
 사용자는 한국 개발자/연구자이며 텔레그램으로 대화합니다. 한국어로 답하세요.
@@ -244,7 +268,6 @@ async def run(message: str, deep: bool = False,
     final user/assistant text (no stale tool calls/results) so the
     model gets pronoun/topic continuity ('그 회사의 경쟁사는?') without
     paying tokens to redo old retrievals."""
-    model = config.DEEP_MODEL if deep else config.ANSWER_MODEL
     contents: list[types.Content] = []
     for turn in (history or []):
         role = turn.get("role")
@@ -257,12 +280,66 @@ async def run(message: str, deep: bool = False,
     contents.append(
         types.Content(role="user", parts=[types.Part.from_text(text=message)])
     )
-    sources: list[str] = []
-    tool_calls: list[str] = []
-    # Track largest compare_papers result we saw this turn so we only
-    # pay Pro premium when the aggregation is genuinely large.
-    compare_papers_count = 0
-    PRO_THRESHOLD = 25
+    state = {
+        "message": message,
+        "deep": deep,
+        "contents": contents,
+        "sources": [],
+        "tool_calls": [],
+        "compare_papers_count": 0,
+        "model": config.DEEP_MODEL if deep else config.ANSWER_MODEL,
+        "step": 0,
+        "pro_decision": None,
+    }
+    return await _loop(state)
+
+
+async def resume(state_id: str, decision: str) -> dict:
+    """Continue an agent run paused awaiting Pro/Flash confirmation.
+    `decision` is one of 'pro', 'flash', 'cancel'."""
+    _gc_pending()
+    state = _PENDING_RUNS.pop(state_id, None)
+    if not state:
+        return {
+            "text": "⚠️ 확인 요청이 만료됐습니다 (10분 초과). "
+                    "같은 질문을 다시 보내주세요.",
+            "sources": [], "tool_calls": [],
+            "model": "expired",
+            "query": "",
+        }
+    if decision == "cancel":
+        return {
+            "text": "취소했습니다. 더 좁은 질문으로 다시 시도하시거나, "
+                    "/deep <질문> 으로 의도적으로 Pro 합성을 요청할 수 있어요.",
+            "sources": state["sources"],
+            "tool_calls": state["tool_calls"],
+            "model": state["model"],
+            "query": state["message"],
+        }
+    state["pro_decision"] = decision
+    if decision == "pro":
+        state["model"] = config.DEEP_MODEL
+    result = await _loop(state)
+    result["query"] = state["message"]
+    return result
+
+
+async def _loop(state: dict) -> dict:
+    """Drive the function-calling loop forward from `state`.
+
+    When compare_papers returns a large set (≥PRO_THRESHOLD) we pause
+    and ask the user via the bot before paying the Pro premium —
+    avoids silent ₩150+ spend on broad queries like '정리해줘'. The
+    pause is skipped when `state['deep']` is true (user explicitly
+    asked for /deep) or when they already chose a path this turn
+    (`state['pro_decision']`)."""
+    contents: list[types.Content] = state["contents"]
+    sources: list[str] = state["sources"]
+    tool_calls: list[str] = state["tool_calls"]
+    model = state["model"]
+    deep = state["deep"]
+    message = state["message"]
+    compare_papers_count = state["compare_papers_count"]
 
     cfg = types.GenerateContentConfig(
         system_instruction=_SYSTEM,
@@ -272,7 +349,7 @@ async def run(message: str, deep: bool = False,
         max_output_tokens=8192,
     )
 
-    for step in range(MAX_STEPS):
+    for step in range(state["step"], MAX_STEPS):
         resp = await _client.aio.models.generate_content(
             model=model, contents=contents, config=cfg
         )
@@ -308,13 +385,42 @@ async def run(message: str, deep: bool = False,
             ))
         contents.append(types.Content(role="user", parts=response_parts))
 
-        # Upgrade synthesis to Pro only when compare_papers returned a
-        # large set (≥PRO_THRESHOLD). Smaller comparisons are something
-        # Flash handles fine; the Pro premium isn't justified.
+        # Pro upgrade gate. If a large compare_papers result just came
+        # back, suspend and ask the user instead of silently switching
+        # to Pro (~₩150). /deep skips this; once the user has decided
+        # this turn the decision sticks and we don't ask again.
         if (not deep and model != config.DEEP_MODEL
-                and compare_papers_count >= PRO_THRESHOLD):
-            log.info("compare_papers returned %d docs (≥%d) — upgrading synthesis to %s",
-                     compare_papers_count, PRO_THRESHOLD, config.DEEP_MODEL)
+                and compare_papers_count >= PRO_THRESHOLD
+                and state["pro_decision"] is None):
+            _gc_pending()
+            state_id = uuid.uuid4().hex
+            _PENDING_RUNS[state_id] = {
+                "message": message,
+                "deep": deep,
+                "contents": contents,
+                "sources": sources,
+                "tool_calls": tool_calls,
+                "compare_papers_count": compare_papers_count,
+                "model": model,
+                "step": step + 1,
+                "pro_decision": None,
+                "ts": time.time(),
+            }
+            log.info("suspending for Pro confirmation: %d docs, state_id=%s",
+                     compare_papers_count, state_id)
+            return {
+                "status": "pending_pro_confirmation",
+                "state_id": state_id,
+                "count": compare_papers_count,
+                "sources": sources,
+                "tool_calls": tool_calls,
+                "model": model,
+                "query": message,
+            }
+
+        # User approved Pro earlier this turn — apply once.
+        if state["pro_decision"] == "pro" and model != config.DEEP_MODEL:
+            log.info("user-approved Pro upgrade (%d docs)", compare_papers_count)
             model = config.DEEP_MODEL
 
     final = await _client.aio.models.generate_content(

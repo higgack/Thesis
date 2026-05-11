@@ -476,7 +476,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 <b>【3. 답변 출처 도구】</b>
  🧠 search_my_brain  저장 자료 단일 검색
  🧠 compare_papers  저장 자료 다수(50) 통합·비교
-   (25개+ 반환 시 Pro 모델 자동 합성)
+   25개+ 시 Pro/Flash/취소 버튼으로 사용자 확인 후 진행
  🧠 recent_docs  최근 학습 목록
  📄 search_papers  외부 학술 (S2→arXiv)
  🌐 web_search  실시간 구글 (명시 시만)
@@ -544,7 +544,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 영속: retry_queue·failed_log·chat_history·qna.db·cost.db·dashboard·hf_cache
  • BM25 캐시: 부팅 시 백그라운드 빌드 (53k 1~2분, 빌드 중엔 dense-only)
  • BGE-reranker-base: 로컬 cross-encoder 활성 (LOCAL_RERANKER_ENABLED=1)
- • Pro 합성 자동 트리거: compare_papers가 25개+ 반환 시
+ • compare_papers 25개+ 시 Pro/Flash/취소 인라인 버튼으로 확인
+   (자동 ₩150 청구 차단, 10분 안 미선택 시 만료)
  • 자동 메모리 청소: 5분 주기 gc+malloc_trim (idle 일 때만)
    90% 이상이면 agent 시작 전 즉시 청소, 95% 이상이면 거부
    현황은 /status (RSS·한도·마지막 청소 회수량)
@@ -1477,11 +1478,37 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
             return
     finally:
         typing_task.cancel()
-    # Anything below this point — reply rendering, history record,
-    # qna persistence, dashboard regen, mermaid — is wrapped so a
-    # failure can't leave the user with no signal at all. Without
-    # this guard the typing indicator just disappears and they're
-    # left wondering whether the bot is alive.
+    # Pro-confirmation gate: the agent paused mid-flight because a
+    # large compare_papers result would trigger a ₩150-class Pro
+    # synthesis. Show inline buttons so the user opts in instead of
+    # getting silently billed for it. The agent run resumes in
+    # on_pro_confirmation_callback when the user taps.
+    if result.get("status") == "pending_pro_confirmation":
+        try:
+            await _send_pro_confirmation(update, result)
+        except Exception:
+            log.exception("pro confirmation send failed")
+        _ACTIVE_AGENT_RUNS = max(0, _ACTIVE_AGENT_RUNS - 1)
+        _LAST_REPLY_AT = datetime.utcnow()
+        return
+    try:
+        await _finalize_agent_reply(
+            update.message, ctx, chat_id, text, result,
+        )
+    finally:
+        _ACTIVE_AGENT_RUNS = max(0, _ACTIVE_AGENT_RUNS - 1)
+        _LAST_REPLY_AT = datetime.utcnow()
+
+
+async def _finalize_agent_reply(message, ctx: ContextTypes.DEFAULT_TYPE,
+                                chat_id: int, text: str, result: dict) -> None:
+    """Shared reply tail used by both fresh runs and resumed runs.
+
+    Wrapped so a render/network hiccup can't leave the user staring
+    at a dead typing indicator with no error signal. If anything
+    blows up we still ack with an explain string. `message` is any
+    object with `reply_text`/`reply_photo` (Message or
+    callback_query.message)."""
     try:
         # If the agent answered from memory without calling any tool
         # this turn, fall back to the previous turn's citations so
@@ -1494,12 +1521,8 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
                 result["sources"] = prev_sources
                 result["tool_calls"] = (result.get("tool_calls") or []) + prev_tools
                 inherited = True
-        # Use the shared sender: applies _annotate_learn_date, lists
-        # all sources (no 15-cap), and chunks long outputs across
-        # multiple Telegram messages so the suffix isn't silently
-        # dropped.
         body, mermaid_blocks = await _send_agent_reply(
-            update.message.reply_text, result, inherited=inherited,
+            message.reply_text, result, inherited=inherited,
         )
         _record_turn(chat_id, "user", text)
         _record_turn(
@@ -1524,25 +1547,120 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
         for code in mermaid_blocks:
             try:
                 png = await _render_mermaid_png(code)
-                await update.message.reply_photo(
-                    photo=png,
-                    caption="🧩 다이어그램",
-                )
+                await message.reply_photo(photo=png, caption="🧩 다이어그램")
             except Exception as e:
                 log.warning("mermaid render failed: %s", e)
-                await update.message.reply_text(
+                await message.reply_text(
                     f"(다이어그램 렌더 실패: {_explain_error(e)})\n\n{code[:500]}"
                 )
     except Exception as e:
         log.exception("post-agent reply failed")
         try:
-            await update.message.reply_text(
+            await message.reply_text(
                 f"⚠️ 응답 처리 중 오류 — {_explain_error(e)}\n"
                 "질문은 처리됐지만 응답 전송에서 문제가 났습니다. "
                 "/status 로 봇 상태 확인 후 다시 시도해주세요."
             )
         except Exception:
             log.exception("error notification also failed")
+
+
+async def _send_pro_confirmation(update: Update, result: dict) -> None:
+    """Inline keyboard asking whether to pay the Pro premium on a
+    large compare_papers synthesis. Encodes the agent's state_id +
+    the user's choice in callback_data — Telegram caps that at 64
+    bytes so we keep it compact: 'pro:<state_id_first_24>:<choice>'.
+    state_id is a uuid hex (32 chars), so we truncate to first 24
+    which is still globally unique enough for our concurrent run
+    count (~1 at a time)."""
+    state_id = result["state_id"]
+    count = result["count"]
+    short = state_id[:24]
+    # Estimate Pro cost: ~1500 chars/doc → ~1.5k input toks/doc.
+    # Pro: ₩1,750/1M in + ₩14,000/1M out → ~₩3/doc input + ₩20 out.
+    pro_est = max(80, int(count * 3 + 30))
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            f"💎 Pro 합성 (~₩{pro_est})", callback_data=f"pro:{short}:pro"
+        )],
+        [InlineKeyboardButton(
+            "⚡ Flash 25개로 (~₩20)", callback_data=f"pro:{short}:flash"
+        )],
+        [InlineKeyboardButton(
+            "❌ 취소", callback_data=f"pro:{short}:cancel"
+        )],
+    ])
+    # Remember the full state_id since callback_data only carries 24
+    # chars. Keyed by short id so we can look up the real one.
+    _PENDING_SHORT_TO_FULL[short] = state_id
+    await update.message.reply_text(
+        f"📊 {count}개 문서가 검색됐어요.\n\n"
+        f"💎 Pro: 전체 {count}개 깊이 통합 분석 (~₩{pro_est})\n"
+        f"⚡ Flash: 상위 25개로 빠른 합성 (~₩20)\n"
+        f"❌ 취소: 답변하지 않음\n\n"
+        f"10분 안에 선택해주세요.",
+        reply_markup=kb,
+    )
+
+
+_PENDING_SHORT_TO_FULL: dict[str, str] = {}
+
+
+async def on_pro_confirmation_callback(update: Update,
+                                       ctx: ContextTypes.DEFAULT_TYPE):
+    """Resume the agent run when the user picks Pro/Flash/Cancel."""
+    global _ACTIVE_AGENT_RUNS, _LAST_REPLY_AT
+    q = update.callback_query
+    if not q:
+        return
+    user = q.from_user
+    if not user or user.id != config.TELEGRAM_OWNER_ID:
+        await q.answer("권한 없음")
+        return
+    await q.answer()
+    parts = q.data.split(":")
+    if len(parts) != 3 or parts[0] != "pro":
+        return
+    _, short, decision = parts
+    state_id = _PENDING_SHORT_TO_FULL.pop(short, None) or short
+    if decision not in ("pro", "flash", "cancel"):
+        return
+    label = {"pro": "💎 Pro 합성", "flash": "⚡ Flash 25개",
+             "cancel": "❌ 취소"}[decision]
+    try:
+        await q.edit_message_text(
+            (q.message.text or "") + f"\n\n→ {label} 진행 중..."
+        )
+    except Exception:
+        pass
+    # Same memory + counter discipline as _run_agent.
+    pressure = _mem_pressure()
+    if pressure >= _MEM_REFUSE_THRESHOLD:
+        await q.message.reply_text(
+            f"⚠️ 메모리 부족 — 현재 {pressure*100:.0f}% 사용 중. "
+            "잠시 후 다시 질문해주세요."
+        )
+        return
+    if pressure >= _MEM_CLEANUP_THRESHOLD:
+        try:
+            _run_memory_cleanup(f"pre-resume {pressure*100:.0f}%")
+        except Exception:
+            log.exception("threshold cleanup failed")
+    _ACTIVE_AGENT_RUNS += 1
+    typing_task = asyncio.create_task(_sustained_typing(update, ctx))
+    try:
+        try:
+            result = await agent.resume(state_id, decision)
+        except Exception as e:
+            log.exception("agent resume failed")
+            await q.message.reply_text(f"⚠️ {_explain_error(e)}")
+            return
+    finally:
+        typing_task.cancel()
+    chat_id = q.message.chat.id
+    text = result.get("query") or ""
+    try:
+        await _finalize_agent_reply(q.message, ctx, chat_id, text, result)
     finally:
         _ACTIVE_AGENT_RUNS = max(0, _ACTIVE_AGENT_RUNS - 1)
         _LAST_REPLY_AT = datetime.utcnow()
@@ -2146,6 +2264,9 @@ def main():
     app.add_handler(CommandHandler("failed_clear", cmd_failed_clear))
     app.add_handler(CallbackQueryHandler(
         on_callback_query, pattern=r"^failed_(retry|clear)$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        on_pro_confirmation_callback, pattern=r"^pro:"
     ))
     app.add_handler(CommandHandler("queue", cmd_queue))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
