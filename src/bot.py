@@ -212,6 +212,97 @@ def _load_persisted_state() -> None:
         log.exception("chat history load failed")
 
 
+def _scan_orphan_files() -> list[Path]:
+    """Return files under data/files/ that aren't in meta.documents.
+
+    Compares the directory listing against the filename tails of
+    'tg-doc:<uniq>:<filename>' and 'local:<filename>' source labels.
+    Filenames known under either prefix are considered learned."""
+    files_dir = Path(config.DATA_DIR) / "files"
+    if not files_dir.exists():
+        return []
+    try:
+        all_files = {p.name: p for p in files_dir.iterdir() if p.is_file()}
+    except Exception:
+        log.exception("orphan scan failed: dir list")
+        return []
+    known: set[str] = set()
+    import sqlite3
+    db_path = config.DATA_DIR / "meta.db"
+    try:
+        with sqlite3.connect(str(db_path)) as c:
+            for (src,) in c.execute("SELECT source FROM documents"):
+                if not src:
+                    continue
+                if src.startswith("tg-doc:"):
+                    parts = src.split(":", 2)
+                    if len(parts) == 3:
+                        known.add(parts[2])
+                elif src.startswith("local:"):
+                    known.add(src.split(":", 1)[1])
+    except Exception:
+        log.exception("orphan scan failed: db query")
+        return []
+    return sorted(
+        (p for name, p in all_files.items() if name not in known),
+        key=lambda p: p.name,
+    )
+
+
+def _enqueue_orphan_recovery(orphans: list[Path], chat_id: int) -> int:
+    """Push orphan files onto the retry queue as kind='local_file'.
+    The existing _retry_pending_ingest tick (2 min interval, single
+    file at a time, shares the semaphore) drains them safely. Returns
+    the number enqueued."""
+    if not orphans:
+        return 0
+    for p in orphans:
+        _INGEST_RETRY_QUEUE.append({
+            "kind": "local_file",
+            "path": str(p),
+            "file_name": p.name,
+            "chat_id": chat_id,
+            "attempts": 0,
+        })
+    _persist_retry_queue()
+    log.info("orphan recovery: enqueued %d files", len(orphans))
+    return len(orphans)
+
+
+def _recover_orphan_files_at_startup(app) -> None:
+    """Scan for orphan files on boot and enqueue them for recovery.
+    Sends a one-time owner notification so the user knows recovery
+    is in flight (otherwise the queue silently fills up). Skipped
+    when DASHBOARD-only / config.TELEGRAM_OWNER_ID is unset."""
+    try:
+        orphans = _scan_orphan_files()
+        if not orphans:
+            log.info("orphan recovery: no orphans")
+            return
+        count = _enqueue_orphan_recovery(orphans, config.TELEGRAM_OWNER_ID)
+        if count <= 0:
+            return
+        # Estimate: retry tick = 120s. We process one per tick.
+        eta_min = (count * 120) // 60
+        try:
+            async def _notify(_ctx):
+                try:
+                    await app.bot.send_message(
+                        config.TELEGRAM_OWNER_ID,
+                        f"🔄 {count}개 미학습 파일 발견 — 자동 재학습 큐에 추가됨\n"
+                        f"   2분 간격으로 한 개씩 처리 (~{eta_min}분 소요 예상)\n"
+                        f"   /queue 로 진행 상황 확인 가능",
+                    )
+                except Exception:
+                    log.exception("orphan recovery notify failed")
+            if app.job_queue:
+                app.job_queue.run_once(_notify, when=5)
+        except Exception:
+            log.exception("orphan recovery notify schedule failed")
+    except Exception:
+        log.exception("orphan recovery startup failed")
+
+
 def _persist_retry_queue() -> None:
     import json
     try:
@@ -493,6 +584,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • /failed_retry  탭 → 일괄 재시도
  • /failed_clear  탭 → 비우기
  • /queue  자동 재시도 대기 (2분 간격)
+ • /recover_orphans  디스크에 있지만 학습 안 된 파일 일괄 재학습
 ▸ 정리·삭제
  • /forget &lt;id&gt;  특정 문서 삭제
  • /forget_search &lt;키워드&gt;  최대 5건 안전 삭제
@@ -1093,6 +1185,30 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if len(_INGEST_RETRY_QUEUE) > 25:
         out += f"\n... 외 {len(_INGEST_RETRY_QUEUE) - 25}건"
     await update.message.reply_text(out, disable_web_page_preview=True)
+
+
+async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Manual orphan-file rescan. Same logic as the startup hook —
+    finds files on disk not present in meta.documents and pushes
+    them onto the retry queue. Safe to run multiple times: the second
+    run just enqueues anything that drifted since the last scan."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    orphans = await asyncio.to_thread(_scan_orphan_files)
+    if not orphans:
+        await update.message.reply_text("✨ 미학습 파일 없음 — 모든 디스크 파일이 meta에 기록됨.")
+        return
+    count = _enqueue_orphan_recovery(orphans, update.effective_chat.id)
+    eta_min = (count * 120) // 60
+    preview = "\n".join(f"  • {p.name[:80]}" for p in orphans[:15])
+    more = f"\n... 외 {len(orphans) - 15}건" if len(orphans) > 15 else ""
+    await update.message.reply_text(
+        f"🔄 {count}개 미학습 파일 → 재학습 큐에 추가됨\n"
+        f"   2분 간격으로 한 개씩 처리 (~{eta_min}분 소요 예상)\n"
+        f"   /queue 로 진행 상황 확인 가능\n\n"
+        f"{preview}{more}"
+    )
 
 
 async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2523,7 +2639,13 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
     item = _INGEST_RETRY_QUEUE.pop(0)
     _persist_retry_queue()
     chat_id = item["chat_id"]
-    title = item.get("file_name") or item.get("url") or item.get("text", "")[:60] or "(unknown)"
+    title = (
+        item.get("file_name")
+        or item.get("url")
+        or (Path(item["path"]).name if item.get("path") else None)
+        or item.get("text", "")[:60]
+        or "(unknown)"
+    )
     async with _INGEST_SEM:
         retry_job_id = _register_ingest(
             f"[재시도] {title}", item.get("kind", "retry"), chat_id,
@@ -2586,6 +2708,37 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 r = await pipeline.ingest_text(
                     item["text"], item.get("label", "tg-msg-retry"),
                 )
+            elif kind == "local_file":
+                # Orphan-file recovery path — file already on disk
+                # (preserved across container restarts) so we skip the
+                # Telegram download and ingest straight from the path.
+                # Label is filename-based so re-runs dedupe via
+                # meta.find_by_source.
+                dest = Path(item["path"])
+                if not dest.exists():
+                    log.info("orphan recovery: file gone, skipping %s", dest.name)
+                    return
+                label = f"local:{dest.name}"
+                suffix = dest.suffix.lower()
+                if suffix == ".pdf":
+                    r = await pipeline.ingest_pdf(dest, label)
+                elif suffix == ".pptx":
+                    r = await pipeline.ingest_pptx(dest, label)
+                elif suffix == ".docx":
+                    r = await pipeline.ingest_docx(dest, label)
+                elif suffix == ".xlsx":
+                    r = await pipeline.ingest_xlsx(dest, label)
+                elif suffix in _AUDIO_SUFFIX_MIME:
+                    r = await pipeline.ingest_audio(
+                        dest.read_bytes(), label,
+                        mime_type=_AUDIO_SUFFIX_MIME[suffix],
+                    )
+                else:
+                    try:
+                        content = dest.read_text(encoding="utf-8", errors="ignore")
+                    except Exception:
+                        return
+                    r = await pipeline.ingest_text(content, label)
             else:
                 return
         except Exception as e:
@@ -2667,6 +2820,7 @@ def main():
         on_ocr_extend_callback, pattern=r"^ocr:"
     ))
     app.add_handler(CommandHandler("queue", cmd_queue))
+    app.add_handler(CommandHandler("recover_orphans", cmd_recover_orphans))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("cleanup_confirm", cmd_cleanup_confirm))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
@@ -2712,6 +2866,7 @@ def main():
         )
 
     _load_persisted_state()
+    _recover_orphan_files_at_startup(app)
     vector.warm_bm25_cache()  # background scan; first query stays fast
     log.info("bot starting")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
