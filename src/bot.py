@@ -341,14 +341,16 @@ async def _typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Re-send the 'typing...' chat action every few seconds so the
     user sees continuous activity through long agent runs (Pro
-    synthesis on a 50-doc compare can be ~30-60s)."""
+    synthesis on a 50-doc compare can be ~30-60s). 2s cadence keeps
+    the indicator visibly active even when the Telegram client
+    refreshes lazily."""
     while True:
         try:
             await _typing(update, ctx)
         except Exception:
             pass
         try:
-            await asyncio.sleep(4)
+            await asyncio.sleep(2)
         except asyncio.CancelledError:
             break
 
@@ -1355,57 +1357,75 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
             return
     finally:
         typing_task.cancel()
-    # If the agent answered from memory without calling any tool this
-    # turn, fall back to the previous turn's citations so the user
-    # always sees an 출처 block. New tool results take precedence when
-    # present.
-    inherited = False
-    if not result.get("sources"):
-        prev_sources, prev_tools = _last_model_citations(chat_id)
-        if prev_sources:
-            result["sources"] = prev_sources
-            result["tool_calls"] = (result.get("tool_calls") or []) + prev_tools
-            inherited = True
-    # Use the shared sender: applies _annotate_learn_date, lists all
-    # sources (no 15-cap), and chunks long outputs across multiple
-    # Telegram messages so the suffix isn't silently dropped.
-    body, mermaid_blocks = await _send_agent_reply(
-        update.message.reply_text, result, inherited=inherited,
-    )
-    _record_turn(chat_id, "user", text)
-    _record_turn(
-        chat_id, "model", body,
-        sources=result.get("sources") or [],
-        tools=result.get("tool_calls") or [],
-    )
-    qna.record(
-        chat_id=chat_id,
-        question=text,
-        answer=body,
-        sources=result.get("sources") or [],
-        tools=result.get("tool_calls") or [],
-        model=result.get("model"),
-        warning=result.get("warning"),
-    )
+    # Anything below this point — reply rendering, history record,
+    # qna persistence, dashboard regen, mermaid — is wrapped so a
+    # failure can't leave the user with no signal at all. Without
+    # this guard the typing indicator just disappears and they're
+    # left wondering whether the bot is alive.
     try:
-        from .dashboard import regenerate as dashboard_regen
-        dashboard_regen.regenerate()
-    except Exception:
-        log.exception("dashboard regen failed")
-    for code in mermaid_blocks:
+        # If the agent answered from memory without calling any tool
+        # this turn, fall back to the previous turn's citations so
+        # the user always sees an 출처 block. New tool results take
+        # precedence when present.
+        inherited = False
+        if not result.get("sources"):
+            prev_sources, prev_tools = _last_model_citations(chat_id)
+            if prev_sources:
+                result["sources"] = prev_sources
+                result["tool_calls"] = (result.get("tool_calls") or []) + prev_tools
+                inherited = True
+        # Use the shared sender: applies _annotate_learn_date, lists
+        # all sources (no 15-cap), and chunks long outputs across
+        # multiple Telegram messages so the suffix isn't silently
+        # dropped.
+        body, mermaid_blocks = await _send_agent_reply(
+            update.message.reply_text, result, inherited=inherited,
+        )
+        _record_turn(chat_id, "user", text)
+        _record_turn(
+            chat_id, "model", body,
+            sources=result.get("sources") or [],
+            tools=result.get("tool_calls") or [],
+        )
+        qna.record(
+            chat_id=chat_id,
+            question=text,
+            answer=body,
+            sources=result.get("sources") or [],
+            tools=result.get("tool_calls") or [],
+            model=result.get("model"),
+            warning=result.get("warning"),
+        )
         try:
-            png = await _render_mermaid_png(code)
-            await update.message.reply_photo(
-                photo=png,
-                caption="🧩 다이어그램",
-            )
-        except Exception as e:
-            log.warning("mermaid render failed: %s", e)
+            from .dashboard import regenerate as dashboard_regen
+            dashboard_regen.regenerate()
+        except Exception:
+            log.exception("dashboard regen failed")
+        for code in mermaid_blocks:
+            try:
+                png = await _render_mermaid_png(code)
+                await update.message.reply_photo(
+                    photo=png,
+                    caption="🧩 다이어그램",
+                )
+            except Exception as e:
+                log.warning("mermaid render failed: %s", e)
+                await update.message.reply_text(
+                    f"(다이어그램 렌더 실패: {_explain_error(e)})\n\n{code[:500]}"
+                )
+    except Exception as e:
+        log.exception("post-agent reply failed")
+        try:
             await update.message.reply_text(
-                f"(다이어그램 렌더 실패: {_explain_error(e)})\n\n{code[:500]}"
+                f"⚠️ 응답 처리 중 오류 — {_explain_error(e)}\n"
+                "질문은 처리됐지만 응답 전송에서 문제가 났습니다. "
+                "/status 로 봇 상태 확인 후 다시 시도해주세요."
             )
-    _ACTIVE_AGENT_RUNS = max(0, _ACTIVE_AGENT_RUNS - 1)
-    _LAST_REPLY_AT = datetime.utcnow()
+        except Exception:
+            log.exception("error notification also failed")
+    finally:
+        _ACTIVE_AGENT_RUNS = max(0, _ACTIVE_AGENT_RUNS - 1)
+        _LAST_REPLY_AT = datetime.utcnow()
 
 
 def _explain_error(e: BaseException, max_len: int = 280) -> str:
