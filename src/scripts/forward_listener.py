@@ -88,14 +88,23 @@ _BUILTIN_SKIP_PATTERNS = [
     "과거 요약 아카이브",
     "주간 요약 보고서",
     "범례: 📋 텔레그램",
-    # Deploy notifications from any of the user's auto-deploy scripts
+    # Deploy notifications from any of the user's auto-deploy scripts.
+    # Match the common shapes — completion, start, restart, redeploy —
+    # so any wording variant gets caught instead of needing a separate
+    # entry per message.
     "배포 완료",
+    "배포 시작",
     "봇 배포",
-    "자동 배포 시작",
+    "자동 배포",
+    "재배포",
+    "redeploy",
     # Health-alert noise from other bots (substack bot_listener, etc).
-    # These fire when a scheduler/process dies and the watchdog auto-
-    # restarts — pure operational signal, never content worth learning.
-    "스케줄러 사망 감지",
+    # The bracketed [스케줄러 ...] prefix is the giveaway — any alert
+    # in that family (사망/오류/지연/타임아웃/...) gets blocked by the
+    # single bracket pattern. The other entries are keyword fallbacks
+    # for variants without brackets.
+    "[스케줄러",
+    "스케줄러 사망",
     "스케줄러 오류",
     "사망 감지",
     "자동 재시작 시도",
