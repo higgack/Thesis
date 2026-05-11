@@ -2095,6 +2095,26 @@ _INGEST_TIMEOUT_SEC = 900  # 15 minutes per message — large PDFs with OCR can 
 _LIVE_EDIT_INTERVAL = 15  # seconds between status edits
 
 
+async def _edit_or_send(ctx, chat_id: int, msg_id: int | None, text: str) -> None:
+    """Edit msg_id in chat_id to `text`; fall back to a fresh send
+    when no message id, or when the edit fails (rate limit, message
+    too old, etc.). Belt-and-suspenders so a failed edit never leaves
+    the user without a final status."""
+    if msg_id:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=chat_id, message_id=msg_id, text=text,
+                disable_web_page_preview=True,
+            )
+            return
+        except Exception:
+            log.warning("edit failed; falling back to send")
+    try:
+        await ctx.bot.send_message(chat_id, text, disable_web_page_preview=True)
+    except Exception:
+        log.exception("fallback send failed")
+
+
 async def _live_status_updater(ctx, chat_id: int, msg_id: int,
                                label: str, job_id: str) -> None:
     """Re-render the ⏳ status message every _LIVE_EDIT_INTERVAL
@@ -2650,6 +2670,32 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
         retry_job_id = _register_ingest(
             f"[재시도] {title}", item.get("kind", "retry"), chat_id,
         )
+
+        # Live status bubble for the retry path so orphan recovery
+        # (and any other retry-queue ingest) shows the same ⏳→✅
+        # in-place edit the live upload path uses. Falls back to a
+        # send_message at the bottom of this function if the edit
+        # fails.
+        status_msg_id: int | None = None
+        try:
+            sent = await ctx.bot.send_message(
+                chat_id, f"⏳ [재시도] {title[:80]}",
+            )
+            status_msg_id = sent.message_id
+            _ACTIVE_INGESTS[retry_job_id]["status_msg_id"] = status_msg_id
+        except Exception:
+            log.exception("retry status start send failed")
+
+        updater_task = None
+        if status_msg_id:
+            updater_task = asyncio.create_task(
+                _live_status_updater(
+                    ctx, chat_id, status_msg_id,
+                    f"[재시도] {title}", retry_job_id,
+                )
+            )
+
+        r = None
         try:
             kind = item["kind"]
             if kind == "doc":
@@ -2750,21 +2796,38 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                     "error", title[:140], _explain_error(e),
                     retry_payload=payload,
                 )
-                await ctx.bot.send_message(
-                    chat_id,
+                final_fail = (
                     f"⚠️ ingest 재시도 포기 — {title[:80]}\n{_explain_error(e)}\n"
-                    "/failed_retry 로 다시 시도할 수 있습니다.",
+                    "/failed_retry 로 다시 시도할 수 있습니다."
+                )
+                await _edit_or_send(
+                    ctx, chat_id, status_msg_id, final_fail,
                 )
                 return
             log.info("ingest retry %d/%d: %s",
                      item["attempts"], _MAX_RETRY_ATTEMPTS, title[:80])
             _INGEST_RETRY_QUEUE.append(item)
             _persist_retry_queue()
+            # Mark the in-flight bubble as 'soft fail, re-queued' so the
+            # user understands why a fresh ⏳ shows up at the next tick.
+            await _edit_or_send(
+                ctx, chat_id, status_msg_id,
+                f"🔁 일시 오류 — 자동 재시도 대기 ({item['attempts']}/"
+                f"{_MAX_RETRY_ATTEMPTS}): {title[:80]}\n{_explain_error(e)}",
+            )
             return
         finally:
+            if updater_task:
+                updater_task.cancel()
+                try:
+                    await updater_task
+                except asyncio.CancelledError:
+                    pass
             _unregister_ingest(retry_job_id)
-    summary = _format_results([r])
-    await ctx.bot.send_message(chat_id, f"⏰ ingest 재시도\n{summary}")
+    summary = _format_results([r]) if r else f"(빈 결과: {title[:60]})"
+    await _edit_or_send(
+        ctx, chat_id, status_msg_id, f"⏰ ingest 재시도\n{summary}",
+    )
 
 
 def main():
