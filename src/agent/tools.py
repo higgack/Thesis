@@ -4,6 +4,7 @@ Each tool is async, returns a JSON-serializable dict, and is wrapped by a
 FunctionDeclaration in TOOL_DECLARATIONS for the model."""
 import asyncio
 import logging
+import re
 from urllib.parse import urlparse
 
 from google import genai
@@ -17,6 +18,27 @@ from . import retrieve, papersearch
 log = logging.getLogger(__name__)
 
 _search_client = genai.Client(api_key=config.GOOGLE_API_KEY)
+
+# compare_papers quality filters — drop noise that inflates Pro
+# synthesis cost without adding signal. The earlier behaviour pulled
+# 50 docs by recency × semantic alone, so a 'Micro LED' query would
+# sweep in raw-URL stubs, daily channel digests, 1-line ticker
+# updates, etc. that share vocabulary with the real material.
+#  - MAX_DISTANCE: cosine ceiling (loose — still on-topic below this).
+#  - MIN_SUMMARY_CHARS: docs shorter are stubs (timestamps, one-line
+#    forwards) with nothing to synthesize.
+#  - DIGEST_TITLE_RE: multi-topic daily/period digests dilute focus.
+_COMPARE_MAX_DISTANCE = 0.55
+_COMPARE_MIN_SUMMARY_CHARS = 200
+_DIGEST_TITLE_RE = re.compile(
+    r"\d{4}년\s*\d{1,2}월\s*\d{1,2}일.*요약|"
+    r"채널\s*요약|"
+    r"Substack\s*요약|"
+    r"^\s*https?://[^\s]+\s*$|"
+    r"^\s*\d{1,2}:\d{2}\s*$|"
+    r"^\s*📅",
+    re.IGNORECASE,
+)
 
 
 async def search_my_brain(query: str, k: int = 5) -> dict:
@@ -142,9 +164,22 @@ async def web_search(query: str) -> dict:
 
 async def compare_papers(topic: str, limit: int = 50,
                          type_filter: str = "") -> dict:
-    """Cross-document overview: gather many summaries at once."""
+    """Cross-document overview: gather many summaries at once.
+
+    Applies three quality filters before ranking so Pro synthesis
+    doesn't pay for noise:
+      1. semantic floor — distance >= 0.55 hits are likely off-topic.
+      2. minimum summary length — strip 1-line forwards / timestamps.
+      3. digest title blocklist — daily channel/Substack roundups."""
     limit = max(1, min(int(limit), 80))
-    hits = await vector.query(topic, k=limit * 2, kind="summary")
+    # Pull 4x so the filters have headroom and we still hit `limit`.
+    hits = await vector.query(topic, k=limit * 4, kind="summary")
+
+    pre_count = len(hits)
+    hits = [h for h in hits
+            if float(h.get("distance", 1.0)) <= _COMPARE_MAX_DISTANCE]
+    low_relevance_dropped = pre_count - len(hits)
+
     # Apply recency factor — newer docs surface first while older
     # comprehensive analyses still get a fair shot (0.55 floor).
     # Pure semantic similarity left to itself pulls dense old reports
@@ -157,8 +192,11 @@ async def compare_papers(topic: str, limit: int = 50,
         semantic = 1.0 - float(h.get("distance", 0) or 0)
         return semantic * recency
     hits = sorted(hits, key=_rank, reverse=True)
-    seen = set()
-    bundles = []
+
+    seen: set[str] = set()
+    bundles: list[dict] = []
+    short_dropped = 0
+    digest_dropped = 0
     for h in hits:
         doc_id = h["metadata"]["doc_id"]
         if doc_id in seen:
@@ -167,15 +205,40 @@ async def compare_papers(topic: str, limit: int = 50,
         doc = meta.get_doc(doc_id) or {}
         if type_filter and doc.get("type") != type_filter:
             continue
+        title = (doc.get("title") or "").strip()
+        summary = (doc.get("summary") or h.get("text") or "").strip()
+        if len(summary) < _COMPARE_MIN_SUMMARY_CHARS:
+            short_dropped += 1
+            continue
+        if title and _DIGEST_TITLE_RE.search(title):
+            digest_dropped += 1
+            continue
         bundles.append({
             "doc_id": doc_id,
-            "title": doc.get("title", ""),
+            "title": title,
             "type": doc.get("type", ""),
-            "summary": doc.get("summary", "")[:1500] or h["text"][:1500],
+            "summary": summary[:1500],
         })
         if len(bundles) >= limit:
             break
-    return {"papers": bundles, "count": len(bundles)}
+
+    if low_relevance_dropped or short_dropped or digest_dropped:
+        log.info(
+            "compare_papers filters: low_relevance=%d short=%d digest=%d "
+            "→ kept %d/%d",
+            low_relevance_dropped, short_dropped, digest_dropped,
+            len(bundles), pre_count,
+        )
+
+    return {
+        "papers": bundles,
+        "count": len(bundles),
+        "filtered": {
+            "low_relevance": low_relevance_dropped,
+            "short": short_dropped,
+            "digest": digest_dropped,
+        },
+    }
 
 
 TOOL_DISPATCH = {
@@ -266,7 +329,9 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
             "reviews. Use when the user asks to compare/integrate/summarize "
             "ACROSS many saved papers ('하이브리드 본딩 논문 전체 정리해줘', "
             "'X와 Y 분야 차이 비교해줘'). For a single specific question, prefer "
-            "search_my_brain."
+            "search_my_brain. Note: results are pre-filtered to drop "
+            "off-topic, short, and daily-digest docs — so the returned "
+            "`count` is already the high-signal set."
         ),
         parameters=types.Schema(
             type=types.Type.OBJECT,
