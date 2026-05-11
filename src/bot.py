@@ -33,6 +33,83 @@ _ACTIVE_AGENT_RUNS = 0
 _LAST_REPLY_AT: datetime | None = None
 _FAILED_MAX = 200
 
+# Memory management — automatic gc + libc malloc_trim so long-running
+# processes hand pages back to the OS instead of inflating until OOM.
+# Container OOM kills were a chronic pain on the e2-small VM; even on
+# the e2-medium upgrade the bot's RSS can climb past mem_limit during
+# ingest bursts. _MEM_CLEANUP_THRESHOLD triggers immediate cleanup
+# before agent.run, _MEM_REFUSE_THRESHOLD refuses the run outright so
+# we surface a clear error instead of letting Docker kill the process.
+_MEM_CLEANUP_THRESHOLD = 0.90
+_MEM_REFUSE_THRESHOLD = 0.95
+_LAST_CLEANUP_AT: datetime | None = None
+_LAST_CLEANUP_FREED_MB: float = 0.0
+_MEM_LIMIT_MB_CACHE: float | None = None
+
+
+def _process_rss_mb() -> float:
+    """Current process RSS in MB via psutil. Returns 0.0 if psutil
+    isn't importable (shouldn't happen in container, but keeps the
+    cleanup path safe in dev)."""
+    try:
+        import psutil
+        return psutil.Process().memory_info().rss / (1024 * 1024)
+    except Exception:
+        return 0.0
+
+
+def _cgroup_mem_limit_mb() -> float:
+    """Read the container's memory cap. cgroup v2 (memory.max) takes
+    precedence; falls back to v1 (memory.limit_in_bytes). Result is
+    cached because the limit never changes within a container's life."""
+    global _MEM_LIMIT_MB_CACHE
+    if _MEM_LIMIT_MB_CACHE is not None:
+        return _MEM_LIMIT_MB_CACHE
+    for path in ("/sys/fs/cgroup/memory.max",
+                 "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            raw = Path(path).read_text().strip()
+            if raw and raw != "max":
+                _MEM_LIMIT_MB_CACHE = int(raw) / (1024 * 1024)
+                return _MEM_LIMIT_MB_CACHE
+        except Exception:
+            continue
+    _MEM_LIMIT_MB_CACHE = 0.0
+    return 0.0
+
+
+def _mem_pressure() -> float:
+    """Fraction of the cgroup memory limit currently used (0.0-1.0+).
+    Returns 0.0 if either reading fails so we never falsely refuse."""
+    limit = _cgroup_mem_limit_mb()
+    if limit <= 0:
+        return 0.0
+    return _process_rss_mb() / limit
+
+
+def _run_memory_cleanup(reason: str = "scheduled") -> float:
+    """Force a Python GC pass + libc heap trim. Returns MB freed
+    (negative if RSS grew — possible if another worker allocated
+    during the call). Safe to call any time; cheap (<50ms)."""
+    global _LAST_CLEANUP_AT, _LAST_CLEANUP_FREED_MB
+    import gc
+    import ctypes
+    before = _process_rss_mb()
+    collected = gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+    after = _process_rss_mb()
+    freed = before - after
+    _LAST_CLEANUP_AT = datetime.utcnow()
+    _LAST_CLEANUP_FREED_MB = freed
+    log.info(
+        "memory cleanup (%s): %.0f → %.0f MB (freed %.1f MB, gc=%d objs)",
+        reason, before, after, freed, collected,
+    )
+    return freed
+
 # Persist these two so a hang/restart doesn't lose state.
 _RETRY_QUEUE_PATH = config.DATA_DIR / "retry_queue.json"
 _FAILED_LOG_PATH = config.DATA_DIR / "failed_log.json"
@@ -362,7 +439,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • /find &lt;키워드&gt;  제목·요약·메타 검색
  • /recent [N]  최근 N개 (기본 10)
  • /stats  문서·청크 수
- • /status  봇 상태 (활성 agent·인입·큐·마지막 응답)
+ • /status  봇 상태 (활성 agent·인입·큐·메모리·마지막 청소)
  • /usage  인입속도·큐·비용 (오늘/7일/30일·일별 그래프·모델별·ingest/query)
 ▸ 대화·메모리
  • /reset  대화 메모리 초기화 (토픽 바뀔 때)
@@ -468,6 +545,9 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • BM25 캐시: 부팅 시 백그라운드 빌드 (53k 1~2분, 빌드 중엔 dense-only)
  • BGE-reranker-base: 로컬 cross-encoder 활성 (LOCAL_RERANKER_ENABLED=1)
  • Pro 합성 자동 트리거: compare_papers가 25개+ 반환 시
+ • 자동 메모리 청소: 5분 주기 gc+malloc_trim (idle 일 때만)
+   90% 이상이면 agent 시작 전 즉시 청소, 95% 이상이면 거부
+   현황은 /status (RSS·한도·마지막 청소 회수량)
  • 비용 단가 (1M 토큰): Pro ₩1,750·Flash ₩420·Flash-Lite ₩140·Embed ₩210
    환율 ₩1,400/USD 추정 ±20%
  • 대시보드: docker thesis-dashboard 컨테이너 (8082)
@@ -527,6 +607,27 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             last_str = f"{age // 60}분 전"
         else:
             last_str = f"{age // 3600}시간 전"
+    rss = _process_rss_mb()
+    limit = _cgroup_mem_limit_mb()
+    if limit > 0:
+        mem_line = f"\n🧠 메모리: {rss:.0f} / {limit:.0f} MB ({rss/limit*100:.0f}%)"
+    else:
+        mem_line = f"\n🧠 메모리: {rss:.0f} MB"
+    cleanup_at = _LAST_CLEANUP_AT
+    if cleanup_at:
+        age = int((datetime.utcnow() - cleanup_at).total_seconds())
+        if age < 60:
+            ago = f"{age}초 전"
+        elif age < 3600:
+            ago = f"{age // 60}분 전"
+        else:
+            ago = f"{age // 3600}시간 전"
+        cleanup_line = (
+            f"\n🧹 마지막 메모리 청소: {ago} "
+            f"({_LAST_CLEANUP_FREED_MB:+.1f} MB 회수)"
+        )
+    else:
+        cleanup_line = "\n🧹 마지막 메모리 청소: 아직 없음 (5분 주기 자동)"
     out = (
         "🤖 봇 상태\n"
         f"\n💬 활성 agent: {_ACTIVE_AGENT_RUNS}건"
@@ -535,6 +636,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"\n💤 agent 재시도 큐: {len(_RETRY_QUEUE)}건"
         f"\n❌ 영구 실패: {len(_INGEST_FAILED)}건"
         f"\n⏱ 마지막 응답: {last_str}"
+        + mem_line + cleanup_line
     )
     await update.message.reply_text(out)
 
@@ -1324,6 +1426,24 @@ async def on_private(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
                      text: str, deep: bool) -> None:
     global _ACTIVE_AGENT_RUNS, _LAST_REPLY_AT
+    # Memory pressure gate. At ≥95% of mem_limit a new agent run
+    # almost guarantees an OOM kill mid-answer (Pro synth + reranker +
+    # BM25 cache all alloc fresh chunks); refusing with a clear
+    # message is better than losing the whole container. At ≥90% try
+    # a synchronous cleanup first — usually drops us back under the
+    # bar and the run proceeds normally.
+    pressure = _mem_pressure()
+    if pressure >= _MEM_REFUSE_THRESHOLD:
+        await update.message.reply_text(
+            f"⚠️ 메모리 부족 — 현재 {pressure*100:.0f}% 사용 중. "
+            "잠시 후 다시 시도해주세요. (자동 정리 5분 주기 · /status 확인)"
+        )
+        return
+    if pressure >= _MEM_CLEANUP_THRESHOLD:
+        try:
+            _run_memory_cleanup(f"pre-agent {pressure*100:.0f}%")
+        except Exception:
+            log.exception("threshold cleanup failed")
     _ACTIVE_AGENT_RUNS += 1
     await _typing(update, ctx)
     chat_id = update.effective_chat.id
@@ -1864,6 +1984,19 @@ def _format_results(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
+async def _periodic_memory_cleanup(ctx: ContextTypes.DEFAULT_TYPE):
+    """Idle-only gc + malloc_trim every 5min. Skip when agent runs
+    are active so we don't steal CPU from in-flight answers; the
+    pre-run threshold guard handles the busy-but-pressured case
+    separately."""
+    if _ACTIVE_AGENT_RUNS > 0:
+        return
+    try:
+        _run_memory_cleanup("periodic")
+    except Exception:
+        log.exception("periodic memory cleanup failed")
+
+
 async def _refresh_dashboard(ctx: ContextTypes.DEFAULT_TYPE):
     """Regenerate the static dashboard HTML on a tick so ingest-only
     activity (no Q&As happening) still shows up in the totals."""
@@ -2051,6 +2184,12 @@ def main():
             interval=60,
             first=20,
             name="refresh_dashboard",
+        )
+        app.job_queue.run_repeating(
+            _periodic_memory_cleanup,
+            interval=300,
+            first=180,
+            name="periodic_memory_cleanup",
         )
 
     _load_persisted_state()
