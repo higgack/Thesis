@@ -437,7 +437,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  → /find·중복알림·답변 출처에 표시
 
 <b>【8. 웹 대시보드】</b>
- 바로가기: http://34.64.89.160:8082/1e68e9fae4e6fb1f8298bdee768eb73b/
+ 바로가기: http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/
  Basic Auth: 사용자명/비밀번호 (.env 참조)
  구성:
   • 통계 카드 4장 (Q&amp;A·학습자료·오늘·이번 달)
