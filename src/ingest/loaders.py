@@ -225,21 +225,25 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
 
     ocr_meta: dict | None = None
     if not body:
-        ocr_text = _ocr_pdf_pages(path)
-        if ocr_text:
-            body = ocr_text
+        # Image-only PDF: every page is OCR'd (skip-if-text-dense is a
+        # no-op since there's no extracted text to compare against).
+        r = _ocr_pdf_pages(path)
+        if r["text"]:
+            body = r["text"]
     elif page_count > 0 and len(body) / max(page_count, 1) < 1500:
         # Sparse text/page → likely chart/table-heavy. Augment via Vision
-        # OCR, capped so cost stays predictable. If the PDF is bigger
-        # than the cap, surface ocr_meta so the bot can ask whether to
-        # extend coverage.
+        # OCR, capped so cost stays predictable. The per-page skip
+        # threshold avoids paying Vision for back-half text pages
+        # already covered by PyMuPDF.
         applied = min(page_count, SPARSE_OCR_AUTO_CAP)
-        ocr_text = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP)
-        if ocr_text:
-            body = body + "\n\n--- Vision OCR augmentation ---\n\n" + ocr_text
+        r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP)
+        if r["text"]:
+            body = body + "\n\n--- Vision OCR augmentation ---\n\n" + r["text"]
         ocr_meta = {
             "kind": "sparse",
             "applied_pages": applied,
+            "ocrd_pages": r["ocrd"],
+            "skipped_pages": r["skipped"],
             "total_pages": page_count,
             "capped": page_count > SPARSE_OCR_AUTO_CAP,
         }
@@ -248,12 +252,17 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
 
 
 def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150,
-                   start_page: int = 1) -> str:
+                   start_page: int = 1,
+                   skip_if_text_chars: int = 1500) -> dict:
     """Render each page to PNG and ask Gemini Vision to extract text.
 
-    Used as a last resort when PyMuPDF and pypdf both return empty text
-    (image-only / scanned PDFs). Cost per page is roughly ₩3 on
-    gemini-2.5-flash-lite, so a 50-page PDF is about ₩150.
+    Returns {text, ocrd, skipped} so callers can report actual cost
+    instead of the pessimistic range size. Pages whose PyMuPDF text
+    extract already exceeds `skip_if_text_chars` are skipped — the
+    body already has that text via the initial PyMuPDF pass, so
+    OCR-ing them again would just create duplicate chunks and bill
+    Vision unnecessarily (this matters a lot on long deep-research
+    papers where back-half pages are text-heavy).
 
     `start_page` (1-indexed inclusive) lets the resumable-OCR flow
     extend coverage beyond the auto cap by OCR-ing pages
@@ -265,12 +274,12 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150,
         from .. import config
         from ..store import cost as _cost
     except Exception:
-        return ""
+        return {"text": "", "ocrd": 0, "skipped": 0}
 
     try:
         doc = fitz.open(str(path))
     except Exception:
-        return ""
+        return {"text": "", "ocrd": 0, "skipped": 0}
 
     client = genai.Client(api_key=config.GOOGLE_API_KEY)
     prompt = (
@@ -279,6 +288,8 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150,
     )
 
     pages_out: list[str] = []
+    ocrd = 0
+    skipped = 0
     end_page = start_page + max_pages - 1
     for i, page in enumerate(doc, 1):
         if i < start_page:
@@ -286,6 +297,12 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150,
         if i > end_page:
             pages_out.append(f"-- Page {i}+ truncated --")
             break
+        existing_text = (page.get_text("text") or "").strip()
+        if len(existing_text) >= skip_if_text_chars:
+            # PyMuPDF already extracted enough text for this page —
+            # skipping avoids duplicate chunks AND unnecessary cost.
+            skipped += 1
+            continue
         try:
             pix = page.get_pixmap(dpi=dpi)
             img_bytes = pix.tobytes("png")
@@ -304,10 +321,16 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150,
             text = (resp.text or "").strip()
             if text:
                 pages_out.append(f"-- Page {i} --\n{text}")
+            ocrd += 1
         except Exception as e:
             pages_out.append(f"-- Page {i} --\n[OCR error: {type(e).__name__}: {e}]")
+            ocrd += 1
     doc.close()
-    return "\n\n".join(pages_out).strip()
+    return {
+        "text": "\n\n".join(pages_out).strip(),
+        "ocrd": ocrd,
+        "skipped": skipped,
+    }
 
 
 async def load_pdf_async(path: Path) -> tuple[str, str, str | None, dict | None]:

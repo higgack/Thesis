@@ -1654,7 +1654,7 @@ async def _send_ocr_extend_prompts(ctx: ContextTypes.DEFAULT_TYPE,
         }
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(
-                f"📄 나머지 {remaining}p OCR (~₩{cost_est})",
+                f"📄 나머지 {remaining}p 확장 OCR (최대 ~₩{cost_est})",
                 callback_data=f"ocr:{short}:go",
             )],
             [InlineKeyboardButton(
@@ -1668,6 +1668,7 @@ async def _send_ocr_extend_prompts(ctx: ContextTypes.DEFAULT_TYPE,
             f"📊 {title_short}\n"
             f"총 {total}p 중 {applied}p OCR 완료 (차트/표 본 자동 OCR).\n"
             f"딥리서치/장문 리포트라면 나머지도 OCR하면 검색 정확도 ↑.\n"
+            f"※ 텍스트가 이미 충분한 페이지는 자동 스킵 → 실제 비용은 더 적을 수 있음.\n"
             f"10분 안에 선택해주세요.",
             reply_markup=kb,
         )
@@ -1747,14 +1748,24 @@ async def on_ocr_extend_callback(update: Update,
         typing_task.cancel()
     title_short = (state.get("title") or "PDF")[:80]
     if r.get("status") == "ok":
+        skip_note = (f" · {r['pages_skipped']}p 텍스트 충분 스킵"
+                     if r.get("pages_skipped") else "")
         await q.message.reply_text(
             f"✅ {title_short}\n"
-            f"   +{r['pages_added']}p OCR · +{r['chunks_added']} 청크"
+            f"   +{r['pages_ocrd']}p Vision OCR{skip_note} · "
+            f"+{r['chunks_added']} 청크"
         )
+    elif r.get("status") == "empty":
+        skipped = r.get("pages_skipped", 0)
+        if skipped:
+            await q.message.reply_text(
+                f"✅ {title_short}\n"
+                f"   {skipped}p 모두 텍스트 충분 → OCR 스킵 (추가 청크 없음, 비용 0)"
+            )
+        else:
+            await q.message.reply_text(f"⚠️ OCR 결과 없음: {title_short}")
     else:
-        await q.message.reply_text(
-            f"⚠️ OCR 결과 없음: {title_short}"
-        )
+        await q.message.reply_text(f"⚠️ OCR 결과 없음: {title_short}")
 
 
 async def on_pro_confirmation_callback(update: Update,

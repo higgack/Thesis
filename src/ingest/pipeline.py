@@ -57,18 +57,25 @@ async def extend_pdf_ocr(pdf_path: Path, doc_id: str,
                          start_page: int, end_page: int) -> dict:
     """Continue Vision OCR on pages [start_page, end_page] of an
     already-ingested PDF and append the extracted text as new chunks
-    on the same doc. Embeddings are added; summary/Obsidian note are
-    NOT regenerated (the summary captured the document's gist; the
-    new chunks just expand searchable surface area)."""
+    on the same doc. Pages whose PyMuPDF text is already dense get
+    skipped — surfaces as `pages_skipped` so the user sees actual
+    spend vs requested range."""
     from .loaders import ocr_pdf_pages_async
     if end_page < start_page:
-        return {"status": "noop", "pages_added": 0, "chunks_added": 0}
+        return {"status": "noop", "pages_attempted": 0,
+                "pages_ocrd": 0, "pages_skipped": 0, "chunks_added": 0}
     max_pages = end_page - start_page + 1
-    ocr_text = await ocr_pdf_pages_async(
+    r = await ocr_pdf_pages_async(
         pdf_path, start_page=start_page, max_pages=max_pages,
     )
+    ocr_text = r.get("text", "")
     if not ocr_text:
-        return {"status": "empty", "pages_added": 0, "chunks_added": 0}
+        return {
+            "status": "empty", "pages_attempted": max_pages,
+            "pages_ocrd": r.get("ocrd", 0),
+            "pages_skipped": r.get("skipped", 0),
+            "chunks_added": 0,
+        }
     new_chunks = split(ocr_text)
     chunk_items = [{
         "id": f"{doc_id}:ocr-{start_page}:{i}",
@@ -77,12 +84,15 @@ async def extend_pdf_ocr(pdf_path: Path, doc_id: str,
         "idx": 10_000 + start_page + i,  # well above the dense-text idx range
     } for i, c in enumerate(new_chunks)]
     await vector.add_chunks(doc_id, chunk_items)
-    log.info("extend_pdf_ocr doc=%s pages=%d-%d chunks=%d",
-             doc_id, start_page, end_page, len(chunk_items))
+    log.info("extend_pdf_ocr doc=%s range=%d-%d ocrd=%d skipped=%d chunks=%d",
+             doc_id, start_page, end_page, r["ocrd"], r["skipped"],
+             len(chunk_items))
     return {
         "status": "ok",
         "doc_id": doc_id,
-        "pages_added": max_pages,
+        "pages_attempted": max_pages,
+        "pages_ocrd": r["ocrd"],
+        "pages_skipped": r["skipped"],
         "chunks_added": len(chunk_items),
     }
 
