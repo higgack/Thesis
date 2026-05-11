@@ -758,11 +758,27 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     await _typing(update, ctx)
-    await update.message.reply_text(
-        _HELP_TEXT,
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-    )
+    # _HELP_TEXT grew past Telegram's 4096-char limit when the
+    # /pending family was added, so a single reply_text silently
+    # 400'd. Split on the '<b>【…】</b>' section headers so each
+    # chunk renders cleanly without bisecting an HTML tag.
+    pieces = re.split(r"(?=<b>【)", _HELP_TEXT)
+    for piece in pieces:
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            await update.message.reply_text(
+                piece, parse_mode="HTML", disable_web_page_preview=True,
+            )
+        except Exception:
+            log.exception("help chunk send failed; retrying without HTML")
+            try:
+                await update.message.reply_text(
+                    piece, disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("help chunk fallback send failed")
 
 
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
