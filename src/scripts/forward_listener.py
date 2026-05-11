@@ -92,6 +92,14 @@ _BUILTIN_SKIP_PATTERNS = [
     "배포 완료",
     "봇 배포",
     "자동 배포 시작",
+    # Health-alert noise from other bots (substack bot_listener, etc).
+    # These fire when a scheduler/process dies and the watchdog auto-
+    # restarts — pure operational signal, never content worth learning.
+    "스케줄러 사망 감지",
+    "사망 감지",
+    "자동 재시작 시도",
+    "watchdog",
+    "process died",
 ]
 
 
