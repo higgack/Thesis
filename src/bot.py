@@ -207,16 +207,6 @@ def _record_turn(chat_id: int, role: str, text: str,
     _persist_chat_history()
 
 
-def _last_model_citations(chat_id: int) -> tuple[list[str], list[str]]:
-    """Return (sources, tools) from the most recent model turn that
-    actually carried citations. Used as a fallback when the current
-    turn answered from memory without calling any tool."""
-    for entry in reversed(_HISTORY.get(chat_id, [])):
-        if entry.get("role") == "model" and entry.get("sources"):
-            return list(entry.get("sources") or []), list(entry.get("tools") or [])
-    return [], []
-
-
 def _persist_failed_log() -> None:
     import json
     try:
@@ -1351,6 +1341,10 @@ def _annotate_learn_date(body: str, sources: list[str]) -> str:
 
 
 async def _send_agent_reply(send, result, inherited: bool = False):
+    # `inherited` is retained for the historical call-site shape but
+    # is now always False — the inheritance fallback was removed
+    # because it masked routing failures (model skipped brain search,
+    # made up citations, then we stamped unrelated old sources).
     raw, mermaid_blocks = _extract_mermaid(result["text"])
     body = _strip_markdown(raw)
     body = _annotate_learn_date(body, result.get("sources") or [])
@@ -1358,8 +1352,7 @@ async def _send_agent_reply(send, result, inherited: bool = False):
     if result.get("warning"):
         suffix_lines.append(result["warning"])
     if result.get("sources"):
-        header = "📚 출처 (이전 자료 재사용):" if inherited else "📚 출처:"
-        suffix_lines.append(header + _format_sources_with_url(result["sources"]))
+        suffix_lines.append("📚 출처:" + _format_sources_with_url(result["sources"]))
     if result.get("tool_calls"):
         suffix_lines.append(_format_tool_calls(result["tool_calls"]))
     await _send_chunked(send, body)
@@ -1515,19 +1508,16 @@ async def _finalize_agent_reply(message, ctx: ContextTypes.DEFAULT_TYPE,
     object with `reply_text`/`reply_photo` (Message or
     callback_query.message)."""
     try:
-        # If the agent answered from memory without calling any tool
-        # this turn, fall back to the previous turn's citations so
-        # the user always sees an 출처 block. New tool results take
-        # precedence when present.
-        inherited = False
-        if not result.get("sources"):
-            prev_sources, prev_tools = _last_model_citations(chat_id)
-            if prev_sources:
-                result["sources"] = prev_sources
-                result["tool_calls"] = (result.get("tool_calls") or []) + prev_tools
-                inherited = True
+        # No inheritance fallback. Earlier we re-attached the previous
+        # turn's sources when result["sources"] was empty so users
+        # always saw a 출처 block — but combined with the rule that
+        # every question MUST trigger a fresh brain search, that just
+        # papers over routing failures (model answered from training
+        # knowledge, made up citation labels in the body, then we
+        # stamped unrelated old sources on top). Now an empty sources
+        # set surfaces honestly as the verify '출처 없음' warning.
         body, mermaid_blocks = await _send_agent_reply(
-            message.reply_text, result, inherited=inherited,
+            message.reply_text, result, inherited=False,
         )
         _record_turn(chat_id, "user", text)
         _record_turn(
