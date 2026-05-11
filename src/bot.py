@@ -613,172 +613,97 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 
 <b>【1. 명령어】</b>
-▸ 조회·검색
- • /find &lt;키워드&gt;  제목·요약·메타 검색
- • /recent [N]  최근 N개 (기본 10)
- • /stats  문서·청크 수
- • /status  봇 상태 (활성 agent·인입 파일별 경과·큐·메모리·청소)
- • /usage  인입속도·큐·비용 (오늘/7일/30일·일별 그래프·모델별·ingest/query)
-▸ 대화·메모리
- • /reset  대화 메모리 초기화 (토픽 바뀔 때)
-▸ 장애·재시도
- • /failed  실패 목록 + [🔁재시도][🗑비우기]
- • /failed_retry  탭 → 일괄 재시도
- • /failed_clear  탭 → 비우기
- • /queue  자동 재시도 대기 (2분 간격)
- • /recover_orphans  디스크에 있지만 학습 안 된 파일 일괄 재학습
-▸ 보류 결정 (5분 미선택 prompt 자동 보관)
- • /pending  보류된 OCR 확장 + Pro 합성 후보 목록
- • /pending_ocr &lt;번호&gt;  보류 OCR 추가 학습
- • /pending_pro &lt;번호&gt;  보류 질문 Pro 합성
-▸ 정리·삭제
- • /forget &lt;id&gt;  특정 문서 삭제
- • /forget_search &lt;키워드&gt;  최대 5건 안전 삭제
- • /forget_search_all &lt;키워드&gt;  안전장치 없이 일괄 삭제
- • /forget_qna &lt;id&gt;  Q&amp;A 1건 삭제 (대시보드 q-{id}.html의 id)
- • /forget_qna_search &lt;키워드&gt;  Q&amp;A 일괄 삭제 (질문/답변 매칭)
- • /dedupe·/dedupe_confirm  중복 후보 → 일괄 제거 (긴 본문만 유지)
- • /cleanup·/cleanup_confirm  노이즈 후보 → 일괄 제거
-▸ 고급
- • /deep &lt;질문&gt;  Pro 모델 (어려운 추론)
-▸ 시작
- • /start /help
+▸ 조회: /find &lt;키워드&gt; · /recent [N] · /stats · /status · /usage
+▸ 대화: /reset (메모리 초기화)
+▸ 장애: /failed · /failed_retry · /failed_clear · /queue
+       /recover_orphans (디스크에 있지만 미학습 일괄 재학습)
+▸ 보류 (5분 미선택 자동 보관):
+       /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt;
+▸ 삭제: /forget &lt;id&gt; · /forget_search[_all] &lt;키워드&gt;
+       /forget_qna[_search] &lt;id|키워드&gt;
+       /dedupe[_confirm] · /cleanup[_confirm]
+▸ 고급: /deep &lt;질문&gt; (Pro 모델 강제)
+▸ /start /help
 
 <b>【2. 핵심 원리】</b>
- • 채널: 무엇이든 → 자동 수집·요약·임베딩·Obsidian
- • DM: 자연어 → 에이전트가 도구 자동 선택
- • 답변마다 (사용 자료 시점: YYYY.MM~YYYY.MM)
- • 끝줄에 도구 이모지
- • 메모리: 최근 7턴 자동 ("그 회사 경쟁사는?" 가능, /reset으로 초기화)
- • 쿼리 확장: 짧은 질문은 facet 2개로 분해 검색
- • 비용 추적: 모든 Gemini 콜 SQLite 누적
- • Q&amp;A 영구 보관: SQLite + 정적 웹 대시보드 자동
- • 로컬 reranker (BGE): 검색 rerank 비용 0 + 속도 ↑
+ • 채널 무엇이든 → 자동 수집·요약·임베딩·Obsidian
+ • DM 자연어 → 에이전트가 도구 자동 선택
+ • 메모리 7턴 (대명사 OK, /reset으로 초기화)
+ • 쿼리 확장: 짧은 질문 자동 facet 분해
+ • 비용·Q&amp;A SQLite 영구 누적 + 정적 대시보드
+ • 로컬 BGE rerank (비용 0, 속도↑)
  • 답변 끝: (사용 자료 시점: 발행일 · 학습: YYYY.MM)
 
 <b>【3. 답변 출처 도구】</b>
  🧠 search_my_brain  저장 자료 단일 검색
- 🧠 compare_papers  저장 자료 다수(50) 통합·비교
-   25개+ 시 Pro/Flash/취소 버튼으로 사용자 확인 후 진행
+ 🧠 compare_papers  다수(50) 통합·비교 (25개+ Pro/Flash/취소 확인)
  🧠 recent_docs  최근 학습 목록
  📄 search_papers  외부 학술 (S2→arXiv)
  🌐 web_search  실시간 구글 (명시 시만)
  📥 ingest_url  URL 학습
- 예) 🧠→📄 = 저장+외부 / 🧠→🧠 = A vs B
 
 <b>【4. 자연어 트리거】</b>
  🧠 brain — "삼성전기 MLCC 동향"
  🧠 compare — "정리/리뷰/통합/비교/전체"
  📄 papers — "찾아줘/추천/새로운/어떤 논문"
- 🌐 web — "웹/구글/오늘/실시간/지금" 필수
-   ⚠️ "최근/요즘"만으로는 안 감
+ 🌐 web — "웹/구글/오늘/실시간/지금" 필수 ("최근/요즘"만으론 X)
  📥 ingest — "이거 학습해줘 URL" 또는 URL만
  후속 질문 — 대명사 OK
 
 <b>【5. 자료 인입】</b>
  URL/PDF/PPTX/DOCX/XLSX/이미지/음성/YouTube/텍스트 그냥 보내기
- • PDF: 텍스트+OCR fallback (arXiv 자동인식)
-        차트/표 많은 PDF는 자동 Vision OCR 20p
-        그 이상은 인라인 버튼으로 확인 후 진행
- • 이미지: 캡션 ≥80자 캡션만 / 짧으면 OCR / [OCR] 태그 강제 병행
- • 음성: Gemini STT (캡션 prepend)
- • YouTube: 자막→Jina fallback
- 차단: LinkedIn/FB/IG/카스 + Reuters/Bloomberg/WSJ/FT/Economist/NYT/WaPo/Barrons
+ • PDF: 텍스트+OCR, 차트 많은 PDF 자동 Vision 20p (초과 시 확인)
+ • 이미지: 캡션 ≥80자 / 짧으면 OCR / [OCR] 강제 병행
+ • 음성: Gemini STT · YouTube: 자막→Jina fallback
+ 차단: LinkedIn/FB/IG/카스, Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
-<b>【6. 자동 포워딩 (24/7)】</b>
- forward-listener: LISTEN_CHANNEL→FORWARD_TARGET 미러링
- Telethon auto-reconnect + Docker restart
- 학습 차단 자동:
-  • 슬래시 명령 forward 안 함
-  • 그 명령 reply도 차단 (reply_to 추적)
-  • INGEST_SKIP_PATTERNS env (세미콜론 구분)
+<b>【6. 자동 포워딩】</b>
+ LISTEN_CHANNEL→FORWARD_TARGET 미러링 (Telethon auto-reconnect)
+ 학습 차단: 슬래시 명령·reply·INGEST_SKIP_PATTERNS env
  큰 채널 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
 
-<b>【7. 메타데이터 자동 추출】</b>
- Flash-Lite ~₩0.5/문서:
-  🏢 회사명 (계열사 구분) · 🏷 태그 1~5 · 📅 발행일 YYYY.MM
+<b>【7. 메타데이터 자동】</b>
+ Flash-Lite ~₩0.5/문서: 🏢 회사 · 🏷 태그 · 📅 발행일 (YYYY.MM)
  → /find·중복알림·답변 출처에 표시
 
 <b>【8. 웹 대시보드】</b>
- 바로가기: http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/
- Basic Auth: 사용자명/비밀번호 (.env 참조)
- 구성:
-  • 통계 카드 4장 (Q&amp;A·학습자료·오늘·이번 달)
-  • 검색창 (질문/답변/출처 즉시 필터)
-  • 도구 칩 4개 (🧠📄🌐📥) 다중 선택
-  • 날짜별 접이식 섹션
-  • 카드 클릭 → 답변 펼침 / 제목 → 상세
-  • 🗑 버튼 → 1-탭 삭제 (서버 즉시 반영)
-  • 푸터: 생성 시각 · 누적 건수 · 무제한 보관
- 봇 답변 시 + 60초 주기 자동 갱신
- 테마: 19:00~07:00 KST 다크 / 그 외 라이트 자동
+ http://34.50.23.221:8082/&lt;TOKEN&gt;/ (Basic Auth, .env 참조)
+ 통계 4장 · 검색 · 도구 칩 · 날짜별 접이식 · 1-탭 삭제
+ 60초 자동 갱신 · 19~07 KST 다크 자동
 
 <b>【9. 답변 품질】</b>
- • 자료 시점 표기 필수
- • brain 안 부르고 web만 부르는 routing 금지
- • "최근/요즘"만으로 web X → "웹에서/오늘/실시간" 필요
- • 자료 부족 시 솔직히 "부족"
+ • 자료 시점 표기 필수 · 자료 부족 시 솔직히 "부족"
+ • brain 우선 ("최근/요즘"만으로 web X → "웹에서/오늘" 필요)
+ • 후속 질문도 brain 새로 검색 (메모리 only 금지)
  • web 결과는 [도메인]으로 인용
- • 후속 질문도 brain 새로 검색 필수 (메모리 only X)
-   → 매 답변에 fresh 출처 + 날짜·entity 정확성
 
-<b>【10. 운영 / 비용 / 안정성】</b>
- • VM: e2-medium 4GB · bot 2500m / listener 400m · Semaphore(2)
- • 재시도 5회×90s → 영구실패 /failed
- • 영속: retry_queue·failed_log·chat_history·qna.db·cost.db·dashboard·hf_cache
- • BM25 캐시: 부팅 시 백그라운드 빌드 (53k 1~2분, 빌드 중엔 dense-only)
- • BGE-reranker-base: 로컬 cross-encoder 활성 (LOCAL_RERANKER_ENABLED=1)
- • compare_papers 25개+ 시 Pro/Flash/취소 인라인 버튼으로 확인
-   (자동 ₩150 청구 차단, 5분 미선택 시 /pending 자동 보관)
- • PDF Vision OCR: 차트/표 자동 20p, 그 이상은 인라인 버튼으로 확인
-   (페이지당 ~₩3 표시 후 승인하면 백그라운드로 추가 청크 학습)
- • 자동 메모리 청소: 5분 주기 gc+malloc_trim (idle 일 때만)
-   90% 이상이면 agent 시작 전 즉시 청소, 95% 이상이면 거부
-   현황은 /status (RSS·한도·마지막 청소 회수량)
- • 비용 단가 (1M 토큰): Pro ₩1,750·Flash ₩420·Flash-Lite ₩140·Embed ₩210
-   환율 ₩1,400/USD 추정 ±20%
- • 대시보드: docker thesis-dashboard 컨테이너 (8082)
-   env: DASHBOARD_USER · DASHBOARD_PASSWORD · DASHBOARD_TOKEN
+<b>【10. 운영 / 비용】</b>
+ • VM: e2-medium 4GB · bot 2500m · Semaphore(2)
+ • 재시도 5회×90s → /failed
+ • 영속: retry/failed/history/qna/cost/dashboard/hf_cache
+ • BM25 캐시 + BGE-reranker 활성
+ • compare 25개+ Pro 확인 + PDF 20p+ OCR 확인
+   (5분 미선택 → /pending 자동 보관)
+ • 메모리 5분 청소 (90% 즉시·95% 거부, /status에서 확인)
+ • 단가 (1M 토큰): Pro ₩1,750 · Flash ₩420 · Lite ₩140 · Embed ₩210
  • SQLite 잠금: import_channel↔listener 동시 X
- • Obsidian: ./data/obsidian/
 
 <b>【11. 트러블슈팅】</b>
  • "본문 비어있음" → 차단 도메인/paywall
  • 봇 응답 없음 → docker logs thesis-bot-1
- • 채널 이중 인입 → import_channel↔listener 동시 X
- • brain 검색 에러 → BM25 빌드 중, 30초 후
+ • brain 에러 → BM25 빌드 중, 30초 후
  • 답변 토픽 어긋남 → /reset
- • /usage 비용 급등 → audio/Pro/web 다발 의심
- • 대시보드 빈 폴더 → docker compose exec bot python -c "from src.dashboard import regenerate; regenerate.regenerate()"
- • 봇 메타글 학습 → /forget_search_all + INGEST_SKIP_PATTERNS
- • 답변 길어 메시지 잘림 → 자동 분할 (본문/출처 별도 말풍선)"""
+ • 비용 급등 → audio/Pro/web 다발 의심
+ • 봇 메타글 학습 → /forget_search_all + INGEST_SKIP_PATTERNS"""
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     await _typing(update, ctx)
-    # _HELP_TEXT grew past Telegram's 4096-char limit when the
-    # /pending family was added, so a single reply_text silently
-    # 400'd. Split on the '<b>【…】</b>' section headers so each
-    # chunk renders cleanly without bisecting an HTML tag.
-    pieces = re.split(r"(?=<b>【)", _HELP_TEXT)
-    for piece in pieces:
-        piece = piece.strip()
-        if not piece:
-            continue
-        try:
-            await update.message.reply_text(
-                piece, parse_mode="HTML", disable_web_page_preview=True,
-            )
-        except Exception:
-            log.exception("help chunk send failed; retrying without HTML")
-            try:
-                await update.message.reply_text(
-                    piece, disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("help chunk fallback send failed")
+    await update.message.reply_text(
+        _HELP_TEXT, parse_mode="HTML", disable_web_page_preview=True,
+    )
 
 
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
