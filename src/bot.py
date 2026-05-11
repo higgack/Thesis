@@ -351,10 +351,13 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 쿼리 확장: 짧은 질문은 facet 2개로 분해 검색
  • 비용 추적: 모든 Gemini 콜 SQLite 누적
  • Q&amp;A 영구 보관: SQLite + 정적 웹 대시보드 자동
+ • 로컬 reranker (BGE): 검색 rerank 비용 0 + 속도 ↑
+ • 답변 끝: (사용 자료 시점: 발행일 · 학습: YYYY.MM)
 
 <b>【3. 답변 출처 도구】</b>
  🧠 search_my_brain  저장 자료 단일 검색
  🧠 compare_papers  저장 자료 다수(50) 통합·비교
+   (25개+ 반환 시 Pro 모델 자동 합성)
  🧠 recent_docs  최근 학습 목록
  📄 search_papers  외부 학술 (S2→arXiv)
  🌐 web_search  실시간 구글 (명시 시만)
@@ -373,6 +376,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 <b>【5. 자료 인입】</b>
  URL/PDF/PPTX/DOCX/XLSX/이미지/음성/YouTube/텍스트 그냥 보내기
  • PDF: 텍스트+OCR fallback (arXiv 자동인식)
+        차트/표 많은 PDF는 Vision OCR 자동 보강
  • 이미지: 캡션 ≥80자 캡션만 / 짧으면 OCR / [OCR] 태그 강제 병행
  • 음성: Gemini STT (캡션 prepend)
  • YouTube: 자막→Jina fallback
@@ -394,14 +398,17 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 
 <b>【8. 웹 대시보드】</b>
  바로가기: http://34.64.89.160:8082/1e68e9fae4e6fb1f8298bdee768eb73b/
- (위 링크 탭 → 브라우저에서 열림)
+ Basic Auth: 사용자명/비밀번호 (.env 참조)
  구성:
-  • 통계 카드 4장 (Q&amp;A·학습자료·오늘·30일)
+  • 통계 카드 4장 (Q&amp;A·학습자료·오늘·이번 달)
   • 검색창 (질문/답변/출처 즉시 필터)
   • 도구 칩 4개 (🧠📄🌐📥) 다중 선택
   • 날짜별 접이식 섹션
   • 카드 클릭 → 답변 펼침 / 제목 → 상세
- 봇 답변 시 자동 재생성. 핸드폰 호환.
+  • 🗑 버튼 → 1-탭 삭제 (서버 즉시 반영)
+  • 푸터: 생성 시각 · 누적 건수 · 무제한 보관
+ 봇 답변 시 + 60초 주기 자동 갱신
+ 테마: 19:00~07:00 KST 다크 / 그 외 라이트 자동
 
 <b>【9. 답변 품질】</b>
  • 자료 시점 표기 필수
@@ -415,6 +422,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 재시도 5회×90s → 영구실패 /failed
  • 영속: retry_queue·failed_log·chat_history·qna.db·cost.db·dashboard
  • BM25 캐시: 부팅 시 백그라운드 빌드 (41k 1~2분, 빌드 중엔 dense-only)
+ • BGE-reranker-base: 로컬 cross-encoder (~400MB, 첫 호출만 다운로드)
+ • Pro 합성 자동 트리거: compare_papers가 25개+ 반환 시
  • 비용 단가 (1M 토큰): Pro ₩1,750·Flash ₩420·Flash-Lite ₩140·Embed ₩210
    환율 ₩1,400/USD 추정 ±20%
  • 대시보드: systemd second-brain-dashboard.service (8082)
@@ -429,7 +438,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 답변 토픽 어긋남 → /reset
  • /usage 비용 급등 → audio/Pro/web 다발 의심
  • 대시보드 빈 폴더 → docker compose exec bot python -c "from src.dashboard import regenerate; regenerate.regenerate()"
- • 봇 메타글 학습 → /forget_search_all + INGEST_SKIP_PATTERNS"""
+ • 봇 메타글 학습 → /forget_search_all + INGEST_SKIP_PATTERNS
+ • 답변 길어 메시지 잘림 → 자동 분할 (본문/출처 별도 말풍선)"""
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
