@@ -27,9 +27,10 @@ _search_client = genai.Client(api_key=config.GOOGLE_API_KEY)
 #  - MAX_DISTANCE: cosine ceiling (loose — still on-topic below this).
 #  - MIN_SUMMARY_CHARS: docs shorter are stubs (timestamps, one-line
 #    forwards) with nothing to synthesize.
-#  - DIGEST_TITLE_RE: multi-topic daily/period digests dilute focus.
+#  - DIGEST_TITLE_RE: multi-topic daily/period digests get
+#    soft-penalised, not banned outright (see digest handling below).
 _COMPARE_MAX_DISTANCE = 0.55
-_COMPARE_MIN_SUMMARY_CHARS = 200
+_COMPARE_MIN_SUMMARY_CHARS = 100
 _DIGEST_TITLE_RE = re.compile(
     r"\d{4}년\s*\d{1,2}월\s*\d{1,2}일.*요약|"
     r"채널\s*요약|"
@@ -39,6 +40,34 @@ _DIGEST_TITLE_RE = re.compile(
     r"^\s*📅",
     re.IGNORECASE,
 )
+
+# Digest handling — three-pronged compromise so daily roundups stay
+# usable for recent context but don't drown out focused 1차 자료:
+#  A. Cap how many digests can appear in the final set.
+#  B. Drop digests older than the recency window (their content has
+#     usually been re-summarised in 1차 자료 by now).
+#  C. Multiply digest rank score by the penalty so they only surface
+#     when there aren't enough on-topic primary docs anyway.
+_DIGEST_MAX_QUOTA = 5
+_DIGEST_RECENCY_DAYS = 30
+_DIGEST_RANK_PENALTY = 0.4
+
+
+def _is_digest_title(title: str) -> bool:
+    return bool(title and _DIGEST_TITLE_RE.search(title))
+
+
+def _doc_age_days(doc: dict) -> float | None:
+    """Days since ingest, or None if ingested_at is missing/malformed."""
+    from datetime import datetime
+    raw = (doc or {}).get("ingested_at")
+    if not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(raw)
+    except Exception:
+        return None
+    return max(0.0, (datetime.utcnow() - ts).total_seconds() / 86400.0)
 
 
 async def search_my_brain(query: str, k: int = 5) -> dict:
@@ -166,13 +195,16 @@ async def compare_papers(topic: str, limit: int = 50,
                          type_filter: str = "") -> dict:
     """Cross-document overview: gather many summaries at once.
 
-    Applies three quality filters before ranking so Pro synthesis
-    doesn't pay for noise:
-      1. semantic floor — distance >= 0.55 hits are likely off-topic.
-      2. minimum summary length — strip 1-line forwards / timestamps.
-      3. digest title blocklist — daily channel/Substack roundups."""
+    Filters applied before ranking so Pro synthesis doesn't pay for
+    noise:
+      * semantic floor (distance > 0.55) — off-topic.
+      * minimum summary length (<100 chars) — stubs, single-line
+        forwards, timestamps.
+      * digest handling — daily/period roundups get a rank penalty,
+        a 30-day recency window, AND a hard quota of 5 in the final
+        set. They aren't banned outright because recent digests can
+        be the only source of intermediate market context."""
     limit = max(1, min(int(limit), 80))
-    # Pull 4x so the filters have headroom and we still hit `limit`.
     hits = await vector.query(topic, k=limit * 4, kind="summary")
 
     pre_count = len(hits)
@@ -190,13 +222,18 @@ async def compare_papers(topic: str, limit: int = 50,
         doc = meta.get_doc(h["metadata"]["doc_id"]) or {}
         recency = _recency_factor(doc.get("ingested_at") or "")
         semantic = 1.0 - float(h.get("distance", 0) or 0)
-        return semantic * recency
+        score = semantic * recency
+        if _is_digest_title(doc.get("title") or ""):
+            score *= _DIGEST_RANK_PENALTY
+        return score
     hits = sorted(hits, key=_rank, reverse=True)
 
     seen: set[str] = set()
     bundles: list[dict] = []
     short_dropped = 0
-    digest_dropped = 0
+    digest_old_dropped = 0
+    digest_quota_dropped = 0
+    digest_kept = 0
     for h in hits:
         doc_id = h["metadata"]["doc_id"]
         if doc_id in seen:
@@ -210,9 +247,15 @@ async def compare_papers(topic: str, limit: int = 50,
         if len(summary) < _COMPARE_MIN_SUMMARY_CHARS:
             short_dropped += 1
             continue
-        if title and _DIGEST_TITLE_RE.search(title):
-            digest_dropped += 1
-            continue
+        if _is_digest_title(title):
+            age_days = _doc_age_days(doc)
+            if age_days is not None and age_days > _DIGEST_RECENCY_DAYS:
+                digest_old_dropped += 1
+                continue
+            if digest_kept >= _DIGEST_MAX_QUOTA:
+                digest_quota_dropped += 1
+                continue
+            digest_kept += 1
         bundles.append({
             "doc_id": doc_id,
             "title": title,
@@ -222,11 +265,14 @@ async def compare_papers(topic: str, limit: int = 50,
         if len(bundles) >= limit:
             break
 
-    if low_relevance_dropped or short_dropped or digest_dropped:
+    if (low_relevance_dropped or short_dropped
+            or digest_old_dropped or digest_quota_dropped):
         log.info(
-            "compare_papers filters: low_relevance=%d short=%d digest=%d "
+            "compare_papers filters: low_relevance=%d short=%d "
+            "digest_old=%d digest_quota=%d digest_kept=%d "
             "→ kept %d/%d",
-            low_relevance_dropped, short_dropped, digest_dropped,
+            low_relevance_dropped, short_dropped,
+            digest_old_dropped, digest_quota_dropped, digest_kept,
             len(bundles), pre_count,
         )
 
@@ -236,7 +282,9 @@ async def compare_papers(topic: str, limit: int = 50,
         "filtered": {
             "low_relevance": low_relevance_dropped,
             "short": short_dropped,
-            "digest": digest_dropped,
+            "digest_old": digest_old_dropped,
+            "digest_quota": digest_quota_dropped,
+            "digest_kept": digest_kept,
         },
     }
 
