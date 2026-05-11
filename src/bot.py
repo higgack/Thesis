@@ -314,6 +314,21 @@ async def _typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await ctx.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
 
 
+async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Re-send the 'typing...' chat action every few seconds so the
+    user sees continuous activity through long agent runs (Pro
+    synthesis on a 50-doc compare can be ~30-60s)."""
+    while True:
+        try:
+            await _typing(update, ctx)
+        except Exception:
+            pass
+        try:
+            await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            break
+
+
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 
 <b>【1. 명령어】</b>
@@ -1244,24 +1259,31 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
     await _typing(update, ctx)
     chat_id = update.effective_chat.id
     history = list(_HISTORY.get(chat_id, []))
+    # Sustained "typing..." indicator until agent returns. Background
+    # task fires the chat_action every 4s so the user sees the bot is
+    # still working through compare_papers/Pro synthesis.
+    typing_task = asyncio.create_task(_sustained_typing(update, ctx))
     try:
-        result = await agent.run(text, deep=deep, history=history)
-    except Exception as e:
-        if _is_overload(e):
-            _RETRY_QUEUE.append({
-                "chat_id": update.effective_chat.id,
-                "text": text,
-                "deep": deep,
-                "attempts": 0,
-            })
-            await update.message.reply_text(
-                "⏳ Gemini 일시 과부하 — 자동으로 재시도 중입니다 (최대 약 7~8분).\n"
-                "별도로 다시 보내실 필요 없어요."
-            )
+        try:
+            result = await agent.run(text, deep=deep, history=history)
+        except Exception as e:
+            if _is_overload(e):
+                _RETRY_QUEUE.append({
+                    "chat_id": update.effective_chat.id,
+                    "text": text,
+                    "deep": deep,
+                    "attempts": 0,
+                })
+                await update.message.reply_text(
+                    "⏳ Gemini 일시 과부하 — 자동으로 재시도 중입니다 (최대 약 7~8분).\n"
+                    "별도로 다시 보내실 필요 없어요."
+                )
+                return
+            log.exception("agent failed")
+            await update.message.reply_text(f"⚠️ {_explain_error(e)}")
             return
-        log.exception("agent failed")
-        await update.message.reply_text(f"⚠️ {_explain_error(e)}")
-        return
+    finally:
+        typing_task.cancel()
     raw, mermaid_blocks = _extract_mermaid(result["text"])
     body = _strip_markdown(raw)
     suffix_lines = []
