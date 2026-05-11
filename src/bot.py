@@ -40,7 +40,7 @@ _HISTORY_PATH = config.DATA_DIR / "chat_history.json"
 # NOT stored — replaying stale retrievals confuses the model and
 # wastes tokens.
 _HISTORY: dict[int, list[dict]] = {}
-_HISTORY_MAX_TURNS = 3   # 3 user + 3 model = 6 messages
+_HISTORY_MAX_TURNS = 7   # 7 user + 7 model = 14 messages
 _HISTORY_USER_CAP = 400
 _HISTORY_MODEL_CAP = 1200
 
@@ -362,7 +362,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • DM: 자연어 → 에이전트가 도구 자동 선택
  • 답변마다 (사용 자료 시점: YYYY.MM~YYYY.MM)
  • 끝줄에 도구 이모지
- • 메모리: 최근 3턴 자동 ("그 회사 경쟁사는?" 가능)
+ • 메모리: 최근 7턴 자동 ("그 회사 경쟁사는?" 가능, /reset으로 초기화)
  • 쿼리 확장: 짧은 질문은 facet 2개로 분해 검색
  • 비용 추적: 모든 Gemini 콜 SQLite 누적
  • Q&amp;A 영구 보관: SQLite + 정적 웹 대시보드 자동
