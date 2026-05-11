@@ -99,19 +99,39 @@ def _persist_chat_history() -> None:
         log.exception("chat history persist failed")
 
 
-def _record_turn(chat_id: int, role: str, text: str) -> None:
+def _record_turn(chat_id: int, role: str, text: str,
+                 sources: list[str] | None = None,
+                 tools: list[str] | None = None) -> None:
     """Append one turn to this chat's rolling history. Trims old turns
     so memory stays bounded; persists to disk so restarts don't drop
-    context."""
+    context. Model turns can also carry the sources/tools that produced
+    them so a follow-up that doesn't trigger a new search still has the
+    previous turn's citations to show."""
     if not text:
         return
     cap = _HISTORY_USER_CAP if role == "user" else _HISTORY_MODEL_CAP
+    entry: dict = {"role": role, "text": text[:cap]}
+    if role == "model":
+        if sources:
+            entry["sources"] = list(sources)
+        if tools:
+            entry["tools"] = list(tools)
     h = _HISTORY.setdefault(chat_id, [])
-    h.append({"role": role, "text": text[:cap]})
+    h.append(entry)
     max_msgs = _HISTORY_MAX_TURNS * 2
     if len(h) > max_msgs:
         del h[: len(h) - max_msgs]
     _persist_chat_history()
+
+
+def _last_model_citations(chat_id: int) -> tuple[list[str], list[str]]:
+    """Return (sources, tools) from the most recent model turn that
+    actually carried citations. Used as a fallback when the current
+    turn answered from memory without calling any tool."""
+    for entry in reversed(_HISTORY.get(chat_id, [])):
+        if entry.get("role") == "model" and entry.get("sources"):
+            return list(entry.get("sources") or []), list(entry.get("tools") or [])
+    return [], []
 
 
 def _persist_failed_log() -> None:
@@ -431,8 +451,9 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • "최근/요즘"만으로 web X → "웹에서/오늘/실시간" 필요
  • 자료 부족 시 솔직히 "부족"
  • web 결과는 [도메인]으로 인용
- • 후속 질문도 brain 새로 검색 (메모리 only 답변 X)
-   → 출처 매번 갱신·확장
+ • 후속 질문: 모델이 추가 검색 필요성 자율 판단
+   메모리만으로 충분하면 스킵, 새 각도면 검색
+ • 출처는 매 답변에 항상 표시 (새 검색 X면 이전 자료 재사용)
 
 <b>【10. 운영 / 비용 / 안정성】</b>
  • 동시성 Semaphore(2) · 메모리 bot 1500m / listener 400m
@@ -1175,7 +1196,7 @@ def _annotate_learn_date(body: str, sources: list[str]) -> str:
     )
 
 
-async def _send_agent_reply(send, result):
+async def _send_agent_reply(send, result, inherited: bool = False):
     raw, mermaid_blocks = _extract_mermaid(result["text"])
     body = _strip_markdown(raw)
     body = _annotate_learn_date(body, result.get("sources") or [])
@@ -1183,7 +1204,8 @@ async def _send_agent_reply(send, result):
     if result.get("warning"):
         suffix_lines.append(result["warning"])
     if result.get("sources"):
-        suffix_lines.append("📚 출처:" + _format_sources_with_url(result["sources"]))
+        header = "📚 출처 (이전 자료 재사용):" if inherited else "📚 출처:"
+        suffix_lines.append(header + _format_sources_with_url(result["sources"]))
     if result.get("tool_calls"):
         suffix_lines.append(_format_tool_calls(result["tool_calls"]))
     await _send_chunked(send, body)
@@ -1283,14 +1305,29 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
             return
     finally:
         typing_task.cancel()
+    # If the agent answered from memory without calling any tool this
+    # turn, fall back to the previous turn's citations so the user
+    # always sees an 출처 block. New tool results take precedence when
+    # present.
+    inherited = False
+    if not result.get("sources"):
+        prev_sources, prev_tools = _last_model_citations(chat_id)
+        if prev_sources:
+            result["sources"] = prev_sources
+            result["tool_calls"] = (result.get("tool_calls") or []) + prev_tools
+            inherited = True
     # Use the shared sender: applies _annotate_learn_date, lists all
     # sources (no 15-cap), and chunks long outputs across multiple
     # Telegram messages so the suffix isn't silently dropped.
     body, mermaid_blocks = await _send_agent_reply(
-        update.message.reply_text, result,
+        update.message.reply_text, result, inherited=inherited,
     )
     _record_turn(chat_id, "user", text)
-    _record_turn(chat_id, "model", body)
+    _record_turn(
+        chat_id, "model", body,
+        sources=result.get("sources") or [],
+        tools=result.get("tool_calls") or [],
+    )
     qna.record(
         chat_id=chat_id,
         question=text,
