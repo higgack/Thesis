@@ -1270,6 +1270,71 @@ def _format_sources_with_url(titles: list[str], cap: int | None = None) -> str:
     return "\n  • " + "\n  • ".join(formatted) if formatted else ""
 
 
+_CITE_INNER_RE = re.compile(r"\[([^\[\]\n]{1,300})\]")
+
+
+def _split_citation_inner(inner: str) -> list[str]:
+    """Try to split '[A, B, C]' into ['A', 'B', 'C'] when it looks
+    safe. Bail (return single label) when ambiguous — too many parts,
+    very short fragments, or commas that look like prose punctuation
+    inside one title."""
+    if ", " not in inner:
+        return [inner]
+    parts = [p.strip() for p in inner.split(", ")]
+    if len(parts) > 5 or any(len(p) < 3 for p in parts):
+        return [inner]
+    return parts
+
+
+def _renumber_citations(text: str) -> tuple[str, list[str]]:
+    """Replace inline [label] citations with [N] numbered references.
+
+    Each unique label gets the next sequential number; combined
+    citations like '[A, B]' get rendered as '[1, 2]'. Returns the
+    rewritten text plus the ordered label list (for the legend)."""
+    label_to_num: dict[str, int] = {}
+    ordered: list[str] = []
+
+    def repl(m: re.Match) -> str:
+        inner = m.group(1).strip()
+        if not inner:
+            return m.group(0)
+        parts = _split_citation_inner(inner)
+        nums: list[str] = []
+        for p in parts:
+            if p not in label_to_num:
+                ordered.append(p)
+                label_to_num[p] = len(ordered)
+            nums.append(str(label_to_num[p]))
+        return "[" + ", ".join(nums) + "]"
+
+    return _CITE_INNER_RE.sub(repl, text), ordered
+
+
+def _format_numbered_sources(labels: list[str]) -> str:
+    """Build the numbered legend rendered after the answer body.
+    URLs are looked up via meta.search_title so each cited label
+    keeps its clickable source link when one exists."""
+    if not labels:
+        return ""
+    lines: list[str] = []
+    for i, label in enumerate(labels, 1):
+        url = ""
+        try:
+            matches = meta.search_title(label, limit=1)
+        except Exception:
+            matches = []
+        if matches:
+            src = matches[0].get("source") or ""
+            if src.startswith(("http://", "https://")):
+                url = src
+        if url:
+            lines.append(f"  [{i}] {label} → {url}")
+        else:
+            lines.append(f"  [{i}] {label}")
+    return "\n" + "\n".join(lines)
+
+
 # Telegram caps a single message at 4096 chars. Long brain answers
 # (compare_papers can produce 3000+ chars body + 2000 chars of sources)
 # get silently dropped by the API if we pack everything into one send.
@@ -1347,11 +1412,20 @@ async def _send_agent_reply(send, result, inherited: bool = False):
     # made up citations, then we stamped unrelated old sources).
     raw, mermaid_blocks = _extract_mermaid(result["text"])
     body = _strip_markdown(raw)
+    body, ordered_labels = _renumber_citations(body)
     body = _annotate_learn_date(body, result.get("sources") or [])
     suffix_lines = []
     if result.get("warning"):
         suffix_lines.append(result["warning"])
-    if result.get("sources"):
+    if ordered_labels:
+        # Use the numbered legend built from inline citations — what
+        # the user sees in body [1][2] matches the [1] [2] entries
+        # below.
+        suffix_lines.append("📚 출처:" + _format_numbered_sources(ordered_labels))
+    elif result.get("sources"):
+        # Tool was called but model didn't cite inline. Fall back to
+        # the harvested source list so the user still gets a 출처
+        # block.
         suffix_lines.append("📚 출처:" + _format_sources_with_url(result["sources"]))
     if result.get("tool_calls"):
         suffix_lines.append(_format_tool_calls(result["tool_calls"]))
