@@ -27,6 +27,10 @@ log = logging.getLogger("bot")
 _INGEST_SEM = asyncio.Semaphore(2)
 _INGEST_RETRY_QUEUE: list[dict] = []
 _INGEST_FAILED: list[dict] = []
+# Live counters for /status — incremented on entry, decremented in
+# finally so they stay accurate even when an exception unwinds.
+_ACTIVE_AGENT_RUNS = 0
+_LAST_REPLY_AT: datetime | None = None
 _FAILED_MAX = 200
 
 # Persist these two so a hang/restart doesn't lose state.
@@ -356,6 +360,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • /find &lt;키워드&gt;  제목·요약·메타 검색
  • /recent [N]  최근 N개 (기본 10)
  • /stats  문서·청크 수
+ • /status  봇 상태 (활성 agent·인입·큐·마지막 응답)
  • /usage  인입속도·큐·비용 (오늘/7일/30일·일별 그래프·모델별·ingest/query)
 ▸ 대화·메모리
  • /reset  대화 메모리 초기화 (토픽 바뀔 때)
@@ -482,6 +487,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
+    await _typing(update, ctx)
     await update.message.reply_text(
         _HELP_TEXT,
         parse_mode="HTML",
@@ -492,9 +498,42 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
+    await _typing(update, ctx)
     await update.message.reply_text(
         f"문서 {meta.count()}개 / 청크 {vector.chunk_count()}개"
     )
+
+
+async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Quick health snapshot — what is the bot doing right now?
+    Reads in-memory counters so it returns even when the event loop
+    is busy with ingest. Owner-only."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    ingest_capacity = 2
+    ingest_idle = _INGEST_SEM._value  # remaining slots
+    ingest_busy = max(0, ingest_capacity - ingest_idle)
+    last = _LAST_REPLY_AT
+    last_str = "-"
+    if last:
+        age = int((datetime.utcnow() - last).total_seconds())
+        if age < 60:
+            last_str = f"{age}초 전"
+        elif age < 3600:
+            last_str = f"{age // 60}분 전"
+        else:
+            last_str = f"{age // 3600}시간 전"
+    out = (
+        "🤖 봇 상태\n"
+        f"\n💬 활성 agent: {_ACTIVE_AGENT_RUNS}건"
+        f"\n📥 인입 진행: {ingest_busy}/{ingest_capacity}"
+        f"\n🔁 인입 재시도 큐: {len(_INGEST_RETRY_QUEUE)}건"
+        f"\n💤 agent 재시도 큐: {len(_RETRY_QUEUE)}건"
+        f"\n❌ 영구 실패: {len(_INGEST_FAILED)}건"
+        f"\n⏱ 마지막 응답: {last_str}"
+    )
+    await update.message.reply_text(out)
 
 
 async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -502,6 +541,7 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     can spot anomalies (sudden surge, drop) at a glance."""
     if not _is_owner(update):
         return
+    await _typing(update, ctx)
     s = meta.usage_stats()
     chunks = vector.chunk_count()
     queue_len = len(_INGEST_RETRY_QUEUE)
@@ -583,6 +623,7 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
+    await _typing(update, ctx)
     n = 10
     if ctx.args and ctx.args[0].isdigit():
         n = max(1, min(int(ctx.args[0]), 50))
@@ -687,6 +728,7 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     path / first-line summary so the user can jump back to the original."""
     if not _is_owner(update):
         return
+    await _typing(update, ctx)
     query = " ".join(ctx.args).strip()
     if not query:
         await update.message.reply_text("사용법: /find <제목 일부>")
@@ -785,6 +827,7 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     work as text commands too."""
     if not _is_owner(update):
         return
+    await _typing(update, ctx)
     if ctx.args and ctx.args[0] == "clear":
         await update.message.reply_text(_failed_clear_all())
         return
@@ -864,6 +907,7 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     failures). They re-attempt every 2 minutes."""
     if not _is_owner(update):
         return
+    await _typing(update, ctx)
     if not _INGEST_RETRY_QUEUE:
         await update.message.reply_text("재시도 큐 비어있음 ✨")
         return
@@ -1276,6 +1320,8 @@ async def on_private(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
                      text: str, deep: bool) -> None:
+    global _ACTIVE_AGENT_RUNS, _LAST_REPLY_AT
+    _ACTIVE_AGENT_RUNS += 1
     await _typing(update, ctx)
     chat_id = update.effective_chat.id
     history = list(_HISTORY.get(chat_id, []))
@@ -1298,9 +1344,13 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
                     "⏳ Gemini 일시 과부하 — 자동으로 재시도 중입니다 (최대 약 7~8분).\n"
                     "별도로 다시 보내실 필요 없어요."
                 )
+                _ACTIVE_AGENT_RUNS = max(0, _ACTIVE_AGENT_RUNS - 1)
+                _LAST_REPLY_AT = datetime.utcnow()
                 return
             log.exception("agent failed")
             await update.message.reply_text(f"⚠️ {_explain_error(e)}")
+            _ACTIVE_AGENT_RUNS = max(0, _ACTIVE_AGENT_RUNS - 1)
+            _LAST_REPLY_AT = datetime.utcnow()
             return
     finally:
         typing_task.cancel()
@@ -1353,6 +1403,8 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
             await update.message.reply_text(
                 f"(다이어그램 렌더 실패: {_explain_error(e)})\n\n{code[:500]}"
             )
+    _ACTIVE_AGENT_RUNS = max(0, _ACTIVE_AGENT_RUNS - 1)
+    _LAST_REPLY_AT = datetime.utcnow()
 
 
 def _explain_error(e: BaseException, max_len: int = 280) -> str:
@@ -1926,6 +1978,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("usage", cmd_usage))
     app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(CommandHandler("forget", cmd_forget))
