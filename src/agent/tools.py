@@ -32,7 +32,17 @@ _search_client = genai.Client(api_key=config.GOOGLE_API_KEY)
 _COMPARE_MAX_DISTANCE = 0.55
 _COMPARE_MIN_SUMMARY_CHARS = 100
 _DIGEST_TITLE_RE = re.compile(
-    r"\d{4}년\s*\d{1,2}월\s*\d{1,2}일.*요약|"
+    # Daily-aggregator emoji + year prefix — catches the user's auto
+    # rollups regardless of their suffix wording. Real document titles
+    # don't start with this combo (📊 한화솔루션 보고서, 📰 OCI 분석
+    # never start with '📊 2026년'). Picks up '📊 2026년 05월 07일
+    # 한국 목표가 상승여력' etc that the older 'requires 요약' regex
+    # let through.
+    r"^\s*[📊📋📰📈]\s*\d{4}년|"
+    # Catch-all for the same titles when the bot stripped the emoji
+    # at ingest time.
+    r"\d{4}년\s*\d{1,2}월\s*\d{1,2}일.*"
+    r"(요약|한국\s*목표가|한국\s*신고가|상승여력|신저가|급등주|급락주)|"
     r"채널\s*요약|"
     r"Substack\s*요약|"
     r"^\s*https?://[^\s]+\s*$|"
