@@ -460,15 +460,16 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
    → 매 답변에 fresh 출처 + 날짜·entity 정확성
 
 <b>【10. 운영 / 비용 / 안정성】</b>
- • 동시성 Semaphore(2) · 메모리 bot 1500m / listener 400m
+ • VM: e2-medium 4GB · bot 2500m / listener 400m · Semaphore(2)
  • 재시도 5회×90s → 영구실패 /failed
- • 영속: retry_queue·failed_log·chat_history·qna.db·cost.db·dashboard
- • BM25 캐시: 부팅 시 백그라운드 빌드 (41k 1~2분, 빌드 중엔 dense-only)
- • BGE-reranker-base: 로컬 cross-encoder (~400MB, 첫 호출만 다운로드)
+ • 영속: retry_queue·failed_log·chat_history·qna.db·cost.db·dashboard·hf_cache
+ • BM25 캐시: 부팅 시 백그라운드 빌드 (53k 1~2분, 빌드 중엔 dense-only)
+ • BGE-reranker-base: 로컬 cross-encoder 활성 (LOCAL_RERANKER_ENABLED=1)
  • Pro 합성 자동 트리거: compare_papers가 25개+ 반환 시
  • 비용 단가 (1M 토큰): Pro ₩1,750·Flash ₩420·Flash-Lite ₩140·Embed ₩210
    환율 ₩1,400/USD 추정 ±20%
- • 대시보드: systemd second-brain-dashboard.service (8082)
+ • 대시보드: docker thesis-dashboard 컨테이너 (8082)
+   env: DASHBOARD_USER · DASHBOARD_PASSWORD · DASHBOARD_TOKEN
  • SQLite 잠금: import_channel↔listener 동시 X
  • Obsidian: ./data/obsidian/
 
