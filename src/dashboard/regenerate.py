@@ -222,6 +222,11 @@ header .sub { color: var(--muted); font-size: 13px; }
   color: var(--muted);
 }
 .sources li { padding: 2px 0; }
+.source-link {
+  text-decoration: none; margin-left: 4px;
+  font-size: 12px; opacity: 0.65; transition: opacity 0.12s;
+}
+.source-link:hover { opacity: 1; }
 
 .qna-card.hidden, .day-section.hidden { display: none; }
 
@@ -317,6 +322,33 @@ h1 {
 
 def _esc(s) -> str:
     return html.escape(str(s) if s is not None else "")
+
+
+def _source_li(title: str) -> str:
+    """Render a single 출처 entry. Looks up the doc's original
+    source via meta.search_title — when the source is an http(s)
+    URL the title becomes a clickable link, otherwise it stays
+    plain text. Looking up at render time (vs persisting URL in
+    qna.db) lets historical Q&As pick up newly-known URLs without
+    a migration."""
+    safe_title = _esc(title)
+    url = ""
+    try:
+        matches = meta_store.search_title(title, limit=1)
+    except Exception:
+        matches = []
+    if matches:
+        src = matches[0].get("source") or ""
+        if src.startswith(("http://", "https://")):
+            url = src
+    if not url:
+        return f"<li>{safe_title}</li>"
+    safe_url = _esc(url)
+    return (
+        f"<li>{safe_title} "
+        f"<a href='{safe_url}' target='_blank' rel='noopener' "
+        f"class='source-link' title='원본 열기'>🔗</a></li>"
+    )
 
 
 def _tool_class(name: str) -> str:
@@ -580,7 +612,7 @@ def _render_index(rows: list[dict], stats: dict) -> str:
             sources_html = ""
             srcs = it.get("sources") or []
             if srcs:
-                lis = "".join(f"<li>{_esc(s)}</li>" for s in srcs)
+                lis = "".join(_source_li(s) for s in srcs)
                 sources_html = (
                     f"<div class='sources'>📚 출처 {len(srcs)}개<ul>{lis}</ul></div>"
                 )
@@ -632,7 +664,7 @@ def _render_detail(item: dict, token_dir: str) -> str:
     sources_html = ""
     srcs = item.get("sources") or []
     if srcs:
-        lis = "".join(f"<li>{_esc(s)}</li>" for s in srcs)
+        lis = "".join(_source_li(s) for s in srcs)
         sources_html = (
             f"<div class='sources'><h3>📚 출처</h3><ul>{lis}</ul></div>"
         )
