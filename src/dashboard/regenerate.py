@@ -41,6 +41,7 @@ _BASE_CSS = """
   --border: #e5e7eb; --border-soft: #f0f2f5;
   --text: #1f2937; --muted: #6b7280; --accent: #3b82f6;
   --primary: #10b981;
+  --warning-text: #78350f;
   --tool-brain: #ec4899; --tool-paper: #a855f7;
   --tool-web: #10b981; --tool-ingest: #f59e0b;
   --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
@@ -48,8 +49,9 @@ _BASE_CSS = """
 [data-theme="dark"] {
   --bg: #0f172a; --panel: #1e293b; --panel-alt: #172033;
   --border: #334155; --border-soft: #1e2738;
-  --text: #e2e8f0; --muted: #94a3b8; --accent: #60a5fa;
+  --text: #f1f5f9; --muted: #cbd5e1; --accent: #60a5fa;
   --primary: #10b981;
+  --warning-text: #fcd34d;
   --tool-brain: #f472b6; --tool-paper: #c084fc;
   --tool-web: #34d399; --tool-ingest: #fbbf24;
   --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.4);
@@ -206,11 +208,11 @@ header .sub { color: var(--muted); font-size: 13px; }
 .warning {
   background: rgba(245,158,11,0.10); border-left: 3px solid var(--tool-ingest);
   padding: 8px 12px; font-size: 12px; margin: 10px 0;
-  border-radius: 0 6px 6px 0; color: #78350f;
+  border-radius: 0 6px 6px 0; color: var(--warning-text);
 }
 .answer {
   white-space: pre-wrap; word-break: break-word; line-height: 1.7;
-  margin-top: 12px; color: #374151;
+  margin-top: 12px; color: var(--text);
   background: var(--panel); border: 1px solid var(--border-soft);
   border-radius: 8px; padding: 14px 16px;
 }
@@ -261,13 +263,13 @@ h1 {
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 12px; padding: 22px 26px;
   white-space: pre-wrap; word-break: break-word;
-  line-height: 1.75; color: #374151;
+  line-height: 1.75; color: var(--text);
   box-shadow: var(--shadow);
 }
 .warning {
   background: rgba(245,158,11,0.10); border-left: 3px solid var(--tool-ingest);
   padding: 10px 14px; font-size: 13px; margin-bottom: 16px;
-  border-radius: 0 6px 6px 0; color: #78350f;
+  border-radius: 0 6px 6px 0; color: var(--warning-text);
 }
 .sources {
   margin-top: 24px; padding: 18px 22px;
@@ -276,7 +278,7 @@ h1 {
   box-shadow: var(--shadow);
 }
 .sources h3 { margin: 0 0 10px 0; font-size: 13px; color: var(--muted); }
-.sources ul { margin: 0; padding-left: 18px; color: #374151; }
+.sources ul { margin: 0; padding-left: 18px; color: var(--text); }
 .sources li { padding: 3px 0; }
 .tool {
   display: inline-block; padding: 3px 10px; border-radius: 12px;
