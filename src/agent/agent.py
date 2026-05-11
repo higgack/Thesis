@@ -258,6 +258,10 @@ async def run(message: str, deep: bool = False,
     )
     sources: list[str] = []
     tool_calls: list[str] = []
+    # Track largest compare_papers result we saw this turn so we only
+    # pay Pro premium when the aggregation is genuinely large.
+    compare_papers_count = 0
+    PRO_THRESHOLD = 25
 
     cfg = types.GenerateContentConfig(
         system_instruction=_SYSTEM,
@@ -293,20 +297,23 @@ async def run(message: str, deep: bool = False,
             log.info("tool call: %s(%s)", fc.name, args)
             tool_calls.append(fc.name)
             result = await _execute(fc.name, args)
+            if fc.name == "compare_papers":
+                compare_papers_count = max(
+                    compare_papers_count, int(result.get("count", 0) or 0)
+                )
             _harvest_sources(fc.name, result, sources)
             response_parts.append(types.Part.from_function_response(
                 name=fc.name, response=result
             ))
         contents.append(types.Content(role="user", parts=response_parts))
 
-        # Upgrade subsequent synthesis to Pro when compare_papers was
-        # used in this turn. Many-document integration (50 summaries)
-        # exceeds what Flash digests cleanly; Pro keeps the structure
-        # intact at the cost of ~₩20 extra on those queries only.
+        # Upgrade synthesis to Pro only when compare_papers returned a
+        # large set (≥PRO_THRESHOLD). Smaller comparisons are something
+        # Flash handles fine; the Pro premium isn't justified.
         if (not deep and model != config.DEEP_MODEL
-                and "compare_papers" in tool_calls):
-            log.info("compare_papers detected — upgrading synthesis model to %s",
-                     config.DEEP_MODEL)
+                and compare_papers_count >= PRO_THRESHOLD):
+            log.info("compare_papers returned %d docs (≥%d) — upgrading synthesis to %s",
+                     compare_papers_count, PRO_THRESHOLD, config.DEEP_MODEL)
             model = config.DEEP_MODEL
 
     final = await _client.aio.models.generate_content(
