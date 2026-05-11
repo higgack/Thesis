@@ -54,7 +54,14 @@ def _load_local_reranker():
 
 async def _local_rerank(query: str, candidates: list[dict], k: int) -> list[dict] | None:
     """Cross-encoder ranking. Returns None if the local model isn't
-    available so the caller can fall back to Gemini."""
+    available so the caller can fall back to Gemini.
+
+    Gated by LOCAL_RERANKER_ENABLED env (default off) — on a 2GB
+    e2-small VM the 400MB BGE model can tip the bot container over
+    its 1500m memory cap during ingest bursts, triggering OOM kills.
+    Flip the env back to '1' after upgrading the VM."""
+    if os.getenv("LOCAL_RERANKER_ENABLED", "0") != "1":
+        return None
     if len(candidates) <= k:
         return candidates
     model = await asyncio.to_thread(_load_local_reranker)
