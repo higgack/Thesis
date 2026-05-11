@@ -1054,12 +1054,14 @@ def _is_overload(exc: BaseException) -> bool:
     return any(m in s for m in _OVERLOAD_MARKERS)
 
 
-def _format_sources_with_url(titles: list[str], cap: int = 15) -> str:
+def _format_sources_with_url(titles: list[str], cap: int | None = None) -> str:
     """Look up each cited doc title in meta and append the source URL
     if it is an http(s) link, so the user can click straight from the
-    bot reply to the original article. Limits to `cap` items."""
+    bot reply to the original article. By default lists every cited
+    source — the chunked Telegram send handles oversized blocks."""
     formatted: list[str] = []
-    for title in titles[:cap]:
+    items = titles if cap is None else titles[:cap]
+    for title in items:
         try:
             matches = meta.search_title(title, limit=1)
         except Exception:
