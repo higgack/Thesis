@@ -1113,9 +1113,43 @@ async def _send_chunked(send, text: str) -> None:
         await send(piece)
 
 
+_CITATION_LINE_RE = re.compile(r"\(사용 자료 시점:\s*([^)]+)\)")
+
+
+def _annotate_learn_date(body: str, sources: list[str]) -> str:
+    """Add '· 학습: YYYY.MM' to the agent's '(사용 자료 시점: …)' line.
+
+    The agent's date range reflects publication dates pulled from
+    source bodies — useful for brokerage reports where the writing
+    time matters, but confusing when the user wonders why a recently
+    ingested archive shows old dates. Append the latest ingest month
+    among cited sources so both axes are visible at a glance."""
+    if not sources or not _CITATION_LINE_RE.search(body):
+        return body
+    latest = ""
+    for title in sources[:20]:
+        try:
+            matches = meta.search_title(title, limit=1)
+        except Exception:
+            matches = []
+        if not matches:
+            continue
+        d = (matches[0].get("ingested_at") or "")[:7]  # YYYY-MM
+        if d and d > latest:
+            latest = d
+    if not latest:
+        return body
+    learn_mark = latest.replace("-", ".")  # YYYY.MM
+    return _CITATION_LINE_RE.sub(
+        lambda m: f"(사용 자료 시점: {m.group(1)} · 학습: {learn_mark})",
+        body, count=1,
+    )
+
+
 async def _send_agent_reply(send, result):
     raw, mermaid_blocks = _extract_mermaid(result["text"])
     body = _strip_markdown(raw)
+    body = _annotate_learn_date(body, result.get("sources") or [])
     suffix_lines = []
     if result.get("warning"):
         suffix_lines.append(result["warning"])
