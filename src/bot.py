@@ -585,7 +585,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • /failed_clear  탭 → 비우기
  • /queue  자동 재시도 대기 (2분 간격)
  • /recover_orphans  디스크에 있지만 학습 안 된 파일 일괄 재학습
-▸ 보류 결정 (10분 미선택 prompt 자동 보관)
+▸ 보류 결정 (5분 미선택 prompt 자동 보관)
  • /pending  보류된 OCR 확장 + Pro 합성 후보 목록
  • /pending_ocr &lt;번호&gt;  보류 OCR 추가 학습
  • /pending_pro &lt;번호&gt;  보류 질문 Pro 합성
@@ -687,7 +687,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • BM25 캐시: 부팅 시 백그라운드 빌드 (53k 1~2분, 빌드 중엔 dense-only)
  • BGE-reranker-base: 로컬 cross-encoder 활성 (LOCAL_RERANKER_ENABLED=1)
  • compare_papers 25개+ 시 Pro/Flash/취소 인라인 버튼으로 확인
-   (자동 ₩150 청구 차단, 10분 안 미선택 시 만료)
+   (자동 ₩150 청구 차단, 5분 미선택 시 /pending 자동 보관)
  • PDF Vision OCR: 차트/표 자동 20p, 그 이상은 인라인 버튼으로 확인
    (페이지당 ~₩3 표시 후 승인하면 백그라운드로 추가 청크 학습)
  • 자동 메모리 청소: 5분 주기 gc+malloc_trim (idle 일 때만)
@@ -1981,7 +1981,7 @@ async def _send_pro_confirmation(update: Update, result: dict) -> None:
         f"💎 Pro: 전체 {count}개 깊이 통합 분석 (~₩{pro_est})\n"
         f"⚡ Flash: 상위 25개로 빠른 합성 (~₩20)\n"
         f"❌ 취소: 답변하지 않음\n\n"
-        f"10분 안에 선택해주세요.",
+        f"5분 안에 선택해주세요 (미응답 시 /pending 으로 자동 이동).",
         reply_markup=kb,
     )
 
@@ -1994,7 +1994,7 @@ _PENDING_SHORT_TO_FULL: dict[str, str] = {}
 # via inline buttons. Keyed by the 24-char prefix of a uuid because
 # Telegram callback_data caps at 64 bytes.
 _PENDING_OCR: dict[str, dict] = {}
-_PENDING_OCR_TTL_SEC = 600
+_PENDING_OCR_TTL_SEC = 300
 
 
 def _gc_pending_ocr() -> list[dict]:
@@ -2055,7 +2055,7 @@ async def _send_ocr_extend_prompts(ctx: ContextTypes.DEFAULT_TYPE,
             f"총 {total}p 중 {applied}p OCR 완료 (차트/표 본 자동 OCR).\n"
             f"딥리서치/장문 리포트라면 나머지도 OCR하면 검색 정확도 ↑.\n"
             f"※ 텍스트가 이미 충분한 페이지는 자동 스킵 → 실제 비용은 더 적을 수 있음.\n"
-            f"10분 안에 선택해주세요.",
+            f"5분 안에 선택해주세요 (미응답 시 /pending 으로 자동 이동).",
             reply_markup=kb,
         )
 
@@ -2080,7 +2080,10 @@ async def on_ocr_extend_callback(update: Update,
     state = _PENDING_OCR.pop(short, None)
     if not state:
         try:
-            await q.edit_message_text("⚠️ 확인 요청이 만료됐습니다 (10분 초과).")
+            await q.edit_message_text(
+                "⚠️ 확인 요청이 만료됐습니다 (5분 초과). "
+                "/pending 에서 확인할 수 있어요."
+            )
         except Exception:
             pass
         return

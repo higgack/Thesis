@@ -61,7 +61,7 @@ PRO_THRESHOLD = 25
 # we can pick up where we left off after the user taps a button. TTL'd
 # so abandoned prompts don't pile up in memory.
 _PENDING_RUNS: dict[str, dict] = {}
-_PENDING_TTL_SEC = 600
+_PENDING_TTL_SEC = 300
 
 
 def _gc_pending() -> None:
@@ -411,7 +411,7 @@ async def resume(state_id: str, decision: str) -> dict:
     state = _PENDING_RUNS.pop(state_id, None)
     if not state:
         return {
-            "text": "⚠️ 확인 요청이 만료됐습니다 (10분 초과). "
+            "text": "⚠️ 확인 요청이 만료됐습니다 (5분 초과). "
                     "같은 질문을 다시 보내주세요.",
             "sources": [], "tool_calls": [],
             "model": "expired",
