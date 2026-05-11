@@ -667,7 +667,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  → /find·중복알림·답변 출처에 표시
 
 <b>【8. 웹 대시보드】</b>
- http://34.50.23.221:8082/&lt;TOKEN&gt;/ (Basic Auth, .env 참조)
+ http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html
+ Basic Auth: 사용자명/비밀번호 (.env 참조)
  통계 4장 · 검색 · 도구 칩 · 날짜별 접이식 · 1-탭 삭제
  60초 자동 갱신 · 19~07 KST 다크 자동
 
