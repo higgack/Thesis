@@ -91,6 +91,23 @@ def find_by_source(source: str) -> dict | None:
         return dict(row) if row else None
 
 
+def find_by_filename(filename: str) -> dict | None:
+    """Filename-level lookup. Matches both `tg-doc:<uniq>:<filename>`
+    (live Telegram doc) and `local:<filename>` (orphan recovery) so
+    files learned under one source label still dedupe when seen via
+    the other path. Used by the retry queue / load filter to avoid
+    cycling already-ingested files."""
+    if not filename:
+        return None
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM documents "
+            "WHERE source LIKE ? OR source = ? LIMIT 1",
+            (f"tg-doc:%:{filename}", f"local:{filename}"),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def recent(limit: int = 10) -> list[dict]:
     with _conn() as c:
         rows = c.execute(

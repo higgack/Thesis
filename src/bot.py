@@ -197,15 +197,21 @@ def _load_persisted_state() -> None:
                 seen: set[str] = set()
                 deduped: list[dict] = []
                 dropped_unsupported = 0
+                dropped_already_learned = 0
                 for item in data:
                     # Filter unsupported local_file entries (legacy
                     # orphan scan used to push .ppt/.ipynb/.png/etc).
                     if item.get("kind") == "local_file":
-                        suffix = Path(
-                            item.get("path") or ""
-                        ).suffix.lower()
+                        path = item.get("path") or ""
+                        suffix = Path(path).suffix.lower()
                         if suffix and suffix not in _SUPPORTED_INGEST_SUFFIXES:
                             dropped_unsupported += 1
+                            continue
+                        # Same filename already learned (possibly via
+                        # tg-doc: source) → don't re-cycle it.
+                        fname = Path(path).name
+                        if fname and meta.find_by_filename(fname):
+                            dropped_already_learned += 1
                             continue
                     key = (
                         item.get("file_name")
@@ -223,12 +229,13 @@ def _load_persisted_state() -> None:
                     deduped.append(item)
                 _INGEST_RETRY_QUEUE.extend(deduped)
                 dropped = len(data) - len(deduped)
+                dups = dropped - dropped_unsupported - dropped_already_learned
                 if dropped > 0:
                     log.info(
                         "restored %d retry items "
-                        "(%d duplicates, %d unsupported dropped)",
-                        len(deduped), dropped - dropped_unsupported,
-                        dropped_unsupported,
+                        "(%d duplicates, %d unsupported, %d already learned dropped)",
+                        len(deduped), dups, dropped_unsupported,
+                        dropped_already_learned,
                     )
                 else:
                     log.info("restored %d items to retry queue", len(deduped))
@@ -639,6 +646,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 ▸ 대화: /reset (메모리 초기화)
 ▸ 장애: /failed · /failed_retry · /failed_clear · /queue
        /recover_orphans (디스크에 있지만 미학습 일괄 재학습)
+       /queue_cancel_all (전체 큐·보류 일괄 취소)
 ▸ 보류 (5분 미선택 자동 보관):
        /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt;
        /pending_approve_all → /pending_approve_all_confirm (일괄 승인)
@@ -1447,6 +1455,42 @@ async def cmd_pending_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
         return
     await update.message.reply_text(
         f"🗑 {ocr_n + pro_n}건 취소됨 (OCR {ocr_n} · Pro {pro_n})"
+    )
+
+
+async def cmd_queue_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Stop everything in flight — wipe ingest retry queue, pending
+    Pro run queue, agent overload retry queue, and both pending DB
+    tables. Currently-running ingest finishes its file (no clean
+    way to abort mid-pipeline) but nothing new starts. Zero cost.
+    Use when the bot is overwhelmed and you want a fresh slate."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    ingest_n = len(_INGEST_RETRY_QUEUE)
+    pro_q_n = len(_PENDING_PRO_RUN_QUEUE)
+    agent_q_n = len(_RETRY_QUEUE)
+    _INGEST_RETRY_QUEUE.clear()
+    _PENDING_PRO_RUN_QUEUE.clear()
+    _RETRY_QUEUE.clear()
+    _persist_retry_queue()
+    ocr_n = await asyncio.to_thread(pending_store.delete_all_ocr)
+    pro_n = await asyncio.to_thread(pending_store.delete_all_pro)
+    total = ingest_n + pro_q_n + agent_q_n + ocr_n + pro_n
+    if total == 0:
+        await update.message.reply_text(
+            "📭 비울 항목 없음 — 모든 큐 비어있음."
+        )
+        return
+    await update.message.reply_text(
+        f"🛑 전체 작업 취소 — 총 {total}건 정리\n"
+        f"  • 인입 재시도 큐: {ingest_n}건\n"
+        f"  • Pro 답변 큐: {pro_q_n}건\n"
+        f"  • agent 과부하 재시도: {agent_q_n}건\n"
+        f"  • 보류 OCR: {ocr_n}건\n"
+        f"  • 보류 Pro: {pro_n}건\n\n"
+        f"진행 중인 ingest 1-2건은 끝까지 처리되고 새 작업은 시작 안 됨.\n"
+        f"다시 학습하려면 /recover_orphans 로 재시작 가능."
     )
 
 
@@ -3055,6 +3099,21 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
         or item.get("text", "")[:60]
         or "(unknown)"
     )
+
+    # Filename-level dedup: same file may have been learned earlier
+    # under a different source label (tg-doc: ↔ local:). Skip silently
+    # so the user doesn't see a stream of '♻️ 이미 있음' messages and
+    # the bot doesn't spend the slot.
+    if item.get("kind") == "local_file":
+        fname = Path(item.get("path") or "").name
+        if fname:
+            try:
+                already = await asyncio.to_thread(meta.find_by_filename, fname)
+            except Exception:
+                already = None
+            if already:
+                log.info("retry skip — filename already learned: %s", fname)
+                return
     async with _INGEST_SEM:
         retry_job_id = _register_ingest(
             f"[재시도] {title}", item.get("kind", "retry"), chat_id,
@@ -3320,6 +3379,7 @@ def main():
         "pending_approve_all_confirm", cmd_pending_approve_all_confirm,
     ))
     app.add_handler(CommandHandler("pending_cancel_all", cmd_pending_cancel_all))
+    app.add_handler(CommandHandler("queue_cancel_all", cmd_queue_cancel_all))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("cleanup_confirm", cmd_cleanup_confirm))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
