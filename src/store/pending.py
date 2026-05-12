@@ -201,3 +201,25 @@ def delete_pro(row_id: int) -> bool:
     except Exception:
         log.exception("pending.delete_pro failed")
         return False
+
+
+def delete_all_ocr() -> int:
+    """Wipe every pending OCR row. Returns the deleted count."""
+    try:
+        with _conn() as c:
+            cur = c.execute("DELETE FROM pending_ocr")
+            return cur.rowcount
+    except Exception:
+        log.exception("pending.delete_all_ocr failed")
+        return 0
+
+
+def delete_all_pro() -> int:
+    """Wipe every pending Pro row. Returns the deleted count."""
+    try:
+        with _conn() as c:
+            cur = c.execute("DELETE FROM pending_pro")
+            return cur.rowcount
+    except Exception:
+        log.exception("pending.delete_all_pro failed")
+        return 0

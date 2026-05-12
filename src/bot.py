@@ -619,6 +619,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
        /recover_orphans (디스크에 있지만 미학습 일괄 재학습)
 ▸ 보류 (5분 미선택 자동 보관):
        /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt;
+       /pending_approve_all → /pending_approve_all_confirm (일괄 승인)
+       /pending_cancel_all (일괄 취소)
 ▸ 삭제: /forget &lt;id&gt; · /forget_search[_all] &lt;키워드&gt;
        /forget_qna[_search] &lt;id|키워드&gt;
        /dedupe[_confirm] · /cleanup[_confirm]
@@ -1321,6 +1323,110 @@ async def cmd_pending_pro(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _run_agent(update, ctx, item["question"], deep=True)
 
 
+def _ocr_cost_est(applied: int, total: int) -> int:
+    remaining = max(0, total - applied)
+    return max(10, remaining * 3)
+
+
+def _pro_cost_est(count: int) -> int:
+    return max(80, count * 3 + 30)
+
+
+async def cmd_pending_approve_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Step 1 of bulk approve — preview the totals + cost estimate.
+    User must follow up with /pending_approve_all_confirm to actually
+    execute. The two-step gate exists because a wide Pro approval can
+    easily hit ~₩1k+; we don't want a slip-tap to spend it."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    ocr_items = await asyncio.to_thread(pending_store.list_ocr)
+    pro_items = await asyncio.to_thread(pending_store.list_pro)
+    if not ocr_items and not pro_items:
+        await update.message.reply_text("📭 일괄 승인 대상 없음 — /pending 비어있음.")
+        return
+    ocr_cost = sum(
+        _ocr_cost_est(int(it["applied_pages"]), int(it["total_pages"]))
+        for it in ocr_items
+    )
+    pro_cost = sum(_pro_cost_est(int(it["count"])) for it in pro_items)
+    total = len(ocr_items) + len(pro_items)
+    lines = [
+        "📋 일괄 승인 대상\n",
+        f"🔵 OCR {len(ocr_items)}건 (예상 ~₩{ocr_cost:,})",
+        f"🟣 Pro {len(pro_items)}건 (예상 ~₩{pro_cost:,})",
+        f"   합계 {total}건 · 약 ~₩{ocr_cost + pro_cost:,}\n",
+        "진행하려면 /pending_approve_all_confirm",
+    ]
+    await update.message.reply_text("\n".join(lines))
+
+
+async def cmd_pending_approve_all_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Step 2 — actually queue every pending item for processing.
+    OCR rows ride the existing retry queue (kind='ocr_extend',
+    drains 1/tick × 2min). Pro rows go to _PENDING_PRO_RUN_QUEUE
+    (separate drain job, 1/tick × 90s)."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    ocr_items = await asyncio.to_thread(pending_store.list_ocr)
+    pro_items = await asyncio.to_thread(pending_store.list_pro)
+    if not ocr_items and not pro_items:
+        await update.message.reply_text("📭 일괄 승인 대상 없음.")
+        return
+    ocr_pushed = 0
+    for it in ocr_items:
+        if not it.get("pdf_path"):
+            continue
+        _INGEST_RETRY_QUEUE.append({
+            "kind": "ocr_extend",
+            "doc_id": it["doc_id"],
+            "title": it["title"],
+            "pdf_path": it["pdf_path"],
+            "start_page": int(it["applied_pages"]) + 1,
+            "end_page": int(it["total_pages"]),
+            "chat_id": int(it["chat_id"]),
+            "attempts": 0,
+        })
+        ocr_pushed += 1
+    pro_pushed = 0
+    for it in pro_items:
+        if not it.get("question"):
+            continue
+        _PENDING_PRO_RUN_QUEUE.append({
+            "chat_id": int(it["chat_id"]),
+            "question": it["question"],
+        })
+        pro_pushed += 1
+    pending_store.delete_all_ocr()
+    pending_store.delete_all_pro()
+    _persist_retry_queue()
+    eta_ocr_min = (ocr_pushed * 2)
+    eta_pro_min = (pro_pushed * 2)  # 90s tick ≈ 1.5min, round up
+    await update.message.reply_text(
+        f"✅ 일괄 승인 완료\n"
+        f"🔵 OCR {ocr_pushed}건 인입 큐 추가 (~{eta_ocr_min}분 소요)\n"
+        f"🟣 Pro {pro_pushed}건 답변 큐 추가 (~{eta_pro_min}분 소요)\n"
+        f"진행 상황 → /queue · /status"
+    )
+
+
+async def cmd_pending_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Wipe every pending row without acting on it. Zero cost — just
+    a DB delete on the two pending tables."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    ocr_n = await asyncio.to_thread(pending_store.delete_all_ocr)
+    pro_n = await asyncio.to_thread(pending_store.delete_all_pro)
+    if ocr_n == 0 and pro_n == 0:
+        await update.message.reply_text("📭 취소할 항목 없음.")
+        return
+    await update.message.reply_text(
+        f"🗑 {ocr_n + pro_n}건 취소됨 (OCR {ocr_n} · Pro {pro_n})"
+    )
+
+
 async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -1528,6 +1634,11 @@ _OVERLOAD_MARKERS = ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "high de
 _MAX_RETRY_ATTEMPTS = 5
 _RETRY_INTERVAL_SECONDS = 90
 _RETRY_QUEUE: list[dict] = []
+
+# Items popped from /pending Pro list via /pending_approve_all_confirm.
+# Drained by _drain_pending_pro one item per 90s tick so a 20-row bulk
+# approve doesn't fire 20 concurrent agent runs and blow the memory cap.
+_PENDING_PRO_RUN_QUEUE: list[dict] = []
 
 
 async def on_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2812,6 +2923,79 @@ async def _refresh_dashboard(ctx: ContextTypes.DEFAULT_TYPE):
         log.exception("scheduled dashboard refresh failed")
 
 
+async def _drain_pending_pro(ctx: ContextTypes.DEFAULT_TYPE):
+    """One pending-Pro question per tick. Sends a ⏳ status, runs
+    agent.run(deep=True), then ships the answer through the same
+    chunked / qna-record / dashboard-regen pipeline as a live /deep.
+    Re-queues if memory pressure refuses the run."""
+    if not _PENDING_PRO_RUN_QUEUE:
+        return
+    global _ACTIVE_AGENT_RUNS, _LAST_REPLY_AT
+    pressure = _mem_pressure()
+    if pressure >= _MEM_REFUSE_THRESHOLD:
+        log.info("pending pro: memory %.0f%%, deferring", pressure * 100)
+        return
+    if pressure >= _MEM_CLEANUP_THRESHOLD:
+        try:
+            _run_memory_cleanup(f"pre-pending-pro {pressure*100:.0f}%")
+        except Exception:
+            pass
+    item = _PENDING_PRO_RUN_QUEUE.pop(0)
+    chat_id = int(item["chat_id"])
+    question = item["question"]
+    _ACTIVE_AGENT_RUNS += 1
+    try:
+        try:
+            sent = await ctx.bot.send_message(
+                chat_id, f"⏳ [보류 승인] Pro 답변 시작: {question[:80]}",
+            )
+        except Exception:
+            sent = None
+        try:
+            result = await agent.run(question, deep=True, history=[])
+        except Exception as e:
+            log.exception("pending pro agent.run failed")
+            await _edit_or_send(
+                ctx, chat_id, getattr(sent, "message_id", None),
+                f"⚠️ Pro 답변 실패: {question[:60]}\n{_explain_error(e)}",
+            )
+            return
+        async def _send(text):
+            await ctx.bot.send_message(chat_id, text, disable_web_page_preview=True)
+        try:
+            body, mermaid_blocks = await _send_agent_reply(_send, result)
+        except Exception:
+            log.exception("pending pro reply render failed")
+            return
+        try:
+            _record_turn(chat_id, "user", question)
+            _record_turn(
+                chat_id, "model", body,
+                sources=result.get("sources") or [],
+                tools=result.get("tool_calls") or [],
+            )
+            qna.record(
+                chat_id=chat_id, question=question, answer=body,
+                sources=result.get("sources") or [],
+                tools=result.get("tool_calls") or [],
+                model=result.get("model"),
+                warning=result.get("warning"),
+            )
+            from .dashboard import regenerate as dashboard_regen
+            dashboard_regen.regenerate()
+        except Exception:
+            log.exception("pending pro qna/dashboard record failed")
+        for code in mermaid_blocks:
+            try:
+                png = await _render_mermaid_png(code)
+                await ctx.bot.send_photo(chat_id, photo=png, caption="🧩 다이어그램")
+            except Exception:
+                log.warning("pending pro mermaid render failed")
+    finally:
+        _ACTIVE_AGENT_RUNS = max(0, _ACTIVE_AGENT_RUNS - 1)
+        _LAST_REPLY_AT = datetime.utcnow()
+
+
 async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
     """Drain one queued ingest per tick, sharing the same semaphore as live
     ingests so total concurrent ingests stays bounded."""
@@ -2915,6 +3099,34 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 r = await pipeline.ingest_text(
                     item["text"], item.get("label", "tg-msg-retry"),
                 )
+            elif kind == "ocr_extend":
+                # Bulk-approved OCR extension from /pending_approve_all.
+                # Same pipeline.extend_pdf_ocr call as the single-row
+                # /pending_ocr <N> path; wrapped here so it inherits
+                # the live-status bubble + soft-retry mechanics.
+                pdf_path = Path(item.get("pdf_path") or "")
+                if not pdf_path.exists():
+                    log.info("pending ocr_extend: file gone, skipping %s",
+                             pdf_path.name)
+                    return
+                r = await pipeline.extend_pdf_ocr(
+                    pdf_path, item["doc_id"],
+                    int(item["start_page"]), int(item["end_page"]),
+                )
+                # Normalise to the same {status, title, type, chunks}
+                # shape _format_results expects for the success line.
+                if r.get("status") == "ok":
+                    r = {
+                        "status": "ok",
+                        "title": (item.get("title") or pdf_path.name)[:200],
+                        "type": "pdf",
+                        "chunks": r.get("chunks_added", 0),
+                    }
+                else:
+                    r = {
+                        "status": "empty",
+                        "title": (item.get("title") or pdf_path.name)[:200],
+                    }
             elif kind == "local_file":
                 # Orphan-file recovery path — file already on disk
                 # (preserved across container restarts) so we skip the
@@ -3049,6 +3261,11 @@ def main():
     app.add_handler(CommandHandler("pending", cmd_pending))
     app.add_handler(CommandHandler("pending_ocr", cmd_pending_ocr))
     app.add_handler(CommandHandler("pending_pro", cmd_pending_pro))
+    app.add_handler(CommandHandler("pending_approve_all", cmd_pending_approve_all))
+    app.add_handler(CommandHandler(
+        "pending_approve_all_confirm", cmd_pending_approve_all_confirm,
+    ))
+    app.add_handler(CommandHandler("pending_cancel_all", cmd_pending_cancel_all))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("cleanup_confirm", cmd_cleanup_confirm))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
@@ -3091,6 +3308,12 @@ def main():
             interval=60,
             first=90,
             name="promote_expired_pending",
+        )
+        app.job_queue.run_repeating(
+            _drain_pending_pro,
+            interval=90,
+            first=120,
+            name="drain_pending_pro",
         )
         app.job_queue.run_repeating(
             _periodic_memory_cleanup,
