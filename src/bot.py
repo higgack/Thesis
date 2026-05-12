@@ -670,7 +670,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 
 <b>【3. 답변 출처 도구】</b>
  🧠 search_my_brain  저장 자료 단일 검색
- 🧠 compare_papers  다수(50) 통합·비교 (25개+ Pro/Flash/취소 확인)
+ 🧠 compare_papers  다수(50) 통합·비교 (20개+ Pro/Flash/취소 확인)
  🧠 recent_docs  최근 학습 목록
  📄 search_papers  외부 학술 (S2→arXiv)
  🌐 web_search  실시간 구글 (명시 시만)
@@ -717,7 +717,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 재시도 5회×90s → /failed
  • 영속: retry/failed/history/qna/cost/dashboard/hf_cache
  • BM25 캐시 + BGE-reranker 활성
- • compare 25개+ Pro 확인 + PDF 20p+ OCR 확인
+ • compare 20개+ Pro 확인 + PDF 20p+ OCR 확인
    (5분 미선택 → /pending 자동 보관)
  • 메모리 5분 청소 (90% 즉시·95% 거부, /status에서 확인)
  • 단가 (1M 토큰): Pro ₩1,750 · Flash ₩420 · Lite ₩140 · Embed ₩210

@@ -80,7 +80,7 @@ def _doc_age_days(doc: dict) -> float | None:
     return max(0.0, (datetime.utcnow() - ts).total_seconds() / 86400.0)
 
 
-async def search_my_brain(query: str, k: int = 5) -> dict:
+async def search_my_brain(query: str, k: int = 10) -> dict:
     """Hybrid retrieval over the user's saved corpus.
 
     Runs the original query plus up to 2 LLM-generated facet variants
@@ -326,7 +326,7 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                 ),
                 "k": types.Schema(
                     type=types.Type.INTEGER,
-                    description="Max results (1-10). Default 5.",
+                    description="Max results (1-15). Default 10.",
                 ),
             },
             required=["query"],

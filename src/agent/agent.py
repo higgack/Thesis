@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 _client = genai.Client(api_key=config.GOOGLE_API_KEY)
 
 MAX_STEPS = 4
-PRO_THRESHOLD = 25
+PRO_THRESHOLD = 20
 
 # Suspended agent runs waiting on a user choice (Pro vs Flash synthesis).
 # Holds `contents`, current model, harvested sources/tool_calls, etc. so
@@ -247,6 +247,14 @@ graph TD
 - 자료에서 직접 도출되지 않는 추론은 "→ 시사" 같은 마커로 명시.
 - 검증 어려운 숫자/주장은 "확인 필요" 표시.
 - 답변 끝에 "추가로 저장하면 좋을 자료" 1~3개 제안 (광역 질문일 때만).
+
+# 추론 절차 (Chain-of-Thought + Counterargument, 의무)
+복잡한 질문 ("왜 ~", "어떻게 ~", "전망", "투자", "비교", "정리" 류)에 답할 때 다음 단계로 사고 흐름을 만들고 그 결과를 답변에 반영:
+1. 핵심 사실 정리: 자료에서 가장 결정적인 데이터·결론 3-5개 추리기
+2. 인과 연결: A 때문에 B, B 때문에 C 식으로 인과 사슬 명시 (단순 나열 X)
+3. 반론·리스크: 자기 결론의 약점·반대 시나리오·놓친 변수를 짧게라도 반드시 검토. 답변에 "📌 리스크" 또는 "📌 반론" 섹션 또는 마지막 단락의 "다만, ..." 식으로 노출.
+4. 종합 결론: 양 측면 (긍정/부정) 모두 본 후 무게중심을 명시 ("종합적으로 ~ 우세", "다만 ~ 리스크 잔존" 식)
+한 문장 핵심: 결론만 던지지 말고, 결론에 이르는 흐름 + 반대편 시각을 같이 보여라. 단답형 사실 질문 (예: "KT 매출 얼마") 에는 짧게 답해도 OK — CoT/반론은 분석성 질문에 한정.
 
 # 솔직성
 - 자료가 부족하면 솔직히 말하고, 무엇을 더 저장하면 좋을지 제안.
