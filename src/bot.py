@@ -683,11 +683,12 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 메모리 7턴 (대명사 OK, /reset으로 초기화)
  • 쿼리 확장: 짧은 질문 자동 facet 분해
  • 비용·Q&amp;A SQLite 영구 누적 + 정적 대시보드
- • 로컬 BGE rerank (비용 0, 속도↑)
+ • 임베딩 + reranker 모두 로컬 (Gemini 호출 X)
  • 답변 끝: (사용 자료 시점: 발행일 · 학습: YYYY.MM)
+ • 분석성 질문은 자동 CoT + 반론·리스크 검토
 
 <b>【3. 답변 출처 도구】</b>
- 🧠 search_my_brain  저장 자료 단일 검색
+ 🧠 search_my_brain  저장 자료 단일 검색 (TOP_K 10)
  🧠 compare_papers  다수(50) 통합·비교 (20개+ Pro/Flash/취소 확인)
  🧠 recent_docs  최근 학습 목록
  📄 search_papers  외부 학술 (S2→arXiv)
@@ -709,19 +710,20 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 음성: Gemini STT · YouTube: 자막→Jina fallback
  차단: LinkedIn/FB/IG/카스, Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
-<b>【6. 자동 포워딩】</b>
- LISTEN_CHANNEL→FORWARD_TARGET 미러링 (Telethon auto-reconnect)
- 학습 차단: 슬래시 명령·reply·INGEST_SKIP_PATTERNS env
+<b>【6. 자동 포워딩 (비활성화 상태)】</b>
+ forward-listener는 profile 게이트로 stop. 비용 절감용.
+ 활성화: COMPOSE_PROFILES=forward docker compose up -d forward-listener
  큰 채널 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
 
 <b>【7. 메타데이터 자동】</b>
- Flash-Lite ~₩0.5/문서: 🏢 회사 · 🏷 태그 · 📅 발행일 (YYYY.MM)
+ Flash-Lite 요약+메타 1콜 합침 (~₩0.5/doc, Stage 1 절감)
+ 🏢 회사 · 🏷 태그 · 📅 발행일 (YYYY.MM)
  → /find·중복알림·답변 출처에 표시
 
 <b>【8. 웹 대시보드】</b>
  http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html
  Basic Auth: 사용자명/비밀번호 (.env 참조)
- 통계 4장 · 검색 · 도구 칩 · 날짜별 접이식 · 1-탭 삭제
+ 통계 4장 · 검색 · 도구 칩 · 날짜별 접이식 · 1-탭 삭제 · 🔗 원본 링크
  60초 자동 갱신 · 19~07 KST 다크 자동
 
 <b>【9. 답변 품질】</b>
@@ -729,17 +731,20 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • brain 우선 ("최근/요즘"만으로 web X → "웹에서/오늘" 필요)
  • 후속 질문도 brain 새로 검색 (메모리 only 금지)
  • web 결과는 [도메인]으로 인용
+ • 인용은 자료 제목 (숫자 [1] X) · 본문 [N] 자동 매김
 
-<b>【10. 운영 / 비용】</b>
+<b>【10. 운영 / 비용 (Stage 1+2 절감 적용)】</b>
  • VM: e2-standard-2 8GB · bot 6000m · Semaphore(4)
  • 재시도 5회×90s → /failed
  • 영속: retry/failed/history/qna/cost/dashboard/hf_cache
- • BM25 캐시 + BGE-reranker 활성
+ • 임베딩: 로컬 BGE-M3 1024-dim (₩0, sentence-transformers)
+ • Reranker: 로컬 BGE-reranker-base (₩0)
+ • LLM: Gemini Pro·Flash·Flash-Lite (API)
  • compare 20개+ Pro 확인 + PDF 10p+ OCR 확인
    (5분 미선택 → /pending 자동 보관)
- • 메모리 5분 청소 (90% 즉시·95% 거부, /status에서 확인)
- • 단가 (1M 토큰): Pro ₩1,750 · Flash ₩420 · Lite ₩140 · Embed ₩210
- • SQLite 잠금: import_channel↔listener 동시 X
+ • 메모리 5분 청소 (90% 즉시·95% 거부)
+ • 단가 (1M 토큰): Pro ₩1,750·Flash ₩420·Lite ₩140·Embed ₩0
+ • 자동 복구 마커: /app/data/no_auto_recovery (queue_cancel_all 시 생성)
 
 <b>【11. 트러블슈팅】</b>
  • "본문 비어있음" → 차단 도메인/paywall
@@ -747,7 +752,9 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • brain 에러 → BM25 빌드 중, 30초 후
  • 답변 토픽 어긋남 → /reset
  • 비용 급등 → audio/Pro/web 다발 의심
- • 봇 메타글 학습 → /forget_search_all + INGEST_SKIP_PATTERNS"""
+ • 봇 메타글 학습 → /forget_search_all + INGEST_SKIP_PATTERNS
+ • BGE-M3 모델: /app/data/hf_cache (2.3GB) 보존
+ • 임베딩 backend 변경: .env EMBED_BACKEND=gemini|bge-m3"""
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
