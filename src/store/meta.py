@@ -1,8 +1,11 @@
+import logging
 import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from .. import config
+
+log = logging.getLogger(__name__)
 
 
 _TITLE_NORMALIZE_RE = re.compile(r"[\s\-_.,;:()\[\]/\\!?'\"`~@#%^&*+=<>{}|]+")
@@ -106,6 +109,47 @@ def find_by_filename(filename: str) -> dict | None:
             (f"tg-doc:%:{filename}", f"local:{filename}"),
         ).fetchone()
         return dict(row) if row else None
+
+
+_FORWARD_DIGEST_RE = re.compile(
+    # Auto-aggregator emojis followed by a year — captures the daily
+    # rollup pattern these forwarded summaries use. User-written notes
+    # don't start with this combo.
+    r"^\s*[📋📰📊📈]\s*\d{4}년|"
+    # Plain '한국 목표가 ... 상승여력' / '한국 신고가' style stock
+    # screener forwards (no emoji prefix).
+    r"\d{4}년\s*\d{1,2}월\s*\d{1,2}일.*"
+    r"(요약|한국\s*목표가|한국\s*신고가|상승여력|신저가|급등주|급락주)|"
+    r"채널\s*요약|"
+    r"Substack\s*요약|"
+    # Bare-timestamp 'cards' that the forwarder sometimes drops.
+    r"^\s*📅",
+    re.IGNORECASE,
+)
+
+
+def find_forwarded_digests() -> list[dict]:
+    """Return every doc that looks like an auto-forwarded channel
+    digest: source comes from a Telegram message text ingest
+    (`tg-msg:%`) AND the title matches the bracket/emoji digest
+    pattern. User-written long pastes use the same source prefix but
+    don't match the title shape, so this leaves them alone."""
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT id, source, type, title, summary, ingested_at "
+                "FROM documents WHERE source LIKE 'tg-msg:%'"
+            ).fetchall()
+    except Exception:
+        log.exception("find_forwarded_digests failed")
+        return []
+    out: list[dict] = []
+    for row in rows:
+        d = dict(row)
+        title = (d.get("title") or "").strip()
+        if title and _FORWARD_DIGEST_RE.search(title):
+            out.append(d)
+    return out
 
 
 def recent(limit: int = 10) -> list[dict]:

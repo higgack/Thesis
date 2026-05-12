@@ -655,6 +655,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
        /forget_qna[_search] &lt;id|키워드&gt;
        /dedupe → /dedupe_confirm  중복 doc (본문 가장 긴 것 1개만 유지)
        /cleanup → /cleanup_confirm  노이즈 doc (짧은 text 자료)
+       /forget_forwards → /forget_forwards_confirm  자동 포워딩 디지스트
 ▸ 고급: /deep &lt;질문&gt; (Pro 모델 강제)
 ▸ /start /help
 
@@ -964,6 +965,40 @@ async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"노이즈 후보 {len(noisy)}건 (text 타입, 본문 짧음):\n{preview}{more}\n\n"
         f"전부 삭제하려면: /cleanup confirm"
+    )
+
+
+async def cmd_forget_forwards(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Wipe auto-forwarded channel digests (only docs whose title
+    matches the digest emoji/header pattern AND whose source is
+    tg-msg:). User-written long pastes share the same source prefix
+    but don't match the title shape, so they survive. Two-step:
+    /forget_forwards previews, /forget_forwards confirm executes."""
+    if not _is_owner(update):
+        return
+    candidates = meta.find_forwarded_digests()
+    if not candidates:
+        await update.message.reply_text("📭 자동 포워딩 디지스트 없음 ✨")
+        return
+    args = [a.lower() for a in (ctx.args or [])]
+    if "confirm" in args:
+        n_chunks = 0
+        for d in candidates:
+            n_chunks += vector.delete_doc(d["id"])
+            meta.delete(d["id"])
+        await update.message.reply_text(
+            f"✅ 자동 포워딩 자료 {len(candidates)}건 제거 "
+            f"(청크 {n_chunks}개)"
+        )
+        return
+    preview = "\n".join(
+        f"  • {_clean_text(d.get('title') or '')[:70]}"
+        for d in candidates[:15]
+    )
+    more = f"\n... 외 {len(candidates) - 15}건" if len(candidates) > 15 else ""
+    await update.message.reply_text(
+        f"📋 자동 포워딩 디지스트 후보 {len(candidates)}건:\n{preview}{more}\n\n"
+        f"전부 삭제하려면: /forget_forwards confirm"
     )
 
 
@@ -1615,6 +1650,13 @@ async def cmd_cleanup_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     ctx.args = ["confirm"]
     await cmd_cleanup(update, ctx)
+
+
+async def cmd_forget_forwards_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    ctx.args = ["confirm"]
+    await cmd_forget_forwards(update, ctx)
 
 
 # Single-token slash aliases for the agent's tools so the usage guide
@@ -3384,6 +3426,10 @@ def main():
     app.add_handler(CommandHandler("cleanup_confirm", cmd_cleanup_confirm))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
     app.add_handler(CommandHandler("dedupe_confirm", cmd_dedupe_confirm))
+    app.add_handler(CommandHandler("forget_forwards", cmd_forget_forwards))
+    app.add_handler(CommandHandler(
+        "forget_forwards_confirm", cmd_forget_forwards_confirm,
+    ))
     app.add_handler(CommandHandler("deep", cmd_deep))
     app.add_handler(CommandHandler("search_my_brain", cmd_search_my_brain))
     app.add_handler(CommandHandler("compare_papers", cmd_compare_papers))
