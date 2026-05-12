@@ -623,7 +623,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
        /pending_cancel_all (일괄 취소)
 ▸ 삭제: /forget &lt;id&gt; · /forget_search[_all] &lt;키워드&gt;
        /forget_qna[_search] &lt;id|키워드&gt;
-       /dedupe[_confirm] · /cleanup[_confirm]
+       /dedupe → /dedupe_confirm  중복 doc (본문 가장 긴 것 1개만 유지)
+       /cleanup → /cleanup_confirm  노이즈 doc (짧은 text 자료)
 ▸ 고급: /deep &lt;질문&gt; (Pro 모델 강제)
 ▸ /start /help
 
