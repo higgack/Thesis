@@ -70,23 +70,27 @@ def main() -> int:
     offset = 0
     done = 0
     start = time.time()
+    print(f"starting loop: total={total}, BATCH={BATCH}", flush=True)
     while True:
+        print(f"  fetching offset={offset} ...", flush=True)
         batch = src.get(
             limit=BATCH, offset=offset,
             include=["documents", "metadatas"],
         )
         ids = batch.get("ids") or []
+        print(f"  got {len(ids)} ids from source", flush=True)
         if not ids:
+            print("  no more ids — exiting loop", flush=True)
             break
         docs = batch.get("documents") or []
         metas = batch.get("metadatas") or []
-        # Encode
+        print(f"  encoding {len(docs)} docs ...", flush=True)
         vecs = model.encode(
             docs, normalize_embeddings=True, batch_size=32,
             show_progress_bar=False,
         )
         vec_list = [list(map(float, v)) for v in vecs]
-        # Write (upsert — idempotent)
+        print(f"  upserting {len(ids)} vectors ...", flush=True)
         dst.upsert(
             ids=ids, embeddings=vec_list,
             documents=docs, metadatas=metas,
