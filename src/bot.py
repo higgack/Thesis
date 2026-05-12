@@ -26,7 +26,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
-_INGEST_SEM = asyncio.Semaphore(2)
+_INGEST_SEM = asyncio.Semaphore(4)
 _INGEST_RETRY_QUEUE: list[dict] = []
 _INGEST_FAILED: list[dict] = []
 # Live counters for /status — incremented on entry, decremented in
@@ -713,7 +713,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • web 결과는 [도메인]으로 인용
 
 <b>【10. 운영 / 비용】</b>
- • VM: e2-medium 4GB · bot 2500m · Semaphore(2)
+ • VM: e2-standard-2 8GB · bot 6000m · Semaphore(4)
  • 재시도 5회×90s → /failed
  • 영속: retry/failed/history/qna/cost/dashboard/hf_cache
  • BM25 캐시 + BGE-reranker 활성

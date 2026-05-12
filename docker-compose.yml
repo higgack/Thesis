@@ -20,10 +20,11 @@ services:
       - ./data:/app/data
       - tg-bot-api-data:/var/lib/telegram-bot-api
     restart: unless-stopped
-    # Bumped after VM upgrade e2-small (2GB) → e2-medium (4GB). 2.5GB
-    # gives the bot enough headroom for BM25 cache + BGE-reranker
-    # + ingest bursts without OOM-killing again.
-    mem_limit: 2500m
+    # Sized for e2-standard-2 (8 GB VM). Leaves ~2 GB for OS +
+    # dashboard + telegram-bot-api + headroom. Bumped from 2500m
+    # alongside Semaphore(2→4) so 4 parallel ingests can run without
+    # tripping the 90% cleanup / 95% refuse guards.
+    mem_limit: 6000m
     dns:
       - 8.8.8.8
       - 1.1.1.1
