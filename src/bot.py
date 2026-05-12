@@ -196,7 +196,17 @@ def _load_persisted_state() -> None:
             if isinstance(data, list):
                 seen: set[str] = set()
                 deduped: list[dict] = []
+                dropped_unsupported = 0
                 for item in data:
+                    # Filter unsupported local_file entries (legacy
+                    # orphan scan used to push .ppt/.ipynb/.png/etc).
+                    if item.get("kind") == "local_file":
+                        suffix = Path(
+                            item.get("path") or ""
+                        ).suffix.lower()
+                        if suffix and suffix not in _SUPPORTED_INGEST_SUFFIXES:
+                            dropped_unsupported += 1
+                            continue
                     key = (
                         item.get("file_name")
                         or item.get("path")
@@ -214,8 +224,12 @@ def _load_persisted_state() -> None:
                 _INGEST_RETRY_QUEUE.extend(deduped)
                 dropped = len(data) - len(deduped)
                 if dropped > 0:
-                    log.info("restored %d retry items (%d duplicates dropped)",
-                             len(deduped), dropped)
+                    log.info(
+                        "restored %d retry items "
+                        "(%d duplicates, %d unsupported dropped)",
+                        len(deduped), dropped - dropped_unsupported,
+                        dropped_unsupported,
+                    )
                 else:
                     log.info("restored %d items to retry queue", len(deduped))
     except Exception:
@@ -250,7 +264,15 @@ def _scan_orphan_files() -> list[Path]:
     if not files_dir.exists():
         return []
     try:
-        all_files = {p.name: p for p in files_dir.iterdir() if p.is_file()}
+        # Only sweep formats the pipeline actually handles. Stray
+        # .ppt / .ipynb / .zip / random binaries used to enter the
+        # queue and cycle through max_attempts before landing in
+        # /failed — pure waste. Files that don't match here just
+        # stay on disk untouched.
+        all_files = {
+            p.name: p for p in files_dir.iterdir()
+            if p.is_file() and p.suffix.lower() in _SUPPORTED_INGEST_SUFFIXES
+        }
     except Exception:
         log.exception("orphan scan failed: dir list")
         return []
@@ -2513,6 +2535,27 @@ _AUDIO_SUFFIX_MIME = {
     ".aac": "audio/aac",
 }
 
+_IMAGE_SUFFIX_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
+# Whitelist for orphan recovery + retry-queue dedup. Anything not in
+# here just stays on disk and never enters the queue, so a stray
+# .ppt / .ipynb / .zip can't burn cycles failing in a loop. Text
+# fallback (.txt/.md/.csv) is intentionally narrow — random binary
+# extensions would otherwise slip through the 'else: ingest_text'
+# branch and produce garbage chunks.
+_SUPPORTED_INGEST_SUFFIXES: frozenset[str] = frozenset({
+    ".pdf", ".pptx", ".docx", ".xlsx",
+    ".txt", ".md", ".csv",
+    *_AUDIO_SUFFIX_MIME.keys(),
+    *_IMAGE_SUFFIX_MIME.keys(),
+})
+
 
 async def _ingest_voice_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
     """Telegram voice note (msg.voice) — OGG/Opus."""
@@ -3152,6 +3195,16 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                     r = await pipeline.ingest_audio(
                         dest.read_bytes(), label,
                         mime_type=_AUDIO_SUFFIX_MIME[suffix],
+                    )
+                elif suffix in _IMAGE_SUFFIX_MIME:
+                    # Pictures dropped into /app/data/files (e.g.
+                    # 'send as file' attachments) — feed them through
+                    # the same Vision OCR path the live photo handler
+                    # uses. No caption available offline so it's pure
+                    # OCR text.
+                    r = await pipeline.ingest_image(
+                        dest.read_bytes(), label, caption="",
+                        mime_type=_IMAGE_SUFFIX_MIME[suffix],
                     )
                 else:
                     try:
