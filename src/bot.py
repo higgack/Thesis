@@ -668,6 +668,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
        /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt;
        /pending_approve_all → /pending_approve_all_confirm (일괄 승인)
        /pending_cancel_all (일괄 취소)
+       /ocr_extend &lt;doc_id|키워드&gt; (학습된 PDF OCR 추가 확장)
 ▸ 삭제: /forget &lt;id&gt; · /forget_search[_all] &lt;키워드&gt;
        /forget_qna[_search] &lt;id|키워드&gt;
        /dedupe → /dedupe_confirm  중복 doc (본문 가장 긴 것 1개만 유지)
@@ -1343,6 +1344,108 @@ async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         lines.append("  → /pending_pro <번호> 로 Pro 답변 시작")
     await update.message.reply_text(
         "\n".join(lines), disable_web_page_preview=True,
+    )
+
+
+async def cmd_ocr_extend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Manual OCR extension for an already-ingested PDF.
+
+    Same confirmation flow as the auto-trigger at ingest time:
+      * compute page count + cost estimate
+      * send inline buttons (✅ proceed · ❌ cancel)
+      * 5-min TTL — unanswered prompts get promoted to /pending by
+        the periodic _promote_expired_pending job (same code path
+        as ingest-time OCR prompts).
+
+    Reuses _PENDING_OCR + on_ocr_extend_callback infrastructure so a
+    user tap goes straight into the existing extension pipeline."""
+    if not _is_owner(update):
+        return
+    if not ctx.args:
+        await update.message.reply_text(
+            "사용법: /ocr_extend <doc_id 또는 제목 키워드>"
+        )
+        return
+    query = " ".join(ctx.args).strip()
+    await _typing(update, ctx)
+    # Look up the doc — try direct id first, then title substring.
+    doc = await asyncio.to_thread(meta.get_doc, query)
+    if not doc:
+        matches = await asyncio.to_thread(meta.search_title, query, 1)
+        if not matches:
+            await update.message.reply_text(
+                f"⚠️ 매칭 doc 없음: '{query[:60]}'"
+            )
+            return
+        doc = matches[0]
+    doc_id = doc["id"]
+    title = doc.get("title") or query
+    source = doc.get("source") or ""
+    # Derive filename from the source label.
+    if source.startswith("tg-doc:"):
+        fname = source.split(":", 2)[-1]
+    elif source.startswith("local:"):
+        fname = source[len("local:"):]
+    else:
+        await update.message.reply_text(
+            f"⚠️ 비-PDF source: {source[:60]} (OCR 확장은 디스크 PDF만 지원)"
+        )
+        return
+    pdf_path = Path(config.DATA_DIR) / "files" / fname
+    if not pdf_path.exists():
+        await update.message.reply_text(
+            f"⚠️ 디스크에 파일 없음: {fname[:60]}"
+        )
+        return
+    # Count pages via PyMuPDF.
+    try:
+        def _count_pages(p: str) -> int:
+            import fitz
+            d = fitz.open(p)
+            try:
+                return d.page_count
+            finally:
+                d.close()
+        total_pages = await asyncio.to_thread(_count_pages, str(pdf_path))
+    except Exception as e:
+        await update.message.reply_text(
+            f"⚠️ 페이지 수 확인 실패: {_explain_error(e)}"
+        )
+        return
+    if total_pages <= 0:
+        await update.message.reply_text("⚠️ 페이지 0 — OCR 대상 없음")
+        return
+    # Cost estimate. ~₩3 per Vision-Lite page, text-dense pages
+    # auto-skipped at extend time.
+    est_cost = max(10, total_pages * 3)
+    _gc_pending_ocr()
+    short = uuid.uuid4().hex[:24]
+    _PENDING_OCR[short] = {
+        "doc_id": doc_id,
+        "pdf_path": str(pdf_path),
+        "start_page": 1,
+        "end_page": total_pages,
+        "title": title,
+        "chat_id": update.effective_chat.id,
+        "ts": time.time(),
+    }
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            f"📄 {total_pages}p OCR (~₩{est_cost})",
+            callback_data=f"ocr:{short}:go",
+        )],
+        [InlineKeyboardButton(
+            "❌ 취소",
+            callback_data=f"ocr:{short}:skip",
+        )],
+    ])
+    title_short = (title or fname)[:80]
+    await update.message.reply_text(
+        f"📊 OCR 확장 요청 — {title_short}\n"
+        f"총 {total_pages}p (텍스트 충분한 페이지는 자동 skip)\n"
+        f"예상 비용: ~₩{est_cost}\n\n"
+        f"5분 안에 선택해주세요 (미응답 시 /pending 자동 보관).",
+        reply_markup=kb,
     )
 
 
@@ -3522,6 +3625,7 @@ def main():
     app.add_handler(CommandHandler("pending", cmd_pending))
     app.add_handler(CommandHandler("pending_ocr", cmd_pending_ocr))
     app.add_handler(CommandHandler("pending_pro", cmd_pending_pro))
+    app.add_handler(CommandHandler("ocr_extend", cmd_ocr_extend))
     app.add_handler(CommandHandler("pending_approve_all", cmd_pending_approve_all))
     app.add_handler(CommandHandler(
         "pending_approve_all_confirm", cmd_pending_approve_all_confirm,
