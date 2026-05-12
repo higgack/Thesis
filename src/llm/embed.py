@@ -1,6 +1,17 @@
-"""Gemini embedding wrapper with extended retry on overload."""
+"""Embedding wrapper with two backends.
+
+Default backend = `gemini` (gemini-embedding-001, 3072-dim).
+Set EMBED_BACKEND=bge-m3 in .env to switch to the local
+sentence-transformers BAAI/bge-m3 model (1024-dim, free).
+
+The local backend runs inside the bot container on CPU. First load
+downloads the model (~2.3 GB) under HF_HOME=/app/data/hf_cache and
+keeps it resident. Embedding 100 chunks ≈ 200 ms on e2-standard-2.
+"""
 import asyncio
 import logging
+import os
+import threading
 
 from google import genai
 from google.genai import types
@@ -10,6 +21,8 @@ from ..store import cost
 
 log = logging.getLogger(__name__)
 _client = genai.Client(api_key=config.GOOGLE_API_KEY)
+
+EMBED_BACKEND = os.getenv("EMBED_BACKEND", "gemini").lower()
 
 _OVERLOAD_MARKERS = (
     "503",
@@ -28,7 +41,7 @@ def _is_overloaded(exc: BaseException) -> bool:
 _BATCH_LIMIT = 100  # Gemini embed_content hard cap per request
 
 
-async def _embed_one(texts: list[str], task_type: str) -> list[list[float]]:
+async def _embed_gemini_batch(texts: list[str], task_type: str) -> list[list[float]]:
     last_err: BaseException | None = None
     for attempt in range(6):
         try:
@@ -37,9 +50,6 @@ async def _embed_one(texts: list[str], task_type: str) -> list[list[float]]:
                 contents=texts,
                 config=types.EmbedContentConfig(task_type=task_type),
             )
-            # embed_content rarely surfaces usage_metadata; fall back
-            # to a char-based heuristic so daily cost reflects embedding
-            # spend even when the API stays quiet.
             purpose = "query" if task_type == "RETRIEVAL_QUERY" else "ingest"
             usd_in = cost.record_resp(config.EMBED_MODEL, resp, purpose=purpose)
             if usd_in == 0.0:
@@ -58,13 +68,70 @@ async def _embed_one(texts: list[str], task_type: str) -> list[list[float]]:
     raise last_err
 
 
+# Local BGE-M3 — lazy singleton, loaded on first call.
+_LOCAL_MODEL = None
+_LOCAL_LOCK = threading.Lock()
+_LOCAL_LOAD_FAILED = False
+
+
+def _load_local_embed():
+    global _LOCAL_MODEL, _LOCAL_LOAD_FAILED
+    if _LOCAL_MODEL is not None:
+        return _LOCAL_MODEL
+    if _LOCAL_LOAD_FAILED:
+        return None
+    with _LOCAL_LOCK:
+        if _LOCAL_MODEL is not None:
+            return _LOCAL_MODEL
+        if _LOCAL_LOAD_FAILED:
+            return None
+        try:
+            os.environ.setdefault("HF_HOME", "/app/data/hf_cache")
+            from sentence_transformers import SentenceTransformer
+            log.info("loading BAAI/bge-m3 (first-time download ~2.3 GB)...")
+            _LOCAL_MODEL = SentenceTransformer("BAAI/bge-m3")
+            log.info("bge-m3 ready (dim=%d)",
+                     _LOCAL_MODEL.get_sentence_embedding_dimension())
+        except Exception as e:
+            log.exception("bge-m3 load failed: %s", e)
+            _LOCAL_LOAD_FAILED = True
+            return None
+    return _LOCAL_MODEL
+
+
+async def _embed_bge_batch(texts: list[str]) -> list[list[float]]:
+    """Local BGE-M3 encoding. normalize_embeddings=True so cosine
+    distance maps to dot-product (matches Chroma's cosine space)."""
+    model = await asyncio.to_thread(_load_local_embed)
+    if model is None:
+        # Fall back to Gemini if the local model failed to load — the
+        # backend swap should never break ingest.
+        log.warning("bge-m3 unavailable, falling back to Gemini for this batch")
+        return await _embed_gemini_batch(texts, "RETRIEVAL_DOCUMENT")
+    vectors = await asyncio.to_thread(
+        model.encode, texts, normalize_embeddings=True, batch_size=32,
+    )
+    return [list(map(float, v)) for v in vectors]
+
+
 async def embed(texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:
     if not texts:
         return []
+    if EMBED_BACKEND == "bge-m3":
+        # Local model — no API rate limit, batch size is just a memory
+        # knob. Keep the same 100-chunk loop as the Gemini path for
+        # consistency.
+        if len(texts) <= _BATCH_LIMIT:
+            return await _embed_bge_batch(texts)
+        out: list[list[float]] = []
+        for i in range(0, len(texts), _BATCH_LIMIT):
+            out.extend(await _embed_bge_batch(texts[i:i + _BATCH_LIMIT]))
+        return out
+    # Default: Gemini
     if len(texts) <= _BATCH_LIMIT:
-        return await _embed_one(texts, task_type)
-    out: list[list[float]] = []
+        return await _embed_gemini_batch(texts, task_type)
+    out = []
     for i in range(0, len(texts), _BATCH_LIMIT):
         batch = texts[i:i + _BATCH_LIMIT]
-        out.extend(await _embed_one(batch, task_type))
+        out.extend(await _embed_gemini_batch(batch, task_type))
     return out

@@ -180,8 +180,9 @@ def _xml_field(xml: str, tag: str, skip_first: bool = False) -> str | None:
 # Auto OCR cap for sparse-text (chart-heavy) PDFs. PDFs larger than
 # this trigger an inline-button prompt asking whether to OCR the rest;
 # the user opts in / out per document so we never silently bill ₩200+
-# on a 100-page deep-research report.
-SPARSE_OCR_AUTO_CAP = 20
+# on a 100-page deep-research report. Lowered 20→10 after the user
+# decided most reports' essential content sits in the first ~10 pages.
+SPARSE_OCR_AUTO_CAP = 10
 
 
 def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
@@ -230,7 +231,7 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
         r = _ocr_pdf_pages(path)
         if r["text"]:
             body = r["text"]
-    elif page_count > 0 and len(body) / max(page_count, 1) < 1500:
+    elif page_count > 0 and len(body) / max(page_count, 1) < 1800:
         # Sparse text/page → likely chart/table-heavy. Augment via Vision
         # OCR, capped so cost stays predictable. The per-page skip
         # threshold avoids paying Vision for back-half text pages

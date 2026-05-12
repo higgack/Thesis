@@ -8,7 +8,7 @@ from .. import config
 from ..store import meta, vector, obsidian
 from .chunker import split
 from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async, load_xlsx_async, ocr_image_async, transcribe_audio_async
-from .summarize import summarize
+from .summarize import summarize, summarize_and_extract
 
 log = logging.getLogger(__name__)
 
@@ -248,12 +248,16 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
         "idx": i,
     } for i, c in enumerate(chunks)]
 
-    # Summary (Gemini text gen), chunk embedding (Gemini embed), and
-    # metadata extraction (Gemini text gen, separate prompt) hit
-    # different endpoints — run them in parallel.
-    summary, metadata, _ = await asyncio.gather(
-        summarize(title, body, hint=hint),
-        _extract_metadata(title, body, doc_type),
+    # Short forwarded text rarely has useful metadata (1-line market
+    # snapshots, ticker calls, etc.) — skip the metadata extraction
+    # entirely so we don't pay a Lite call for noise.
+    skip_meta = source.startswith("tg-msg:") and len(body) < 500
+
+    # Summary + metadata folded into one Lite call (was two parallel
+    # calls before). Embedding still runs concurrently — different
+    # endpoint so no contention.
+    (summary, metadata), _ = await asyncio.gather(
+        summarize_and_extract(title, body, doc_type, hint=hint, skip_meta=skip_meta),
         vector.add_chunks(doc_id, chunk_items),
     )
 

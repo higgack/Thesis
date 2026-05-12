@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 
 import chromadb
@@ -8,13 +9,24 @@ from ..llm.embed import embed
 
 log = logging.getLogger(__name__)
 
+# Separate collection per embedding backend — different dimensions
+# (Gemini 3072 vs BGE-M3 1024) can't coexist inside one Chroma
+# collection. Switching EMBED_BACKEND to 'bge-m3' before the migration
+# script has run yields an empty new collection, which is fine — the
+# bot will repopulate it as docs are re-ingested or via migrate script.
+_EMBED_BACKEND = os.getenv("EMBED_BACKEND", "gemini").lower()
+COLLECTION_NAME = (
+    "knowledge_bge_m3" if _EMBED_BACKEND == "bge-m3" else "knowledge"
+)
+
 _client = chromadb.PersistentClient(
     path=str(config.DATA_DIR / "chroma"),
     settings=Settings(anonymized_telemetry=False),
 )
 _collection = _client.get_or_create_collection(
-    name="knowledge", metadata={"hnsw:space": "cosine"}
+    name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
 )
+log.info("vector collection=%s (backend=%s)", COLLECTION_NAME, _EMBED_BACKEND)
 
 
 async def add_chunks(doc_id: str, chunks: list[dict]) -> None:

@@ -686,7 +686,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 
 <b>【5. 자료 인입】</b>
  URL/PDF/PPTX/DOCX/XLSX/이미지/음성/YouTube/텍스트 그냥 보내기
- • PDF: 텍스트+OCR, 차트 많은 PDF 자동 Vision 20p (초과 시 확인)
+ • PDF: 텍스트+OCR, 차트 많은 PDF 자동 Vision 10p (초과 시 확인)
  • 이미지: 캡션 ≥80자 / 짧으면 OCR / [OCR] 강제 병행
  • 음성: Gemini STT · YouTube: 자막→Jina fallback
  차단: LinkedIn/FB/IG/카스, Reuters/Bloomberg/WSJ/FT/NYT/WaPo
@@ -717,7 +717,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 재시도 5회×90s → /failed
  • 영속: retry/failed/history/qna/cost/dashboard/hf_cache
  • BM25 캐시 + BGE-reranker 활성
- • compare 20개+ Pro 확인 + PDF 20p+ OCR 확인
+ • compare 20개+ Pro 확인 + PDF 10p+ OCR 확인
    (5분 미선택 → /pending 자동 보관)
  • 메모리 5분 청소 (90% 즉시·95% 거부, /status에서 확인)
  • 단가 (1M 토큰): Pro ₩1,750 · Flash ₩420 · Lite ₩140 · Embed ₩210
