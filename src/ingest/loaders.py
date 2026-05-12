@@ -185,6 +185,13 @@ def _xml_field(xml: str, tag: str, skip_first: bool = False) -> str | None:
 SPARSE_OCR_AUTO_CAP = 10
 
 
+def _looks_like_title(s: str) -> bool:
+    """Reject PDF metadata.title placeholders like '2013년 0월 0일' or
+    pure-numeric strings — fall back to filename instead."""
+    s = (s or "").strip()
+    return bool(re.search(r"[A-Za-z가-힣]{2,}", s))
+
+
 def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
     """Extract text from a PDF.
 
@@ -206,7 +213,7 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
         doc = fitz.open(str(path))
         page_count = doc.page_count
         meta_title = (doc.metadata or {}).get("title")
-        if meta_title and meta_title.strip():
+        if meta_title and meta_title.strip() and _looks_like_title(meta_title):
             title = meta_title.strip()
         body = "\n\n".join(page.get_text("text") or "" for page in doc).strip()
         doc.close()
@@ -219,7 +226,7 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
             page_count = page_count or len(reader.pages)
             pages = [p.extract_text() or "" for p in reader.pages]
             body = "\n\n".join(pages).strip()
-            if reader.metadata and reader.metadata.title:
+            if reader.metadata and reader.metadata.title and _looks_like_title(reader.metadata.title):
                 title = reader.metadata.title
         except Exception:
             pass
