@@ -169,6 +169,11 @@ def _run_memory_cleanup(reason: str = "scheduled") -> float:
 _RETRY_QUEUE_PATH = config.DATA_DIR / "retry_queue.json"
 _FAILED_LOG_PATH = config.DATA_DIR / "failed_log.json"
 _HISTORY_PATH = config.DATA_DIR / "chat_history.json"
+# Marker file: when present, _recover_orphan_files_at_startup skips
+# the boot-time orphan rescan. /queue_cancel_all creates it so a
+# cancel survives container restarts (auto_pull rebuilds, etc.).
+# /recover_orphans clears it on manual re-enable.
+_RECOVERY_SUPPRESS_PATH = config.DATA_DIR / "no_auto_recovery"
 
 # Per-chat conversation memory: keyed by chat_id, holds the most
 # recent user/model text turns so follow-up questions like
@@ -344,7 +349,19 @@ def _recover_orphan_files_at_startup(app) -> None:
     """Scan for orphan files on boot and enqueue them for recovery.
     Sends a one-time owner notification so the user knows recovery
     is in flight (otherwise the queue silently fills up). Skipped
-    when DASHBOARD-only / config.TELEGRAM_OWNER_ID is unset."""
+    when DASHBOARD-only / config.TELEGRAM_OWNER_ID is unset.
+
+    Honours the `_RECOVERY_SUPPRESS_PATH` marker — when the user has
+    explicitly cancelled all work via /queue_cancel_all, we don't
+    silently re-enqueue everything on the next deploy. Marker is
+    cleared by /recover_orphans."""
+    if _RECOVERY_SUPPRESS_PATH.exists():
+        log.info(
+            "orphan recovery: suppressed (marker %s present, "
+            "use /recover_orphans to re-enable)",
+            _RECOVERY_SUPPRESS_PATH,
+        )
+        return
     try:
         orphans = _scan_orphan_files()
         if not orphans:
@@ -1247,20 +1264,36 @@ async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Manual orphan-file rescan. Same logic as the startup hook —
     finds files on disk not present in meta.documents and pushes
     them onto the retry queue. Safe to run multiple times: the second
-    run just enqueues anything that drifted since the last scan."""
+    run just enqueues anything that drifted since the last scan.
+
+    Also clears the suppress marker so the next container boot's
+    auto-scan resumes (a previous /queue_cancel_all may have set it).
+    Running this command is the explicit 'I want orphan recovery
+    back on' signal."""
     if not _is_owner(update):
         return
     await _typing(update, ctx)
+    marker_was_present = False
+    try:
+        if _RECOVERY_SUPPRESS_PATH.exists():
+            _RECOVERY_SUPPRESS_PATH.unlink()
+            marker_was_present = True
+    except Exception:
+        log.exception("failed to clear recovery suppress marker")
     orphans = await asyncio.to_thread(_scan_orphan_files)
     if not orphans:
-        await update.message.reply_text("✨ 미학습 파일 없음 — 모든 디스크 파일이 meta에 기록됨.")
+        msg = "✨ 미학습 파일 없음 — 모든 디스크 파일이 meta에 기록됨."
+        if marker_was_present:
+            msg += "\n🔓 자동 복구 다시 활성화됨 (재시작 시 자동 스캔 재개)"
+        await update.message.reply_text(msg)
         return
     count = _enqueue_orphan_recovery(orphans, update.effective_chat.id)
     eta_min = (count * 120) // 60
     preview = "\n".join(f"  • {p.name[:80]}" for p in orphans[:15])
     more = f"\n... 외 {len(orphans) - 15}건" if len(orphans) > 15 else ""
+    resume_note = "\n🔓 자동 복구도 재활성화됨" if marker_was_present else ""
     await update.message.reply_text(
-        f"🔄 {count}개 미학습 파일 → 재학습 큐에 추가됨\n"
+        f"🔄 {count}개 미학습 파일 → 재학습 큐에 추가됨{resume_note}\n"
         f"   2분 간격으로 한 개씩 처리 (~{eta_min}분 소요 예상)\n"
         f"   /queue 로 진행 상황 확인 가능\n\n"
         f"{preview}{more}"
@@ -1511,10 +1544,19 @@ async def cmd_queue_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     _persist_retry_queue()
     ocr_n = await asyncio.to_thread(pending_store.delete_all_ocr)
     pro_n = await asyncio.to_thread(pending_store.delete_all_pro)
+    # Drop a marker so the next container boot's orphan scan stays
+    # quiet — previously a redeploy after cancel would re-enqueue
+    # everything from disk and undo the user's intent.
+    try:
+        _RECOVERY_SUPPRESS_PATH.touch(exist_ok=True)
+    except Exception:
+        log.exception("failed to create recovery suppress marker")
     total = ingest_n + pro_q_n + agent_q_n + ocr_n + pro_n
     if total == 0:
         await update.message.reply_text(
-            "📭 비울 항목 없음 — 모든 큐 비어있음."
+            "📭 비울 항목 없음 — 모든 큐 비어있음.\n"
+            "🚫 자동 복구도 영구 중단 (재시작해도 orphan 자동 학습 X)\n"
+            "다시 학습하려면 /recover_orphans"
         )
         return
     await update.message.reply_text(
@@ -1524,8 +1566,9 @@ async def cmd_queue_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"  • agent 과부하 재시도: {agent_q_n}건\n"
         f"  • 보류 OCR: {ocr_n}건\n"
         f"  • 보류 Pro: {pro_n}건\n\n"
+        f"🚫 자동 복구도 영구 중단 (재시작해도 orphan 자동 학습 안 됨)\n"
         f"진행 중인 ingest 1-2건은 끝까지 처리되고 새 작업은 시작 안 됨.\n"
-        f"다시 학습하려면 /recover_orphans 로 재시작 가능."
+        f"다시 학습하려면 /recover_orphans 로 재시작 (suppress 마커 해제)"
     )
 
 
