@@ -1847,18 +1847,43 @@ def _split_citation_inner(inner: str) -> list[str]:
     return parts
 
 
-def _renumber_citations(text: str) -> tuple[str, list[str]]:
+def _renumber_citations(
+    text: str, harvested_sources: list[str] | None = None,
+) -> tuple[str, list[str]]:
     """Replace inline [label] citations with [N] numbered references.
 
     Each unique label gets the next sequential number; combined
     citations like '[A, B]' get rendered as '[1, 2]'. Returns the
-    rewritten text plus the ordered label list (for the legend)."""
+    rewritten text plus the ordered label list (for the legend).
+
+    Pure-digit citations (model wrote '[1]' instead of a real title)
+    get resolved against the harvested source list — '[1]' →
+    harvested_sources[0]. This fixes the case where the model
+    decided to use academic numbered refs on its own: previously the
+    legend ended up showing '[1] 1', '[2] 2', etc. (the digit itself
+    treated as a label). When the index is out of range we fall
+    back to leaving the bracket as-is so a stray '[2026]' year ref
+    doesn't pollute the legend."""
     label_to_num: dict[str, int] = {}
     ordered: list[str] = []
+    sources = harvested_sources or []
 
     def repl(m: re.Match) -> str:
         inner = m.group(1).strip()
         if not inner:
+            return m.group(0)
+        # Digit-only ref: try to map to the harvested source by index
+        # so '[1]' becomes the real doc title in the legend.
+        if inner.isdigit() and 1 <= len(inner) <= 3:
+            idx = int(inner) - 1
+            if 0 <= idx < len(sources):
+                label = sources[idx]
+                if label not in label_to_num:
+                    ordered.append(label)
+                    label_to_num[label] = len(ordered)
+                return f"[{label_to_num[label]}]"
+            # Out of range — leave the bracket untouched so a year
+            # or unrelated number doesn't fabricate a legend entry.
             return m.group(0)
         parts = _split_citation_inner(inner)
         nums: list[str] = []
@@ -1933,6 +1958,38 @@ async def _send_chunked(send, text: str) -> None:
         await send(piece)
 
 
+_SECTION_HEADER_RE = re.compile(
+    r"^(📌 [^\n]+)$", re.MULTILINE,
+)
+
+
+def _format_body_html(body: str) -> str:
+    """Render the agent body for Telegram HTML mode. Escapes any
+    raw HTML-unsafe chars first, then wraps '📌 N. xxx' section
+    headers in <b>...</b> so they pop visually. Section markers in
+    the agent's standard output (📌 N. Title) become bold; other
+    body text stays plain."""
+    import html
+    escaped = html.escape(body)
+    return _SECTION_HEADER_RE.sub(r"<b>\1</b>", escaped)
+
+
+async def _send_chunked_html(send, text_html: str) -> None:
+    """Same chunking as _send_chunked but with parse_mode=HTML so
+    the <b> wrappers around section headers render. Falls back to
+    plain text on parse failure (rare; html.escape covers user
+    content already)."""
+    for piece in _chunk_for_telegram(text_html):
+        try:
+            await send(piece, parse_mode="HTML")
+        except Exception:
+            log.warning("HTML send failed, retrying as plain")
+            try:
+                await send(piece)
+            except Exception:
+                log.exception("plain fallback send also failed")
+
+
 _CITATION_LINE_RE = re.compile(r"\(사용 자료 시점:\s*([^)]+)\)")
 
 
@@ -1973,8 +2030,14 @@ async def _send_agent_reply(send, result, inherited: bool = False):
     # made up citations, then we stamped unrelated old sources).
     raw, mermaid_blocks = _extract_mermaid(result["text"])
     body = _strip_markdown(raw)
-    body, ordered_labels = _renumber_citations(body)
+    # Pass harvested sources so '[1]'-style digit refs resolve to the
+    # real doc title (previously they ended up as '[1] 1' in the
+    # legend because the digit became the label).
+    body, ordered_labels = _renumber_citations(
+        body, result.get("sources") or [],
+    )
     body = _annotate_learn_date(body, result.get("sources") or [])
+    body_html = _format_body_html(body)
     suffix_lines = []
     if result.get("warning"):
         suffix_lines.append(result["warning"])
@@ -1990,7 +2053,7 @@ async def _send_agent_reply(send, result, inherited: bool = False):
         suffix_lines.append("📚 출처:" + _format_sources_with_url(result["sources"]))
     if result.get("tool_calls"):
         suffix_lines.append(_format_tool_calls(result["tool_calls"]))
-    await _send_chunked(send, body)
+    await _send_chunked_html(send, body_html)
     if suffix_lines:
         await _send_chunked(send, "\n".join(suffix_lines))
     return body, mermaid_blocks
