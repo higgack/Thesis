@@ -32,8 +32,14 @@ services:
   # real time. Runs as its own container so bot redeploys don't
   # interrupt the listener — and Docker auto-restarts it if Telethon
   # disconnects.
+  # Gated behind the 'forward' profile so the default
+  # `docker compose up -d` (which auto_pull uses) does NOT start it.
+  # The bot was paying ~₩2-5k/day to summarise mirrored content that
+  # the user no longer wants. Re-enable with:
+  #   COMPOSE_PROFILES=forward docker compose up -d forward-listener
   forward-listener:
     build: .
+    profiles: ["forward"]
     env_file: .env
     command: ["python", "-m", "src.scripts.forward_listener"]
     volumes:
