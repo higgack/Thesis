@@ -266,10 +266,13 @@ async def _expand_substack_digest(client: TelegramClient, msg,
 # only standalone metadata footers like "공시링크: https://...".
 _PLAIN_URL_STRIP_PATTERNS: dict[str, list[re.Pattern]] = {
     "finter_gpt": [
-        re.compile(
-            r"^(공시링크|회사정보|최근계약)\s*:\s*https?://\S+\s*$",
-            re.MULTILINE,
-        ),
+        # 머니터링 공시 알림 포맷은 라벨 한 줄 + URL 한 줄 구조라
+        # `label: url` 한 줄 패턴으로는 안 잡힘. URL 라인만 직접 제거.
+        re.compile(r"^https?://www\.moneytoring\.ai/\S+\s*$", re.MULTILINE),
+        re.compile(r"^https?://dart\.fss\.or\.kr/\S+\s*$", re.MULTILINE),
+        # 라벨만 남은 외톨이 줄도 제거 (URL 없으면 의미 없음)
+        re.compile(r"^머니터링 공시 알림\s*$", re.MULTILINE),
+        re.compile(r"^공시링크\s*$", re.MULTILINE),
     ],
     "jubung": [
         re.compile(
