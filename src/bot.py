@@ -3733,18 +3733,29 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 except asyncio.CancelledError:
                     pass
             _unregister_ingest(retry_job_id)
-    # Silent success: don't spam Telegram with one message per drained
-    # queue item — at 4 concurrent retries × 100+ queued items, the
-    # send_message floods saturated the API proxy and starved /status,
-    # /failed_clear, /queue. The user inspects bulk drain progress via
-    # /status (queue count) and /recent (last ingested doc) instead.
-    # Errors still surface in the except branch above with the linear
-    # backoff message.
-    if r and r.get("status") not in ("ok", "duplicate"):
-        summary = _format_results([r])
-        await _edit_or_send(
-            ctx, chat_id, None, f"⏰ ingest 재시도\n{summary}",
-        )
+    # Visibility policy for drained retry items:
+    #   - ok (newly learned)     → send '✅ title (chunks)' so the user
+    #                              sees real progress through the queue.
+    #   - duplicate              → silent (forwarded digests re-cite
+    #                              the same URLs hundreds of times).
+    #   - empty / error / other  → send so the user can see what's
+    #                              stuck even after the silent backoff
+    #                              messages above suppress the soft
+    #                              fails.
+    if r:
+        s = r.get("status")
+        if s == "ok":
+            summary = _format_results([r])
+            if summary.strip():
+                await _edit_or_send(
+                    ctx, chat_id, None, f"⏰ {summary}",
+                )
+        elif s not in ("duplicate",):
+            summary = _format_results([r])
+            if summary.strip():
+                await _edit_or_send(
+                    ctx, chat_id, None, f"⏰ {summary}",
+                )
     log.info("retry done [%s]: %s",
              (r or {}).get("status", "unknown"), title[:80])
 
