@@ -45,6 +45,13 @@ _RETRY_INGEST_BATCH = int(os.getenv("RETRY_INGEST_BATCH", "4"))
 # US evening / KR morning" set RETRY_ACTIVE_HOURS_UTC=01-09 (= KST
 # 10:00-18:00). Empty / unset = always active (legacy behaviour).
 _RETRY_ACTIVE_HOURS_UTC = os.getenv("RETRY_ACTIVE_HOURS_UTC", "").strip()
+# After a failed retry, hold the item for this many seconds before
+# making it eligible again. Prevents one stuck item from monopolising
+# the queue's drain rate (without this, a perpetually-overloaded
+# upstream can spin the same item to the front of the queue every
+# 30s). Default 1 hour. Other queue items (with elapsed not_before_ts
+# or never-failed-yet) drain normally during the hold.
+_RETRY_BACKOFF_SEC = int(os.getenv("RETRY_BACKOFF_SEC", "3600"))
 _INGEST_RETRY_QUEUE: list[dict] = []
 _INGEST_FAILED: list[dict] = []
 # Live counters for /status — incremented on entry, decremented in
@@ -3477,12 +3484,27 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def _pop_eligible_retry_item() -> dict | None:
+    """Walk the retry queue from the front and pop the first item whose
+    not_before_ts (set on previous failure) has elapsed. Items still in
+    backoff stay in place so other queue items keep flowing. Returns
+    None when nothing is currently eligible."""
+    now = time.time()
+    for i, candidate in enumerate(_INGEST_RETRY_QUEUE):
+        nb = candidate.get("not_before_ts")
+        if nb is None or nb <= now:
+            return _INGEST_RETRY_QUEUE.pop(i)
+    return None
+
+
 async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
     """Drain one queued ingest, sharing the same semaphore as live
     ingests so total concurrent ingests stays bounded."""
     if not _INGEST_RETRY_QUEUE:
         return
-    item = _INGEST_RETRY_QUEUE.pop(0)
+    item = _pop_eligible_retry_item()
+    if item is None:
+        return  # everything currently in backoff
     _persist_retry_queue()
     chat_id = item["chat_id"]
     title = (
@@ -3685,14 +3707,18 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 return
             log.info("ingest retry %d/%d: %s",
                      item["attempts"], _MAX_RETRY_ATTEMPTS, title[:80])
+            # Hold this item for _RETRY_BACKOFF_SEC before it's eligible
+            # again so a single broken upstream doesn't monopolise the
+            # drain rate. Other queue items keep flowing during the hold.
+            item["not_before_ts"] = time.time() + _RETRY_BACKOFF_SEC
             _INGEST_RETRY_QUEUE.append(item)
             _persist_retry_queue()
-            # Mark the in-flight bubble as 'soft fail, re-queued' so the
-            # user understands why a fresh ⏳ shows up at the next tick.
+            wait_min = max(1, _RETRY_BACKOFF_SEC // 60)
             await _edit_or_send(
                 ctx, chat_id, status_msg_id,
-                f"🔁 일시 오류 — 자동 재시도 대기 ({item['attempts']}/"
-                f"{_MAX_RETRY_ATTEMPTS}): {title[:80]}\n{_explain_error(e)}",
+                f"🔁 일시 오류 — {wait_min}분 후 자동 재시도 "
+                f"({item['attempts']}/{_MAX_RETRY_ATTEMPTS}): {title[:80]}\n"
+                f"{_explain_error(e)}",
             )
             return
         finally:
