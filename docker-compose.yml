@@ -20,11 +20,11 @@ services:
       - ./data:/app/data
       - tg-bot-api-data:/var/lib/telegram-bot-api
     restart: unless-stopped
-    # Sized for e2-standard-2 (8 GB VM). Leaves ~2 GB for OS +
-    # dashboard + telegram-bot-api + headroom. Bumped from 2500m
-    # alongside Semaphore(2→4) so 4 parallel ingests can run without
-    # tripping the 90% cleanup / 95% refuse guards.
-    mem_limit: 6000m
+    # Sized for c3-standard-4 (16 GB VM). Leaves ~4 GB for OS +
+    # dashboard + forward-listener + headroom. Bumped from 6000m
+    # alongside Semaphore(4→8) so 8 parallel ingests can hold their
+    # chunks + BGE-M3 weights without tripping the cleanup guards.
+    mem_limit: 12000m
     dns:
       - 8.8.8.8
       - 1.1.1.1

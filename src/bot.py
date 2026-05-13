@@ -26,16 +26,16 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
-_INGEST_SEM = asyncio.Semaphore(4)
-_INGEST_SEM_CAPACITY = 4
+_INGEST_SEM = asyncio.Semaphore(8)
+_INGEST_SEM_CAPACITY = 8
 # How many queued retries to drain per tick + how often we tick. Tuned
-# for the e2-standard-2 + 6 GiB mem_limit + BGE-M3 (local embed, no API
-# wait): bot has plenty of headroom (~3.4 GiB free) so we can process
-# 2 at a time every 60 s without starving live ingests of the
-# semaphore slots. Combined throughput: 2 items / minute ≈ 120/hour
-# (vs the previous 30/hour). Adjust if /status shows memory > 80%.
-_RETRY_INGEST_INTERVAL_SEC = 60
-_RETRY_INGEST_BATCH = 2
+# for c3-standard-4 (4 vCPU, 16 GiB RAM) + 12 GiB bot mem_limit + BGE-M3
+# (local embed, no API wait). 4 items per 30 s = 8/min ≈ 480/hour
+# of sustained drain, ~4× the e2-standard-2 baseline. Live ingests
+# still get priority because the semaphore is shared. Adjust if
+# /status shows memory > 80% or repeated cleanup warnings.
+_RETRY_INGEST_INTERVAL_SEC = 30
+_RETRY_INGEST_BATCH = 4
 _INGEST_RETRY_QUEUE: list[dict] = []
 _INGEST_FAILED: list[dict] = []
 # Live counters for /status — incremented on entry, decremented in
@@ -749,7 +749,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 인용은 자료 제목 (숫자 [1] X) · 본문 [N] 자동 매김
 
 <b>【10. 운영 / 비용 (Stage 1+2 절감 적용)】</b>
- • VM: e2-standard-2 8GB · bot 6000m · Semaphore(4)
+ • VM: c3-standard-4 16GB · bot 12000m · Semaphore(8)
  • 재시도 5회×90s → /failed
  • 영속: retry/failed/history/qna/cost/dashboard/hf_cache
  • 임베딩: 로컬 BGE-M3 1024-dim (₩0, sentence-transformers)
@@ -3415,11 +3415,10 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
     which keeps concurrent ingests bounded at the semaphore capacity
     regardless of how many tasks we kick off in parallel here.
 
-    Tuned for throughput: 2 items / 60 s ≈ 120/hour, vs the previous
-    1 / 120 s = 30/hour. With 6 GiB mem_limit and BGE-M3 local embed
-    (no API wait), the bot has ~3.4 GiB headroom — two simultaneous
-    ingests + 1-2 live messages still leaves room for the daily Noah
-    digests / forward-listener bursts."""
+    Tuned for throughput: 4 items / 30 s ≈ 480/hour on c3-standard-4
+    (4 vCPU + 16 GB RAM). BGE-M3 local embed has no API wait, and
+    Semaphore(8) bounds true concurrency so memory stays well under
+    the 12 GiB mem_limit even during digest bursts."""
     if not _INGEST_RETRY_QUEUE:
         return
     n = min(_RETRY_INGEST_BATCH, len(_INGEST_RETRY_QUEUE))

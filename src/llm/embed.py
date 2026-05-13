@@ -87,6 +87,15 @@ def _load_local_embed():
             return None
         try:
             os.environ.setdefault("HF_HOME", "/app/data/hf_cache")
+            # Pin torch to the host's vCPU count so the encoder uses
+            # every available core. SentenceTransformer doesn't expose
+            # a thread knob, but torch picks it up globally. Without
+            # this, torch defaults to 1 thread inside a container and
+            # leaves 3 of 4 cores idle on c3-standard-4.
+            import torch
+            n_threads = os.cpu_count() or 2
+            torch.set_num_threads(n_threads)
+            log.info("torch threads set to %d (cpu_count)", n_threads)
             from sentence_transformers import SentenceTransformer
             log.info("loading BAAI/bge-m3 (first-time download ~2.3 GB)...")
             _LOCAL_MODEL = SentenceTransformer("BAAI/bge-m3")
@@ -108,8 +117,12 @@ async def _embed_bge_batch(texts: list[str]) -> list[list[float]]:
         # backend swap should never break ingest.
         log.warning("bge-m3 unavailable, falling back to Gemini for this batch")
         return await _embed_gemini_batch(texts, "RETRIEVAL_DOCUMENT")
+    # batch_size 64 fits comfortably in 12 GiB mem_limit and roughly
+    # halves the per-batch overhead vs 32 — meaningful on c3 where
+    # the sapphire-rapids cores chew through forward passes fast and
+    # batch setup becomes the bottleneck.
     vectors = await asyncio.to_thread(
-        model.encode, texts, normalize_embeddings=True, batch_size=32,
+        model.encode, texts, normalize_embeddings=True, batch_size=64,
     )
     return [list(map(float, v)) for v in vectors]
 
