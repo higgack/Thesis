@@ -94,6 +94,26 @@ def find_by_source(source: str) -> dict | None:
         return dict(row) if row else None
 
 
+def find_text_by_hash(hash8: str) -> dict | None:
+    """Content-hash lookup for text docs. Source labels follow the
+    `<prefix>:<hash8>` shape (e.g. `tg-msg:3418:35747abd`), but the
+    forward-listener re-forwarding the same upstream message produces
+    a fresh msg_id every time — so two forwards of identical text get
+    two source labels that differ only in the middle segment and slip
+    past find_by_source(). Searching by the trailing hash catches that
+    case cheaply and short-circuits the summary + embed work."""
+    if not hash8:
+        return None
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM documents "
+            "WHERE type='text' AND source LIKE ? "
+            "ORDER BY ingested_at ASC LIMIT 1",
+            (f"%:{hash8}",),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def find_by_filename(filename: str) -> dict | None:
     """Filename-level lookup. Matches both `tg-doc:<uniq>:<filename>`
     (live Telegram doc) and `local:<filename>` (orphan recovery) so

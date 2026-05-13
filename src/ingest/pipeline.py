@@ -172,8 +172,16 @@ async def ingest_image(img_bytes: bytes, source_label: str, caption: str = "",
 
 
 async def ingest_text(text: str, label: str = "text") -> dict:
-    src = f"{label}:{hashlib.sha1(text.encode()).hexdigest()[:8]}"
+    hash8 = hashlib.sha1(text.encode()).hexdigest()[:8]
+    src = f"{label}:{hash8}"
+    # Exact source match handles the common case (same upload pasted
+    # twice). Content-hash fallback handles re-forwarded TG messages
+    # where the wrapping msg_id changes but the body is byte-identical —
+    # without this, every digest expansion re-summarises and re-embeds
+    # already-known text at ~₩0.5 / doc plus minutes of pipeline time.
     if existing := meta.find_by_source(src):
+        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    if existing := meta.find_text_by_hash(hash8):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     title = text.strip().splitlines()[0][:80] if text.strip() else label
     return await _ingest("text", src, title, text, None)
