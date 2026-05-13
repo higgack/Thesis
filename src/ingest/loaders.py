@@ -34,6 +34,11 @@ _MIN_BODY_CHARS = 200
 _BLOCKED_HOSTS = (
     # Auth walls — bot can never see the body
     "linkedin.com", "facebook.com", "instagram.com", "story.kakao.com",
+    # X (twitter) — public oEmbed strips threads + we don't pay for the
+    # API. Forwarded channels routinely cite X posts; without this block
+    # every cite spawns a useless ingest that yields an empty body and
+    # spends a retry slot.
+    "x.com", "twitter.com",
     # English-language paywalls — server returns a stub or login redirect
     # (한국 매체는 보통 본문 추출되니 제외; 막으면 좋은 자료까지 잃음)
     "reuters.com", "bloomberg.com", "ft.com", "wsj.com",
