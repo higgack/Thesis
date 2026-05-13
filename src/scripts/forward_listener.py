@@ -136,10 +136,38 @@ _HTTP_URL_RE = re.compile(r"https?://[^\s)\]>]+")
 _THROTTLE_SEC = 0.5
 
 
-def _extract_telegram_links(text: str) -> list[tuple[str, int]]:
+def _all_message_urls(msg) -> list[str]:
+    """Collect every URL appearing in a Telegram message — text body
+    AND link entities. Noah's bot delivers each '원문 보기' as a
+    Markdown/HTML hyperlink, so the URL lives in `msg.entities` rather
+    than `msg.message`. Scanning text alone misses the entire link
+    list (the symptom we hit on the first live Substack digest:
+    `0 URLs to relay` despite 11 visible articles)."""
+    from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl
+    urls: list[str] = []
+    text = msg.message or ""
+    # Plain URLs typed inline in the body.
+    for m in _HTTP_URL_RE.finditer(text):
+        urls.append(m.group(0).rstrip(".,);"))
+    # Hidden URLs from text-link entities ([label](url) markdown form).
+    for ent in (msg.entities or []):
+        if isinstance(ent, MessageEntityTextUrl):
+            urls.append(ent.url.strip().rstrip(".,);"))
+        elif isinstance(ent, MessageEntityUrl):
+            # Auto-detected URL inside the body — we already caught
+            # this via _HTTP_URL_RE, but slice from offset to be safe
+            # for cases where the regex stopped early.
+            urls.append(text[ent.offset:ent.offset + ent.length])
+    return urls
+
+
+def _extract_telegram_links(msg) -> list[tuple[str, int]]:
     seen: set[tuple[str, int]] = set()
     out: list[tuple[str, int]] = []
-    for m in _TG_URL_RE.finditer(text):
+    for url in _all_message_urls(msg):
+        m = _TG_URL_RE.search(url)
+        if not m:
+            continue
         ch, mid = m.group(1), int(m.group(2))
         key = (ch, mid)
         if key in seen:
@@ -149,11 +177,13 @@ def _extract_telegram_links(text: str) -> list[tuple[str, int]]:
     return out
 
 
-def _extract_substack_links(text: str) -> list[str]:
+def _extract_substack_links(msg) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
-    for m in _HTTP_URL_RE.finditer(text):
-        url = m.group(0).rstrip(".,);")
+    for url in _all_message_urls(msg):
+        url = url.strip().rstrip(".,);")
+        if not url:
+            continue
         if "t.me/" in url:
             continue
         if url in seen:
@@ -180,9 +210,10 @@ async def _resolve_tg_channel(client: TelegramClient, ch: str):
         return None
 
 
-async def _expand_telegram_digest(client: TelegramClient, text: str,
-                                   target, parent_id: int) -> None:
-    links = _extract_telegram_links(text)
+async def _expand_telegram_digest(client: TelegramClient, msg,
+                                   target) -> None:
+    links = _extract_telegram_links(msg)
+    parent_id = msg.id
     print(f"  TG digest msg {parent_id}: {len(links)} links to expand")
     forwarded = 0
     for ch, mid in links:
@@ -206,9 +237,10 @@ async def _expand_telegram_digest(client: TelegramClient, text: str,
     print(f"  TG digest msg {parent_id}: done, forwarded {forwarded}/{len(links)}")
 
 
-async def _expand_substack_digest(client: TelegramClient, text: str,
-                                   target, parent_id: int) -> None:
-    urls = _extract_substack_links(text)
+async def _expand_substack_digest(client: TelegramClient, msg,
+                                   target) -> None:
+    urls = _extract_substack_links(msg)
+    parent_id = msg.id
     print(f"  Substack digest msg {parent_id}: {len(urls)} URLs to relay")
     sent = 0
     for url in urls:
@@ -395,13 +427,13 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
             # Telegram digest: expand each 원문 link into its original
             # message and forward those instead of the digest body.
             if _DIGEST_TG_RE.search(text):
-                await _expand_telegram_digest(client, text, target, msg.id)
+                await _expand_telegram_digest(client, msg, target)
                 return
 
             # Substack digest: relay each article URL as a plain text
             # message so the bot's URL pipeline crawls the full article.
             if _DIGEST_SUBSTACK_RE.search(text):
-                await _expand_substack_digest(client, text, target, msg.id)
+                await _expand_substack_digest(client, msg, target)
                 return
 
             # Anything else (chat, screenshots, ad-hoc forwards) is
