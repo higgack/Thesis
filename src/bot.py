@@ -3557,16 +3557,30 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             f"[재시도] {title}", item.get("kind", "retry"), chat_id,
         )
 
-        # Retry-queue ingests intentionally skip the ⏳-bubble + live
-        # status updater. With 4 concurrent retries + a 100+ item queue
-        # the editMessageText cadence (every few seconds × N tasks)
-        # saturated the local telegram-bot-api proxy and starved the
-        # event loop, blocking command handlers for minutes. The user
-        # gets a single final ✅/❌ summary at the bottom of this
-        # function instead, which is plenty for backfill / orphan
-        # recovery flows where they're not watching individual items.
+        # Live ⏳ bubble + status updater so the user can see each
+        # retry item ticking through its embedding stage instead of
+        # waiting blindly for the final ✅. Safe to re-enable now that
+        # duplicate/soft-fail messages are silent — only ✅ outputs
+        # post, and the edit cadence (15 s × 4 concurrent) stays under
+        # Telegram's 30/sec floor with margin.
         status_msg_id: int | None = None
+        try:
+            sent = await ctx.bot.send_message(
+                chat_id, f"⏳ [재시도] {title[:80]}",
+            )
+            status_msg_id = sent.message_id
+            _ACTIVE_INGESTS[retry_job_id]["status_msg_id"] = status_msg_id
+        except Exception:
+            log.exception("retry status start send failed")
+
         updater_task = None
+        if status_msg_id:
+            updater_task = asyncio.create_task(
+                _live_status_updater(
+                    ctx, chat_id, status_msg_id,
+                    f"[재시도] {title}", retry_job_id,
+                )
+            )
 
         r = None
         try:
@@ -3755,17 +3769,21 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
     #                              fails.
     if r:
         s = r.get("status")
-        if s == "ok":
+        if s == "duplicate":
+            # Silent duplicate: delete the ⏳ bubble we created so the
+            # chat doesn't fill with bubbles that never resolve.
+            if status_msg_id:
+                try:
+                    await ctx.bot.delete_message(
+                        chat_id=chat_id, message_id=status_msg_id,
+                    )
+                except Exception:
+                    pass
+        else:
             summary = _format_results([r])
             if summary.strip():
                 await _edit_or_send(
-                    ctx, chat_id, None, f"⏰ {summary}",
-                )
-        elif s not in ("duplicate",):
-            summary = _format_results([r])
-            if summary.strip():
-                await _edit_or_send(
-                    ctx, chat_id, None, f"⏰ {summary}",
+                    ctx, chat_id, status_msg_id, f"⏰ {summary}",
                 )
     log.info("retry done [%s]: %s",
              (r or {}).get("status", "unknown"), title[:80])
