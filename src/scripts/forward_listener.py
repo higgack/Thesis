@@ -370,7 +370,12 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
                 )
                 continue
             source_entities.append(src)
+            # Telethon entity `id` is the raw positive integer, but
+            # `event.chat_id` returns the marked form (-100<id> for
+            # channels). Store both so handler lookup matches either.
+            from telethon.utils import get_peer_id
             resolved[src.id] = ch
+            resolved[get_peer_id(src)] = ch
             mode = "plain" if ch.lower() in plain_channels else "digest"
             print(f"listening [{mode}]: {getattr(src, 'title', ch)} ({ch})")
         if not source_entities:
