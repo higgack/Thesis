@@ -1,36 +1,40 @@
-"""24/7 listener that mirrors a source channel into the bot in real
-time.
+"""24/7 listener that mirrors one or more source channels into the bot
+in real time.
 
 Telethon logs in with the user account (same session as
-import_channel.py) and subscribes to NewMessage events on the source
-channel.
+import_channel.py) and subscribes to NewMessage events on every source
+channel listed in `LISTEN_CHANNELS` (comma-separated; falls back to the
+legacy `LISTEN_CHANNEL` env or a CLI arg for a single channel).
 
-Two operating modes (auto-detected from each message body):
+Each source can be handled in one of two modes:
 
-1. Digest expansion — when a message is one of Noah Second Brain's
-   periodic digests (📋 텔레그램, 📰 Substack), the listener does NOT
-   forward the digest body itself. Instead it extracts every original-
-   source link inside the digest and forwards each to the target
-   channel (Telegram links via native message-forward so the bot sees
-   the ORIGINAL author/text, Substack/web links as plain-text URLs so
-   the bot's URL pipeline crawls them).
+1. **Digest mode (default)** — for Noah Second Brain's periodic digests
+   the listener does NOT forward the digest body itself. It extracts
+   every original-source link inside and forwards each:
+     - 📋 텔레그램 채널 요약 → t.me/<ch>/<id> links fetched via
+       Telethon and forwarded so the bot sees the ORIGINAL author/text.
+     - 📰 Substack 요약 → every http URL relayed as plain text so the
+       bot's URL pipeline crawls the full article.
+     - 🐦 X 타임라인 요약 → dropped entirely (paid API, low value).
+   Everything else (chat, screenshots, ad-hoc forwards) is dropped.
 
-   The 🐦 X (Twitter) digest is dropped entirely — X API access is
-   gated/paid so chasing tweet URLs isn't viable; the LLM-summarised
-   body itself was the only signal and it's not worth ingesting.
+2. **Plain mode** — for channels listed in `LISTEN_PLAIN_CHANNELS` we
+   forward each message body as-is, but strip channel-specific URL
+   lines (DART, Naver finance, awakeplus.co.kr, transcript links, …)
+   so the bot's URL pipeline doesn't chase auth-walled or duplicate
+   pages. Charts/images attached to the original message are NOT
+   forwarded (we use `send_message(text)` not `forward_to()`), which
+   matches the user's "텍스트만 학습" preference.
 
-2. Everything else (chat, non-digest forwards, edited messages) is
-   dropped silently. This is intentional: the bot was paying ~₩2-5k/day
-   summarising mirrored noise before digest mode landed. Only digest
-   content makes it through now.
+Usage (run inside Docker — bot stack auto-restarts it on disconnect):
 
-Usage (run inside tmux/systemd so it survives logout):
+    LISTEN_CHANNELS=noah_channel,darthacking,jubung,...
+    LISTEN_PLAIN_CHANNELS=darthacking,jubung,awake_globalwatch,...
+    python -m src.scripts.forward_listener
 
-    python -m src.scripts.forward_listener <channel_username>
-
-Reads BOT_USERNAME, TELEGRAM_API_ID, TELEGRAM_API_HASH from env
-(same as import_channel.py). Reuses
-$DATA_DIR/import_session.session — phone/SMS only on first run.
+Reads BOT_USERNAME, TELEGRAM_API_ID, TELEGRAM_API_HASH from env (same
+as import_channel.py). Reuses `$DATA_DIR/import_session.session` —
+phone/SMS only on first run.
 """
 import asyncio
 import os
@@ -63,6 +67,22 @@ def _forward_target() -> str:
     return name
 
 
+def _parse_channel_list(env_key: str) -> list[str]:
+    """Comma-separated env var → cleaned channel name list. Strips
+    surrounding whitespace, `@`, and any `https://t.me/` prefix so
+    users can paste channel URLs directly."""
+    raw = os.getenv(env_key, "")
+    out: list[str] = []
+    for part in raw.split(","):
+        ch = part.strip().lstrip("@")
+        if not ch:
+            continue
+        if (ch.startswith("https://t.me/") or ch.startswith("t.me/")) and "+" not in ch:
+            ch = ch.split("t.me/", 1)[1].rstrip("/")
+        out.append(ch)
+    return out
+
+
 async def _resolve_channel(client: TelegramClient, channel: str):
     if "+" in channel and ("t.me" in channel or channel.startswith("+")):
         from telethon.tl.functions.messages import (
@@ -87,7 +107,7 @@ RECONNECT_DELAY_SEC = 5
 TELETHON_CONN_RETRIES = 1000
 
 
-# ----------------- Digest expansion -----------------
+# ----------------- Digest expansion (Noah Second Brain) -----------------
 
 # Digest header signatures — these are stable Noah Second Brain
 # templates posted 4-5 times/day each. Detection is anchored on emoji +
@@ -205,11 +225,94 @@ async def _expand_substack_digest(client: TelegramClient, text: str,
     print(f"  Substack digest msg {parent_id}: done, relayed {sent}/{len(urls)}")
 
 
-async def _client_lifecycle(channel: str, target_name: str,
-                            api_id: int, api_hash: str,
+# ----------------- Plain-text channel relay -----------------
+
+# Per-channel URL-line strip patterns. Each entry is a list of compiled
+# regexes applied as `pattern.sub("", text)` so any matching line is
+# removed before relaying. We keep these line-anchored (^...$ with
+# MULTILINE) so a URL appearing inside a paragraph isn't stripped —
+# only standalone metadata footers like "공시링크: https://...".
+_PLAIN_URL_STRIP_PATTERNS: dict[str, list[re.Pattern]] = {
+    "darthacking": [
+        re.compile(
+            r"^(공시링크|회사정보|최근계약)\s*:\s*https?://\S+\s*$",
+            re.MULTILINE,
+        ),
+    ],
+    "jubung": [
+        re.compile(
+            r"^주붕이가 읽은 리포트.*\(https?://[^\s)]+\)\s*$",
+            re.MULTILINE,
+        ),
+    ],
+    "awake_globalwatch": [
+        re.compile(r"^회사정보\s*:\s*https?://\S+\s*$", re.MULTILINE),
+        # Trailing hashtag pair like `#대만 #TW_3711` — clutter, not info.
+        re.compile(r"^#\S+\s+#\S+_\S+\s*$", re.MULTILINE),
+    ],
+    "awake_realtimecheck": [
+        re.compile(r"^회사정보\s*:\s*https?://\S+\s*$", re.MULTILINE),
+        re.compile(r"^https?://www\.awakeplus\.co\.kr/\S+\s*$", re.MULTILINE),
+    ],
+    "fundeasyearnings": [
+        re.compile(
+            r"^📎\s*Transcript Link\s*\(https?://[^\s)]+\)\s*$",
+            re.MULTILINE,
+        ),
+    ],
+}
+
+# After URL stripping, a body shorter than this is treated as "nothing
+# left to learn" and dropped — covers headers like
+# "🇺🇸 오늘 종가 기준 미국기업 52주 신고가 리스트입니다." that only
+# referenced the now-stripped link.
+_PLAIN_MIN_CHARS = 30
+
+
+def _strip_plain_urls(text: str, channel_key: str) -> str:
+    patterns = _PLAIN_URL_STRIP_PATTERNS.get(channel_key, [])
+    out = text
+    for pat in patterns:
+        out = pat.sub("", out)
+    # Collapse runs of >= 3 newlines (created by stripped lines) into
+    # a single blank line so the relayed body stays readable.
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    return out
+
+
+async def _relay_plain(client: TelegramClient, msg, target,
+                       channel_name: str) -> None:
+    text = (msg.message or "").strip()
+    cleaned = _strip_plain_urls(text, channel_name.lower())
+    if len(cleaned) < _PLAIN_MIN_CHARS:
+        print(
+            f"  drop plain msg {msg.id} from {channel_name}: "
+            f"{len(cleaned)} chars after URL strip"
+        )
+        return
+    try:
+        await client.send_message(target, cleaned, link_preview=False)
+        print(
+            f"  relayed plain msg {msg.id} from {channel_name} "
+            f"({len(cleaned)} chars)"
+        )
+    except FloodWaitError as e:
+        print(f"  flood wait {e.seconds}s on {channel_name}/{msg.id}")
+        await asyncio.sleep(e.seconds + 1)
+    except Exception as e:
+        print(
+            f"  err relay {channel_name}/{msg.id}: "
+            f"{type(e).__name__}: {e}"
+        )
+
+
+# ----------------- Lifecycle -----------------
+
+async def _client_lifecycle(channels: list[str], plain_channels: set[str],
+                            target_name: str, api_id: int, api_hash: str,
                             session_path) -> None:
-    """One full client connection — start, subscribe, run until the
-    socket dies, then return so the outer loop reconnects."""
+    """One full client connection — start, subscribe to every source,
+    run until the socket dies, then return so the outer loop reconnects."""
     client = TelegramClient(
         str(session_path), api_id, api_hash,
         connection_retries=TELETHON_CONN_RETRIES,
@@ -219,32 +322,74 @@ async def _client_lifecycle(channel: str, target_name: str,
     )
     try:
         await client.start()
-        try:
-            src = await _resolve_channel(client, channel)
-            target = await _resolve_channel(client, target_name)
-        except Exception as e:
+
+        # Resolve every source channel + the target. A single failure
+        # (e.g. user not a member of one private channel) drops that
+        # source but keeps the rest running.
+        resolved: dict[int, str] = {}  # chat_id → channel name
+        source_entities = []
+        for ch in channels:
+            try:
+                src = await _resolve_channel(client, ch)
+            except Exception as e:
+                print(
+                    f"resolve failed for {ch}: {type(e).__name__}: {e} — "
+                    "skipping this source"
+                )
+                continue
+            source_entities.append(src)
+            resolved[src.id] = ch
+            mode = "plain" if ch.lower() in plain_channels else "digest"
+            print(f"listening [{mode}]: {getattr(src, 'title', ch)} ({ch})")
+        if not source_entities:
             print(
-                f"resolve failed: {type(e).__name__}: {e} — "
-                f"sleeping {RECONNECT_DELAY_SEC}s before retry"
+                f"no source channels resolved — sleeping {RECONNECT_DELAY_SEC}s"
             )
             return
 
-        print(f"listening: {getattr(src, 'title', channel)}")
-        print(f"forwarding to: {getattr(target, 'title', None) or target_name}")
-        print("digest mode: 📋 Telegram → expand · 📰 Substack → expand · "
-              "🐦 X → drop · other → drop")
+        try:
+            target = await _resolve_channel(client, target_name)
+        except Exception as e:
+            print(
+                f"resolve target failed: {type(e).__name__}: {e} — "
+                f"sleeping {RECONNECT_DELAY_SEC}s before retry"
+            )
+            return
+        print(
+            f"forwarding to: {getattr(target, 'title', None) or target_name}"
+        )
+        print(
+            "digest mode: 📋 Telegram → expand · 📰 Substack → expand · "
+            "🐦 X → drop · other → drop"
+        )
+        if plain_channels:
+            print(
+                f"plain-relay mode: {sorted(plain_channels)} "
+                "(text only, URL lines stripped, attachments dropped)"
+            )
         print("running... Ctrl+C to stop\n")
 
-        @client.on(events.NewMessage(chats=src))
+        @client.on(events.NewMessage(chats=source_entities))
         async def handler(event):
             msg = event.message
             text = (msg.message or "").strip()
+
+            # Identify which configured source this came from. Falls
+            # back to the raw chat id if the channel isn't in our map
+            # (shouldn't happen, but defensive).
+            channel_name = resolved.get(event.chat_id, str(event.chat_id))
+
+            # Plain-relay path: ignore digest detection, just strip
+            # known URL footers and re-send as text.
+            if channel_name.lower() in plain_channels:
+                await _relay_plain(client, msg, target, channel_name)
+                return
 
             # X digest: drop. X API access is paid/restricted and the
             # LLM summary in the digest body alone isn't worth the cost
             # of ingesting at scale.
             if _DIGEST_X_RE.search(text):
-                print(f"  skip X digest {msg.id}")
+                print(f"  skip X digest {msg.id} from {channel_name}")
                 return
 
             # Telegram digest: expand each 원문 link into its original
@@ -263,7 +408,7 @@ async def _client_lifecycle(channel: str, target_name: str,
             # dropped. Earlier behaviour was to mirror everything, but
             # that summarised ~₩2-5k/day of noise. Only digest content
             # makes it through now — see module docstring.
-            print(f"  drop non-digest msg {msg.id}")
+            print(f"  drop non-digest msg {msg.id} from {channel_name}")
 
         await client.run_until_disconnected()
     finally:
@@ -273,7 +418,7 @@ async def _client_lifecycle(channel: str, target_name: str,
             pass
 
 
-async def run(channel: str) -> None:
+async def run(channels: list[str], plain_channels: set[str]) -> None:
     """Outer loop: reconnect forever so a flaky network or a
     Telethon-side socket close can never silently drop forwarded
     messages. Each iteration spins up a fresh TelegramClient with
@@ -287,7 +432,8 @@ async def run(channel: str) -> None:
     while True:
         try:
             await _client_lifecycle(
-                channel, target_name, api_id, api_hash, session_path,
+                channels, plain_channels, target_name,
+                api_id, api_hash, session_path,
             )
             print(
                 f"client disconnected — reconnecting in "
@@ -305,19 +451,30 @@ async def run(channel: str) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) >= 2:
-        channel = sys.argv[1]
-    else:
-        channel = os.getenv("LISTEN_CHANNEL", "").strip()
-    if not channel:
+    # Multi-channel takes precedence; fall back to legacy single-channel
+    # env / CLI arg so old deployments keep working without env changes.
+    channels = _parse_channel_list("LISTEN_CHANNELS")
+    if not channels:
+        legacy = os.getenv("LISTEN_CHANNEL", "").strip()
+        if legacy:
+            channels = _parse_channel_list("LISTEN_CHANNEL") or [legacy]
+    if not channels and len(sys.argv) >= 2:
+        cli = sys.argv[1].strip().lstrip("@")
+        if (cli.startswith("https://t.me/") or cli.startswith("t.me/")) \
+                and "+" not in cli:
+            cli = cli.split("t.me/", 1)[1].rstrip("/")
+        channels = [cli]
+    if not channels:
         sys.exit(
-            "Channel not provided. Pass as CLI arg or set LISTEN_CHANNEL env var.\n"
-            "  e.g. LISTEN_CHANNEL='https://t.me/+ABCxyz'"
+            "No channels provided. Set LISTEN_CHANNELS=ch1,ch2,... in "
+            ".env, or pass a single channel as CLI arg.\n"
+            "  Optional: LISTEN_PLAIN_CHANNELS=darthacking,jubung,...\n"
+            "  for channels whose body should be relayed verbatim (URL "
+            "footers stripped, no digest expansion)."
         )
-    if (channel.startswith("https://t.me/") or channel.startswith("t.me/")) \
-            and "+" not in channel:
-        channel = channel.split("t.me/", 1)[1].rstrip("/")
-    asyncio.run(run(channel))
+
+    plain_channels = {c.lower() for c in _parse_channel_list("LISTEN_PLAIN_CHANNELS")}
+    asyncio.run(run(channels, plain_channels))
 
 
 if __name__ == "__main__":

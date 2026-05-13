@@ -81,33 +81,28 @@ def main() -> int:
     torch.set_num_interop_threads(min(n_cpu, 8))
     from sentence_transformers import SentenceTransformer
     model = SentenceTransformer("BAAI/bge-m3")
-    print(f"bge-m3 ready (dim={model.get_sentence_embedding_dimension()})")
-    print(f"torch threads: intra={torch.get_num_threads()} inter={torch.get_num_interop_threads()}", flush=True)
+    print(f"bge-m3 ready (dim={model.get_sentence_embedding_dimension()}) "
+          f"· torch threads intra={torch.get_num_threads()} "
+          f"inter={torch.get_num_interop_threads()}", flush=True)
 
     offset = 0
     done = 0
     start = time.time()
-    print(f"starting loop: total={total}, BATCH={BATCH}", flush=True)
     while True:
-        print(f"  fetching offset={offset} ...", flush=True)
         batch = src.get(
             limit=BATCH, offset=offset,
             include=["documents", "metadatas"],
         )
         ids = batch.get("ids") or []
-        print(f"  got {len(ids)} ids from source", flush=True)
         if not ids:
-            print("  no more ids — exiting loop", flush=True)
             break
         docs = batch.get("documents") or []
         metas = batch.get("metadatas") or []
-        print(f"  encoding {len(docs)} docs ...", flush=True)
         vecs = model.encode(
             docs, normalize_embeddings=True, batch_size=32,
             show_progress_bar=False,
         )
         vec_list = [list(map(float, v)) for v in vecs]
-        print(f"  upserting {len(ids)} vectors ...", flush=True)
         dst.upsert(
             ids=ids, embeddings=vec_list,
             documents=docs, metadatas=metas,
@@ -120,7 +115,8 @@ def main() -> int:
         print(
             f"  {already + done}/{total} "
             f"({(already + done) * 100 / total:.1f}%) · "
-            f"{rate:.0f} chunks/s · ETA {eta:.0f}s"
+            f"{rate:.0f} chunks/s · ETA {eta:.0f}s",
+            flush=True,
         )
 
     final = dst.count()

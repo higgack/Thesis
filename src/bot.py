@@ -659,7 +659,7 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 
 <b>【1. 명령어】</b>
-▸ 조회: /find &lt;키워드&gt; · /recent [N] · /stats · /status · /usage
+▸ 조회: /find &lt;키워드&gt; · /recent [N] · /stats · /status · /usage · /cost
 ▸ 대화: /reset (메모리 초기화)
 ▸ 장애: /failed · /failed_retry · /failed_clear · /queue
        /recover_orphans (디스크에 있지만 미학습 일괄 재학습)
@@ -710,12 +710,13 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 음성: Gemini STT · YouTube: 자막→Jina fallback
  차단: LinkedIn/FB/IG/카스, Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
-<b>【6. 자동 포워딩 (digest 모드)】</b>
- forward-listener가 LISTEN_CHANNEL의 새 글을 감지
- 📋 Telegram 요약 → 원문 메시지 fetch + 자동 ingest
- 📰 Substack 요약 → 원문 article URL fetch + 자동 ingest
- 🐦 X 요약 → drop (X API 비용)
- 그 외 (잡담/일반) → drop. digest만 통과.
+<b>【6. 자동 포워딩 (multi-channel)】</b>
+ LISTEN_CHANNELS (콤마구분) 채널들을 동시 감지:
+ [Noah 디지스트] 📋 TG 원문 fetch · 📰 Substack URL relay · 🐦 X drop
+ [LISTEN_PLAIN_CHANNELS] 본문 그대로 (URL line strip, 이미지 drop)
+   · darthacking (공시) · jubung (리포트) · awake_globalwatch (글로벌)
+   · awake_realtimeCheck (52주↑) · Fundeasyearnings (실적/옵션)
+ 그 외 (잡담/일반) → drop
  큰 채널 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
 
 <b>【7. 메타데이터 자동】</b>
@@ -931,6 +932,57 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"\n  {s['latest_at'][:16].replace('T', ' ')}"
         f"\n\n🔁 retry 큐: {queue_len}건"
         f"\n❌ failed 누적: {failed_len}건"
+    )
+    await update.message.reply_text(out)
+
+
+async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Cost-only view: today, week/month averages, projected monthly
+    spend at the current pace, and the AS IS vs TO BE bands for sanity
+    checking. /usage covers ingest + cost; this one strips the noise so
+    you can answer "are we actually on the cheap path?" in two lines.
+
+    The projection multiplies the trailing-7-day daily average by 30 — a
+    rolling estimate that captures any expander activation or load
+    spike better than the calendar month-to-date number does."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+
+    today = cost.today_krw()
+    week = cost.period_krw(7)
+    mtd = cost.month_to_date_krw()
+    daily = cost.daily_breakdown(14)
+
+    # Daily average over the last 7 days (excluding empty days makes
+    # the projection useless on a fresh deploy, so use simple mean).
+    avg_7d = week["total_krw"] / 7 if week["total_krw"] else 0.0
+    projected_monthly = avg_7d * 30
+
+    max_cost = max((d["cost"] for d in daily), default=0.0)
+    daily_lines = []
+    for d in daily:
+        bar_len = int(round((d["cost"] / max_cost) * 24)) if max_cost else 0
+        bar = "█" * bar_len if bar_len else "·"
+        daily_lines.append(
+            f"  {d['date'][5:]}  {bar:<24}  ₩{d['cost']:,.0f}"
+            + (f"  ({d['calls']}콜)" if d["calls"] else "")
+        )
+    daily_block = "\n".join(daily_lines)
+
+    out = (
+        "💰 비용 현황 (KST · Gemini API)\n"
+        f"\n• 오늘:    ₩{today['total_krw']:,.0f}  ({today['calls']}콜)"
+        f"\n• 7일 합계: ₩{week['total_krw']:,.0f}"
+        f"\n• 이번 달:  ₩{mtd['total_krw']:,.0f}  ({mtd['day']}일차)"
+        f"\n\n📈 현재 페이스 → 월 예상치"
+        f"\n  ₩{projected_monthly:,.0f}/월  (최근 7일 평균 × 30)"
+        f"\n\n🎯 프로젝션 밴드 (비용절감 프로젝트 완료 기준)"
+        f"\n  AS IS  (digest 본문만):     ~₩5,600 ~ 9,100/월"
+        f"\n  TO BE  (expander 원문 학습): ~₩11,000 ~ 14,500/월"
+        f"\n  BEFORE (절감 전):           ~₩30,000 ~ 50,000/월"
+        f"\n\n📅 최근 14일 (KST)\n{daily_block}"
+        f"\n\n💡 세부 분석: /usage"
     )
     await update.message.reply_text(out)
 
@@ -3611,6 +3663,7 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("usage", cmd_usage))
+    app.add_handler(CommandHandler("cost", cmd_cost))
     app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("forget_search", cmd_forget_search))
