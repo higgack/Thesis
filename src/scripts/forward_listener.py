@@ -481,12 +481,14 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
         # Backfill the last BACKFILL_WINDOW_SEC of messages from every
         # source so a container restart doesn't silently swallow whatever
         # landed during the downtime. content-hash dedup on the bot side
-        # makes replay safe — anything already ingested becomes a no-op.
-        # Default 60 min covers typical docker rebuild + Telethon cold
-        # start (~3 min) with plenty of margin. Override via
-        # BACKFILL_MINUTES env when recovering from a longer outage.
+        # makes replay safe — anything already ingested becomes a no-op,
+        # so generous defaults cost only a few seconds of startup iter.
+        # 180 min covers a slow rebuild + Noah's typical 4-5 hour digest
+        # cadence so even a worst-case stuck-during-digest restart still
+        # picks up the previous digest. Override via BACKFILL_MINUTES env
+        # for full-day recoveries (e.g. VM machine-type swap).
         from datetime import datetime, timedelta, timezone
-        backfill_min = int(os.getenv("BACKFILL_MINUTES", "60"))
+        backfill_min = int(os.getenv("BACKFILL_MINUTES", "180"))
         BACKFILL_WINDOW_SEC = backfill_min * 60
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=BACKFILL_WINDOW_SEC)
         print(f"backfilling last {backfill_min} min "
