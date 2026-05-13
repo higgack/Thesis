@@ -24,7 +24,7 @@ services:
     # dashboard + telegram-bot-api + headroom. Bumped from 2500m
     # alongside Semaphore(2→4) so 4 parallel ingests can run without
     # tripping the 90% cleanup / 95% refuse guards.
-    mem_limit: 6000m
+    mem_limit: 7000m
     dns:
       - 8.8.8.8
       - 1.1.1.1

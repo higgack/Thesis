@@ -21,6 +21,14 @@ Run:
   docker compose exec bot python -m src.scripts.migrate_embeddings
 """
 import os
+
+# Force multi-threaded CPU inference — must be set BEFORE torch/sentence-
+# transformers import. PyTorch defaults to single-thread on import which
+# halves throughput on e2-standard-2 (2 vCPU).
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "true")
+
 import sys
 import time
 
@@ -63,9 +71,13 @@ def main() -> int:
 
     # Load BGE-M3 once
     print("loading BAAI/bge-m3 ...")
+    import torch
+    torch.set_num_threads(2)
+    torch.set_num_interop_threads(2)
     from sentence_transformers import SentenceTransformer
     model = SentenceTransformer("BAAI/bge-m3")
     print(f"bge-m3 ready (dim={model.get_sentence_embedding_dimension()})")
+    print(f"torch threads: intra={torch.get_num_threads()} inter={torch.get_num_interop_threads()}", flush=True)
 
     offset = 0
     done = 0
