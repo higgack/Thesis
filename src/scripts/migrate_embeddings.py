@@ -22,11 +22,14 @@ Run:
 """
 import os
 
-# Force multi-threaded CPU inference — must be set BEFORE torch/sentence-
-# transformers import. PyTorch defaults to single-thread on import which
-# halves throughput on e2-standard-2 (2 vCPU).
-os.environ.setdefault("OMP_NUM_THREADS", "2")
-os.environ.setdefault("MKL_NUM_THREADS", "2")
+# Use every available vCPU for the encoder. Default torch behavior on
+# CPU is sometimes single-threaded which crippled the migration to
+# ~0.2 chunks/s on e2-standard-2. Picking up os.cpu_count() means the
+# same script scales when the VM is temporarily upgraded to c3-highcpu
+# class machines for the one-shot migration.
+_CPU = str(os.cpu_count() or 2)
+os.environ.setdefault("OMP_NUM_THREADS", _CPU)
+os.environ.setdefault("MKL_NUM_THREADS", _CPU)
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "true")
 
 import sys
@@ -72,8 +75,10 @@ def main() -> int:
     # Load BGE-M3 once
     print("loading BAAI/bge-m3 ...")
     import torch
-    torch.set_num_threads(2)
-    torch.set_num_interop_threads(2)
+    n_cpu = os.cpu_count() or 2
+    torch.set_num_threads(n_cpu)
+    # interop threads should stay modest — too many causes contention.
+    torch.set_num_interop_threads(min(n_cpu, 8))
     from sentence_transformers import SentenceTransformer
     model = SentenceTransformer("BAAI/bge-m3")
     print(f"bge-m3 ready (dim={model.get_sentence_embedding_dimension()})")
