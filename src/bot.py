@@ -3696,12 +3696,14 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             item["not_before_ts"] = time.time() + hold
             _INGEST_RETRY_QUEUE.append(item)
             _persist_retry_queue()
-            wait_min = max(1, hold // 60)
-            await _edit_or_send(
-                ctx, chat_id, status_msg_id,
-                f"🔁 일시 오류 — {wait_min}분 후 자동 재시도 "
-                f"({item['attempts']}/{_MAX_RETRY_ATTEMPTS}): {title[:80]}\n"
-                f"{_explain_error(e)}",
+            # No Telegram ping per soft-fail — the user doesn't need to
+            # see "wait 1h" messages stacking up during a Gemini outage.
+            # /status shows queue depth, /failed shows the eventual
+            # permanent failures.
+            log.info(
+                "retry soft-fail %d/%d (hold %dm): %s — %s",
+                item["attempts"], _MAX_RETRY_ATTEMPTS, max(1, hold // 60),
+                title[:80], _explain_error(e),
             )
             return
         finally:
@@ -3712,10 +3714,20 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 except asyncio.CancelledError:
                     pass
             _unregister_ingest(retry_job_id)
-    summary = _format_results([r]) if r else f"(빈 결과: {title[:60]})"
-    await _edit_or_send(
-        ctx, chat_id, status_msg_id, f"⏰ ingest 재시도\n{summary}",
-    )
+    # Silent success: don't spam Telegram with one message per drained
+    # queue item — at 4 concurrent retries × 100+ queued items, the
+    # send_message floods saturated the API proxy and starved /status,
+    # /failed_clear, /queue. The user inspects bulk drain progress via
+    # /status (queue count) and /recent (last ingested doc) instead.
+    # Errors still surface in the except branch above with the linear
+    # backoff message.
+    if r and r.get("status") not in ("ok", "duplicate"):
+        summary = _format_results([r])
+        await _edit_or_send(
+            ctx, chat_id, None, f"⏰ ingest 재시도\n{summary}",
+        )
+    log.info("retry done [%s]: %s",
+             (r or {}).get("status", "unknown"), title[:80])
 
 
 def main():
