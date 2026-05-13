@@ -19,7 +19,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import shutil
 import sys
+import tempfile
 
 from telethon import TelegramClient
 
@@ -120,16 +122,25 @@ async def run(limit: int) -> None:
 
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
-    session_path = config.DATA_DIR / "import_session"
+    # The live forward-listener holds an exclusive SQLite lock on
+    # import_session.session, so we copy it into a tmpdir and let
+    # Telethon open the duplicate. Auth key inside is identical, so
+    # no phone-code prompt. tmpdir is cleaned up on exit.
+    src_session = config.DATA_DIR / "import_session.session"
+    if not src_session.exists():
+        sys.exit(f"session not found at {src_session} — run import_channel first")
+    with tempfile.TemporaryDirectory(prefix="verify_forward_") as tmp:
+        copy_path = os.path.join(tmp, "verify.session")
+        shutil.copyfile(src_session, copy_path)
 
-    client = TelegramClient(str(session_path), api_id, api_hash)
-    await client.start()
-    try:
-        print(f"verifying {len(channels)} channels (last {limit} msgs each)")
-        for ch in channels:
-            await _verify_channel(client, ch, plain_channels, limit)
-    finally:
-        await client.disconnect()
+        client = TelegramClient(copy_path[:-len(".session")], api_id, api_hash)
+        await client.start()
+        try:
+            print(f"verifying {len(channels)} channels (last {limit} msgs each)")
+            for ch in channels:
+                await _verify_channel(client, ch, plain_channels, limit)
+        finally:
+            await client.disconnect()
 
 
 def main() -> None:
