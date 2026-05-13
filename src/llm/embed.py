@@ -87,18 +87,24 @@ def _load_local_embed():
             return None
         try:
             os.environ.setdefault("HF_HOME", "/app/data/hf_cache")
-            # Pin torch to the host's vCPU count so the encoder uses
-            # every available core. SentenceTransformer doesn't expose
-            # a thread knob, but torch picks it up globally. Without
-            # this, torch defaults to 1 thread inside a container and
-            # leaves 3 of 4 cores idle on c3-standard-4.
             import torch
-            n_threads = os.cpu_count() or 2
-            torch.set_num_threads(n_threads)
-            log.info("torch threads set to %d (cpu_count)", n_threads)
+            # Auto-detect: prefer GPU when the container is on a CUDA-
+            # enabled host (Dockerfile.gpu + GCE T4/L4/A100). Falls back
+            # to multi-threaded CPU otherwise. EMBED_DEVICE=cpu forces
+            # CPU even on a GPU box (useful for A/B perf testing).
+            device_pref = os.getenv("EMBED_DEVICE", "auto").lower()
+            if device_pref == "cpu" or not torch.cuda.is_available():
+                device = "cpu"
+                n_threads = os.cpu_count() or 2
+                torch.set_num_threads(n_threads)
+                log.info("bge-m3 device=cpu (threads=%d)", n_threads)
+            else:
+                device = "cuda"
+                log.info("bge-m3 device=cuda (%s)",
+                         torch.cuda.get_device_name(0))
             from sentence_transformers import SentenceTransformer
             log.info("loading BAAI/bge-m3 (first-time download ~2.3 GB)...")
-            _LOCAL_MODEL = SentenceTransformer("BAAI/bge-m3")
+            _LOCAL_MODEL = SentenceTransformer("BAAI/bge-m3", device=device)
             log.info("bge-m3 ready (dim=%d)",
                      _LOCAL_MODEL.get_sentence_embedding_dimension())
         except Exception as e:
@@ -117,12 +123,14 @@ async def _embed_bge_batch(texts: list[str]) -> list[list[float]]:
         # backend swap should never break ingest.
         log.warning("bge-m3 unavailable, falling back to Gemini for this batch")
         return await _embed_gemini_batch(texts, "RETRIEVAL_DOCUMENT")
-    # batch_size 64 fits comfortably in 12 GiB mem_limit and roughly
-    # halves the per-batch overhead vs 32 — meaningful on c3 where
-    # the sapphire-rapids cores chew through forward passes fast and
-    # batch setup becomes the bottleneck.
+    # GPU can chew through much bigger batches without OOM (T4 has
+    # 16 GB VRAM, BGE-M3 weights take ~2 GB). CPU stays at 64 to keep
+    # the per-batch wall time low so single-doc latency doesn't spike.
+    import torch
+    batch_size = 256 if torch.cuda.is_available() else 64
     vectors = await asyncio.to_thread(
-        model.encode, texts, normalize_embeddings=True, batch_size=64,
+        model.encode, texts, normalize_embeddings=True,
+        batch_size=batch_size,
     )
     return [list(map(float, v)) for v in vectors]
 
