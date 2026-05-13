@@ -478,23 +478,23 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
             # make it through now — see module docstring.
             print(f"  drop non-digest msg {msg.id} from {channel_name}")
 
-        # Backfill the last BACKFILL_WINDOW_SEC of messages from every
-        # source so a container restart doesn't silently swallow whatever
-        # landed during the downtime. content-hash dedup on the bot side
-        # makes replay safe — anything already ingested becomes a no-op,
-        # so generous defaults cost only a few seconds of startup iter.
-        # 180 min covers a slow rebuild + Noah's typical 4-5 hour digest
-        # cadence so even a worst-case stuck-during-digest restart still
-        # picks up the previous digest. Override via BACKFILL_MINUTES env
-        # for full-day recoveries (e.g. VM machine-type swap).
+        # Backfill is disabled by default: replay floods the bot with
+        # hundreds of dedup hits per restart (mostly already-known
+        # forwarded content), and the ✅/♻️ message stream saturates
+        # the local telegram-bot-api proxy. Set BACKFILL_MINUTES=N to
+        # opt in for a one-time recovery (e.g. after a long outage),
+        # then remove the env so the next restart stays clean.
         from datetime import datetime, timedelta, timezone
-        backfill_min = int(os.getenv("BACKFILL_MINUTES", "180"))
+        backfill_min = int(os.getenv("BACKFILL_MINUTES", "0"))
+        if backfill_min <= 0:
+            print("backfill disabled (BACKFILL_MINUTES=0) — skipping replay")
         BACKFILL_WINDOW_SEC = backfill_min * 60
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=BACKFILL_WINDOW_SEC)
-        print(f"backfilling last {backfill_min} min "
-              f"(since {cutoff.isoformat(timespec='seconds')}) ...")
+        if backfill_min > 0:
+            print(f"backfilling last {backfill_min} min "
+                  f"(since {cutoff.isoformat(timespec='seconds')}) ...")
         from telethon.utils import get_peer_id
-        for src in source_entities:
+        for src in source_entities if backfill_min > 0 else []:
             chat_id = get_peer_id(src)
             channel_name = resolved.get(chat_id, str(chat_id))
             recent: list = []
