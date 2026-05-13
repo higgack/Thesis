@@ -423,15 +423,12 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
         last_digest: dict[int, tuple[str, float]] = {}
         DIGEST_CONTINUATION_WINDOW_SEC = 90.0
 
-        @client.on(events.NewMessage(chats=source_entities))
-        async def handler(event):
-            msg = event.message
+        async def _dispatch(msg, channel_name: str, chat_id: int) -> None:
+            """Single message → digest expand / plain relay / drop. Shared
+            between the live NewMessage handler and the startup backfill
+            so we never miss messages that landed during a container
+            restart (Telethon doesn't replay history on reconnect)."""
             text = (msg.message or "").strip()
-
-            # Identify which configured source this came from. Falls
-            # back to the raw chat id if the channel isn't in our map
-            # (shouldn't happen, but defensive).
-            channel_name = resolved.get(event.chat_id, str(event.chat_id))
 
             # Plain-relay path: ignore digest detection, just strip
             # known URL footers and re-send as text.
@@ -444,14 +441,14 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
             # Telegram digest: expand each 원문 link into its original
             # message and forward those instead of the digest body.
             if _DIGEST_TG_RE.search(text):
-                last_digest[event.chat_id] = ("tg", now)
+                last_digest[chat_id] = ("tg", now)
                 await _expand_telegram_digest(client, msg, target)
                 return
 
             # Substack digest: relay each article URL as a plain text
             # message so the bot's URL pipeline crawls the full article.
             if _DIGEST_SUBSTACK_RE.search(text):
-                last_digest[event.chat_id] = ("ss", now)
+                last_digest[chat_id] = ("ss", now)
                 await _expand_substack_digest(client, msg, target)
                 return
 
@@ -460,17 +457,17 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
             # same channel is treated as part 2..N of that digest. We
             # reuse the parent kind's expander so a 📋 split keeps doing
             # t.me forwards and a 📰 split keeps doing URL relays.
-            prev = last_digest.get(event.chat_id)
+            prev = last_digest.get(chat_id)
             if prev and (now - prev[1]) <= DIGEST_CONTINUATION_WINDOW_SEC:
                 kind = prev[0]
                 if kind == "tg" and _extract_telegram_links(msg):
                     print(f"  digest continuation (TG) {msg.id} from {channel_name}")
-                    last_digest[event.chat_id] = (kind, now)  # extend window
+                    last_digest[chat_id] = (kind, now)  # extend window
                     await _expand_telegram_digest(client, msg, target)
                     return
                 if kind == "ss" and _extract_substack_links(msg):
                     print(f"  digest continuation (SS) {msg.id} from {channel_name}")
-                    last_digest[event.chat_id] = (kind, now)
+                    last_digest[chat_id] = (kind, now)
                     await _expand_substack_digest(client, msg, target)
                     return
 
@@ -480,6 +477,52 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
             # ~₩2-5k/day of noise. Only digest content + continuations
             # make it through now — see module docstring.
             print(f"  drop non-digest msg {msg.id} from {channel_name}")
+
+        # Backfill the last BACKFILL_WINDOW_SEC of messages from every
+        # source so a container restart doesn't silently swallow whatever
+        # landed during the downtime. content-hash dedup on the bot side
+        # makes replay safe — anything already ingested becomes a no-op.
+        # Window of 30 min is enough to cover a docker rebuild + Telethon
+        # cold start (~2-3 min on this VM) with plenty of margin.
+        from datetime import datetime, timedelta, timezone
+        BACKFILL_WINDOW_SEC = 30 * 60
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=BACKFILL_WINDOW_SEC)
+        print(f"backfilling last {BACKFILL_WINDOW_SEC // 60} min "
+              f"(since {cutoff.isoformat(timespec='seconds')}) ...")
+        from telethon.utils import get_peer_id
+        for src in source_entities:
+            chat_id = get_peer_id(src)
+            channel_name = resolved.get(chat_id, str(chat_id))
+            recent: list = []
+            try:
+                async for m in client.iter_messages(src, limit=100):
+                    if m.date < cutoff:
+                        break
+                    recent.append(m)
+            except Exception as e:
+                print(f"  backfill iter failed for {channel_name}: "
+                      f"{type(e).__name__}: {e}")
+                continue
+            if not recent:
+                continue
+            # Process oldest → newest so digest headers come before
+            # their continuations and last_digest window logic stays
+            # consistent.
+            recent.reverse()
+            print(f"  backfill {channel_name}: {len(recent)} msgs to replay")
+            for msg in recent:
+                try:
+                    await _dispatch(msg, channel_name, chat_id)
+                except Exception as e:
+                    print(f"    backfill dispatch err {msg.id} "
+                          f"{channel_name}: {type(e).__name__}: {e}")
+        print("backfill done — switching to live mode\n")
+
+        @client.on(events.NewMessage(chats=source_entities))
+        async def handler(event):
+            await _dispatch(event.message,
+                            resolved.get(event.chat_id, str(event.chat_id)),
+                            event.chat_id)
 
         await client.run_until_disconnected()
     finally:
