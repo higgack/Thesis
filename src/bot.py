@@ -723,7 +723,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 
 <b>【6. 자동 포워딩 (multi-channel)】</b>
  LISTEN_CHANNELS (콤마구분) 채널들을 동시 감지:
- [Noah 디지스트] 📋 TG 원문 fetch · 📰 Substack URL relay · 🐦 X drop
+ [Noah 디지스트] 📋 TG 원문 fetch · 📰 Substack URL relay · 그 외 drop
  [LISTEN_PLAIN_CHANNELS] 본문 그대로 (URL line strip, 이미지 drop)
    · finter_gpt (머니터링 공시) · jubung (리포트) · awake_globalwatch (글로벌)
    · awake_realtimeCheck (52주↑) · Fundeasyearnings (실적/옵션)

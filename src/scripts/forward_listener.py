@@ -15,8 +15,9 @@ Each source can be handled in one of two modes:
        Telethon and forwarded so the bot sees the ORIGINAL author/text.
      - 📰 Substack 요약 → every http URL relayed as plain text so the
        bot's URL pipeline crawls the full article.
-     - 🐦 X 타임라인 요약 → dropped entirely (paid API, low value).
-   Everything else (chat, screenshots, ad-hoc forwards) is dropped.
+   Everything else (X timeline digests, daily ranking lists, chat,
+   screenshots, ad-hoc forwards, partial digest continuations) is
+   dropped — only the two formats above produce useful ingest.
 
 2. **Plain mode** — for channels listed in `LISTEN_PLAIN_CHANNELS` we
    forward each message body as-is, but strip channel-specific URL
@@ -115,7 +116,6 @@ TELETHON_CONN_RETRIES = 1000
 # 채널 doesn't get expanded by mistake.
 _DIGEST_TG_RE = re.compile(r"📋[^\n]*채널\s*요약")
 _DIGEST_SUBSTACK_RE = re.compile(r"📰[^\n]*Substack\s*요약")
-_DIGEST_X_RE = re.compile(r"🐦[^\n]*(?:X\s*타임라인|타임라인)\s*요약")
 
 # Pull every t.me/<channel>/<msg_id> or t.me/c/<chat_id>/<msg_id> hit
 # from the digest body. Private-channel links use the numeric c/... form
@@ -400,7 +400,7 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
         )
         print(
             "digest mode: 📋 Telegram → expand · 📰 Substack → expand · "
-            "🐦 X → drop · other → drop"
+            "other → drop"
         )
         if plain_channels:
             print(
@@ -423,13 +423,6 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
             # known URL footers and re-send as text.
             if channel_name.lower() in plain_channels:
                 await _relay_plain(client, msg, target, channel_name)
-                return
-
-            # X digest: drop. X API access is paid/restricted and the
-            # LLM summary in the digest body alone isn't worth the cost
-            # of ingesting at scale.
-            if _DIGEST_X_RE.search(text):
-                print(f"  skip X digest {msg.id} from {channel_name}")
                 return
 
             # Telegram digest: expand each 원문 link into its original

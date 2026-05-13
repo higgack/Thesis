@@ -29,7 +29,6 @@ from .. import config
 from .forward_listener import (
     _DIGEST_SUBSTACK_RE,
     _DIGEST_TG_RE,
-    _DIGEST_X_RE,
     _PLAIN_MIN_CHARS,
     _extract_substack_links,
     _extract_telegram_links,
@@ -56,16 +55,15 @@ def _classify_plain(text: str, channel_key: str) -> tuple[str, str, int]:
 def _classify_digest(text: str, msg) -> tuple[str, str, int]:
     """Return (verdict, reason, count) for a digest-mode candidate.
     `count` is # of expansions that would happen (TG forwards or
-    Substack URLs)."""
-    if _DIGEST_X_RE.search(text):
-        return "SKIP", "X digest (intentionally dropped)", 0
+    Substack URLs). Only 📋 TG and 📰 Substack digests are kept; X
+    timeline digests and every other message type are dropped."""
     if _DIGEST_TG_RE.search(text):
         n = len(_extract_telegram_links(msg))
         return "EXPAND-TG", f"{n} t.me links to forward", n
     if _DIGEST_SUBSTACK_RE.search(text):
         n = len(_extract_substack_links(msg))
         return "EXPAND-SS", f"{n} URLs to relay", n
-    return "DROP", "not a digest (non-Noah message)", 0
+    return "DROP", "not a 📋/📰 digest", 0
 
 
 async def _verify_channel(
@@ -100,7 +98,7 @@ async def _verify_channel(
             verdict, reason, n = _classify_digest(text, m)
         counts[verdict] = counts.get(verdict, 0) + 1
         preview = text.replace("\n", " ")[:60]
-        extra = f" [{reason}]" if verdict in ("DROP", "SKIP") else ""
+        extra = f" [{reason}]" if verdict == "DROP" else ""
         suffix = f" → {n} items" if verdict.startswith("EXPAND") else f" ({n} chars)"
         print(f"  [#{m.id}] {verdict:9}{suffix}{extra}")
         if preview:
