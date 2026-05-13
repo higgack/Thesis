@@ -39,12 +39,6 @@ _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # slows the drain to give new ingests faster slot access).
 _RETRY_INGEST_INTERVAL_SEC = int(os.getenv("RETRY_INGEST_INTERVAL_SEC", "30"))
 _RETRY_INGEST_BATCH = int(os.getenv("RETRY_INGEST_BATCH", "4"))
-# Quiet hours: a UTC half-open hour range "start-end" during which the
-# retry job no-ops so live ingests have the whole semaphore. Outside
-# the window the queue drains normally. Example for "drain only during
-# US evening / KR morning" set RETRY_ACTIVE_HOURS_UTC=01-09 (= KST
-# 10:00-18:00). Empty / unset = always active (legacy behaviour).
-_RETRY_ACTIVE_HOURS_UTC = os.getenv("RETRY_ACTIVE_HOURS_UTC", "").strip()
 # After a failed retry, hold the item for this many seconds before
 # making it eligible again. Prevents one stuck item from monopolising
 # the queue's drain rate (without this, a perpetually-overloaded
@@ -3435,42 +3429,15 @@ async def _drain_pending_pro(ctx: ContextTypes.DEFAULT_TYPE):
         _LAST_REPLY_AT = datetime.utcnow()
 
 
-def _retry_within_active_window() -> bool:
-    """Honour RETRY_ACTIVE_HOURS_UTC. Empty value or parse failure
-    means 'always active' so a misconfigured env never wedges the
-    queue. Window is half-open [start, end); supports wrap across
-    midnight (e.g. 22-04 = 22:00 → 04:00 UTC)."""
-    if not _RETRY_ACTIVE_HOURS_UTC:
-        return True
-    try:
-        s, e = _RETRY_ACTIVE_HOURS_UTC.split("-", 1)
-        start, end = int(s), int(e)
-    except Exception:
-        return True
-    hour = datetime.utcnow().hour
-    if start <= end:
-        return start <= hour < end
-    # wrap-around window
-    return hour >= start or hour < end
-
-
 async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
     """Drain up to _RETRY_INGEST_BATCH queued ingests per tick. Each
     inner call pops one item and processes it through `_INGEST_SEM`,
     which keeps concurrent ingests bounded at the semaphore capacity
     regardless of how many tasks we kick off in parallel here.
 
-    Tuned for throughput: 4 items / 30 s ≈ 480/hour on c3-standard-4
-    (4 vCPU + 16 GB RAM). BGE-M3 local embed has no API wait, and
-    Semaphore(8) bounds true concurrency so memory stays well under
-    the 12 GiB mem_limit even during digest bursts.
-
-    Skipped entirely when RETRY_ACTIVE_HOURS_UTC is set and the current
-    UTC hour falls outside it. The queue holds; new live ingests keep
-    flowing because they use the same semaphore but skip this scheduler
-    path."""
-    if not _retry_within_active_window():
-        return
+    Per-item not_before_ts (linear backoff on failure) is the only
+    gating mechanism — failed items naturally hold while healthy items
+    keep draining around them."""
     if not _INGEST_RETRY_QUEUE:
         return
     n = min(_RETRY_INGEST_BATCH, len(_INGEST_RETRY_QUEUE))
