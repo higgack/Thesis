@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import shutil
+import sqlite3
 import sys
 import tempfile
 
@@ -123,15 +123,25 @@ async def run(limit: int) -> None:
     api_id = int(os.environ["TELEGRAM_API_ID"])
     api_hash = os.environ["TELEGRAM_API_HASH"]
     # The live forward-listener holds an exclusive SQLite lock on
-    # import_session.session, so we copy it into a tmpdir and let
-    # Telethon open the duplicate. Auth key inside is identical, so
-    # no phone-code prompt. tmpdir is cleaned up on exit.
+    # import_session.session (WAL mode means a plain file copy is not
+    # consistent — sqlite3.backup() is the safe path that produces a
+    # clean snapshot regardless of in-flight writes). Open the source
+    # read-only so we never bump heads with the live writer; the dst
+    # tmp file is opened fresh and disposed when the tmpdir closes.
     src_session = config.DATA_DIR / "import_session.session"
     if not src_session.exists():
         sys.exit(f"session not found at {src_session} — run import_channel first")
     with tempfile.TemporaryDirectory(prefix="verify_forward_") as tmp:
         copy_path = os.path.join(tmp, "verify.session")
-        shutil.copyfile(src_session, copy_path)
+        src_conn = sqlite3.connect(
+            f"file:{src_session}?mode=ro", uri=True, timeout=10,
+        )
+        dst_conn = sqlite3.connect(copy_path)
+        try:
+            src_conn.backup(dst_conn)
+        finally:
+            src_conn.close()
+            dst_conn.close()
 
         client = TelegramClient(copy_path[:-len(".session")], api_id, api_hash)
         await client.start()
