@@ -28,8 +28,8 @@ Each source can be handled in one of two modes:
 
 Usage (run inside Docker — bot stack auto-restarts it on disconnect):
 
-    LISTEN_CHANNELS=noah_channel,darthacking,jubung,...
-    LISTEN_PLAIN_CHANNELS=darthacking,jubung,awake_globalwatch,...
+    LISTEN_CHANNELS=noah_channel,finter_gpt,jubung,...
+    LISTEN_PLAIN_CHANNELS=finter_gpt,jubung,awake_globalwatch,...
     python -m src.scripts.forward_listener
 
 Reads BOT_USERNAME, TELEGRAM_API_ID, TELEGRAM_API_HASH from env (same
@@ -265,7 +265,7 @@ async def _expand_substack_digest(client: TelegramClient, msg,
 # MULTILINE) so a URL appearing inside a paragraph isn't stripped —
 # only standalone metadata footers like "공시링크: https://...".
 _PLAIN_URL_STRIP_PATTERNS: dict[str, list[re.Pattern]] = {
-    "darthacking": [
+    "finter_gpt": [
         re.compile(
             r"^(공시링크|회사정보|최근계약)\s*:\s*https?://\S+\s*$",
             re.MULTILINE,
@@ -505,7 +505,7 @@ def main() -> None:
         sys.exit(
             "No channels provided. Set LISTEN_CHANNELS=ch1,ch2,... in "
             ".env, or pass a single channel as CLI arg.\n"
-            "  Optional: LISTEN_PLAIN_CHANNELS=darthacking,jubung,...\n"
+            "  Optional: LISTEN_PLAIN_CHANNELS=finter_gpt,jubung,...\n"
             "  for channels whose body should be relayed verbatim (URL "
             "footers stripped, no digest expansion)."
         )
