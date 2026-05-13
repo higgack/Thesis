@@ -27,6 +27,15 @@ logging.basicConfig(
 log = logging.getLogger("bot")
 
 _INGEST_SEM = asyncio.Semaphore(4)
+_INGEST_SEM_CAPACITY = 4
+# How many queued retries to drain per tick + how often we tick. Tuned
+# for the e2-standard-2 + 6 GiB mem_limit + BGE-M3 (local embed, no API
+# wait): bot has plenty of headroom (~3.4 GiB free) so we can process
+# 2 at a time every 60 s without starving live ingests of the
+# semaphore slots. Combined throughput: 2 items / minute ≈ 120/hour
+# (vs the previous 30/hour). Adjust if /status shows memory > 80%.
+_RETRY_INGEST_INTERVAL_SEC = 60
+_RETRY_INGEST_BATCH = 2
 _INGEST_RETRY_QUEUE: list[dict] = []
 _INGEST_FAILED: list[dict] = []
 # Live counters for /status — incremented on entry, decremented in
@@ -370,15 +379,17 @@ def _recover_orphan_files_at_startup(app) -> None:
         count = _enqueue_orphan_recovery(orphans, config.TELEGRAM_OWNER_ID)
         if count <= 0:
             return
-        # Estimate: retry tick = 120s. We process one per tick.
-        eta_min = (count * 120) // 60
+        # Estimate: retry tick = _RETRY_INGEST_INTERVAL_SEC, draining
+        # _RETRY_INGEST_BATCH items per tick.
+        per_min = max(1, _RETRY_INGEST_BATCH * 60 // _RETRY_INGEST_INTERVAL_SEC)
+        eta_min = max(1, count // per_min)
         try:
             async def _notify(_ctx):
                 try:
                     await app.bot.send_message(
                         config.TELEGRAM_OWNER_ID,
                         f"🔄 {count}개 미학습 파일 발견 — 자동 재학습 큐에 추가됨\n"
-                        f"   2분 간격으로 한 개씩 처리 (~{eta_min}분 소요 예상)\n"
+                        f"   1분 간격으로 최대 2개씩 처리 (~{eta_min}분 소요 예상)\n"
                         f"   /queue 로 진행 상황 확인 가능",
                     )
                 except Exception:
@@ -786,7 +797,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     await _typing(update, ctx)
-    ingest_capacity = 2
+    ingest_capacity = _INGEST_SEM_CAPACITY
     ingest_idle = _INGEST_SEM._value  # remaining slots
     ingest_busy = max(0, ingest_capacity - ingest_idle)
     last = _LAST_REPLY_AT
@@ -1208,7 +1219,7 @@ def _failed_retry_all(chat_id: int) -> str:
     _INGEST_FAILED.extend(kept)
     _persist_retry_queue()
     _persist_failed_log()
-    msg = f"🔁 retry queue로 {retried}건 재등록\n2분 간격으로 자동 처리됩니다."
+    msg = f"🔁 retry queue로 {retried}건 재등록\n1분 간격 최대 2개씩 자동 처리."
     if kept:
         msg += f"\n\n♻️ retry 정보 없는 {len(kept)}건은 그대로 — 채널 스크롤로 직접 다시 보내주세요."
     return msg
@@ -1312,7 +1323,7 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _INGEST_RETRY_QUEUE:
         await update.message.reply_text("재시도 큐 비어있음 ✨")
         return
-    out = f"🔁 재시도 큐 {len(_INGEST_RETRY_QUEUE)}건 (2분 간격 자동)"
+    out = f"🔁 재시도 큐 {len(_INGEST_RETRY_QUEUE)}건 (1분 간격, 최대 2건/회 자동)"
     for item in _INGEST_RETRY_QUEUE[:25]:
         kind = item.get("kind", "?")
         title = item.get("file_name") or item.get("url") or "(unknown)"
@@ -1351,13 +1362,14 @@ async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
         return
     count = _enqueue_orphan_recovery(orphans, update.effective_chat.id)
-    eta_min = (count * 120) // 60
+    per_min = max(1, _RETRY_INGEST_BATCH * 60 // _RETRY_INGEST_INTERVAL_SEC)
+    eta_min = max(1, count // per_min)
     preview = "\n".join(f"  • {p.name[:80]}" for p in orphans[:15])
     more = f"\n... 외 {len(orphans) - 15}건" if len(orphans) > 15 else ""
     resume_note = "\n🔓 자동 복구도 재활성화됨" if marker_was_present else ""
     await update.message.reply_text(
         f"🔄 {count}개 미학습 파일 → 재학습 큐에 추가됨{resume_note}\n"
-        f"   2분 간격으로 한 개씩 처리 (~{eta_min}분 소요 예상)\n"
+        f"   1분 간격으로 최대 2개씩 처리 (~{eta_min}분 소요 예상)\n"
         f"   /queue 로 진행 상황 확인 가능\n\n"
         f"{preview}{more}"
     )
@@ -3397,8 +3409,32 @@ async def _drain_pending_pro(ctx: ContextTypes.DEFAULT_TYPE):
         _LAST_REPLY_AT = datetime.utcnow()
 
 
+async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
+    """Drain up to _RETRY_INGEST_BATCH queued ingests per tick. Each
+    inner call pops one item and processes it through `_INGEST_SEM`,
+    which keeps concurrent ingests bounded at the semaphore capacity
+    regardless of how many tasks we kick off in parallel here.
+
+    Tuned for throughput: 2 items / 60 s ≈ 120/hour, vs the previous
+    1 / 120 s = 30/hour. With 6 GiB mem_limit and BGE-M3 local embed
+    (no API wait), the bot has ~3.4 GiB headroom — two simultaneous
+    ingests + 1-2 live messages still leaves room for the daily Noah
+    digests / forward-listener bursts."""
+    if not _INGEST_RETRY_QUEUE:
+        return
+    n = min(_RETRY_INGEST_BATCH, len(_INGEST_RETRY_QUEUE))
+    if n <= 0:
+        return
+    # Each inner call pops at most one item (synchronously, before any
+    # await), so launching them concurrently is safe.
+    await asyncio.gather(
+        *[_retry_pending_ingest(ctx) for _ in range(n)],
+        return_exceptions=True,
+    )
+
+
 async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
-    """Drain one queued ingest per tick, sharing the same semaphore as live
+    """Drain one queued ingest, sharing the same semaphore as live
     ingests so total concurrent ingests stays bounded."""
     if not _INGEST_RETRY_QUEUE:
         return
@@ -3725,8 +3761,8 @@ def main():
             name="retry_pending",
         )
         app.job_queue.run_repeating(
-            _retry_pending_ingest,
-            interval=120,
+            _retry_pending_ingest_batch,
+            interval=_RETRY_INGEST_INTERVAL_SEC,
             first=60,
             name="retry_pending_ingest",
         )
