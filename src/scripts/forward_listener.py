@@ -482,12 +482,14 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
         # source so a container restart doesn't silently swallow whatever
         # landed during the downtime. content-hash dedup on the bot side
         # makes replay safe — anything already ingested becomes a no-op.
-        # Window of 30 min is enough to cover a docker rebuild + Telethon
-        # cold start (~2-3 min on this VM) with plenty of margin.
+        # Default 60 min covers typical docker rebuild + Telethon cold
+        # start (~3 min) with plenty of margin. Override via
+        # BACKFILL_MINUTES env when recovering from a longer outage.
         from datetime import datetime, timedelta, timezone
-        BACKFILL_WINDOW_SEC = 30 * 60
+        backfill_min = int(os.getenv("BACKFILL_MINUTES", "60"))
+        BACKFILL_WINDOW_SEC = backfill_min * 60
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=BACKFILL_WINDOW_SEC)
-        print(f"backfilling last {BACKFILL_WINDOW_SEC // 60} min "
+        print(f"backfilling last {backfill_min} min "
               f"(since {cutoff.isoformat(timespec='seconds')}) ...")
         from telethon.utils import get_peer_id
         for src in source_entities:
