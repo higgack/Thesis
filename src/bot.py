@@ -760,7 +760,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 인용은 자료 제목 (숫자 [1] X) · 본문 [N] 자동 매김
 
 <b>【10. 운영 / 비용 (Stage 1+2 절감 적용)】</b>
- • VM: c3-standard-4 16GB · bot 12000m · Semaphore(8)
+ • VM: n2-standard-4 16GB · bot 12000m · Semaphore(env INGEST_SEM_CAPACITY)
  • 재시도 5회×90s → /failed
  • 영속: retry/failed/history/qna/cost/dashboard/hf_cache
  • 임베딩: 로컬 BGE-M3 1024-dim (₩0, sentence-transformers)
