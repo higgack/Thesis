@@ -2742,7 +2742,9 @@ def _explain_error(e: BaseException, max_len: int = 280) -> str:
 _INGEST_TIMEOUT_SEC = 900  # 15 minutes per message — large PDFs with OCR can take this long
 
 
-_LIVE_EDIT_INTERVAL = 15  # seconds between status edits
+_LIVE_EDIT_INTERVAL = 10  # seconds between status edits — 4 concurrent
+# retries × 6 edits/min = 24/min sits well under Telegram's same-chat
+# ~1/sec floor with room for live uploads happening alongside.
 
 
 async def _edit_or_send(ctx, chat_id: int, msg_id: int | None, text: str) -> None:
