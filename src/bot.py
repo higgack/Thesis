@@ -27,7 +27,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
-_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "8"))
+_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "4"))
 _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # How many queued retries to drain per tick + how often we tick. Tuned
 # for c3-standard-4 / n2-standard-4 (4 vCPU, 16 GiB RAM) + 12 GiB bot
