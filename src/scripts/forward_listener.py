@@ -15,9 +15,13 @@ Each source can be handled in one of two modes:
        Telethon and forwarded so the bot sees the ORIGINAL author/text.
      - 📰 Substack 요약 → every http URL relayed as plain text so the
        bot's URL pipeline crawls the full article.
-   Everything else (X timeline digests, daily ranking lists, chat,
-   screenshots, ad-hoc forwards, partial digest continuations) is
-   dropped — only the two formats above produce useful ingest.
+   Continuation messages (Noah splits long digests across multiple
+   Telegram messages because of the 4096-char limit; only the first
+   carries the header) are detected via a short time window and run
+   through the same expander as their parent. Everything else (X
+   timeline digests, daily ranking lists, chat, screenshots, ad-hoc
+   forwards) is dropped — only the two formats above produce useful
+   ingest.
 
 2. **Plain mode** — for channels listed in `LISTEN_PLAIN_CHANNELS` we
    forward each message body as-is, but strip channel-specific URL
@@ -409,6 +413,16 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
             )
         print("running... Ctrl+C to stop\n")
 
+        # Track the most recent 📋/📰 digest header per source channel so
+        # we can recognise continuation messages. Noah's bot splits
+        # digests > 4096 chars into N consecutive Telegram messages; only
+        # the first carries the "📋 ... 채널 요약" / "📰 ... Substack
+        # 요약" header. Without this window, parts 2..N look like plain
+        # non-digest messages and lose every t.me URL inside them.
+        # Value: (kind, monotonic_seconds). kind ∈ {"tg", "ss"}.
+        last_digest: dict[int, tuple[str, float]] = {}
+        DIGEST_CONTINUATION_WINDOW_SEC = 90.0
+
         @client.on(events.NewMessage(chats=source_entities))
         async def handler(event):
             msg = event.message
@@ -425,22 +439,46 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
                 await _relay_plain(client, msg, target, channel_name)
                 return
 
+            now = asyncio.get_event_loop().time()
+
             # Telegram digest: expand each 원문 link into its original
             # message and forward those instead of the digest body.
             if _DIGEST_TG_RE.search(text):
+                last_digest[event.chat_id] = ("tg", now)
                 await _expand_telegram_digest(client, msg, target)
                 return
 
             # Substack digest: relay each article URL as a plain text
             # message so the bot's URL pipeline crawls the full article.
             if _DIGEST_SUBSTACK_RE.search(text):
+                last_digest[event.chat_id] = ("ss", now)
                 await _expand_substack_digest(client, msg, target)
                 return
 
-            # Anything else (chat, screenshots, ad-hoc forwards) is
-            # dropped. Earlier behaviour was to mirror everything, but
-            # that summarised ~₩2-5k/day of noise. Only digest content
-            # makes it through now — see module docstring.
+            # Split-digest continuation: a header-less message arriving
+            # within DIGEST_CONTINUATION_WINDOW_SEC of a digest from the
+            # same channel is treated as part 2..N of that digest. We
+            # reuse the parent kind's expander so a 📋 split keeps doing
+            # t.me forwards and a 📰 split keeps doing URL relays.
+            prev = last_digest.get(event.chat_id)
+            if prev and (now - prev[1]) <= DIGEST_CONTINUATION_WINDOW_SEC:
+                kind = prev[0]
+                if kind == "tg" and _extract_telegram_links(msg):
+                    print(f"  digest continuation (TG) {msg.id} from {channel_name}")
+                    last_digest[event.chat_id] = (kind, now)  # extend window
+                    await _expand_telegram_digest(client, msg, target)
+                    return
+                if kind == "ss" and _extract_substack_links(msg):
+                    print(f"  digest continuation (SS) {msg.id} from {channel_name}")
+                    last_digest[event.chat_id] = (kind, now)
+                    await _expand_substack_digest(client, msg, target)
+                    return
+
+            # Anything else (chat, screenshots, ad-hoc forwards, X
+            # timeline digests, daily ranking lists) is dropped. Earlier
+            # behaviour was to mirror everything, but that summarised
+            # ~₩2-5k/day of noise. Only digest content + continuations
+            # make it through now — see module docstring.
             print(f"  drop non-digest msg {msg.id} from {channel_name}")
 
         await client.run_until_disconnected()
