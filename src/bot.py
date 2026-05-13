@@ -3527,29 +3527,16 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             f"[재시도] {title}", item.get("kind", "retry"), chat_id,
         )
 
-        # Live status bubble for the retry path so orphan recovery
-        # (and any other retry-queue ingest) shows the same ⏳→✅
-        # in-place edit the live upload path uses. Falls back to a
-        # send_message at the bottom of this function if the edit
-        # fails.
+        # Retry-queue ingests intentionally skip the ⏳-bubble + live
+        # status updater. With 4 concurrent retries + a 100+ item queue
+        # the editMessageText cadence (every few seconds × N tasks)
+        # saturated the local telegram-bot-api proxy and starved the
+        # event loop, blocking command handlers for minutes. The user
+        # gets a single final ✅/❌ summary at the bottom of this
+        # function instead, which is plenty for backfill / orphan
+        # recovery flows where they're not watching individual items.
         status_msg_id: int | None = None
-        try:
-            sent = await ctx.bot.send_message(
-                chat_id, f"⏳ [재시도] {title[:80]}",
-            )
-            status_msg_id = sent.message_id
-            _ACTIVE_INGESTS[retry_job_id]["status_msg_id"] = status_msg_id
-        except Exception:
-            log.exception("retry status start send failed")
-
         updater_task = None
-        if status_msg_id:
-            updater_task = asyncio.create_task(
-                _live_status_updater(
-                    ctx, chat_id, status_msg_id,
-                    f"[재시도] {title}", retry_job_id,
-                )
-            )
 
         r = None
         try:
