@@ -2852,22 +2852,35 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
         else:
             final_text = f"(빈 결과: {label[:60]})"
 
-        sent_ok = False
-        if status_msg_id:
-            try:
-                await ctx.bot.edit_message_text(
-                    chat_id=notify_chat_id, message_id=status_msg_id,
-                    text=final_text, disable_web_page_preview=True,
-                )
-                sent_ok = True
-            except Exception:
-                # Edit can fail (too old, network) — fall back to new send.
-                log.warning("status final edit failed; sending fresh")
-        if not sent_ok:
-            try:
-                await ctx.bot.send_message(notify_chat_id, final_text)
-            except Exception:
-                log.exception("ingest result notify failed")
+        # All-duplicate batches produce an empty final_text from
+        # _format_results. Skip the user-facing send (and clean up the
+        # ⏳ bubble) so backfill / forwarded channel storms stay silent.
+        if not (final_text or "").strip():
+            if status_msg_id:
+                try:
+                    await ctx.bot.delete_message(
+                        chat_id=notify_chat_id, message_id=status_msg_id,
+                    )
+                except Exception:
+                    pass
+            sent_ok = True
+        else:
+            sent_ok = False
+            if status_msg_id:
+                try:
+                    await ctx.bot.edit_message_text(
+                        chat_id=notify_chat_id, message_id=status_msg_id,
+                        text=final_text, disable_web_page_preview=True,
+                    )
+                    sent_ok = True
+                except Exception:
+                    # Edit can fail (too old, network) — fall back to new send.
+                    log.warning("status final edit failed; sending fresh")
+            if not sent_ok:
+                try:
+                    await ctx.bot.send_message(notify_chat_id, final_text)
+                except Exception:
+                    log.exception("ingest result notify failed")
 
         # OCR-extend prompts run after the final result is visible.
         if results:
@@ -3289,7 +3302,13 @@ def _format_results(results: list[dict]) -> str:
         if s == "ok":
             lines.append(f"✅ {r['title']}  ({r['type']}, {r['chunks']} chunks)")
         elif s == "duplicate":
-            lines.append(f"♻️ 이미 있음: {r['title']}")
+            # Silent — forwarded digests and channel relays re-cite the
+            # same upstream URLs constantly, and a '♻️ 이미 있음' line per
+            # dedup hit floods the chat (hundreds per digest expansion).
+            # User intent for a manual upload is satisfied by the bot's
+            # absence of an error reply — if they care they can check
+            # /recent or /find.
+            continue
         elif s == "empty":
             title = r.get("title", "")
             src = r.get("source", "") or title
