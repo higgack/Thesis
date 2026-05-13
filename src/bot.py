@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import logging
+import os
 import re
 import time
 import uuid
@@ -26,16 +27,18 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
-_INGEST_SEM = asyncio.Semaphore(8)
-_INGEST_SEM_CAPACITY = 8
+_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "8"))
+_INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # How many queued retries to drain per tick + how often we tick. Tuned
-# for c3-standard-4 (4 vCPU, 16 GiB RAM) + 12 GiB bot mem_limit + BGE-M3
-# (local embed, no API wait). 4 items per 30 s = 8/min ≈ 480/hour
-# of sustained drain, ~4× the e2-standard-2 baseline. Live ingests
-# still get priority because the semaphore is shared. Adjust if
-# /status shows memory > 80% or repeated cleanup warnings.
-_RETRY_INGEST_INTERVAL_SEC = 30
-_RETRY_INGEST_BATCH = 4
+# for c3-standard-4 / n2-standard-4 (4 vCPU, 16 GiB RAM) + 12 GiB bot
+# mem_limit + BGE-M3 (local embed, no API wait). 4 items per 30 s =
+# 8/min ≈ 480/hour of sustained drain, ~4× the e2-standard-2 baseline.
+# Live ingests still get priority because the semaphore is shared.
+# Override via env when the queue is huge and live messages are getting
+# starved (e.g. RETRY_INGEST_INTERVAL_SEC=120 + RETRY_INGEST_BATCH=1
+# slows the drain to give new ingests faster slot access).
+_RETRY_INGEST_INTERVAL_SEC = int(os.getenv("RETRY_INGEST_INTERVAL_SEC", "30"))
+_RETRY_INGEST_BATCH = int(os.getenv("RETRY_INGEST_BATCH", "4"))
 _INGEST_RETRY_QUEUE: list[dict] = []
 _INGEST_FAILED: list[dict] = []
 # Live counters for /status — incremented on entry, decremented in
