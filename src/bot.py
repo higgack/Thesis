@@ -37,8 +37,14 @@ _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # Override via env when the queue is huge and live messages are getting
 # starved (e.g. RETRY_INGEST_INTERVAL_SEC=120 + RETRY_INGEST_BATCH=1
 # slows the drain to give new ingests faster slot access).
-_RETRY_INGEST_INTERVAL_SEC = int(os.getenv("RETRY_INGEST_INTERVAL_SEC", "30"))
-_RETRY_INGEST_BATCH = int(os.getenv("RETRY_INGEST_BATCH", "4"))
+# Hardcoded — earlier env-driven throttling (.env RETRY_INGEST_BATCH=1,
+# RETRY_INGEST_INTERVAL_SEC=120) was a flood-control workaround back when
+# the bot was spamming success/duplicate replies. With silent dedup and
+# linear backoff in place, that throttle just leaves CPU idle and the
+# queue draining at 30/hour. Pin to defaults so a stale .env can't
+# resurrect the bottleneck.
+_RETRY_INGEST_INTERVAL_SEC = 30
+_RETRY_INGEST_BATCH = 4
 # After a failed retry, hold the item for this many seconds before
 # making it eligible again. Prevents one stuck item from monopolising
 # the queue's drain rate (without this, a perpetually-overloaded
