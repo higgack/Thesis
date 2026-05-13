@@ -12,11 +12,15 @@ log = logging.getLogger(__name__)
 _client = genai.Client(api_key=config.GOOGLE_API_KEY)
 
 # When a model returns 503 / 429 / RESOURCE_EXHAUSTED, immediately retry on
-# the next entry instead of waiting for the same overloaded model.
+# the next entry instead of waiting for the same overloaded model. The
+# chain is now cyclic-ish — flash-lite escalates to flash so cheap-tier
+# ingest doesn't die alone when AI Studio rate-limits flash-lite. The
+# seen-set in _chain_for breaks the cycle after one pass so we never
+# loop forever.
 _FALLBACK_CHAIN = {
     "gemini-2.5-pro": "gemini-2.5-flash",
     "gemini-2.5-flash": "gemini-2.5-flash-lite",
-    "gemini-2.5-flash-lite": None,
+    "gemini-2.5-flash-lite": "gemini-2.5-flash",
 }
 
 _OVERLOAD_MARKERS = (
