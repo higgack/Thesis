@@ -132,6 +132,10 @@ def _derive_from_summary(summary: str) -> str:
         line = _SUMMARY_PREFIX_RE.sub("", line).strip()
         # Unwrap **bold** so we don't get "**파일 형식**: PNG ..."
         line = re.sub(r"\*\*([^*]+)\*\*", r"\1", line).strip()
+        # Also strip standalone/unbalanced `**` left over from summary
+        # snippets like "**금융 및 경제 동향**:" where leading was already
+        # stripped by _SUMMARY_PREFIX_RE.
+        line = line.replace("**", "").strip()
         # Strip leading "Field: " prefix where Field is a short label
         line = re.sub(r"^[가-힣A-Za-z]{1,8}\s*:\s*", "", line).strip()
         # Strip "1. " / "1) " numbering
