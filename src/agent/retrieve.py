@@ -81,13 +81,34 @@ def _recency_factor(ingested_at_iso: str) -> float:
     """Soft exponential decay so recent docs outrank stale ones with the
     same semantic relevance. Important for time-sensitive material like
     brokerage reports where last week's view supersedes last year's.
-    0d → 1.0, 6mo → ~0.72, 1yr → ~0.62, 2yr+ → ~0.56."""
+
+    Tuned (2026-05) to be gentler than the original 0.55+0.45·exp(-d/180)
+    curve, which crushed older but deeper analyses (1y broker report
+    semantic 0.92 lost to yesterday's 500-char alert with semantic 0.78).
+    New curve: 0.70 + 0.30·exp(-d/365). 0d → 1.0, 6mo → ~0.85,
+    1yr → ~0.81, 2yr+ → ~0.71. Half-life doubled, floor raised so old
+    deep work stays competitive when recency × semantic conflict."""
     try:
         ts = datetime.fromisoformat(ingested_at_iso)
     except Exception:
         return 1.0
     days = max(0.0, (datetime.utcnow() - ts).total_seconds() / 86400.0)
-    return 0.55 + 0.45 * math.exp(-days / 180.0)
+    return 0.70 + 0.30 * math.exp(-days / 365.0)
+
+
+def _depth_bonus(doc: dict) -> float:
+    """Reward documents with substantial bodies. Broker reports,
+    Substack long-form articles, and academic summaries earn a small
+    score multiplier; one-line alerts or short forwards stay neutral.
+    Combined with softer recency, this keeps deep analysis surfacing
+    even when several short same-day docs cluster at the top."""
+    summary = doc.get("summary") or ""
+    chars = len(summary)
+    if chars >= 8000:
+        return 1.15
+    if chars >= 4000:
+        return 1.08
+    return 1.0
 
 log = logging.getLogger(__name__)
 
@@ -213,19 +234,23 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
     else:
         log.info("bm25 cache cold — dense-only retrieval this turn")
 
-    recency_cache: dict[str, float] = {}
+    # Cache per-doc score modifiers (recency × depth_bonus) so we look
+    # up each parent doc at most once even when several of its chunks
+    # are candidates.
+    mod_cache: dict[str, float] = {}
     for cid in list(dense.keys()):
         s, h = dense[cid]
         doc_id = h["metadata"].get("doc_id")
         if not doc_id:
             continue
-        if doc_id not in recency_cache:
-            d = meta.get_doc(doc_id)
-            recency_cache[doc_id] = (
+        if doc_id not in mod_cache:
+            d = meta.get_doc(doc_id) or {}
+            recency = (
                 _recency_factor(d["ingested_at"])
-                if d and d.get("ingested_at") else 1.0
+                if d.get("ingested_at") else 1.0
             )
-        dense[cid] = (s * recency_cache[doc_id], h)
+            mod_cache[doc_id] = recency * _depth_bonus(d)
+        dense[cid] = (s * mod_cache[doc_id], h)
 
     ranked = sorted(dense.values(), key=lambda x: x[0], reverse=True)
 

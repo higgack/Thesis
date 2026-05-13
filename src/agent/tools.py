@@ -60,7 +60,12 @@ _DIGEST_TITLE_RE = re.compile(
 #     when there aren't enough on-topic primary docs anyway.
 _DIGEST_MAX_QUOTA = 5
 _DIGEST_RECENCY_DAYS = 30
-_DIGEST_RANK_PENALTY = 0.4
+# Softened (2026-05) from 0.4 → 0.7. The aggressive 0.4 buried digests
+# that had relevant info even when no primary source competed (e.g.
+# digest semantic 0.85 × 0.4 = 0.34 lost to a barely-related 0.5 primary).
+# The hard quota of 5 + recency floor still cap digest noise; the score
+# penalty just needs to keep them below equivalent primary sources.
+_DIGEST_RANK_PENALTY = 0.7
 
 
 def _is_digest_title(title: str) -> bool:
@@ -227,12 +232,12 @@ async def compare_papers(topic: str, limit: int = 50,
     # Pure semantic similarity left to itself pulls dense old reports
     # ahead of recent daily summaries; this is what made queries like
     # "반도체 강세 이유" cite 2024 reports despite May-2026 ingest.
-    from .retrieve import _recency_factor
+    from .retrieve import _recency_factor, _depth_bonus
     def _rank(h):
         doc = meta.get_doc(h["metadata"]["doc_id"]) or {}
         recency = _recency_factor(doc.get("ingested_at") or "")
         semantic = 1.0 - float(h.get("distance", 0) or 0)
-        score = semantic * recency
+        score = semantic * recency * _depth_bonus(doc)
         if _is_digest_title(doc.get("title") or ""):
             score *= _DIGEST_RANK_PENALTY
         return score
