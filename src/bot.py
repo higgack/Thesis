@@ -3139,6 +3139,15 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_cha
 
     urls, plain = _collect_message_urls(msg)
     for url in urls:
+        # Skip URLs that have already burned through their retry budget
+        # in a prior digest — paywalled domains (Reuters etc.) and broken
+        # shorteners stay broken, no point spending another 5 attempts.
+        if _url_in_failed_log(url):
+            log.info("url skip — previously failed: %s", url[:120])
+            results.append({"status": "skipped", "title": url,
+                            "source": url,
+                            "detail": "이전에 실패한 URL — 자동 skip"})
+            continue
         url_retry = {"kind": "url", "url": url}
         try:
             r = await pipeline.ingest_url(url)
@@ -3209,6 +3218,23 @@ def _record_failure(status: str, title: str, detail: str = "",
     if len(_INGEST_FAILED) > _FAILED_MAX:
         del _INGEST_FAILED[0]
     _persist_failed_log()
+
+
+def _url_in_failed_log(url: str) -> bool:
+    """Has this exact URL already landed in /failed? Used to short-circuit
+    repeated tries on the same paywalled / blocked link — digests often
+    cite the same Reuters/Bloomberg article from many sections, and each
+    citation otherwise spawns its own 5-attempt cycle to /failed."""
+    if not url:
+        return False
+    for e in _INGEST_FAILED:
+        payload = e.get("retry") or {}
+        if payload.get("kind") == "url" and payload.get("url") == url:
+            return True
+        # Pre-retry-payload entries stored the URL only in title.
+        if e.get("title") == url:
+            return True
+    return False
 
 
 def _empty_url_guidance(source: str) -> str:
