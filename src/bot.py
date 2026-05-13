@@ -3707,13 +3707,16 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 return
             log.info("ingest retry %d/%d: %s",
                      item["attempts"], _MAX_RETRY_ATTEMPTS, title[:80])
-            # Hold this item for _RETRY_BACKOFF_SEC before it's eligible
-            # again so a single broken upstream doesn't monopolise the
-            # drain rate. Other queue items keep flowing during the hold.
-            item["not_before_ts"] = time.time() + _RETRY_BACKOFF_SEC
+            # Linear backoff per attempt: 1×_RETRY_BACKOFF_SEC on 1st
+            # failure, 2× on 2nd, ... so a chronically-stuck item never
+            # monopolises the queue. With default 3600s and
+            # _MAX_RETRY_ATTEMPTS=5 the final wait is up to 5 h before
+            # /failed pickup.
+            hold = _RETRY_BACKOFF_SEC * item["attempts"]
+            item["not_before_ts"] = time.time() + hold
             _INGEST_RETRY_QUEUE.append(item)
             _persist_retry_queue()
-            wait_min = max(1, _RETRY_BACKOFF_SEC // 60)
+            wait_min = max(1, hold // 60)
             await _edit_or_send(
                 ctx, chat_id, status_msg_id,
                 f"🔁 일시 오류 — {wait_min}분 후 자동 재시도 "
