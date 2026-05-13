@@ -389,7 +389,8 @@ def _recover_orphan_files_at_startup(app) -> None:
                     await app.bot.send_message(
                         config.TELEGRAM_OWNER_ID,
                         f"🔄 {count}개 미학습 파일 발견 — 자동 재학습 큐에 추가됨\n"
-                        f"   1분 간격으로 최대 2개씩 처리 (~{eta_min}분 소요 예상)\n"
+                        f"   {_RETRY_INGEST_INTERVAL_SEC}초 간격으로 최대 "
+                        f"{_RETRY_INGEST_BATCH}개씩 처리 (~{eta_min}분 소요 예상)\n"
                         f"   /queue 로 진행 상황 확인 가능",
                     )
                 except Exception:
@@ -1219,7 +1220,11 @@ def _failed_retry_all(chat_id: int) -> str:
     _INGEST_FAILED.extend(kept)
     _persist_retry_queue()
     _persist_failed_log()
-    msg = f"🔁 retry queue로 {retried}건 재등록\n1분 간격 최대 2개씩 자동 처리."
+    msg = (
+        f"🔁 retry queue로 {retried}건 재등록\n"
+        f"{_RETRY_INGEST_INTERVAL_SEC}초 간격, 최대 "
+        f"{_RETRY_INGEST_BATCH}건/회 자동 처리."
+    )
     if kept:
         msg += f"\n\n♻️ retry 정보 없는 {len(kept)}건은 그대로 — 채널 스크롤로 직접 다시 보내주세요."
     return msg
@@ -1323,7 +1328,11 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _INGEST_RETRY_QUEUE:
         await update.message.reply_text("재시도 큐 비어있음 ✨")
         return
-    out = f"🔁 재시도 큐 {len(_INGEST_RETRY_QUEUE)}건 (1분 간격, 최대 2건/회 자동)"
+    out = (
+        f"🔁 재시도 큐 {len(_INGEST_RETRY_QUEUE)}건 "
+        f"({_RETRY_INGEST_INTERVAL_SEC}초 간격, 최대 "
+        f"{_RETRY_INGEST_BATCH}건/회 자동)"
+    )
     for item in _INGEST_RETRY_QUEUE[:25]:
         kind = item.get("kind", "?")
         title = item.get("file_name") or item.get("url") or "(unknown)"
@@ -1369,7 +1378,8 @@ async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     resume_note = "\n🔓 자동 복구도 재활성화됨" if marker_was_present else ""
     await update.message.reply_text(
         f"🔄 {count}개 미학습 파일 → 재학습 큐에 추가됨{resume_note}\n"
-        f"   1분 간격으로 최대 2개씩 처리 (~{eta_min}분 소요 예상)\n"
+        f"   {_RETRY_INGEST_INTERVAL_SEC}초 간격으로 최대 "
+        f"{_RETRY_INGEST_BATCH}개씩 처리 (~{eta_min}분 소요 예상)\n"
         f"   /queue 로 진행 상황 확인 가능\n\n"
         f"{preview}{more}"
     )
