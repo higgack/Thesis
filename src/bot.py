@@ -37,13 +37,13 @@ _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # Override via env when the queue is huge and live messages are getting
 # starved (e.g. RETRY_INGEST_INTERVAL_SEC=120 + RETRY_INGEST_BATCH=1
 # slows the drain to give new ingests faster slot access).
-# Hardcoded — earlier env-driven throttling (.env RETRY_INGEST_BATCH=1,
-# RETRY_INGEST_INTERVAL_SEC=120) was a flood-control workaround back when
-# the bot was spamming success/duplicate replies. With silent dedup and
-# linear backoff in place, that throttle just leaves CPU idle and the
-# queue draining at 30/hour. Pin to defaults so a stale .env can't
-# resurrect the bottleneck.
-_RETRY_INGEST_INTERVAL_SEC = 30
+# Hardcoded. The scheduler ticks every 10 s and spawns enough retry
+# tasks to refill any free slots in _INGEST_SEM. Combined with a
+# semaphore-aware spawn loop (below), this keeps ingest at full
+# concurrency without depending on env tuning or scheduler batch
+# sizing. The user's earlier .env throttle (1 per 120 s, set during a
+# flood-control incident) is intentionally ignored.
+_RETRY_INGEST_INTERVAL_SEC = 10
 _RETRY_INGEST_BATCH = 4
 # After a failed retry, hold the item for this many seconds before
 # making it eligible again. Prevents one stuck item from monopolising
@@ -3481,25 +3481,30 @@ async def _drain_pending_pro(ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
-    """Drain up to _RETRY_INGEST_BATCH queued ingests per tick. Each
-    inner call pops one item and processes it through `_INGEST_SEM`,
-    which keeps concurrent ingests bounded at the semaphore capacity
-    regardless of how many tasks we kick off in parallel here.
+    """Refill any free _INGEST_SEM slots from the retry queue and
+    return immediately so the next tick (10 s later) can do the same.
 
-    Per-item not_before_ts (linear backoff on failure) is the only
-    gating mechanism — failed items naturally hold while healthy items
-    keep draining around them."""
+    Older version awaited gather() of all spawned tasks per tick,
+    which let APScheduler's max_instances=1 wedge the whole drain
+    behind one slow PDF — even though 3 of 4 slots were idle. Now we
+    spawn one fire-and-forget task per free slot (capped by
+    _RETRY_INGEST_BATCH) and finish, so subsequent ticks always see
+    'how many slots are open right now?' and top them up.
+
+    Per-item not_before_ts (linear backoff on failure) is enforced
+    inside _pop_eligible_retry_item, so stuck items hold while
+    healthy ones drain around them."""
     if not _INGEST_RETRY_QUEUE:
         return
-    n = min(_RETRY_INGEST_BATCH, len(_INGEST_RETRY_QUEUE))
+    free_slots = _INGEST_SEM._value
+    n = min(_RETRY_INGEST_BATCH, free_slots, len(_INGEST_RETRY_QUEUE))
     if n <= 0:
         return
-    # Each inner call pops at most one item (synchronously, before any
-    # await), so launching them concurrently is safe.
-    await asyncio.gather(
-        *[_retry_pending_ingest(ctx) for _ in range(n)],
-        return_exceptions=True,
-    )
+    for _ in range(n):
+        # Detach: each task acquires the semaphore inside
+        # _retry_pending_ingest. Returning immediately lets APScheduler
+        # consider the tick 'done' so the next one runs on schedule.
+        asyncio.create_task(_retry_pending_ingest(ctx))
 
 
 def _pop_eligible_retry_item() -> dict | None:
