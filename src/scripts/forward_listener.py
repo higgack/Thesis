@@ -3,9 +3,26 @@ time.
 
 Telethon logs in with the user account (same session as
 import_channel.py) and subscribes to NewMessage events on the source
-channel. Each new post is forwarded to the bot DM, which then runs
-through the standard ingest pipeline (with the new dedup + URL-skip
-rules so automation digests don't blow up costs).
+channel.
+
+Two operating modes (auto-detected from each message body):
+
+1. Digest expansion — when a message is one of Noah Second Brain's
+   periodic digests (📋 텔레그램, 📰 Substack), the listener does NOT
+   forward the digest body itself. Instead it extracts every original-
+   source link inside the digest and forwards each to the target
+   channel (Telegram links via native message-forward so the bot sees
+   the ORIGINAL author/text, Substack/web links as plain-text URLs so
+   the bot's URL pipeline crawls them).
+
+   The 🐦 X (Twitter) digest is dropped entirely — X API access is
+   gated/paid so chasing tweet URLs isn't viable; the LLM-summarised
+   body itself was the only signal and it's not worth ingesting.
+
+2. Everything else (chat, non-digest forwards, edited messages) is
+   dropped silently. This is intentional: the bot was paying ~₩2-5k/day
+   summarising mirrored noise before digest mode landed. Only digest
+   content makes it through now.
 
 Usage (run inside tmux/systemd so it survives logout):
 
@@ -17,6 +34,7 @@ $DATA_DIR/import_session.session — phone/SMS only on first run.
 """
 import asyncio
 import os
+import re
 import sys
 
 from telethon import TelegramClient, events
@@ -69,64 +87,122 @@ RECONNECT_DELAY_SEC = 5
 TELETHON_CONN_RETRIES = 1000
 
 
-# Always-skipped substrings, hardcoded so they ship with the code and
-# don't depend on the user remembering to update INGEST_SKIP_PATTERNS
-# on each new bot meta-message we want to ignore.
-_BUILTIN_SKIP_PATTERNS = [
-    # Our own help text — leading title that only ever appears in /help
-    "second brain 봇 사용법",
-    # /usage outputs from this bot and the user's other dashboards
-    "second brain 사용 현황",
-    "noah 요약봇 사용 현황",
-    "noah 요약봇 사용현황",
-    "gemini api 비용 (추정)",
-    "gemini api 사용량",
-    "봇 사용 현황",
-    # Schedule / archive announcement messages from other bots
-    "noah의 주식요약 통합 스케줄",
-    "통합 스케줄",
-    "과거 요약 아카이브",
-    "주간 요약 보고서",
-    "범례: 📋 텔레그램",
-    # Deploy notifications from any of the user's auto-deploy scripts.
-    # Match the common shapes — completion, start, restart, redeploy —
-    # so any wording variant gets caught instead of needing a separate
-    # entry per message.
-    "배포 완료",
-    "배포 시작",
-    "봇 배포",
-    "자동 배포",
-    "재배포",
-    "redeploy",
-    # Health-alert noise from other bots (substack bot_listener, etc).
-    # The bracketed [스케줄러 ...] prefix is the giveaway — any alert
-    # in that family (사망/오류/지연/타임아웃/...) gets blocked by the
-    # single bracket pattern. The other entries are keyword fallbacks
-    # for variants without brackets.
-    "[스케줄러",
-    "스케줄러 사망",
-    "스케줄러 오류",
-    "사망 감지",
-    "자동 재시작 시도",
-    "watchdog",
-    "process died",
-]
+# ----------------- Digest expansion -----------------
+
+# Digest header signatures — these are stable Noah Second Brain
+# templates posted 4-5 times/day each. Detection is anchored on emoji +
+# "요약" so a regular forward that just happens to include the word
+# 채널 doesn't get expanded by mistake.
+_DIGEST_TG_RE = re.compile(r"📋[^\n]*채널\s*요약")
+_DIGEST_SUBSTACK_RE = re.compile(r"📰[^\n]*Substack\s*요약")
+_DIGEST_X_RE = re.compile(r"🐦[^\n]*(?:X\s*타임라인|타임라인)\s*요약")
+
+# Pull every t.me/<channel>/<msg_id> or t.me/c/<chat_id>/<msg_id> hit
+# from the digest body. Private-channel links use the numeric c/... form
+# and only resolve when the listener's Telethon account is already a
+# member of that chat — failures are logged and skipped.
+_TG_URL_RE = re.compile(
+    r"https?://t\.me/(c/\d+|[A-Za-z][\w]{1,63})/(\d+)"
+)
+
+# Match any http(s) URL but exclude t.me (telegram has its own path).
+# Substack digests link to substack.com, custom domains
+# (newsletter.semianalysis.com), and occasional non-substack analyst
+# sites — capturing every link in the body is the most robust.
+_HTTP_URL_RE = re.compile(r"https?://[^\s)\]>]+")
+
+# Per-link throttle so a 100-URL digest doesn't trip Telegram's
+# floodwait. 0.5s = ~50s for a typical 100-link digest, safe.
+_THROTTLE_SEC = 0.5
 
 
-def _skip_patterns() -> list[str]:
-    """Substring blocklist — any match in a message body skips the
-    forward. Combines hardcoded baseline (system messages, deploy
-    notifications, our own help text) with INGEST_SKIP_PATTERNS env
-    for the user's per-deployment additions (semicolon-separated)."""
-    raw = os.getenv("INGEST_SKIP_PATTERNS", "")
-    extras = [p.strip().lower() for p in raw.split(";") if p.strip()]
+def _extract_telegram_links(text: str) -> list[tuple[str, int]]:
+    seen: set[tuple[str, int]] = set()
+    out: list[tuple[str, int]] = []
+    for m in _TG_URL_RE.finditer(text):
+        ch, mid = m.group(1), int(m.group(2))
+        key = (ch, mid)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
+def _extract_substack_links(text: str) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
-    for p in _BUILTIN_SKIP_PATTERNS + extras:
-        if p and p not in seen:
-            seen.add(p)
-            out.append(p)
+    for m in _HTTP_URL_RE.finditer(text):
+        url = m.group(0).rstrip(".,);")
+        if "t.me/" in url:
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append(url)
     return out
+
+
+async def _resolve_tg_channel(client: TelegramClient, ch: str):
+    """Resolve 'c/1234567890' (numeric private id) or username to a
+    Telethon peer. Falls back to None on any error so we don't crash
+    the digest loop over one bad link."""
+    try:
+        if ch.startswith("c/"):
+            from telethon.tl.types import PeerChannel
+            # 100-prefix is the Telegram-standard MTProto channel id
+            # encoding for clients; user-side links use the bare digits.
+            chat_id = int("100" + ch[2:])
+            return await client.get_entity(PeerChannel(chat_id))
+        return await client.get_entity(ch)
+    except Exception as e:
+        print(f"    cannot resolve channel '{ch}': {type(e).__name__}: {e}")
+        return None
+
+
+async def _expand_telegram_digest(client: TelegramClient, text: str,
+                                   target, parent_id: int) -> None:
+    links = _extract_telegram_links(text)
+    print(f"  TG digest msg {parent_id}: {len(links)} links to expand")
+    forwarded = 0
+    for ch, mid in links:
+        peer = await _resolve_tg_channel(client, ch)
+        if peer is None:
+            continue
+        try:
+            orig = await client.get_messages(peer, ids=mid)
+            if not orig:
+                print(f"    skip {ch}/{mid}: message not found")
+                continue
+            await orig.forward_to(target)
+            forwarded += 1
+            print(f"    fwd {ch}/{mid} ({forwarded}/{len(links)})")
+        except FloodWaitError as e:
+            print(f"    flood wait {e.seconds}s on {ch}/{mid}")
+            await asyncio.sleep(e.seconds + 1)
+        except Exception as e:
+            print(f"    err {ch}/{mid}: {type(e).__name__}: {e}")
+        await asyncio.sleep(_THROTTLE_SEC)
+    print(f"  TG digest msg {parent_id}: done, forwarded {forwarded}/{len(links)}")
+
+
+async def _expand_substack_digest(client: TelegramClient, text: str,
+                                   target, parent_id: int) -> None:
+    urls = _extract_substack_links(text)
+    print(f"  Substack digest msg {parent_id}: {len(urls)} URLs to relay")
+    sent = 0
+    for url in urls:
+        try:
+            await client.send_message(target, url, link_preview=False)
+            sent += 1
+            print(f"    sent {url} ({sent}/{len(urls)})")
+        except FloodWaitError as e:
+            print(f"    flood wait {e.seconds}s on {url}")
+            await asyncio.sleep(e.seconds + 1)
+        except Exception as e:
+            print(f"    err {url}: {type(e).__name__}: {e}")
+        await asyncio.sleep(_THROTTLE_SEC)
+    print(f"  Substack digest msg {parent_id}: done, relayed {sent}/{len(urls)}")
 
 
 async def _client_lifecycle(channel: str, target_name: str,
@@ -155,55 +231,39 @@ async def _client_lifecycle(channel: str, target_name: str,
 
         print(f"listening: {getattr(src, 'title', channel)}")
         print(f"forwarding to: {getattr(target, 'title', None) or target_name}")
+        print("digest mode: 📋 Telegram → expand · 📰 Substack → expand · "
+              "🐦 X → drop · other → drop")
         print("running... Ctrl+C to stop\n")
-
-        skip_patterns = _skip_patterns()
-        if skip_patterns:
-            print(f"skip patterns: {skip_patterns}")
 
         @client.on(events.NewMessage(chats=src))
         async def handler(event):
             msg = event.message
             text = (msg.message or "").strip()
 
-            # Skip user-typed slash commands so they never get learned.
-            if text.startswith("/"):
-                print(f"  skip slash cmd {msg.id}")
+            # X digest: drop. X API access is paid/restricted and the
+            # LLM summary in the digest body alone isn't worth the cost
+            # of ingesting at scale.
+            if _DIGEST_X_RE.search(text):
+                print(f"  skip X digest {msg.id}")
                 return
 
-            # Skip a bot's direct reply to a slash command (e.g. Noah
-            # 요약봇 답하는 /usage 출력). Regular bot-posted summaries
-            # aren't reply_to anything, so they pass through.
-            reply_to_id = getattr(msg, "reply_to_msg_id", None)
-            if reply_to_id:
-                try:
-                    parent = await client.get_messages(src, ids=reply_to_id)
-                    parent_text = (getattr(parent, "message", "") or "").strip()
-                    if parent_text.startswith("/"):
-                        print(f"  skip reply-to-cmd {msg.id} → parent {reply_to_id}")
-                        return
-                except Exception as e:
-                    # If the parent lookup fails (deleted/inaccessible),
-                    # err on the side of forwarding rather than blocking.
-                    print(f"  reply lookup failed {reply_to_id}: {e}")
+            # Telegram digest: expand each 원문 link into its original
+            # message and forward those instead of the digest body.
+            if _DIGEST_TG_RE.search(text):
+                await _expand_telegram_digest(client, text, target, msg.id)
+                return
 
-            # Pattern-based skip — fires when reply_to chain doesn't
-            # exist (channel context, forwarded posts, edited messages).
-            if skip_patterns and text:
-                lc = text.lower()
-                for pat in skip_patterns:
-                    if pat in lc:
-                        print(f"  skip pattern '{pat}' on {msg.id}")
-                        return
+            # Substack digest: relay each article URL as a plain text
+            # message so the bot's URL pipeline crawls the full article.
+            if _DIGEST_SUBSTACK_RE.search(text):
+                await _expand_substack_digest(client, text, target, msg.id)
+                return
 
-            try:
-                await event.message.forward_to(target)
-                print(f"  forwarded msg {msg.id}")
-            except FloodWaitError as e:
-                print(f"  flood wait {e.seconds}s")
-                await asyncio.sleep(e.seconds + 1)
-            except Exception as e:
-                print(f"  err {msg.id}: {type(e).__name__}: {e}")
+            # Anything else (chat, screenshots, ad-hoc forwards) is
+            # dropped. Earlier behaviour was to mirror everything, but
+            # that summarised ~₩2-5k/day of noise. Only digest content
+            # makes it through now — see module docstring.
+            print(f"  drop non-digest msg {msg.id}")
 
         await client.run_until_disconnected()
     finally:

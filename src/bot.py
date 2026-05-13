@@ -710,9 +710,12 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 음성: Gemini STT · YouTube: 자막→Jina fallback
  차단: LinkedIn/FB/IG/카스, Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
-<b>【6. 자동 포워딩 (비활성화 상태)】</b>
- forward-listener는 profile 게이트로 stop. 비용 절감용.
- 활성화: COMPOSE_PROFILES=forward docker compose up -d forward-listener
+<b>【6. 자동 포워딩 (digest 모드)】</b>
+ forward-listener가 LISTEN_CHANNEL의 새 글을 감지
+ 📋 Telegram 요약 → 원문 메시지 fetch + 자동 ingest
+ 📰 Substack 요약 → 원문 article URL fetch + 자동 ingest
+ 🐦 X 요약 → drop (X API 비용)
+ 그 외 (잡담/일반) → drop. digest만 통과.
  큰 채널 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
 
 <b>【7. 메타데이터 자동】</b>
@@ -752,7 +755,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • brain 에러 → BM25 빌드 중, 30초 후
  • 답변 토픽 어긋남 → /reset
  • 비용 급등 → audio/Pro/web 다발 의심
- • 봇 메타글 학습 → /forget_search_all + INGEST_SKIP_PATTERNS
+ • 봇 메타글 학습 → digest mode 자동 차단
  • BGE-M3 모델: /app/data/hf_cache (2.3GB) 보존
  • 임베딩 backend 변경: .env EMBED_BACKEND=gemini|bge-m3"""
 
