@@ -981,7 +981,7 @@ Orphan: /orphans · /recover_orphans
 
 <b>【10-2. 비용 절감(자동)】</b>
 ✅ 6단 dedup ₩0: ①source ②URL canonical ③file_hash ④text_hash ⑤body_hash ⑥title 정규화
-✅ 청크 1000 토큰·요약 단일콜 12k/partial 8k·Vision DPI 100·자동캡 7p·트리거 800자/p
+✅ 청크 1000 토큰·요약 단일콜 12k/partial 8k·Vision DPI 100·sparse 자동캡 0p(OCR_AUTO_CAP)·image-only 3p(OCR_IMAGE_ONLY_CAP)·트리거 800자/p
 ✅ <b>Progressive OCR</b>(probe 3p 텍스트 &lt;300자면 나머지 skip, 환경변수 OCR_PROBE_MIN_TEXT) · <b>청크 임베딩 캐시</b>(반복 disclaimer 청크 Gemini 호출 0) · <b>메타 추출 gating</b>(이미지/음성/짧은 텍스트 skip)
 ✅ 페이지 image hash dedup·빈/표지 skip·표 무료 임베딩·짧은 forward 요약 skip·차단 도메인·.txt/.md/.csv 제외·failed URL 즉시 skip·/failed_clear 영구
 
