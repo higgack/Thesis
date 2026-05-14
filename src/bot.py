@@ -105,6 +105,51 @@ def _record_dedup_confirmed(filename: str) -> None:
         )
     except Exception:
         log.exception("dedup_confirmed persist failed")
+
+
+# Items the user explicitly told the bot to stop retrying (via
+# /failed_clear). Filenames and URLs collected from the failure log
+# at clear-time so the orphan scan, URL ingest, and forward-listener
+# all skip them silently — no re-attempts, no /failed re-entries.
+_PERMANENTLY_IGNORED_PATH = config.DATA_DIR / "permanently_ignored.json"
+_IGNORED_FILENAMES: set[str] = set()
+_IGNORED_URLS: set[str] = set()
+
+
+def _load_permanently_ignored() -> None:
+    global _IGNORED_FILENAMES, _IGNORED_URLS
+    try:
+        import json as _json
+        if _PERMANENTLY_IGNORED_PATH.exists():
+            data = _json.loads(_PERMANENTLY_IGNORED_PATH.read_text(encoding="utf-8"))
+            _IGNORED_FILENAMES = set(data.get("filenames") or [])
+            _IGNORED_URLS = set(data.get("urls") or [])
+    except Exception:
+        log.exception("permanently_ignored load failed")
+        _IGNORED_FILENAMES = set()
+        _IGNORED_URLS = set()
+
+
+def _persist_permanently_ignored() -> None:
+    try:
+        import json as _json
+        _PERMANENTLY_IGNORED_PATH.write_text(
+            _json.dumps({
+                "filenames": sorted(_IGNORED_FILENAMES),
+                "urls": sorted(_IGNORED_URLS),
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        log.exception("permanently_ignored persist failed")
+
+
+def _is_ignored_filename(filename: str) -> bool:
+    return bool(filename) and filename in _IGNORED_FILENAMES
+
+
+def _is_ignored_url(url: str) -> bool:
+    return bool(url) and url in _IGNORED_URLS
 # Live ⏳ status bubbles persisted to disk so a bot restart can clean
 # them up — otherwise the bubble freezes at whatever elapsed time
 # was last rendered ('처리 중 (2분 00초)' forever) because the updater
@@ -427,6 +472,10 @@ def _scan_orphan_files() -> list[Path]:
     # body_hash / title match). Without this, legacy docs without
     # file_hash keep resurfacing every restart.
     known |= _DEDUP_CONFIRMED
+    # And filenames the user explicitly told us to forget via
+    # /failed_clear. Those files might still be on disk but we never
+    # want to attempt them again.
+    known |= _IGNORED_FILENAMES
 
     # First pass: filter by filename (cheap source-label match).
     candidates = [p for name, p in all_files.items() if name not in known]
@@ -984,6 +1033,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 차단 도메인: X / Reuters / Bloomberg / paywall / LinkedIn 등
  • .txt/.md/.csv 첨부 = 학습 제외 (메시지 paste 만 학습)
  • failed URL 즉시 skip — 한 번 실패한 URL 재시도 안 함
+ • /failed_clear = 영구 무시 — 목록의 파일/URL 다시 안 학습 (orphan + URL + retry 모두 차단)
 
 <b>【10-3. Retry 정책】</b>
  • 최대 5회, 선형 백오프 (1h → 2h → 3h → 4h → /failed)
@@ -1478,10 +1528,47 @@ def _failed_retry_all(chat_id: int) -> str:
 
 
 def _failed_clear_all() -> str:
+    """Clear the failure log AND mark every cleared item as
+    permanently ignored. After this, orphan recovery / URL ingest /
+    forward-listener all skip these items silently — no more 'tried
+    5 times, gave up, back in /failed tomorrow' cycles."""
     n = len(_INGEST_FAILED)
+    added_files = 0
+    added_urls = 0
+    for entry in _INGEST_FAILED:
+        payload = entry.get("retry") or {}
+        title = entry.get("title") or ""
+        # URL — explicit kind='url' OR title that LOOKS like a URL.
+        url = payload.get("url") or (title if title.startswith(("http://", "https://")) else None)
+        if url and url not in _IGNORED_URLS:
+            _IGNORED_URLS.add(url)
+            added_urls += 1
+        # Filename — from retry payload (kind='doc' / 'local_file') or
+        # from the title for entries pre-dating retry_payload.
+        fname = (
+            payload.get("file_name")
+            or (Path(payload["path"]).name if payload.get("path") else None)
+        )
+        if not fname and title and not title.startswith(("http://", "https://")):
+            # Best-effort: if the title ends in a known extension, treat
+            # it as a filename. Avoids polluting the ignore list with
+            # generic '본문 비어있음' titles.
+            if any(title.lower().endswith(ext) for ext in
+                   (".pdf", ".pptx", ".docx", ".xlsx", ".mp3", ".m4a",
+                    ".png", ".jpg", ".jpeg")):
+                fname = title
+        if fname and fname not in _IGNORED_FILENAMES:
+            _IGNORED_FILENAMES.add(fname)
+            added_files += 1
+    if added_files or added_urls:
+        _persist_permanently_ignored()
     _INGEST_FAILED.clear()
     _persist_failed_log()
-    return f"실패 목록 비웠음 ({n}건)"
+    return (
+        f"실패 목록 비웠음 ({n}건)\n"
+        f"🚫 영구 무시 추가: 파일 {added_files}건, URL {added_urls}건\n"
+        f"  → orphan 재학습 / URL 재시도 / forward-listener 모두 차단"
+    )
 
 
 async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -3471,9 +3558,16 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
 
     urls, plain = _collect_message_urls(msg)
     for url in urls:
-        # Skip URLs that have already burned through their retry budget
-        # in a prior digest — paywalled domains (Reuters etc.) and broken
-        # shorteners stay broken, no point spending another 5 attempts.
+        # Skip URLs the user explicitly cleared via /failed_clear
+        # (permanently ignored) OR URLs that have already burned
+        # through their retry budget — paywalled domains stay broken,
+        # no point spending another 5 attempts.
+        if _is_ignored_url(url):
+            log.info("url skip — permanently ignored: %s", url[:120])
+            results.append({"status": "skipped", "title": url,
+                            "source": url,
+                            "detail": "영구 무시 URL (/failed_clear)"})
+            continue
         if _url_in_failed_log(url):
             log.info("url skip — previously failed: %s", url[:120])
             results.append({"status": "skipped", "title": url,
@@ -3859,6 +3953,11 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             if already:
                 log.info("retry skip — filename already learned: %s", fname)
                 _record_dedup_confirmed(fname)
+                return
+            # User permanently ignored this filename — drop the retry
+            # request without touching the pipeline.
+            if _is_ignored_filename(fname):
+                log.info("retry skip — permanently ignored: %s", fname)
                 return
     async with _INGEST_SEM:
         retry_job_id = _register_ingest(
@@ -4309,6 +4408,7 @@ def main():
 
     _load_persisted_state()
     _load_dedup_confirmed()
+    _load_permanently_ignored()
     _cleanup_stale_bubbles_at_startup(app)
     _recover_orphan_files_at_startup(app)
     vector.warm_bm25_cache()  # background scan; first query stays fast
