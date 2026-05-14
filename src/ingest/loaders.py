@@ -637,6 +637,13 @@ async def _load_pdf_from_bytes(data: bytes, source_url: str) -> tuple[str, str, 
 
 
 def load_pptx(path: Path) -> tuple[str, str, str | None]:
+    """Robust PPTX text extraction. python-pptx returns None instead
+    of '' / safe defaults in several edge cases (notes_text_frame on
+    slides whose notes XML is malformed, cells missing a text_frame,
+    SmartArt shapes that lack a .text accessor). The user hit an
+    AttributeError 'NoneType has no text' that re-queued the file on
+    every restart — wrap every accessor with a None guard so a single
+    odd slide can't blow up the whole load."""
     from pptx import Presentation
     prs = Presentation(str(path))
     parts: list[str] = []
@@ -644,18 +651,33 @@ def load_pptx(path: Path) -> tuple[str, str, str | None]:
     for i, slide in enumerate(prs.slides, 1):
         slide_lines: list[str] = []
         for shape in slide.shapes:
-            text = getattr(shape, "text", "") or ""
-            if text.strip():
-                slide_lines.append(text.strip())
+            try:
+                text = getattr(shape, "text", "") or ""
+                if text.strip():
+                    slide_lines.append(text.strip())
+            except Exception:
+                pass
             if getattr(shape, "has_table", False):
-                for row in shape.table.rows:
-                    cells = [c.text.strip() for c in row.cells if c.text and c.text.strip()]
-                    if cells:
-                        slide_lines.append(" | ".join(cells))
+                try:
+                    for row in shape.table.rows:
+                        cells_raw = []
+                        for c in row.cells:
+                            t = getattr(c, "text", None)
+                            if t and t.strip():
+                                cells_raw.append(t.strip())
+                        if cells_raw:
+                            slide_lines.append(" | ".join(cells_raw))
+                except Exception:
+                    pass
         if getattr(slide, "has_notes_slide", False):
-            notes = (slide.notes_slide.notes_text_frame.text or "").strip()
-            if notes:
-                slide_lines.append(f"[Notes] {notes}")
+            try:
+                ns = slide.notes_slide
+                ntf = getattr(ns, "notes_text_frame", None) if ns else None
+                notes = (getattr(ntf, "text", None) or "").strip() if ntf else ""
+                if notes:
+                    slide_lines.append(f"[Notes] {notes}")
+            except Exception:
+                pass
         if i == 1 and slide_lines:
             first = slide_lines[0].splitlines()[0].strip()
             if 3 <= len(first) <= 120:

@@ -977,7 +977,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     out = (
         "🤖 봇 상태\n"
         f"\n💬 활성 agent: {_ACTIVE_AGENT_RUNS}건"
-        f"\n📥 인입 진행: {ingest_busy}/{ingest_capacity}{ingest_detail}"
+        f"\n📥 동시 학습: {ingest_busy}건 (슬롯 {ingest_busy}/{ingest_capacity}){ingest_detail}"
         f"\n🔁 인입 재시도 큐: {len(_INGEST_RETRY_QUEUE)}건"
         f"\n💤 agent 재시도 큐: {len(_RETRY_QUEUE)}건"
         f"\n❌ 영구 실패: {len(_INGEST_FAILED)}건"
