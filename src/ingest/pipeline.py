@@ -205,7 +205,27 @@ async def ingest_image(img_bytes: bytes, source_label: str, caption: str = "",
     return await _ingest("image", source_label, title, body, None)
 
 
+# Drop patterns: text bodies matching these are silently skipped at
+# ingest time so retry-queue items + any bypassed forwards are filtered
+# consistently with forward-listener's _PLAIN_DROP_PATTERNS. Each entry
+# is a compiled regex. Add narrative-free auto-generated formats here.
+_TEXT_DROP_PATTERNS = (
+    # 🚨 알파 스캐너 시리즈 (FundEasy_Earnings) — ticker tables only,
+    # no narrative. Same pattern as forward-listener side, applied
+    # here too in case the message slipped through (legacy retry-queue
+    # entries, manual paste, etc.).
+    re.compile(r"알파\s*스캐너", re.UNICODE),
+)
+
+
 async def ingest_text(text: str, label: str = "text") -> dict:
+    for pat in _TEXT_DROP_PATTERNS:
+        if pat.search(text):
+            log.info("ingest text dropped (pattern %r): %s",
+                     pat.pattern, text[:60].replace("\n", " "))
+            return {"status": "skipped",
+                    "title": text.strip().splitlines()[0][:80] if text.strip() else label,
+                    "detail": "drop pattern matched"}
     hash8 = hashlib.sha1(text.encode()).hexdigest()[:8]
     src = f"{label}:{hash8}"
     # Exact source match handles the common case (same upload pasted
