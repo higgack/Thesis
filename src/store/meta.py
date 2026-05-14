@@ -43,6 +43,11 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 CREATE INDEX IF NOT EXISTS idx_docs_ingested ON documents(ingested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_docs_source ON documents(source);
+CREATE TABLE IF NOT EXISTS ocr_cache (
+    img_hash TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    ts TEXT NOT NULL
+);
 """
 
 
@@ -96,6 +101,33 @@ def upsert_doc(doc_id: str, source: str, doc_type: str, title: str,
                  file_hash=excluded.file_hash""",
             (doc_id, source, doc_type, title, summary, obsidian_path,
              datetime.utcnow().isoformat(), metadata_json, file_hash),
+        )
+
+
+def ocr_cache_get(img_hash: str) -> str | None:
+    """Look up a previously OCR'd page image. Same image bytes from
+    different docs (recurring disclaimer / cover pages across broker
+    reports) share the cached Gemini Vision output — saves the call
+    cost on every repeat hit."""
+    if not img_hash:
+        return None
+    with _conn() as c:
+        row = c.execute(
+            "SELECT text FROM ocr_cache WHERE img_hash=?", (img_hash,),
+        ).fetchone()
+        return row["text"] if row else None
+
+
+def ocr_cache_put(img_hash: str, text: str) -> None:
+    """Store a Vision OCR result keyed on the image bytes hash. Idempotent
+    via INSERT OR REPLACE so repeat ingests don't duplicate rows."""
+    if not img_hash or not text:
+        return
+    with _conn() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO ocr_cache(img_hash, text, ts) "
+            "VALUES(?, ?, ?)",
+            (img_hash, text, datetime.utcnow().isoformat()),
         )
 
 

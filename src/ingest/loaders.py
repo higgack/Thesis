@@ -1,10 +1,13 @@
 import asyncio
+import logging
 import re
 from pathlib import Path
 import httpx
 import trafilatura
 from pypdf import PdfReader
 from youtube_transcript_api import YouTubeTranscriptApi
+
+log = logging.getLogger(__name__)
 
 _YOUTUBE_RE = re.compile(
     r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([\w-]{11})"
@@ -224,7 +227,19 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
         meta_title = (doc.metadata or {}).get("title")
         if meta_title and meta_title.strip() and _looks_like_title(meta_title):
             title = meta_title.strip()
-        body = "\n\n".join(page.get_text("text") or "" for page in doc).strip()
+        # Per-page text + structured table extraction. find_tables()
+        # surfaces broker-report tables that page.get_text("text") often
+        # serialises as ragged whitespace; appending the structured rows
+        # gives the embedder a cleaner signal AND lets sparse-text pages
+        # cross the auto-OCR threshold without spending Vision tokens.
+        page_parts: list[str] = []
+        for page in doc:
+            t = page.get_text("text") or ""
+            tables_text = _extract_pdf_tables(page)
+            if tables_text:
+                t = (t + "\n\n[Tables]\n" + tables_text).strip()
+            page_parts.append(t)
+        body = "\n\n".join(page_parts).strip()
         doc.close()
     except Exception:
         body = ""
@@ -283,6 +298,64 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
     return (title or path.stem)[:200], body, None, ocr_meta
 
 
+def _extract_pdf_tables(page) -> str:
+    """Use PyMuPDF's table finder to pull structured rows out of a
+    page. Returns a TSV-ish string ready to append to the page's text,
+    or '' when no usable tables are found.
+
+    Conservative thresholds: at least 2 rows × 2 cols and ≥6 non-empty
+    cells. This filters out chart-axis lines and decorative grids that
+    find_tables() sometimes flags as tables, which would otherwise
+    pollute the body with noise."""
+    try:
+        finder = page.find_tables()
+    except Exception:
+        return ""
+    rows_all: list[str] = []
+    try:
+        tables = list(finder.tables) if hasattr(finder, "tables") else list(finder)
+    except Exception:
+        return ""
+    for t in tables:
+        try:
+            rows = t.extract() or []
+        except Exception:
+            continue
+        if len(rows) < 2:
+            continue
+        max_cols = max((len(r) for r in rows), default=0)
+        if max_cols < 2:
+            continue
+        filled = sum(1 for r in rows for c in r if (c or "").strip())
+        if filled < 6:
+            continue
+        rows_all.append(
+            "\n".join("\t".join((c or "").strip() for c in r) for r in rows)
+        )
+    return "\n\n".join(rows_all)
+
+
+def _page_is_blank(img_bytes: bytes, existing_text: str) -> bool:
+    """Detect cover / disclaimer / blank pages so we don't waste a
+    Vision call on them. Heuristic: PyMuPDF found <30 chars of text
+    AND the rendered image is ≥95% near-white pixels."""
+    if len(existing_text.strip()) >= 30:
+        return False
+    try:
+        from PIL import Image
+        import io as _io
+        img = Image.open(_io.BytesIO(img_bytes)).convert("L")
+    except Exception:
+        return False
+    pixels = list(img.getdata())
+    if not pixels:
+        return False
+    # Sample to keep the scan cheap on 1275×1650-ish images.
+    sample = pixels[::100]
+    white = sum(1 for p in sample if p >= 240)
+    return white / len(sample) >= 0.95
+
+
 def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 100,
                    start_page: int = 1,
                    skip_if_text_chars: int = 1500) -> dict:
@@ -324,9 +397,13 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 100,
         "단락/제목/표 구조를 유지하고, 설명이나 코멘트 없이 텍스트만 출력하세요."
     )
 
+    import hashlib as _hashlib
+    from ..store import meta as _meta
     pages_out: list[str] = []
     ocrd = 0
     skipped = 0
+    cached_hits = 0
+    blank_skips = 0
     end_page = start_page + max_pages - 1
     for i, page in enumerate(doc, 1):
         if i < start_page:
@@ -343,6 +420,21 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 100,
         try:
             pix = page.get_pixmap(dpi=dpi)
             img_bytes = pix.tobytes("png")
+            # L: blank / boilerplate skip — cover, disclaimer, and empty
+            # pages waste Vision calls without contributing signal.
+            if _page_is_blank(img_bytes, existing_text):
+                blank_skips += 1
+                continue
+            # K: cross-document OCR cache. Same disclaimer / logo /
+            # template page in many broker reports hashes identically;
+            # one Vision call covers them all forever.
+            img_hash = _hashlib.sha1(img_bytes).hexdigest()
+            cached_text = _meta.ocr_cache_get(img_hash)
+            if cached_text is not None:
+                if cached_text.strip():
+                    pages_out.append(f"-- Page {i} --\n{cached_text}")
+                cached_hits += 1
+                continue
             resp = client.models.generate_content(
                 model=config.SUMMARY_MODEL,
                 contents=[
@@ -358,11 +450,14 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 100,
             text = (resp.text or "").strip()
             if text:
                 pages_out.append(f"-- Page {i} --\n{text}")
+                _meta.ocr_cache_put(img_hash, text)
             ocrd += 1
         except Exception as e:
             pages_out.append(f"-- Page {i} --\n[OCR error: {type(e).__name__}: {e}]")
             ocrd += 1
     doc.close()
+    if cached_hits or blank_skips:
+        log.info("ocr cache hits=%d, blank skips=%d", cached_hits, blank_skips)
     return {
         "text": "\n\n".join(pages_out).strip(),
         "ocrd": ocrd,
