@@ -4134,6 +4134,34 @@ _PADDLE_RELEASE_PATH = config.DATA_DIR / ".paddle_last_seen"
 _PADDLE_BASELINE = "v3.3.1"  # the broken version we shipped against
 
 
+def _parse_semver(tag: str) -> tuple[int, ...]:
+    """Parse 'v3.3.1' / '3.3.1' / 'v3.3.1-rc1' into (3, 3, 1).
+    Pre-release suffixes (rc/beta/alpha) are stripped so the
+    numeric comparison still works. Returns (0,) on unparseable
+    input so a weird tag is treated as 'older than anything' —
+    safer than firing a false positive."""
+    if not tag:
+        return (0,)
+    s = tag.strip().lstrip("vV")
+    # cut anything past first non-digit-or-dot (e.g. '-rc1', 'b0')
+    cleaned = []
+    for ch in s:
+        if ch.isdigit() or ch == ".":
+            cleaned.append(ch)
+        else:
+            break
+    s = "".join(cleaned).strip(".")
+    if not s:
+        return (0,)
+    parts = []
+    for p in s.split("."):
+        try:
+            parts.append(int(p))
+        except ValueError:
+            break
+    return tuple(parts) if parts else (0,)
+
+
 async def _send_actionable_alert(ctx, notify_id: str, message: str,
                                   parse_mode: str | None = "HTML") -> None:
     """Send a Telegram message with a [✅ 확인 / 알람 정지] inline
@@ -4255,7 +4283,24 @@ async def _check_paddle_release(ctx: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        if latest == last_seen:
+        # github /releases/latest returns the MOST RECENTLY CREATED
+        # release, which can be a back-port patch on an older branch
+        # (e.g. v3.3.0 published AFTER v3.3.1). Only notify if the
+        # new tag is strictly higher than BOTH the baseline AND the
+        # last_seen — otherwise it's noise (and last_seen mustn't
+        # regress either, or the next legit upgrade gets compared
+        # against the wrong floor).
+        latest_v = _parse_semver(latest)
+        baseline_v = _parse_semver(_PADDLE_BASELINE)
+        last_seen_v = _parse_semver(last_seen)
+        target_v = max(baseline_v, last_seen_v)
+        if latest_v <= target_v:
+            log.info(
+                "paddle release check: %s ≤ %s (baseline %s, last_seen %s) "
+                "— skip notify",
+                latest, ".".join(str(p) for p in target_v),
+                _PADDLE_BASELINE, last_seen,
+            )
             return
 
         # Record FIRST so a duplicate run doesn't double-fire the
