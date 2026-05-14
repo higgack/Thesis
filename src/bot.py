@@ -911,174 +911,61 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             break
 
 
-_HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
+_HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
-<b>【1. 명령어】</b>
-▸ 조회: /find &lt;키워드&gt; · /recent [N] · /stats · /status · /usage · /cost
-▸ 대화: /reset (메모리 초기화)
-▸ 장애: /failed · /failed_retry · /failed_clear · /queue
-       /orphans (디스크에 있지만 미학습 파일 목록만 보기)
-       /recover_orphans (orphan 일괄 재학습 큐 등록)
-       /queue_cancel_all (전체 큐·보류 일괄 취소)
-▸ 보류 (5분 미선택 자동 보관):
-       /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt;
-       /pending_approve_all → /pending_approve_all_confirm (일괄 승인)
-       /pending_cancel_all (일괄 취소)
-       /ocr_extend &lt;doc_id|키워드&gt; (학습된 PDF OCR 추가 확장)
-▸ 삭제: /forget &lt;id&gt; · /forget_search[_all] &lt;키워드&gt;
-       /forget_qna[_search] &lt;id|키워드&gt;
-       /dedupe → /dedupe_confirm  중복 doc (본문 가장 긴 것 1개만 유지)
-       /cleanup → /cleanup_confirm  노이즈 doc (짧은 text 자료)
-       /forget_forwards → /forget_forwards_confirm  자동 포워딩 디지스트
-▸ 고급: /deep &lt;질문&gt; (Pro 모델 강제)
-▸ /start /help
+<b>【1. 명령어 전체】</b>
+조회: /find &lt;키워드&gt; · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
+대화: /reset · /deep &lt;질문&gt; (Pro 강제)
+장애: /failed · /failed_retry · /failed_clear (영구 무시) · /queue · /queue_cancel_all
+Orphan: /orphans · /recover_orphans
+보류(5분 자동보관): /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all(_confirm) · /pending_cancel_all · /ocr_extend &lt;doc_id|키워드&gt;
+삭제: /forget &lt;id&gt; · /forget_search[_all] &lt;kw&gt; · /forget_qna[_search] &lt;id|kw&gt; · /dedupe(_confirm) · /cleanup(_confirm) · /forget_forwards(_confirm)
+도구: /search_my_brain · /compare_papers · /search_papers · /web_search · /ingest_url
+기타: /start /help
 
-<b>【2. 핵심 원리】</b>
- • 채널 무엇이든 → 자동 수집·요약·임베딩·Obsidian
- • DM 자연어 → 에이전트가 도구 자동 선택
- • 메모리 7턴 (대명사 OK, /reset으로 초기화)
- • 쿼리 확장: 짧은 질문 자동 facet 분해
- • 비용·Q&amp;A SQLite 영구 누적 + 정적 대시보드
- • 임베딩 + reranker 모두 로컬 (Gemini 호출 X)
- • 답변 끝: (사용 자료 시점: 발행일 · 학습: YYYY.MM)
- • 분석성 질문은 자동 CoT + 반론·리스크 검토
+<b>【2. 핵심 원리】</b> 채널 무엇이든→자동 수집·요약·임베딩·Obsidian / DM 자연어→에이전트 도구 자동 / 메모리 7턴(대명사 OK, /reset) / 짧은 질문 facet 자동확장 / 비용·Q&amp;A SQLite 영구+대시보드 / 분석 질문 자동 CoT+반론 / 답변 끝 (자료 시점: 발행일·학습 YYYY.MM)
 
 <b>【3. 답변 출처 도구】</b>
- 🧠 search_my_brain  저장 자료 단일 검색 (TOP_K 10)
- 🧠 compare_papers  다수(50) 통합·비교 (20개+ Pro/Flash/취소 확인)
- 🧠 recent_docs  최근 학습 목록
- 📄 search_papers  외부 학술 (S2→arXiv)
- 🌐 web_search  실시간 구글 (명시 시만)
- 📥 ingest_url  URL 학습
+🧠 search_my_brain 단일검색(TOP_K 10) · 🧠 compare_papers 50건 통합·비교(20+ Pro/Flash/취소) · 🧠 recent_docs 최근 학습 · 📄 search_papers 학술(S2→arXiv) · 🌐 web_search 구글 실시간(명시 시만) · 📥 ingest_url URL 학습
 
 <b>【4. 자연어 트리거】</b>
- 🧠 brain — "삼성전기 MLCC 동향"
- 🧠 compare — "정리/리뷰/통합/비교/전체"
- 📄 papers — "찾아줘/추천/새로운/어떤 논문"
- 🌐 web — "웹/구글/오늘/실시간/지금" 필수 ("최근/요즘"만으론 X)
- 📥 ingest — "이거 학습해줘 URL" 또는 URL만
- 후속 질문 — 대명사 OK
+🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰/비교/전체" · 📄 papers "찾아줘/추천/논문" · 🌐 web "웹/구글/오늘/지금" 필수("최근/요즘"만으론 X) · 📥 ingest "학습해줘 URL"·URL만 / 후속 질문 대명사 OK
 
-<b>【5. 자료 인입】</b>
- URL/PDF/PPTX/DOCX/XLSX/이미지/음성/YouTube/텍스트(메시지) 그냥 보내기
- • PDF: 텍스트+OCR(병렬), 차트 많은 PDF 자동 Vision 7p (초과 시 확인)
- • 이미지: 캡션 ≥80자 / 짧으면 OCR / [OCR] 강제 병행
- • 음성: Gemini STT · YouTube: 자막→Jina fallback
- • <b>.txt/.md/.csv 첨부 = 학습 제외</b> (필요 시 메시지로 직접 paste)
- 차단: LinkedIn/FB/IG/카스, Reuters/Bloomberg/WSJ/FT/NYT/WaPo
+<b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 그냥 전송
+• PDF: 텍스트+OCR 병렬, 차트 많으면 Vision 자동 7p(초과 시 확인) • 이미지: 캡션≥80자/짧으면 OCR/[OCR] 강제병행 • 음성: Gemini STT · YouTube: 자막→Jina fallback • <b>.txt/.md/.csv 첨부=학습 제외</b>(필요시 메시지 paste)
+차단: LinkedIn/FB/IG/카스, Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
-<b>【6. 자동 포워딩 (multi-channel)】</b>
- LISTEN_CHANNELS (콤마구분) 채널들을 동시 감지:
- [Noah 디지스트] 📋 TG 원문 fetch · 📰 Substack URL relay · 그 외 drop
- [LISTEN_PLAIN_CHANNELS] 본문 그대로 (URL line strip, 이미지 drop)
-   · daju_dart (다주 DART 공시) · Fundeasyearnings (어닝/옵션, 알파스캐너 drop)
- 채널 ON/OFF 는 .env LISTEN_CHANNELS / LISTEN_PLAIN_CHANNELS 수정
- 그 외 (잡담/일반) → drop
- 큰 채널 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
+<b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS 동시 감지
+[Noah 디지스트] 📋 TG 원문 fetch / 📰 Substack URL relay / 그 외 drop
+[PLAIN] 본문 그대로(URL line strip, 이미지 drop): daju_dart(DART 공시) · Fundeasyearnings(어닝/옵션, 알파스캐너 drop) · 그 외 drop
+백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
 
-<b>【7. 메타데이터 자동】</b>
- Flash-Lite 요약+메타 1콜 합침 (~₩0.5/doc, Stage 1 절감)
- 🏢 회사 · 🏷 태그 · 📅 발행일 (YYYY.MM)
- → /find·중복알림·답변 출처에 표시
+<b>【7. 메타데이터】</b> Flash-Lite 요약+메타 1콜 (~₩0.5/doc) · 🏢회사 🏷태그 📅YYYY.MM → /find·중복알림·답변 출처 표시
 
-<b>【8. 웹 대시보드】</b>
- http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html
- Basic Auth: 사용자명/비밀번호 (.env 참조)
- 통계 4장 · 검색 · 도구 칩 · 날짜별 접이식 · 1-탭 삭제 · 🔗 원본 링크
- 60초 자동 갱신 · 19~07 KST 다크 자동
+<b>【8. 대시보드】</b> http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html · Basic Auth(.env) · 통계 4장·검색·도구 칩·접이식·1-탭 삭제·🔗 원본 · 60s 갱신·19~07 KST 다크
 
-<b>【9. 답변 품질】</b>
- • 자료 시점 표기 필수 · 자료 부족 시 솔직히 "부족"
- • brain 우선 ("최근/요즘"만으로 web X → "웹에서/오늘" 필요)
- • 후속 질문도 brain 새로 검색 (메모리 only 금지)
- • web 결과는 [도메인]으로 인용
- • 인용은 자료 제목 (숫자 [1] X) · 본문 [N] 자동 매김
+<b>【9. 답변 품질】</b> 자료 시점 필수·부족 시 솔직히 표시 / brain 우선("최근/요즘"만으론 web X, "웹에서/오늘" 필요) / 후속도 brain 재검색 / web 결과 [도메인] 인용 / 인용=자료제목 본문 [N] 자동
 
-<b>【10. 운영 / 인프라】</b>
- • VM: n2-standard-4 (4 vCPU, 16GB) · bot mem_limit 12GB
- • 동시 학습: Semaphore 8 + 큐 tick batch 8 (env INGEST_SEM_CAPACITY)
- • 명령어 응답성: concurrent_updates=True + HTTPX pool 32
- • 영속 데이터: retry queue / failed log / chat history /
-   qna log / cost db / dashboard / ocr_cache / active_bubbles
- • 봇 재시작 시 stale ⏳ 버블 자동 정리 (active_bubbles.json)
- • 메모리 자동 청소 5분 주기 (90% 즉시·95% 거부)
- • 60s Gemini call timeout · 10분 ingest timeout
+<b>【10. 운영】</b> VM n2-standard-4(4 vCPU/16GB) bot 12GB · Semaphore 8+큐 batch 8(INGEST_SEM_CAPACITY) · concurrent_updates=True+HTTPX pool 32 · 영속(retry/failed/history/qna/cost/dashboard/ocr_cache/active_bubbles) · 재시작 시 stale ⏳ 정리 · 메모리 청소 5분(90%즉시 95%거부) · 60s call timeout · 10분 ingest timeout
 
-<b>【10-1. 모델 + 비용 (현재)】</b>
- • <b>임베딩</b>: Gemini embedding-001 (3072-dim · $0.15/1M)
- • <b>요약 / 메타</b>: Flash-Lite (Lite → Flash auto fallback on 503)
- • <b>답변 (Q&amp;A)</b>: Flash (기본) · Pro (deep mode · /deep)
- • <b>Vision OCR</b>: Flash-Lite (멀티모달, DPI 100)
- • 단가 (1M 토큰): Pro ₩1,750 · Flash ₩420 · Lite ₩140 · Embed ₩200
- • 답변 1h 인메모리 캐시 — 동일 질문 재호출 0
+<b>【10-1. 모델·단가】</b> 임베딩 Gemini embedding-001(3072-dim) · 요약/메타 Flash-Lite(Lite→Flash auto fallback on 503) · 답변 Flash(기본)·Pro(/deep) · Vision OCR Flash-Lite(DPI 100) · 1M 토큰 ₩: Pro 1,750 / Flash 420 / Lite 140 / Embed 200 · 답변 1h 인메모리 캐시
 
-<b>【10-2. Ingest 비용 절감 (모두 자동 적용)】</b>
- ✅ <b>6단 dedup, 모두 비용 ₩0 즉시 reject</b>:
-   1. source 라벨 — URL/파일명 정확 매치
-   2. URL canonical — utm/fbclid/scheme/www/m strip, YouTube/arXiv ID 통일
-   3. file_hash — SHA1 바이트 매치 (PDF/PPTX/DOCX/XLSX)
-   4. text_hash — 텍스트 본문 SHA1 (forward 재포워딩)
-   5. body_hash — 추출 본문 정규화 (PDF ↔ PPTX 같은 내용)
-   6. title 정규화 — 헤드라인 매치 (재게시/paraphrase)
- • 청크 1000 토큰 (env CHUNK_TOKENS) — 임베딩 청크 ↓30%
- • 요약 단일콜 임계 12k 토큰, partial 8k — 긴 PDF Flash-Lite 호출 ↓60%
- • Vision OCR DPI 100 (env OCR_DPI) — 이미지 토큰 ↓55%
- • Vision 자동 캡 7p (env OCR_AUTO_CAP)
- • Vision 트리거 800자/p (env OCR_SPARSE_THRESHOLD)
- • 페이지 image hash dedup — 반복 disclaimer Vision 호출 0
- • 빈/단순 페이지 자동 skip — 표지/blank
- • PyMuPDF 표 추출 — 구조화 표 무료 임베딩
- • PDF metadata title 휴리스틱 — 회사+날짜 코드면 파일명 우선
- • 짧은 forward (≤400 토큰) 요약 skip — 본문 자체가 summary
- • 차단 도메인: X / Reuters / Bloomberg / paywall / LinkedIn 등
- • .txt/.md/.csv 첨부 = 학습 제외 (메시지 paste 만 학습)
- • failed URL 즉시 skip — 한 번 실패한 URL 재시도 안 함
- • /failed_clear = 영구 무시 — 목록의 파일/URL 다시 안 학습 (orphan + URL + retry 모두 차단)
+<b>【10-2. Ingest 절감(자동)】</b>
+✅ 6단 dedup ₩0 즉시 reject: ①source(URL·파일명) ②URL canonical(utm/fbclid/scheme/www/m strip, YouTube/arXiv ID) ③file_hash SHA1(PDF/PPTX/DOCX/XLSX) ④text_hash SHA1 ⑤body_hash 정규화(PDF↔PPTX 동일내용) ⑥title 정규화(재게시/paraphrase)
+• 청크 1000 토큰(CHUNK_TOKENS) 청크↓30% • 요약 단일콜 12k, partial 8k Flash-Lite 호출↓60% • Vision DPI 100(OCR_DPI) 토큰↓55% • Vision 자동캡 7p(OCR_AUTO_CAP) • Vision 트리거 800자/p(OCR_SPARSE_THRESHOLD) • 페이지 image hash dedup(반복 disclaimer Vision 0) • 빈/표지 페이지 skip • PyMuPDF 표 무료 임베딩 • PDF metadata title 휴리스틱(회사+코드면 파일명) • 짧은 forward(≤400 토큰) 요약 skip • 차단 도메인(X/Reuters/Bloomberg/paywall/LinkedIn) • .txt/.md/.csv 첨부 제외 • failed URL 즉시 skip • /failed_clear=영구 무시(orphan+URL+retry 모두 차단)
 
-<b>【10-3. Retry 정책】</b>
- • 최대 5회, 선형 백오프 (1h → 2h → 3h → 4h → /failed)
- • 같은 자료가 실패해도 다른 큐 아이템 막지 않음 (not_before_ts)
- • Telegram flood-ban 회피: silent retry 메시지 / RetryAfter circuit breaker
- • 30s 간격 live status 갱신 (env _LIVE_EDIT_INTERVAL)
+<b>【10-3. Retry】</b> 최대 5회 선형 백오프(1h→2h→3h→4h→/failed) · 실패가 다른 큐 안 막음(not_before_ts) · flood-ban 회피 silent retry+RetryAfter circuit breaker · 30s live status
 
-<b>【11. 트러블슈팅】</b>
- • "본문 비어있음" → 차단 도메인/paywall
- • 봇 응답 없음 → docker logs thesis-bot-1
- • brain 에러 → BM25 빌드 중, 30초 후
- • 답변 토픽 어긋남 → /reset
- • 비용 급등 → audio/Pro/web 다발 의심
- • 봇 메타글 학습 → digest mode 자동 차단
- • BGE-M3 모델: /app/data/hf_cache (2.3GB) 보존
- • 임베딩 backend 변경: .env EMBED_BACKEND=gemini|bge-m3"""
+<b>【11. 트러블슈팅】</b> "본문 비어있음"→차단/paywall · 봇 무응답→docker logs thesis-bot-1 · brain 에러→BM25 빌드중 30s 후 · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web 의심 · 봇 메타글→digest mode 차단 · BGE-M3 /app/data/hf_cache 보존 · backend 전환 .env EMBED_BACKEND=gemini|bge-m3"""
 
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     await _typing(update, ctx)
-    # Help text outgrew Telegram's 4096-char-per-message cap as we
-    # accumulated sections. Split on top-level `【N. ...】` section
-    # headers so chunks stay readable + always start at a section
-    # boundary; never split mid-paragraph.
-    chunks: list[str] = []
-    buf = ""
-    for line in _HELP_TEXT.splitlines(keepends=True):
-        # Start a new chunk on a section header IF the current chunk
-        # is already substantial — avoids one-line preambles per chunk.
-        is_section = "<b>【" in line
-        if is_section and len(buf) > 3000:
-            chunks.append(buf)
-            buf = ""
-        if len(buf) + len(line) > 3800:
-            chunks.append(buf)
-            buf = ""
-        buf += line
-    if buf:
-        chunks.append(buf)
-    for c in chunks:
-        await update.message.reply_text(
-            c, parse_mode="HTML", disable_web_page_preview=True,
-        )
+    await update.message.reply_text(
+        _HELP_TEXT, parse_mode="HTML", disable_web_page_preview=True,
+    )
 
 
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
