@@ -944,7 +944,7 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【1. 명령어】</b>
-조회: /find &lt;kw&gt; · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
+조회: /find &lt;kw&gt; · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
 장애: /failed · /failed_retry · /failed_clear(영구 무시) · /queue · /queue_cancel_all · /audit(대기 전수)
 Orphan: /orphans · /recover_orphans
@@ -1493,6 +1493,77 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Reuse the help-splitter so any number of matches fits across
     # however many Telegram messages it takes. Paragraph (blank-line)
     # boundaries between items keep each chunk readable.
+    for chunk in _split_for_telegram(out):
+        await update.message.reply_text(
+            chunk, parse_mode="HTML", disable_web_page_preview=True,
+        )
+
+
+async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Dump every chunk of one doc across multiple Telegram messages
+    so the user can read the FULL original body, not just the
+    LLM-compressed summary that /find shows.
+
+    Usage: /show <doc_id 또는 제목 키워드>
+    - doc_id: 16-char hex from /find's source/id area
+    - 키워드: title substring match (first hit wins)
+
+    Cost: ₩0 (SQLite + Chroma local lookups only). Output can be
+    long for big PDFs — multi-message split handles up to ~50,000
+    chars across ~15 Telegram messages."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    if not ctx.args:
+        await update.message.reply_text(
+            "사용법: /show <doc_id 또는 제목 키워드>\n"
+            "/find 로 찾은 doc의 본문 전체 청크를 차례대로 보여줍니다."
+        )
+        return
+    query = " ".join(ctx.args).strip()
+
+    # Lookup priority: exact id → title keyword search.
+    doc = await asyncio.to_thread(meta.get_doc, query)
+    if not doc:
+        matches = await asyncio.to_thread(meta.search_broad, query, 1)
+        if not matches:
+            await update.message.reply_text(f"매칭 없음: '{query[:60]}'")
+            return
+        doc = matches[0]
+
+    doc_id = doc["id"]
+    title = doc.get("title") or "(제목 없음)"
+    chunks = await asyncio.to_thread(vector.get_doc_chunks, doc_id)
+    if not chunks:
+        await update.message.reply_text(
+            f"⚠️ '{title[:60]}' — Chroma 청크 없음. "
+            f"(meta 만 있고 본문 청크가 삭제됐을 가능성)"
+        )
+        return
+
+    import html as _html
+    chunk_chunks = [c for c in chunks if c.get("kind") == "chunk"]
+    summary_chunks = [c for c in chunks if c.get("kind") == "summary"]
+
+    header_lines = [
+        f"📄 <b>{_html.escape(title[:120])}</b>",
+        f"🆔 <code>{_html.escape(doc_id)}</code>"
+        f" · 청크 {len(chunk_chunks)}개"
+        + (f" + 요약 1" if summary_chunks else ""),
+    ]
+    src = doc.get("source") or ""
+    if src.startswith(("http://", "https://")):
+        header_lines.append(f"📎 {_html.escape(src[:120])}")
+    elif src.startswith("tg-"):
+        header_lines.append(f"💬 {_html.escape(src.split(':', 1)[0])}")
+    header = "\n".join(header_lines)
+
+    body_parts: list[str] = [header]
+    for c in chunk_chunks:
+        idx = c.get("idx", 0)
+        text = _html.escape(c.get("text") or "")
+        body_parts.append(f"\n\n<b>━━ chunk #{idx} ━━</b>\n{text}")
+    out = "".join(body_parts)
     for chunk in _split_for_telegram(out):
         await update.message.reply_text(
             chunk, parse_mode="HTML", disable_web_page_preview=True,
@@ -4495,6 +4566,7 @@ def main():
     app.add_handler(CommandHandler("forget_qna", cmd_forget_qna))
     app.add_handler(CommandHandler("forget_qna_search", cmd_forget_qna_search))
     app.add_handler(CommandHandler("find", cmd_find))
+    app.add_handler(CommandHandler("show", cmd_show))
     app.add_handler(CommandHandler("failed", cmd_failed))
     app.add_handler(CommandHandler("failed_retry", cmd_failed_retry))
     app.add_handler(CommandHandler("failed_clear", cmd_failed_clear))

@@ -219,5 +219,28 @@ def delete_doc(doc_id: str) -> int:
     return len(res["ids"])
 
 
+def get_doc_chunks(doc_id: str) -> list[dict]:
+    """Return every chunk for one doc, sorted by idx (summary first
+    via idx=-1 convention). Used by /show to dump the full original
+    body when the summary alone is insufficient. Each item is
+    {id, text, idx, kind}."""
+    if not doc_id:
+        return []
+    res = _collection.get(
+        where={"doc_id": doc_id},
+        include=["documents", "metadatas"],
+    )
+    ids = res.get("ids") or []
+    docs = res.get("documents") or []
+    metas = res.get("metadatas") or []
+    out: list[dict] = []
+    for cid, text, md in zip(ids, docs, metas):
+        idx = (md or {}).get("idx", 0)
+        kind = (md or {}).get("kind", "chunk")
+        out.append({"id": cid, "text": text or "", "idx": idx, "kind": kind})
+    out.sort(key=lambda c: c["idx"])
+    return out
+
+
 def chunk_count() -> int:
     return _collection.count()
