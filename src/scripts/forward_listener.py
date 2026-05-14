@@ -263,6 +263,22 @@ async def _expand_substack_digest(client: TelegramClient, msg,
 
 # ----------------- Plain-text channel relay -----------------
 
+# Per-channel drop patterns. If a message body matches any of the
+# regexes in this list for the source channel, it gets dropped
+# entirely instead of relayed. Used for noisy auto-generated content
+# (ticker dumps, alert spam) that has no analytical value worth
+# embedding.
+_PLAIN_DROP_PATTERNS: dict[str, list[re.Pattern]] = {
+    "fundeasyearnings": [
+        # 🚨 알파 스캐너 시리즈 — Alpha consensus / Alpha options /
+        # Alpha scanner. Pure ticker tables with probability scores,
+        # no narrative. Each post is ~30 tickers × repeating fields.
+        # Drop on the '알파 스캐너' header (covers every subtype).
+        re.compile(r"알파\s*스캐너", re.UNICODE),
+    ],
+}
+
+
 # Per-channel URL-line strip patterns. Each entry is a list of compiled
 # regexes applied as `pattern.sub("", text)` so any matching line is
 # removed before relaying. We keep these line-anchored (^...$ with
@@ -322,6 +338,18 @@ def _strip_plain_urls(text: str, channel_key: str) -> str:
 async def _relay_plain(client: TelegramClient, msg, target,
                        channel_name: str) -> None:
     text = (msg.message or "").strip()
+    # Per-channel drop filter — noisy auto-generated content (ticker
+    # tables, alpha scanner dumps) that has no narrative value.
+    # Matches against the raw body before URL stripping so the
+    # header pattern stays visible.
+    drop_patterns = _PLAIN_DROP_PATTERNS.get(channel_name.lower(), [])
+    for pat in drop_patterns:
+        if pat.search(text):
+            print(
+                f"  drop plain msg {msg.id} from {channel_name}: "
+                f"matched drop pattern {pat.pattern!r}"
+            )
+            return
     cleaned = _strip_plain_urls(text, channel_name.lower())
     if len(cleaned) < _PLAIN_MIN_CHARS:
         print(
