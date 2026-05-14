@@ -21,16 +21,43 @@ Rules:
 - `docker logs / rm / exec / inspect <CONTAINER>` — full container name
   (`thesis-bot-1`).
 
-Common commands the user runs after a push:
-```bash
-cd ~/Thesis && git pull && docker compose up -d --force-recreate bot
-docker logs --tail 20 thesis-bot-1
-docker logs --tail 20 thesis-forward-listener-1
+## Auto-deploy is ALREADY active — do NOT suggest manual git pull
+
+**VM has these cron entries running every minute** (verified via `crontab -l`):
+
+```
+* * * * * cd /home/higgack/Thesis && bash scripts/auto_pull.sh
+* * * * * ~/Thesis/scripts/auto_deploy.sh
+*/5 * * * * bash /home/higgack/scheduler_watchdog.sh >> ~/deploy.log 2>&1
 ```
 
-`docker compose restart` does NOT re-read `.env` env_file values — it
-keeps the existing container's env. After editing `.env`, always use
-`docker compose up -d --force-recreate <service>` (or `down`+`up -d`).
+What this means for the agent:
+- After ANY `git push`, the VM auto-pulls the branch within 60 seconds
+  and recreates the bot/forward-listener/dashboard containers.
+- The bot then sends a "🚀 배포 완료 <sha> <title>" notification to the
+  owner's Telegram on every successful redeploy.
+- **NEVER** tell the user to run `git pull` / `docker compose up -d` /
+  `docker compose restart` themselves. They've heard that 10× already
+  and it wastes their time.
+- **NEVER** add new cron entries. The existing ones do the job — adding
+  duplicates causes race conditions.
+- After pushing, the correct closing line is: "푸시 완료 (sha). 1분 내
+  자동 배포 + 텔레그램 알림 갈 거야." That's it.
+
+The only exceptions where a manual command IS needed:
+- After editing `.env` on the VM, because `docker compose restart` doesn't
+  re-read env_file. Use `docker compose up -d --force-recreate <service>`.
+  But auto-deploy doesn't touch `.env`, so this only applies to manual
+  edits the user makes.
+- `docker logs` for diagnostics — read-only, fine to suggest.
+
+Common commands the user might run on their own (read-only / observational):
+```bash
+docker logs --tail 20 thesis-bot-1
+docker logs --tail 20 thesis-forward-listener-1
+tail ~/deploy.log
+crontab -l
+```
 
 ## Branch / push policy
 
