@@ -44,7 +44,7 @@ _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # sizing. The user's earlier .env throttle (1 per 120 s, set during a
 # flood-control incident) is intentionally ignored.
 _RETRY_INGEST_INTERVAL_SEC = 10
-_RETRY_INGEST_BATCH = 4
+_RETRY_INGEST_BATCH = 6
 # After a failed retry, hold the item for this many seconds before
 # making it eligible again. Prevents one stuck item from monopolising
 # the queue's drain rate (without this, a perpetually-overloaded
