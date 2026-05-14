@@ -742,7 +742,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  LISTEN_CHANNELS (콤마구분) 채널들을 동시 감지:
  [Noah 디지스트] 📋 TG 원문 fetch · 📰 Substack URL relay · 그 외 drop
  [LISTEN_PLAIN_CHANNELS] 본문 그대로 (URL line strip, 이미지 drop)
-   · daju_017_bot (다주 공시) · Fundeasyearnings (어닝/옵션, 알파스캐너 drop)
+   · daju_dart (다주 DART 공시) · Fundeasyearnings (어닝/옵션, 알파스캐너 drop)
  채널 ON/OFF 는 .env LISTEN_CHANNELS / LISTEN_PLAIN_CHANNELS 수정
  그 외 (잡담/일반) → drop
  큰 채널 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
