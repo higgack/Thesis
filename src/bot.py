@@ -103,6 +103,31 @@ def _record_dedup_confirmed(filename: str) -> None:
         log.exception("dedup_confirmed persist failed")
 
 
+def _filename_from_source(source: str) -> str:
+    """Pull the filename portion out of a meta.documents.source label.
+    Recognised shapes:
+      tg-doc:<file_unique_id>:<filename>
+      tg-doc-caption:<msg_id>     → no filename
+      local:<filename>
+      http(s)://...                → "" (URLs have no on-disk filename)
+    Returns "" when the source format doesn't carry a filename.
+
+    Used by every doc-deletion entry point (/dedupe_confirm, /cleanup_confirm,
+    /forget, /forget_search...) so the deleted filename gets added to
+    _DEDUP_CONFIRMED. Without this, the orphan scanner picks up the
+    file on disk and the retry queue re-ingests it — an infinite
+    dedup/retry loop reported by the user on 2026-05-15."""
+    if not source:
+        return ""
+    if source.startswith("tg-doc:"):
+        parts = source.split(":", 2)
+        if len(parts) == 3:
+            return parts[2]
+    if source.startswith("local:"):
+        return source.split(":", 1)[1]
+    return ""
+
+
 # Items the user explicitly told the bot to stop retrying (via
 # /failed_clear). Filenames and URLs collected from the failure log
 # at clear-time so the orphan scan, URL ingest, and forward-listener
@@ -1306,8 +1331,21 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("사용법: /forget <doc_id>")
         return
     doc_id = ctx.args[0]
+    # Look up source BEFORE deletion so we can record the filename
+    # to stop orphan-scan resurrection.
+    src = ""
+    try:
+        existing = await asyncio.to_thread(meta.get_doc, doc_id)
+        if existing:
+            src = existing.get("source") or ""
+    except Exception:
+        log.exception("get_doc pre-forget failed")
     n = vector.delete_doc(doc_id)
     ok = meta.delete(doc_id)
+    if ok:
+        fname = _filename_from_source(src)
+        if fname:
+            _record_dedup_confirmed(fname)
     await update.message.reply_text(
         f"{'삭제됨' if ok else '메타 없음'} · 청크 {n}개 제거"
     )
@@ -1326,6 +1364,12 @@ async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         for r in noisy:
             n_chunks += vector.delete_doc(r["id"])
             meta.delete(r["id"])
+            # Record filename so orphan scan doesn't re-queue this
+            # file from disk (cleanup is normally text-only docs, but
+            # belt-and-suspenders since find_noise() could expand).
+            fname = _filename_from_source(r.get("source") or "")
+            if fname:
+                _record_dedup_confirmed(fname)
         await update.message.reply_text(
             f"✅ 노이즈 {len(noisy)}건 / 청크 {n_chunks}개 제거 완료"
         )
@@ -1394,6 +1438,13 @@ async def cmd_dedupe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 chunks_removed += vector.delete_doc(d["id"])
                 meta.delete(d["id"])
                 deleted += 1
+                # Stop the orphan-scan loop: file is still on disk
+                # after meta delete; without this, _scan_orphan_files
+                # finds the file missing from documents and re-queues
+                # it on every restart → infinite dedup/retry cycle.
+                fname = _filename_from_source(d.get("source") or "")
+                if fname:
+                    _record_dedup_confirmed(fname)
         await update.message.reply_text(
             f"✅ 중복 {deleted}건 / 청크 {chunks_removed}개 제거 완료\n"
             f"(각 그룹에서 본문이 가장 긴 것 1개만 유지)"
@@ -2303,6 +2354,9 @@ async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for m in matches:
         n = vector.delete_doc(m["id"])
         meta.delete(m["id"])
+        fname = _filename_from_source(m.get("source") or "")
+        if fname:
+            _record_dedup_confirmed(fname)
         forgotten.append(f"  ✅ {_clean_text(m['title'])[:60]} ({n} chunks)")
     await update.message.reply_text(
         f"삭제 완료 · {len(forgotten)}건\n" + "\n".join(forgotten)
@@ -2378,6 +2432,9 @@ async def cmd_forget_search_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         chunks_total += vector.delete_doc(m["id"])
         meta.delete(m["id"])
         forgotten += 1
+        fname = _filename_from_source(m.get("source") or "")
+        if fname:
+            _record_dedup_confirmed(fname)
     await update.message.reply_text(
         f"✅ 일괄 삭제 · {forgotten}건 / 청크 {chunks_total}개 제거"
     )
