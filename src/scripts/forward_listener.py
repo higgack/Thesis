@@ -72,10 +72,27 @@ def _forward_target() -> str:
     return name
 
 
+# Hard denylist — channels deprecated by user decision. Filtered out
+# regardless of .env contents so a stale LISTEN_CHANNELS entry can't
+# resurrect a removed source. Push-only, no shell needed for the user
+# to drop a channel: add the lowercased name here and the next listener
+# restart ignores it.
+_CHANNEL_DENYLIST: set[str] = {
+    "finter_gpt",     # 머니터링 공시 — 사용자가 daju_dart 로 교체
+    "jubung",         # 주붕이 리포트 — 제거
+    "awake_globalwatch",   # 글로벌 Watch — 제거
+    "awake_realtimecheck", # 52주 신고가 — 제거
+    "darthacking",    # 옛 다트해킹 — finter 로 잠시 교체 후 daju_dart 로 통일
+    "daju_017_bot",   # 옛 봇 DM — daju_dart 채널로 교체
+}
+
+
 def _parse_channel_list(env_key: str) -> list[str]:
     """Comma-separated env var → cleaned channel name list. Strips
     surrounding whitespace, `@`, and any `https://t.me/` prefix so
-    users can paste channel URLs directly."""
+    users can paste channel URLs directly. Entries in
+    _CHANNEL_DENYLIST get silently dropped so deprecated channels can't
+    leak back in via a stale .env."""
     raw = os.getenv(env_key, "")
     out: list[str] = []
     for part in raw.split(","):
@@ -84,6 +101,8 @@ def _parse_channel_list(env_key: str) -> list[str]:
             continue
         if (ch.startswith("https://t.me/") or ch.startswith("t.me/")) and "+" not in ch:
             ch = ch.split("t.me/", 1)[1].rstrip("/")
+        if ch.lower() in _CHANNEL_DENYLIST:
+            continue
         out.append(ch)
     return out
 
