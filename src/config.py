@@ -32,7 +32,7 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "gemini-embedding-001")
 # Env-overridable for fast revert if retrieval quality regresses.
 CHUNK_TOKENS = int(os.getenv("CHUNK_TOKENS", "1000"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
-TOP_K = 15
+TOP_K = 10
 SUMMARY_MAX_TOKENS = 1000
 HINT_SUMMARY_MIN_CHARS = 200
 HINT_SUMMARY_MAX_CHARS = 2000

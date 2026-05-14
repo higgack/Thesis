@@ -195,6 +195,15 @@ import os as _os
 # Vision OCR quality / cost knobs — all env-overridable for fast
 # rollback if quality regression shows up on real broker reports.
 SPARSE_OCR_AUTO_CAP = int(_os.getenv("OCR_AUTO_CAP", "7"))  # pages
+# Progressive OCR ([A] cost cut, 2026-05): on the AUTO sparse/image-PDF
+# trigger only (not /ocr_extend), OCR the first PROBE pages, and only
+# spend Vision on the remaining cap if the probe yielded enough text
+# to be worth continuing. A chart-only deck where the first 3 pages
+# render <200 chars of OCR text almost never has readable content on
+# pages 4-7 either — saves 4 Vision calls (~₩6/doc) with zero recall
+# loss because the user can always extend manually via /pending_ocr.
+_OCR_PROGRESSIVE_PROBE_PAGES = int(_os.getenv("OCR_PROBE_PAGES", "3"))
+_OCR_PROGRESSIVE_MIN_TEXT = int(_os.getenv("OCR_PROBE_MIN_TEXT", "200"))
 OCR_DPI = int(_os.getenv("OCR_DPI", "100"))  # render DPI
 OCR_SPARSE_THRESHOLD = int(_os.getenv("OCR_SPARSE_THRESHOLD", "800"))  # chars/page
 
@@ -281,7 +290,8 @@ def load_pdf(path: Path, on_stage=None) -> tuple[str, str, str | None, dict | No
         # broker report doesn't pin a slot for 40+ min on Vision API
         # calls — pages past the cap can be backfilled via the
         # /pending_ocr resume flow once the doc is searchable.
-        r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP, on_stage=on_stage)
+        r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP,
+                           on_stage=on_stage, progressive=True)
         if r["text"]:
             body = r["text"]
         if page_count > 0:
@@ -302,7 +312,8 @@ def load_pdf(path: Path, on_stage=None) -> tuple[str, str, str | None, dict | No
         # /pending_ocr backfill. Combined with DPI 150→100 and cap
         # 10→7, this trims auto-Vision spend by ~70-80%.
         applied = min(page_count, SPARSE_OCR_AUTO_CAP)
-        r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP, on_stage=on_stage)
+        r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP,
+                           on_stage=on_stage, progressive=True)
         if r["text"]:
             body = body + "\n\n--- Vision OCR augmentation ---\n\n" + r["text"]
         ocr_meta = {
@@ -377,7 +388,8 @@ def _page_is_blank(img_bytes: bytes, existing_text: str) -> bool:
 
 def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = OCR_DPI,
                    start_page: int = 1, on_stage=None,
-                   skip_if_text_chars: int = 1500) -> dict:
+                   skip_if_text_chars: int = 1500,
+                   progressive: bool = False) -> dict:
     # DPI 150 → 100: image input tokens scale roughly with pixel
     # area, so ~55% fewer input tokens per page. Vision OCR on
     # broker-report text (12-14pt body) reads identically at 100 dpi;
@@ -465,45 +477,81 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = OCR_DPI,
     # Gemini's per-min quota even with multiple PDFs ingesting at once.
     # ThreadPoolExecutor inside the asyncio thread is fine because
     # genai's sync client releases GIL during the network wait.
-    if work_items:
-        max_workers = min(len(work_items), 7)
-        completed = 0
-        total = len(work_items)
-        if on_stage:
-            on_stage(f"Vision OCR 0/{total} 페이지")
 
-        def _ocr_one(item):
-            i, img_bytes, img_hash = item
-            try:
-                resp = client.models.generate_content(
-                    model=config.SUMMARY_MODEL,
-                    contents=[
-                        types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
-                        types.Part.from_text(text=prompt),
-                    ],
-                    config=types.GenerateContentConfig(
-                        temperature=0.0,
-                        max_output_tokens=2048,
-                    ),
-                )
-                _cost.record_resp(config.SUMMARY_MODEL, resp, purpose="ingest")
-                text = (resp.text or "").strip()
-                if text:
-                    _meta.ocr_cache_put(img_hash, text)
-                return (i, text)
-            except Exception as e:
-                return (i, f"[OCR error: {type(e).__name__}: {e}]")
+    def _ocr_one(item):
+        i, img_bytes, img_hash = item
+        try:
+            resp = client.models.generate_content(
+                model=config.SUMMARY_MODEL,
+                contents=[
+                    types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
+                    types.Part.from_text(text=prompt),
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    max_output_tokens=2048,
+                ),
+            )
+            _cost.record_resp(config.SUMMARY_MODEL, resp, purpose="ingest")
+            text = (resp.text or "").strip()
+            if text:
+                _meta.ocr_cache_put(img_hash, text)
+            return (i, text)
+        except Exception as e:
+            return (i, f"[OCR error: {type(e).__name__}: {e}]")
 
+    def _run_batch(items, completed_offset, total):
+        """OCR a list of work items in parallel and collect results."""
+        results: list[tuple[int, str]] = []
+        if not items:
+            return results
+        max_workers = min(len(items), 7)
+        completed = completed_offset
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(_ocr_one, w): w for w in work_items}
+            futures = {pool.submit(_ocr_one, w): w for w in items}
             for fut in as_completed(futures):
                 completed += 1
                 if on_stage:
                     on_stage(f"Vision OCR {completed}/{total} 페이지")
-                page_idx, text = fut.result()
-                if text:
-                    pages_out.append((page_idx, f"-- Page {page_idx} --\n{text}"))
-                ocrd += 1
+                results.append(fut.result())
+        return results
+
+    if work_items:
+        total = len(work_items)
+        if on_stage:
+            on_stage(f"Vision OCR 0/{total} 페이지")
+
+        if progressive and len(work_items) > _OCR_PROGRESSIVE_PROBE_PAGES:
+            # Probe: run the first N pages. Decide whether the
+            # remainder is worth the Vision spend based on real text
+            # yield (excludes [OCR error] markers).
+            probe = work_items[:_OCR_PROGRESSIVE_PROBE_PAGES]
+            rest = work_items[_OCR_PROGRESSIVE_PROBE_PAGES:]
+            probe_results = _run_batch(probe, 0, total)
+            probe_text_len = sum(
+                len(t) for _, t in probe_results
+                if t and not t.startswith("[OCR error")
+            )
+            if probe_text_len < _OCR_PROGRESSIVE_MIN_TEXT:
+                log.info(
+                    "progressive OCR: probe %d pages → %d chars "
+                    "(threshold %d) — skipping remaining %d pages",
+                    len(probe), probe_text_len,
+                    _OCR_PROGRESSIVE_MIN_TEXT, len(rest),
+                )
+                batch_results = probe_results
+            else:
+                rest_results = _run_batch(
+                    rest, len(probe_results), total,
+                )
+                batch_results = probe_results + rest_results
+        else:
+            batch_results = _run_batch(work_items, 0, total)
+
+        for page_idx, text in batch_results:
+            if text:
+                pages_out.append((page_idx, f"-- Page {page_idx} --\n{text}"))
+            ocrd += 1
 
     # Sort by page index so output order matches reading order.
     pages_out.sort(key=lambda t: t[0])

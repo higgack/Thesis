@@ -75,6 +75,19 @@ def init():
             "CREATE INDEX IF NOT EXISTS idx_docs_body_hash "
             "ON documents(body_hash)"
         )
+        # Chunk-level embedding cache ([B] cost cut, 2026-05): maps a
+        # SHA1 of normalised chunk text to the Chroma id of the first
+        # chunk that carried it. When a future doc produces the same
+        # chunk (recurring disclaimer / template / signature block),
+        # vector.add_chunks pulls the existing embedding out of Chroma
+        # instead of paying Gemini to recompute. Cross-doc only —
+        # within-doc duplicates still re-embed once (rare anyway).
+        c.execute(
+            "CREATE TABLE IF NOT EXISTS chunk_embed_cache("
+            " chunk_hash TEXT PRIMARY KEY,"
+            " chroma_id TEXT NOT NULL,"
+            " ts TEXT NOT NULL)"
+        )
 
 
 @contextmanager
@@ -136,6 +149,37 @@ def ocr_cache_put(img_hash: str, text: str) -> None:
             "INSERT OR REPLACE INTO ocr_cache(img_hash, text, ts) "
             "VALUES(?, ?, ?)",
             (img_hash, text, datetime.utcnow().isoformat()),
+        )
+
+
+def chunk_embed_lookup(hashes: list[str]) -> dict[str, str]:
+    """Bulk lookup chunk_hash → chroma_id for already-embedded chunks.
+    Used by vector.add_chunks to skip Gemini embedding calls on
+    chunks whose text has been seen in any earlier doc."""
+    if not hashes:
+        return {}
+    with _conn() as c:
+        placeholders = ",".join("?" * len(hashes))
+        rows = c.execute(
+            f"SELECT chunk_hash, chroma_id FROM chunk_embed_cache "
+            f"WHERE chunk_hash IN ({placeholders})",
+            hashes,
+        ).fetchall()
+    return {r["chunk_hash"]: r["chroma_id"] for r in rows}
+
+
+def chunk_embed_remember(mapping: list[tuple[str, str]]) -> None:
+    """Persist (chunk_hash, chroma_id) pairs after their initial
+    embedding. INSERT OR IGNORE so concurrent ingests with the same
+    chunk don't fight."""
+    if not mapping:
+        return
+    ts = datetime.utcnow().isoformat()
+    with _conn() as c:
+        c.executemany(
+            "INSERT OR IGNORE INTO chunk_embed_cache(chunk_hash, chroma_id, ts) "
+            "VALUES(?, ?, ?)",
+            [(h, cid, ts) for h, cid in mapping],
         )
 
 

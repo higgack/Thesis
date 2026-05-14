@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import threading
@@ -8,6 +9,15 @@ from .. import config
 from ..llm.embed import embed
 
 log = logging.getLogger(__name__)
+
+
+def _chunk_text_hash(text: str) -> str:
+    """Stable SHA1 of light-normalised chunk text. Whitespace collapse +
+    lowercase so trivial format differences (line wrap / capitalisation)
+    map to the same cache key. Returns first 16 hex chars — 2^64
+    namespace is plenty for personal-scale corpora."""
+    norm = " ".join((text or "").split()).lower()
+    return hashlib.sha1(norm.encode("utf-8")).hexdigest()[:16]
 
 # Separate collection per embedding backend — different dimensions
 # (Gemini 3072 vs BGE-M3 1024) can't coexist inside one Chroma
@@ -30,16 +40,91 @@ log.info("vector collection=%s (backend=%s)", COLLECTION_NAME, _EMBED_BACKEND)
 
 
 async def add_chunks(doc_id: str, chunks: list[dict]) -> None:
-    """chunks: [{id, text, kind: 'summary'|'chunk', idx}]"""
+    """chunks: [{id, text, kind: 'summary'|'chunk', idx}].
+
+    Chunk-level dedup ([B] cost cut, 2026-05): for kind='chunk' items
+    we hash the text and check meta.chunk_embed_cache. Hits pull the
+    embedding out of Chroma via _collection.get instead of calling
+    Gemini again — recurring disclaimers / template footers / signature
+    blocks across many docs share one embedding compute. Summary
+    chunks are per-doc unique by construction so they always re-embed.
+    """
     if not chunks:
         return
-    vectors = await embed([c["text"] for c in chunks])
+    from . import meta as _meta
+
+    # Step 1: hash chunk-kind items; summary stays None (always re-embed).
+    hashes: list[str | None] = [
+        _chunk_text_hash(c["text"]) if c.get("kind") == "chunk" else None
+        for c in chunks
+    ]
+
+    # Step 2: bulk lookup which hashes already have an embedding in
+    # Chroma we can reuse.
+    cache_keys = [h for h in hashes if h]
+    cached_map = _meta.chunk_embed_lookup(cache_keys) if cache_keys else {}
+
+    # Step 3: fetch the actual embedding vectors for cache hits from
+    # Chroma in one batched .get call. If a cached chroma_id was
+    # later /forgotten, Chroma returns no embedding for that id — we
+    # fall back to fresh embedding for those.
+    referenced_chroma_ids = sorted({cached_map[h] for h in cache_keys
+                                    if h in cached_map})
+    cached_vectors: dict[str, list[float]] = {}
+    if referenced_chroma_ids:
+        try:
+            got = _collection.get(
+                ids=referenced_chroma_ids, include=["embeddings"],
+            )
+            for cid, vec in zip(got.get("ids") or [],
+                                got.get("embeddings") or []):
+                if vec is not None and len(vec) > 0:
+                    cached_vectors[cid] = (vec.tolist()
+                                           if hasattr(vec, "tolist")
+                                           else list(vec))
+        except Exception:
+            log.exception("chunk cache: chroma fetch failed, re-embedding")
+
+    # Step 4: identify which chunks still need a fresh Gemini embed.
+    need_fresh_idx: list[int] = []
+    need_fresh_text: list[str] = []
+    final_vectors: list[list[float] | None] = [None] * len(chunks)
+    for i, (c, h) in enumerate(zip(chunks, hashes)):
+        cached_id = cached_map.get(h) if h else None
+        vec = cached_vectors.get(cached_id) if cached_id else None
+        if vec is not None:
+            final_vectors[i] = vec
+        else:
+            need_fresh_idx.append(i)
+            need_fresh_text.append(c["text"])
+
+    # Step 5: embed the misses (one batched Gemini call).
+    if need_fresh_text:
+        fresh = await embed(need_fresh_text)
+        for slot, vec in zip(need_fresh_idx, fresh):
+            final_vectors[slot] = vec
+
+    reused = len(chunks) - len(need_fresh_idx)
+    if reused:
+        log.info("chunk dedup: reused %d/%d embeddings (saved %d Gemini calls)",
+                 reused, len(chunks), reused)
+
     _collection.add(
         ids=[c["id"] for c in chunks],
-        embeddings=vectors,
+        embeddings=final_vectors,
         documents=[c["text"] for c in chunks],
         metadatas=[{"doc_id": doc_id, "kind": c["kind"], "idx": c["idx"]} for c in chunks],
     )
+
+    # Step 6: remember newly-embedded chunks for future reuse. Only
+    # the freshly-embedded ones — the cached hits already had a row.
+    new_pairs = [
+        (hashes[i], chunks[i]["id"])
+        for i in need_fresh_idx
+        if hashes[i] is not None
+    ]
+    if new_pairs:
+        _meta.chunk_embed_remember(new_pairs)
 
 
 async def query(text: str, k: int = 5, kind: str | None = None) -> list[dict]:

@@ -421,17 +421,11 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
     types.FunctionDeclaration(
         name="web_search",
         description=(
-            "Live Google search via Gemini grounding. STRICT GATING — call "
-            "ONLY when at least one of the following explicit triggers is "
-            "in the user's message: '웹/구글/인터넷에서', '검색해줘', "
-            "'외부에서', '최신 추가해서', '오늘', '방금', '실시간', "
-            "'지금 시세', '현재 주가', '오늘 발표', '이번 주 발표'. "
-            "BANNED triggers — do NOT call web_search just because these "
-            "appear: '최근', '요즘', '근래', '최신' alone, or any company/"
-            "topic name like '삼성전기 어때?', '최근 주식시장 섹터?'. "
-            "Those go to search_my_brain / compare_papers. Calling "
-            "web_search WITHOUT first calling search_my_brain or "
-            "compare_papers is a routing error — brain always comes first."
+            "Live Google search via Gemini grounding. Trigger rule is "
+            "simple: call ONLY when the user's message contains one of "
+            "'웹', '구글', '인터넷' literally. Any other question — even "
+            "with '최근/요즘/오늘' — goes to search_my_brain or "
+            "compare_papers. No other triggers."
         ),
         parameters=types.Schema(
             type=types.Type.OBJECT,

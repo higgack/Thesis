@@ -425,7 +425,22 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
         "idx": i,
     } for i, c in enumerate(chunks)]
 
-    skip_meta = source.startswith("tg-msg:") and len(body) < 500
+    # Metadata gating ([C] cost cut, 2026-05): skip the company/tags/
+    # report_date extraction for inputs that almost never carry that
+    # structure — short forwards, image OCR captions, plain photos,
+    # voice/audio transcripts, and forwarded captions. The summary
+    # itself still runs; only the structured-meta JSON pull is
+    # skipped, saving ~₩0.2 per skipped doc. Long PDF/PPTX/DOCX/URL
+    # paths are unchanged so analyst reports keep their company tag.
+    skip_meta = (
+        (source.startswith("tg-msg:") and len(body) < 500)
+        or source.startswith("tg-photo:")
+        or source.startswith("tg-voice:")
+        or source.startswith("tg-audio:")
+        or source.startswith("tg-doc-caption:")
+        or doc_type == "image"
+        or len(body) < 800
+    )
 
     _emit(on_stage, f"요약 + 임베딩 ({len(chunks)} 청크)")
     (summary, metadata), _ = await asyncio.gather(
