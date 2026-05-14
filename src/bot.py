@@ -1573,14 +1573,40 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     query = " ".join(ctx.args).strip()
 
-    # Lookup priority: exact id → title keyword search.
+    # Lookup priority: exact id → keyword search with content-rich
+    # preference (url/pdf/pptx/docx > text > image > etc). Tiebreaker
+    # picks the doc with the longest summary, since /show's job is to
+    # surface the substantive content — for a YouTube link the user
+    # almost always wants the transcript doc (url, 14 chunks) over
+    # the forwarded telegram message (text, 1 chunk) that shares the
+    # same title keyword.
     doc = await asyncio.to_thread(meta.get_doc, query)
     if not doc:
-        matches = await asyncio.to_thread(meta.search_broad, query, 1)
+        matches = await asyncio.to_thread(meta.search_broad, query, 20)
         if not matches:
             await update.message.reply_text(f"매칭 없음: '{query[:60]}'")
             return
+        _TYPE_RANK = {
+            "url": 0, "pdf": 0, "pptx": 0, "docx": 0, "xlsx": 0,
+            "audio": 1, "youtube": 0,
+            "image": 2,
+            "text": 3,
+        }
+        def _pick_key(d: dict) -> tuple:
+            t = (d.get("type") or "").lower()
+            rank = _TYPE_RANK.get(t, 4)
+            # Negate summary length so longer wins under ascending sort.
+            return (rank, -len(d.get("summary") or ""))
+        matches.sort(key=_pick_key)
         doc = matches[0]
+        if len(matches) > 1:
+            log.info(
+                "show: %d matches for %r, picked id=%s type=%s "
+                "summary_len=%d (others: %s)",
+                len(matches), query[:50], doc["id"],
+                doc.get("type"), len(doc.get("summary") or ""),
+                [(m["id"], m.get("type")) for m in matches[1:5]],
+            )
 
     doc_id = doc["id"]
     title = doc.get("title") or "(제목 없음)"
