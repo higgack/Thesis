@@ -1,5 +1,5 @@
 """
-PaddleOCR worker — file-queue based OCR service.
+PaddleOCR worker — file-queue based OCR service (paddleocr 3.x API).
 
 Polls `/app/data/ocr_queue/*.json` for jobs written by the main bot
 (src/ingest/ocr_client.py), runs Korean+English PaddleOCR on the
@@ -9,15 +9,20 @@ so a kill/restart at any point preserves either the original job or
 the finished result, never a torn state.
 
 Dormant by default: docker-compose puts this service behind
-`profiles: ["ocr-local"]`, so `docker compose up -d` alone does not
-start it. Enable with:
+`profiles: ["ocr-local"]`. Activate with
     docker compose --profile ocr-local up -d ocr-worker
-and set OCR_BACKEND=local or =hybrid in `.env` to route bot OCR
+and set OCR_BACKEND=local or =hybrid in .env to route bot OCR
 through this worker.
 
-Single-process for now; PaddleOCR uses ~1.5GB RAM and ~2 vCPU under
-the cpus: '2' limit, so adding parallel workers is rarely worth it
-unless ingest volume exceeds ~50 PDFs/day with chart-heavy content.
+paddleocr 3.x notes (vs 2.x):
+- Constructor: use_doc_orientation_classify / use_doc_unwarping /
+  use_textline_orientation flags (NOT use_angle_cls / show_log).
+- Inference: .predict(path_or_image) instead of .ocr(path).
+- Results: list of OCRResult-like objects with rec_texts (list of
+  strings) and rec_scores (list of floats). Access via subscript
+  (res['rec_texts']) — defensive code below also tries attribute
+  and .json fallbacks in case the result schema shifts in patch
+  releases.
 """
 import json
 import logging
@@ -39,24 +44,23 @@ HEARTBEAT_PATH = Path(os.getenv("OCR_HEARTBEAT", "/app/data/ocr_worker_heartbeat
 QUEUE_DIR.mkdir(parents=True, exist_ok=True)
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
-log.info("Loading PaddleOCR (Korean+English)...")
+log.info("Loading PaddleOCR (Korean+English, paddleocr 3.x API)...")
 try:
     from paddleocr import PaddleOCR
 except Exception:
     log.exception("paddleocr import failed — exiting")
     raise
 
-# Single shared model instance: cold-start is ~30s, hot inference
-# ~0.5-2s per page on 2 vCPU.
-#
-# Pinned to paddleocr 2.7.x for now (see requirements.txt). v3.x
-# (current latest 3.5.0, https://github.com/PaddlePaddle/PaddleOCR)
-# is a major rewrite — the constructor + ocr() return shape changed.
-# Upgrade is a follow-on task: bump paddleocr/paddlepaddle pins, swap
-# this constructor for the v3 API (`from paddleocr import PPOCR;
-# PPOCR(lang='korean')`), and adjust _ocr_image() to the new
-# result schema (3.x returns OCRResult objects, not nested lists).
-_ocr = PaddleOCR(use_angle_cls=True, lang="korean", show_log=False)
+# Single shared model instance. paddleocr 3.x constructor uses the
+# pipeline-flag style (PaddleX inheritance). Korean lang + textline
+# orientation (replaces 2.x's use_angle_cls). Doc-orientation and
+# unwarping are heavier preprocessing steps disabled for speed.
+_ocr = PaddleOCR(
+    use_doc_orientation_classify=False,
+    use_doc_unwarping=False,
+    use_textline_orientation=True,
+    lang="korean",
+)
 log.info("Model loaded. Polling %s for jobs (interval=%.1fs)",
          QUEUE_DIR, POLL_INTERVAL)
 
@@ -69,29 +73,56 @@ def _atomic_write_json(path: Path, data: dict) -> None:
     tmp.rename(path)
 
 
+def _extract_recognised(res) -> tuple[list[str], list[float]]:
+    """paddleocr 3.x result objects expose rec_texts + rec_scores in
+    one of three patterns depending on the patch release. Try all of
+    them; any one that succeeds wins. Returns (texts, scores) — both
+    empty on total failure (caller treats as 'no text found')."""
+    # Pattern 1: subscript (PaddleX standard dict-like result)
+    try:
+        return list(res["rec_texts"]), list(res["rec_scores"])
+    except (KeyError, TypeError, IndexError):
+        pass
+    # Pattern 2: attribute access
+    try:
+        return list(res.rec_texts), list(res.rec_scores)
+    except AttributeError:
+        pass
+    # Pattern 3: .json property / method
+    try:
+        j = res.json
+        if callable(j):
+            j = j()
+        if isinstance(j, dict):
+            inner = j.get("res") if "res" in j else j
+            if isinstance(inner, dict):
+                return (list(inner.get("rec_texts", []) or []),
+                        list(inner.get("rec_scores", []) or []))
+    except Exception:
+        pass
+    return [], []
+
+
 def _ocr_image(img_path: Path) -> tuple[str, float, int]:
-    """Returns (joined_text, avg_confidence, line_count)."""
-    result = _ocr.ocr(str(img_path))
-    lines: list[str] = []
-    confs: list[float] = []
-    # PaddleOCR result shape: [[bbox, (text, confidence)], ...] per image.
-    # ocr.ocr returns [page_results] even for a single image.
-    page = (result[0] if result else None) or []
-    for region in page:
-        try:
-            if isinstance(region, (list, tuple)) and len(region) >= 2:
-                _, txt_conf = region[0], region[1]
-                if isinstance(txt_conf, (list, tuple)) and len(txt_conf) >= 2:
-                    text = str(txt_conf[0])
-                    conf = float(txt_conf[1])
-                    if text.strip():
-                        lines.append(text)
-                        confs.append(conf)
-        except Exception:
-            log.debug("malformed region in OCR output: %r", region)
-    joined = "\n".join(lines)
-    avg = (sum(confs) / len(confs)) if confs else 0.0
-    return joined, avg, len(lines)
+    """Returns (joined_text, avg_confidence, line_count). Empty
+    result on any failure — caller surfaces blank text and the bot
+    falls back to Gemini for hybrid mode."""
+    result = _ocr.predict(str(img_path))
+    all_texts: list[str] = []
+    all_confs: list[float] = []
+    for res in (result or []):
+        texts, scores = _extract_recognised(res)
+        for t, s in zip(texts, scores):
+            t = str(t or "").strip()
+            if t:
+                all_texts.append(t)
+                try:
+                    all_confs.append(float(s))
+                except (TypeError, ValueError):
+                    all_confs.append(0.0)
+    joined = "\n".join(all_texts)
+    avg = (sum(all_confs) / len(all_confs)) if all_confs else 0.0
+    return joined, avg, len(all_texts)
 
 
 def _process(job_path: Path) -> None:
@@ -132,16 +163,12 @@ def _process(job_path: Path) -> None:
         }
 
     _atomic_write_json(RESULT_DIR / f"{job_id}.json", result)
-    # Always clean up job + image regardless of success — the bot
-    # has the result file now (or the timeout will fall back).
     job_path.unlink(missing_ok=True)
     img_path.unlink(missing_ok=True)
 
 
 def _touch_heartbeat() -> None:
-    """Write current epoch to heartbeat file. Bot can stat-check this
-    before submitting jobs to know the worker is alive (freshness <
-    e.g. 30s)."""
+    """Write current epoch to heartbeat file."""
     try:
         HEARTBEAT_PATH.write_text(str(int(time.time())))
     except Exception:

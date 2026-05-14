@@ -1,40 +1,33 @@
-# Base image choice (2026-05): python:3.10-bullseye (Debian 11).
-#   Why bullseye and not the default (bookworm) or slim:
-#   - python:3.11-slim → ExitCode=139 SIGSEGV in `import paddle`.
-#     Slim base's minimal libstdc++ ABI doesn't match the paddle
-#     2.6.2 binary wheel.
-#   - python:3.10 (bookworm full) → "free(): invalid pointer" glibc
-#     abort. Bookworm ships glibc 2.36, paddle 2.6.x was built
-#     against glibc 2.31 — pthread/malloc ABI changed in 2.34+.
-#   - python:3.10-bullseye ships glibc 2.31 which is exactly what
-#     paddle 2.6.x wheels target. No ABI mismatch.
-# AVX-512 capable Xeon (Cascade Lake) confirmed, so this is not a
-# CPU SIMD issue.
-FROM python:3.10-bullseye
+# Base image (2026-05): official paddlepaddle CPU image.
+#   Why this over python:3.10-bullseye + pip-installed paddle:
+#   - paddle 2.6.2 wheels show 'free(): invalid pointer' glibc abort
+#     on ALL tested debian variants (slim/bullseye/bookworm), and
+#     paddlepaddle/paddle:2.6.x tags were retired from Docker Hub
+#     (only 3.x tags remain visible as of 2026-05).
+#   - paddlepaddle/paddle:3.3.1 is the latest stable CPU image, ships
+#     paddle pre-validated against its bundled OS + Python, so the
+#     binary ABI issues we hit with pip install paddlepaddle go away.
+#   - Image is ~5GB but the worker is dormant by default; pulling
+#     once during the rare hybrid-mode activation is acceptable.
+# Worker code was rewritten to the paddleocr 3.x API: PaddleOCR
+# constructor uses use_doc_orientation_classify / use_doc_unwarping /
+# use_textline_orientation flags (not use_angle_cls), and inference
+# is via .predict() returning result objects with rec_texts /
+# rec_scores.
+FROM paddlepaddle/paddle:3.3.1
 
-# OS deps:
-#   libgomp1     — GNU OpenMP runtime required by paddlepaddle's
-#                  libpaddle.so (without it: 'libgomp.so.1: cannot
-#                  open shared object file').
-#   libgl1       — OpenCV (paddleocr image preprocessing).
-#   libglib2.0-0 — GLib runtime for image lib.
-#   libsm6/libxext6 — X11 image lib runtime (cv2 imports).
-# Most of these are already present in the python:3.10 full base,
-# but we install explicitly to be deterministic across base image
-# version bumps.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgomp1 libgl1 libglib2.0-0 libsm6 libxext6 \
-    && rm -rf /var/lib/apt/lists/*
-
+# paddleocr is NOT pre-installed in the paddle base image — only
+# the core paddle framework. Add it on top via requirements.txt
+# (version pinned there so a single grep finds the dependency).
 WORKDIR /app
-
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download the Korean OCR model so the first job doesn't pay the
-# ~30s cold-start penalty. Best-effort — if it fails (no network at
-# build time) the worker will download lazily on first request.
-RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='korean', show_log=False)" \
+# Pre-load the Korean OCR model so the first job doesn't pay the
+# ~30s cold-start penalty. Best-effort — if it fails (no network
+# at build time, model server hiccup), the worker downloads it
+# lazily on first request.
+RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=True, lang='korean')" \
     || echo "model preload deferred to first request"
 
 COPY worker.py /app/worker.py

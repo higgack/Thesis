@@ -1,2 +1,5 @@
-paddlepaddle==2.6.2
-paddleocr==2.7.3
+# paddlepaddle is pre-installed in the paddlepaddle/paddle:3.3.1
+# base image. Do NOT add it here — pip would try to upgrade the
+# in-image version and risk reintroducing the ABI mismatch we just
+# escaped from.
+paddleocr==3.5.0
