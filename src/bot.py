@@ -890,7 +890,9 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • PyMuPDF 표 추출 — 구조화 표 무료 임베딩
  • 답변 1h 캐시 — 동일 질문 재질의 Gemini 호출 0
  • 알파스캐너 / X / paywall 도메인 자동 차단
- • 파일/텍스트 hash dedup — 같은 자료 재학습 0
+ • 5단 dedup — source / URL canonical / file hash / text hash /
+   body hash (PDF↔PPTX) / title 정규화. 모두 비용 0
+ • URL canonical — utm/fbclid 제거, YouTube/arXiv ID 통일, www/m. strip
  • 60s Gemini timeout + 15분 ingest timeout
 
 <b>【11. 트러블슈팅】</b>

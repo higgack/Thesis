@@ -42,19 +42,49 @@ _URL_TRACKING_PARAMS = {
 }
 
 
+_YOUTUBE_ID_RE = re.compile(
+    r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/|"
+    r"youtube\.com/embed/|m\.youtube\.com/watch\?v=)([\w-]{11})"
+)
+_ARXIV_ID_RE = re.compile(r"arxiv\.org/(?:abs|pdf|html)/([\w.\-]+?)(?:v\d+)?(?:\.pdf)?$")
+
+
 def _canonical_url(url: str) -> str:
-    """Strip tracking params so the SAME article fetched via three
-    different shares (twitter, email, kakao) all dedup to the same
-    source label."""
+    """Aggressively canonicalise URLs so trivial differences (tracking
+    params, scheme, www prefix, mobile subdomain, trailing slash,
+    YouTube short-link, arXiv version) all dedup to ONE entry.
+
+    Examples:
+      http://www.example.com/post?utm_source=tw → https://example.com/post
+      youtu.be/aBcDeFgHiJk                       → https://www.youtube.com/watch?v=aBcDeFgHiJk
+      arxiv.org/pdf/2401.12345v2.pdf             → https://arxiv.org/abs/2401.12345
+      m.example.com/article                      → https://example.com/article
+    """
+    if not url:
+        return url
     try:
+        # YouTube → canonical watch URL (id-based).
+        m = _YOUTUBE_ID_RE.search(url)
+        if m:
+            return f"https://www.youtube.com/watch?v={m.group(1)}"
+        # arXiv → canonical abs URL with version stripped.
+        m = _ARXIV_ID_RE.search(url)
+        if m:
+            return f"https://arxiv.org/abs/{m.group(1)}"
+
         from urllib.parse import urlparse, urlencode, parse_qsl, urlunparse
         p = urlparse(url)
+        scheme = "https"  # force https — most sites redirect anyway
+        netloc = p.netloc.lower()
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        if netloc.startswith("m."):
+            netloc = netloc[2:]
+        path = p.path.rstrip("/") or "/"
         kept = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=False)
                 if k.lower() not in _URL_TRACKING_PARAMS]
-        return urlunparse((
-            p.scheme, p.netloc.lower(), p.path.rstrip("/") or "/",
-            p.params, urlencode(kept), "",
-        ))
+        return urlunparse((scheme, netloc, path, p.params,
+                           urlencode(kept), ""))
     except Exception:
         return url
 
