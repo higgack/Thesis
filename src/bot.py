@@ -690,7 +690,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 ▸ 조회: /find &lt;키워드&gt; · /recent [N] · /stats · /status · /usage · /cost
 ▸ 대화: /reset (메모리 초기화)
 ▸ 장애: /failed · /failed_retry · /failed_clear · /queue
-       /recover_orphans (디스크에 있지만 미학습 일괄 재학습)
+       /orphans (디스크에 있지만 미학습 파일 목록만 보기)
+       /recover_orphans (orphan 일괄 재학습 큐 등록)
        /queue_cancel_all (전체 큐·보류 일괄 취소)
 ▸ 보류 (5분 미선택 자동 보관):
        /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt;
@@ -1386,6 +1387,42 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if len(_INGEST_RETRY_QUEUE) > 25:
         out += f"\n... 외 {len(_INGEST_RETRY_QUEUE) - 25}건"
     await update.message.reply_text(out, disable_web_page_preview=True)
+
+
+async def cmd_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Read-only orphan listing — files on disk under data/files/ that
+    aren't yet in meta.documents. Doesn't enqueue them, doesn't touch
+    the recovery suppress marker. Use /recover_orphans to actually
+    push them onto the retry queue."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    orphans = await asyncio.to_thread(_scan_orphan_files)
+    if not orphans:
+        await update.message.reply_text(
+            "✨ 미학습 파일 없음 — 모든 디스크 파일이 meta에 기록됨."
+        )
+        return
+    # By extension breakdown so the user sees "23 PDFs, 4 PPTs, ..." at
+    # a glance. Sorted alphabetically inside each group for predictability.
+    by_ext: dict[str, list[Path]] = {}
+    for p in orphans:
+        by_ext.setdefault(p.suffix.lower() or "(no ext)", []).append(p)
+    summary_line = " · ".join(
+        f"{ext} {len(files)}개"
+        for ext, files in sorted(by_ext.items(), key=lambda kv: -len(kv[1]))
+    )
+    # Cap the visible list so a 200-file orphan set doesn't overflow
+    # Telegram's 4096-char message limit. The full list is still
+    # accessible via shell or future paging if needed.
+    show = orphans[:30]
+    listing = "\n".join(f"  • {p.name[:80]}" for p in show)
+    more = f"\n... 외 {len(orphans) - len(show)}건" if len(orphans) > len(show) else ""
+    await update.message.reply_text(
+        f"📂 미학습 파일 {len(orphans)}건\n  ({summary_line})\n\n"
+        f"{listing}{more}\n\n"
+        f"학습 시작: /recover_orphans"
+    )
 
 
 async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2768,7 +2805,12 @@ def _explain_error(e: BaseException, max_len: int = 280) -> str:
     return f"{type(cause).__name__}: {msg}"[:max_len]
 
 
-_INGEST_TIMEOUT_SEC = 900  # 15 minutes per message — large PDFs with OCR can take this long
+_INGEST_TIMEOUT_SEC = 600  # 10 minutes per message — sized for the
+# Gemini-embed era. Earlier 15min was for BGE-M3 CPU embedding which is
+# no longer used; current pipeline (Vision OCR ≤7 pages × ~3s, Flash-Lite
+# summary ~5s, Gemini embed ~3s) finishes well under 5 min, so 10 min
+# is conservative enough for unusual edge cases without pinning slots
+# on truly stuck items.
 
 
 _LIVE_EDIT_INTERVAL = 30  # seconds between status edits. 30 s × 4 concurrent
@@ -3892,6 +3934,7 @@ def main():
         on_ocr_extend_callback, pattern=r"^ocr:"
     ))
     app.add_handler(CommandHandler("queue", cmd_queue))
+    app.add_handler(CommandHandler("orphans", cmd_orphans))
     app.add_handler(CommandHandler("recover_orphans", cmd_recover_orphans))
     app.add_handler(CommandHandler("pending", cmd_pending))
     app.add_handler(CommandHandler("pending_ocr", cmd_pending_ocr))
