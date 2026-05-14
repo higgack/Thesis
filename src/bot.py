@@ -2742,9 +2742,10 @@ def _explain_error(e: BaseException, max_len: int = 280) -> str:
 _INGEST_TIMEOUT_SEC = 900  # 15 minutes per message — large PDFs with OCR can take this long
 
 
-_LIVE_EDIT_INTERVAL = 10  # seconds between status edits — 4 concurrent
-# retries × 6 edits/min = 24/min sits well under Telegram's same-chat
-# ~1/sec floor with room for live uploads happening alongside.
+_LIVE_EDIT_INTERVAL = 30  # seconds between status edits. 30 s × 4 concurrent
+# = 8 edits/min, comfortable under Telegram's per-bot floor. Earlier 10 s
+# value triggered today's 22207 s flood ban when combined with success +
+# duplicate spam.
 
 
 async def _edit_or_send(ctx, chat_id: int, msg_id: int | None, text: str) -> None:
@@ -2769,14 +2770,41 @@ async def _edit_or_send(ctx, chat_id: int, msg_id: int | None, text: str) -> Non
 
 async def _live_status_updater(ctx, chat_id: int, msg_id: int,
                                label: str, job_id: str) -> None:
-    """Disabled: live edit_message_text floods Telegram's per-bot
-    rate limit and triggers multi-hour flood bans (we hit a 22207s
-    ban tonight from cumulative edit spam). The ⏳ bubble stays
-    static at its initial state; the final result message at the
-    end of ingest is the only edit. If the bot needs liveliness
-    again later we can re-enable behind an env flag, with a much
-    slower cadence and a circuit-breaker on RetryAfter."""
-    return
+    """Re-render the ⏳ status message every _LIVE_EDIT_INTERVAL
+    seconds so the user sees elapsed time tick forward.
+
+    Defensive vs the 22207s flood-ban incident:
+    1. 30 s cadence (vs prior 10 s) — 4 concurrent ingests = ~8
+       edits/min, well under the per-bot floor.
+    2. Circuit breaker — on a RetryAfter exception we stop editing
+       for this job entirely, so a flood-control event can't recur
+       across the still-active updater tasks."""
+    short_label = label[:80]
+    while True:
+        try:
+            await asyncio.sleep(_LIVE_EDIT_INTERVAL)
+        except asyncio.CancelledError:
+            return
+        info = _ACTIVE_INGESTS.get(job_id)
+        if not info:
+            return
+        elapsed = time.time() - info.get("started_at", time.time())
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=chat_id, message_id=msg_id,
+                text=f"⏳ {short_label}\n   처리 중 ({_fmt_elapsed(elapsed)})",
+            )
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            # RetryAfter (flood control) or any other Telegram error —
+            # stop editing this bubble. The final result post still
+            # tries once at completion; that single attempt is far less
+            # likely to compound a ban than a long-running 30s loop.
+            if "RetryAfter" in type(e).__name__ or "Flood" in str(e):
+                log.warning("live status updater hit flood control, stopping for %s", label[:40])
+                return
+            # Other errors (message too old etc) — swallow and continue.
 
 
 async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
