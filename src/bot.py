@@ -2845,35 +2845,22 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
         else:
             final_text = f"(빈 결과: {label[:60]})"
 
-        # All-duplicate batches produce an empty final_text from
-        # _format_results. Skip the user-facing send (and clean up the
-        # ⏳ bubble) so backfill / forwarded channel storms stay silent.
-        if not (final_text or "").strip():
-            if status_msg_id:
-                try:
-                    await ctx.bot.delete_message(
-                        chat_id=notify_chat_id, message_id=status_msg_id,
-                    )
-                except Exception:
-                    pass
-            sent_ok = True
-        else:
-            sent_ok = False
-            if status_msg_id:
-                try:
-                    await ctx.bot.edit_message_text(
-                        chat_id=notify_chat_id, message_id=status_msg_id,
-                        text=final_text, disable_web_page_preview=True,
-                    )
-                    sent_ok = True
-                except Exception:
-                    # Edit can fail (too old, network) — fall back to new send.
-                    log.warning("status final edit failed; sending fresh")
-            if not sent_ok:
-                try:
-                    await ctx.bot.send_message(notify_chat_id, final_text)
-                except Exception:
-                    log.exception("ingest result notify failed")
+        sent_ok = False
+        if status_msg_id:
+            try:
+                await ctx.bot.edit_message_text(
+                    chat_id=notify_chat_id, message_id=status_msg_id,
+                    text=final_text, disable_web_page_preview=True,
+                )
+                sent_ok = True
+            except Exception:
+                # Edit can fail (too old, network) — fall back to new send.
+                log.warning("status final edit failed; sending fresh")
+        if not sent_ok:
+            try:
+                await ctx.bot.send_message(notify_chat_id, final_text)
+            except Exception:
+                log.exception("ingest result notify failed")
 
         # OCR-extend prompts run after the final result is visible.
         if results:
@@ -3295,13 +3282,7 @@ def _format_results(results: list[dict]) -> str:
         if s == "ok":
             lines.append(f"✅ {r['title']}  ({r['type']}, {r['chunks']} chunks)")
         elif s == "duplicate":
-            # Silent — forwarded digests and channel relays re-cite the
-            # same upstream URLs constantly, and a '♻️ 이미 있음' line per
-            # dedup hit floods the chat (hundreds per digest expansion).
-            # User intent for a manual upload is satisfied by the bot's
-            # absence of an error reply — if they care they can check
-            # /recent or /find.
-            continue
+            lines.append(f"♻️ 이미 있음: {r['title']}")
         elif s == "empty":
             title = r.get("title", "")
             src = r.get("source", "") or title
@@ -3763,15 +3744,15 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             item["not_before_ts"] = time.time() + hold
             _INGEST_RETRY_QUEUE.append(item)
             _persist_retry_queue()
-            # No Telegram ping per soft-fail — the user doesn't need to
-            # see "wait 1h" messages stacking up during a Gemini outage.
-            # /status shows queue depth, /failed shows the eventual
-            # permanent failures.
-            log.info(
-                "retry soft-fail %d/%d (hold %dm): %s — %s",
-                item["attempts"], _MAX_RETRY_ATTEMPTS, max(1, hold // 60),
-                title[:80], _explain_error(e),
+            wait_min = max(1, hold // 60)
+            await _edit_or_send(
+                ctx, chat_id, status_msg_id,
+                f"🔁 일시 오류 — {wait_min}분 후 자동 재시도 "
+                f"({item['attempts']}/{_MAX_RETRY_ATTEMPTS}): {title[:80]}\n"
+                f"{_explain_error(e)}",
             )
+            log.info("retry soft-fail %d/%d (hold %dm): %s",
+                     item["attempts"], _MAX_RETRY_ATTEMPTS, wait_min, title[:80])
             return
         finally:
             if updater_task:
@@ -3790,24 +3771,11 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
     #                              stuck even after the silent backoff
     #                              messages above suppress the soft
     #                              fails.
-    if r:
-        s = r.get("status")
-        if s == "duplicate":
-            # Silent duplicate: delete the ⏳ bubble we created so the
-            # chat doesn't fill with bubbles that never resolve.
-            if status_msg_id:
-                try:
-                    await ctx.bot.delete_message(
-                        chat_id=chat_id, message_id=status_msg_id,
-                    )
-                except Exception:
-                    pass
-        else:
-            summary = _format_results([r])
-            if summary.strip():
-                await _edit_or_send(
-                    ctx, chat_id, status_msg_id, f"⏰ {summary}",
-                )
+    summary = _format_results([r]) if r else f"(빈 결과: {title[:60]})"
+    if summary.strip():
+        await _edit_or_send(
+            ctx, chat_id, status_msg_id, f"⏰ ingest 재시도\n{summary}",
+        )
     log.info("retry done [%s]: %s",
              (r or {}).get("status", "unknown"), title[:80])
 
