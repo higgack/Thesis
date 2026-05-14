@@ -982,10 +982,26 @@ async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     mtd = cost.month_to_date_krw()
     daily = cost.daily_breakdown(14)
 
-    # Daily average over the last 7 days (excluding empty days makes
-    # the projection useless on a fresh deploy, so use simple mean).
+    # Daily average over the last 7 days; project monthly at that rate.
+    # Also derive a "remaining days × today's rate" forecast so a spiky
+    # day surfaces immediately instead of after a week of averaging.
     avg_7d = week["total_krw"] / 7 if week["total_krw"] else 0.0
     projected_monthly = avg_7d * 30
+    today_pace_monthly = today["total_krw"] * 30  # if today's pace held all month
+
+    # Per-purpose split for the 7-day window so the user can see which
+    # bucket (ingest / query / unknown) is driving the bill.
+    by_purpose = (week.get("by_purpose") or {})
+    purpose_lines = []
+    for label, key in (("ingest 학습", "ingest"),
+                       ("query 답변", "query"),
+                       ("기타", "unknown")):
+        info = by_purpose.get(key) or {}
+        krw = info.get("total_krw") or 0.0
+        calls = info.get("calls") or 0
+        if krw or calls:
+            purpose_lines.append(f"  {label}: ₩{krw:,.0f}  ({calls}콜)")
+    purpose_block = "\n".join(purpose_lines) or "  (데이터 없음)"
 
     max_cost = max((d["cost"] for d in daily), default=0.0)
     daily_lines = []
@@ -1003,12 +1019,14 @@ async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"\n• 오늘:    ₩{today['total_krw']:,.0f}  ({today['calls']}콜)"
         f"\n• 7일 합계: ₩{week['total_krw']:,.0f}"
         f"\n• 이번 달:  ₩{mtd['total_krw']:,.0f}  ({mtd['day']}일차)"
-        f"\n\n📈 현재 페이스 → 월 예상치"
+        f"\n\n📈 월말 예상치"
         f"\n  ₩{projected_monthly:,.0f}/월  (최근 7일 평균 × 30)"
-        f"\n\n🎯 프로젝션 밴드 (Stage 1+2 + 6채널 expander 기준)"
-        f"\n  AS IS  (digest 본문만):           ~₩5,600 ~ 9,100/월"
-        f"\n  TO BE  (TG/Substack expand + 5plain): ~₩17,100 ~ 26,050/월"
-        f"\n  BEFORE (절감 전):                 ~₩30,000 ~ 50,000/월"
+        f"\n  ₩{today_pace_monthly:,.0f}/월  (오늘 페이스 × 30)"
+        f"\n\n🧩 7일 용도별"
+        f"\n{purpose_block}"
+        f"\n\n🎯 가이드 (Gemini 임베딩 + Vision-Lite 캡 적용)"
+        f"\n  일상 트래픽:  ~₩60,000 ~ 100,000/월"
+        f"\n  heavy 업로드:  ~₩120,000 ~ 180,000/월"
         f"\n\n📅 최근 14일 (KST)\n{daily_block}"
         f"\n\n💡 세부 분석: /usage"
     )

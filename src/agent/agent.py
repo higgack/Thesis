@@ -317,6 +317,58 @@ def _harvest_sources(name: str, result: dict, sources: list[str]) -> None:
                 sources.append(label)
 
 
+_ANSWER_CACHE: dict[str, tuple[float, dict]] = {}
+_ANSWER_CACHE_TTL_SEC = 3600  # 1 hour — questions about a doc rarely
+# change meaning within an hour, but daily news/market context can,
+# so an hourly horizon keeps stale answers from surviving past their
+# usefulness while still saving on repeated lookups.
+_ANSWER_CACHE_MAX = 200
+
+
+def _answer_cache_key(message: str, deep: bool, history: list[dict] | None) -> str | None:
+    """Cache key for exact-repeat questions only.
+    - History-less (fresh chat) OR identical history → cacheable
+    - Empty / very short questions → skip (not worth caching)
+    - Different deep flag → separate cache entry
+    """
+    import hashlib
+    msg = (message or "").strip()
+    if len(msg) < 6:
+        return None
+    h = hashlib.sha1()
+    h.update(msg.encode("utf-8"))
+    h.update(b"\n--deep--\n" if deep else b"\n--flash--\n")
+    for turn in (history or []):
+        h.update((turn.get("role") or "").encode("utf-8"))
+        h.update(b":")
+        h.update((turn.get("text") or "").encode("utf-8"))
+        h.update(b"\n")
+    return h.hexdigest()
+
+
+def _answer_cache_lookup(key: str | None) -> dict | None:
+    if not key:
+        return None
+    entry = _ANSWER_CACHE.get(key)
+    if not entry:
+        return None
+    ts, value = entry
+    if time.time() - ts > _ANSWER_CACHE_TTL_SEC:
+        _ANSWER_CACHE.pop(key, None)
+        return None
+    return value
+
+
+def _answer_cache_store(key: str | None, value: dict) -> None:
+    if not key:
+        return
+    if len(_ANSWER_CACHE) >= _ANSWER_CACHE_MAX:
+        # Evict the oldest entry. Cheap: ~200 entries scan is sub-ms.
+        oldest = min(_ANSWER_CACHE.items(), key=lambda kv: kv[1][0])[0]
+        _ANSWER_CACHE.pop(oldest, None)
+    _ANSWER_CACHE[key] = (time.time(), value)
+
+
 async def run(message: str, deep: bool = False,
               history: list[dict] | None = None) -> dict:
     """Run one agent turn.
@@ -325,7 +377,15 @@ async def run(message: str, deep: bool = False,
     representing the most recent conversation turns. We replay only
     final user/assistant text (no stale tool calls/results) so the
     model gets pronoun/topic continuity ('그 회사의 경쟁사는?') without
-    paying tokens to redo old retrievals."""
+    paying tokens to redo old retrievals.
+
+    Identical (question, deep, history) combos hit the in-memory cache
+    for up to 1 hour to skip a duplicate Gemini call.
+    """
+    cache_key = _answer_cache_key(message, deep, history)
+    if (cached := _answer_cache_lookup(cache_key)) is not None:
+        return {**cached, "cached": True}
+
     contents: list[types.Content] = []
     for turn in (history or []):
         role = turn.get("role")
@@ -350,7 +410,12 @@ async def run(message: str, deep: bool = False,
         "pro_decision": None,
     }
     result = await _loop(state)
-    return await _enforce_tool_use(state, result)
+    result = await _enforce_tool_use(state, result)
+    # Only cache successful, non-error answers — error states surface
+    # quickly enough that re-trying might succeed on the next pass.
+    if result and not result.get("error") and result.get("text"):
+        _answer_cache_store(cache_key, result)
+    return result
 
 
 _NUDGE_MESSAGE = (
