@@ -4130,6 +4130,78 @@ async def _refresh_dashboard(ctx: ContextTypes.DEFAULT_TYPE):
         log.exception("scheduled dashboard refresh failed")
 
 
+_PADDLE_RELEASE_PATH = config.DATA_DIR / ".paddle_last_seen"
+_PADDLE_BASELINE = "v3.3.1"  # the broken version we shipped against
+
+
+async def _check_paddle_release(ctx: ContextTypes.DEFAULT_TYPE):
+    """Weekly check for a new paddlepaddle release. We're stuck on
+    v3.3.1 because of the PIR+oneDNN ConvertPirAttribute crash; when
+    a newer release ships we want to know so the hybrid OCR worker
+    can be re-attempted. Telegram notifies the owner; the user
+    decides whether to bump the FROM tag in ocr-worker/Dockerfile.
+
+    Runs via APScheduler (no new cron entry needed). State file
+    .paddle_last_seen records the last notified tag so a quiet week
+    doesn't spam the same release twice."""
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(
+                "https://api.github.com/repos/PaddlePaddle/Paddle/releases/latest",
+                headers={"User-Agent": "thesis-bot"},
+            )
+            r.raise_for_status()
+            data = r.json()
+        latest = (data.get("tag_name") or "").strip()
+        if not latest:
+            return
+
+        last_seen = _PADDLE_BASELINE
+        try:
+            if _PADDLE_RELEASE_PATH.exists():
+                last_seen = _PADDLE_RELEASE_PATH.read_text(
+                    encoding="utf-8"
+                ).strip() or _PADDLE_BASELINE
+        except Exception:
+            pass
+
+        if latest == last_seen:
+            return
+
+        # Record FIRST so a duplicate run doesn't double-notify.
+        try:
+            tmp = _PADDLE_RELEASE_PATH.with_suffix(
+                _PADDLE_RELEASE_PATH.suffix + ".tmp"
+            )
+            tmp.write_text(latest, encoding="utf-8")
+            tmp.replace(_PADDLE_RELEASE_PATH)
+        except Exception:
+            log.exception("paddle release state write failed")
+
+        notes_url = data.get("html_url") or "https://github.com/PaddlePaddle/Paddle/releases"
+        msg = (
+            f"🔔 paddle 새 버전 감지: <b>{latest}</b>\n"
+            f"이전 기록: {last_seen}\n\n"
+            f"PIR+oneDNN 버그(ConvertPirAttribute2RuntimeAttribute)가 "
+            f"fix됐는지 release notes 확인:\n{notes_url}\n\n"
+            f"fix 됐으면 ocr-worker/Dockerfile FROM 태그를 "
+            f"<code>paddlepaddle/paddle:{latest.lstrip('v')}</code> 로 bump "
+            f"후 hybrid 재시도 가능."
+        )
+        try:
+            await ctx.bot.send_message(
+                chat_id=config.TELEGRAM_OWNER_ID,
+                text=msg,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.exception("paddle release telegram notify failed")
+    except Exception:
+        log.exception("paddle release check failed")
+
+
 async def _drain_pending_pro(ctx: ContextTypes.DEFAULT_TYPE):
     """One pending-Pro question per tick. Sends a ⏳ status, runs
     agent.run(deep=True), then ships the answer through the same
@@ -4789,6 +4861,18 @@ def main():
             interval=300,
             first=180,
             name="periodic_memory_cleanup",
+        )
+        # Weekly paddle release check — fires once per 7 days,
+        # 5 min after bot start. Notifies Telegram on a new
+        # release so the user can decide whether to bump the
+        # ocr-worker base image and retry hybrid mode. State
+        # persisted in data/.paddle_last_seen to avoid re-notify
+        # on the same tag across bot restarts.
+        app.job_queue.run_repeating(
+            _check_paddle_release,
+            interval=7 * 24 * 3600,
+            first=300,
+            name="check_paddle_release",
         )
         # One-shot Telegram flood-ban release notification. Today's
         # 22207s ban (logged at 2026-05-14 01:28:56 UTC) lifts at
