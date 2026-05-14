@@ -756,8 +756,16 @@ def _is_owner(update: Update) -> bool:
 
 
 async def _typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # send_chat_action is rate-limited harder than send/edit_message
+    # (we hit 429 on a recover_missing burst that triggered _typing on
+    # 1000+ items). Swallow 429s + transport errors so a flaky chat
+    # action never propagates — the typing indicator is a nicety, not
+    # essential.
     if update.effective_chat:
-        await ctx.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
+        try:
+            await ctx.bot.send_chat_action(update.effective_chat.id, ChatAction.TYPING)
+        except Exception:
+            pass
 
 
 async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
