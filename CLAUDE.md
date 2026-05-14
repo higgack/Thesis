@@ -114,6 +114,39 @@ Anti-patterns to avoid:
 - 'Save and exit.' (How? `:wq`? `Ctrl+O`+`Ctrl+X`? `:x`?)
 - 'It should work now.' (How do I verify? What if it didn't?)
 
+## Actionable alerts — always use the ack-button pattern
+
+When the bot needs the user to take a deliberate action (paddle
+release out, ban lifted, queue full, monthly cost over budget,
+etc.), DO NOT use a one-shot Telegram send_message. The user can
+miss it while away from chat, and a single notification has no
+state — you can't tell whether the user saw it.
+
+Always route through `_send_actionable_alert` (defined in
+`src/bot.py`) which:
+  1. Records the alert in `src/store/notify_acks.py` (atomic
+     JSON, persisted across bot restarts).
+  2. Sends the message with an inline `[✅ 확인 / 알람 정지]`
+     button.
+  3. The hourly `_resend_unacked_alerts` job re-fires the same
+     message every 24 hours until the user taps the button.
+  4. `on_ack_callback` (registered on pattern `^ack:`) flips
+     the record and edits the message to "→ ✅ 확인됨, 알람 중단".
+
+Each alert needs a stable `notify_id` (e.g. `paddle_v3.4.0`).
+Duplicate ids are refused so a recurring check (weekly paddle scan,
+hourly cost watchdog, etc.) can call `_send_actionable_alert`
+freely without spamming — the ack store dedups.
+
+DO NOT:
+  - Send actionable alerts via raw `ctx.bot.send_message` — the
+    user will miss it the day they're not on Telegram.
+  - Use a notify_id that includes timestamps (e.g.
+    `paddle_2026-05-15`); the resend pattern depends on the id
+    being identifiable across days.
+  - Skip the hourly job registration; without it the alert never
+    re-fires after the first send.
+
 ## Automation-first principle (always default to schedulers)
 
 When the user wants something to happen "from now on" / "every time"

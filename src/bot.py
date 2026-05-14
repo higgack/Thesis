@@ -4134,16 +4134,105 @@ _PADDLE_RELEASE_PATH = config.DATA_DIR / ".paddle_last_seen"
 _PADDLE_BASELINE = "v3.3.1"  # the broken version we shipped against
 
 
+async def _send_actionable_alert(ctx, notify_id: str, message: str,
+                                  parse_mode: str | None = "HTML") -> None:
+    """Send a Telegram message with a [✅ 확인 / 알람 정지] inline
+    button and record it for daily resend until the user taps it.
+    Standard pattern for any 'user must take action' notification —
+    avoids silent miss when the user is away from Telegram on the
+    day a one-shot alert fires."""
+    from .store import notify_acks
+    inserted = await asyncio.to_thread(
+        notify_acks.record_pending, notify_id, message, parse_mode,
+    )
+    if not inserted:
+        # Already pending from a previous check; resend loop will
+        # handle it. Don't send again here or we double-fire.
+        return
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ 확인 / 알람 정지",
+                             callback_data=f"ack:{notify_id}"),
+    ]])
+    try:
+        await ctx.bot.send_message(
+            chat_id=config.TELEGRAM_OWNER_ID,
+            text=message,
+            parse_mode=parse_mode,
+            reply_markup=kb,
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        log.exception("actionable alert send failed (id=%s)", notify_id)
+
+
+async def on_ack_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handler for the [✅ 확인 / 알람 정지] button. Flips the alert's
+    acked state so the daily resend loop stops, and edits the
+    message in-place to confirm."""
+    q = update.callback_query
+    if not q:
+        return
+    user = q.from_user
+    if not user or user.id != config.TELEGRAM_OWNER_ID:
+        await q.answer("권한 없음")
+        return
+    await q.answer()
+    parts = (q.data or "").split(":", 1)
+    if len(parts) != 2 or parts[0] != "ack":
+        return
+    notify_id = parts[1]
+    from .store import notify_acks
+    flipped = await asyncio.to_thread(notify_acks.mark_acked, notify_id)
+    suffix = "\n\n→ ✅ 확인됨, 알람 중단" if flipped else "\n\n→ (이미 확인됨)"
+    try:
+        await q.edit_message_text(
+            (q.message.text or "") + suffix,
+            parse_mode=None,        # plain text after the user message
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        log.exception("ack callback edit failed")
+
+
+async def _resend_unacked_alerts(ctx: ContextTypes.DEFAULT_TYPE):
+    """Hourly: any actionable alert that hasn't been acked within
+    24h gets re-sent with the same [✅ 확인] button. Telegram dedups
+    visually by the new send_message id so the user sees a fresh
+    bubble each day until they tap."""
+    from .store import notify_acks
+    try:
+        due = await asyncio.to_thread(notify_acks.list_due)
+    except Exception:
+        log.exception("notify_acks list_due failed")
+        return
+    for notify_id, rec in due:
+        try:
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ 확인 / 알람 정지",
+                                     callback_data=f"ack:{notify_id}"),
+            ]])
+            await ctx.bot.send_message(
+                chat_id=config.TELEGRAM_OWNER_ID,
+                text=rec.get("message") or "(empty alert)",
+                parse_mode=rec.get("parse_mode"),
+                reply_markup=kb,
+                disable_web_page_preview=True,
+            )
+            # Bump last_sent_at AFTER the successful send so a network
+            # error keeps the alert eligible for retry next hour.
+            await asyncio.to_thread(notify_acks.update_last_sent, notify_id)
+        except Exception:
+            log.exception("alert resend failed (id=%s)", notify_id)
+
+
 async def _check_paddle_release(ctx: ContextTypes.DEFAULT_TYPE):
     """Weekly check for a new paddlepaddle release. We're stuck on
     v3.3.1 because of the PIR+oneDNN ConvertPirAttribute crash; when
     a newer release ships we want to know so the hybrid OCR worker
-    can be re-attempted. Telegram notifies the owner; the user
-    decides whether to bump the FROM tag in ocr-worker/Dockerfile.
-
-    Runs via APScheduler (no new cron entry needed). State file
-    .paddle_last_seen records the last notified tag so a quiet week
-    doesn't spam the same release twice."""
+    can be re-attempted. Notifies via _send_actionable_alert so the
+    message keeps re-sending daily until the user taps ✅. State
+    files: .paddle_last_seen (dedup the github check) and
+    notify_acks.json (dedup the user-facing alert)."""
     try:
         import httpx
         async with httpx.AsyncClient(timeout=20) as c:
@@ -4169,7 +4258,9 @@ async def _check_paddle_release(ctx: ContextTypes.DEFAULT_TYPE):
         if latest == last_seen:
             return
 
-        # Record FIRST so a duplicate run doesn't double-notify.
+        # Record FIRST so a duplicate run doesn't double-fire the
+        # actionable alert (notify_acks also dedups by id, belt+
+        # suspenders).
         try:
             tmp = _PADDLE_RELEASE_PATH.with_suffix(
                 _PADDLE_RELEASE_PATH.suffix + ".tmp"
@@ -4189,15 +4280,12 @@ async def _check_paddle_release(ctx: ContextTypes.DEFAULT_TYPE):
             f"<code>paddlepaddle/paddle:{latest.lstrip('v')}</code> 로 bump "
             f"후 hybrid 재시도 가능."
         )
-        try:
-            await ctx.bot.send_message(
-                chat_id=config.TELEGRAM_OWNER_ID,
-                text=msg,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            log.exception("paddle release telegram notify failed")
+        await _send_actionable_alert(
+            ctx,
+            notify_id=f"paddle_{latest}",
+            message=msg,
+            parse_mode="HTML",
+        )
     except Exception:
         log.exception("paddle release check failed")
 
@@ -4787,6 +4875,9 @@ def main():
     app.add_handler(CallbackQueryHandler(
         on_ocr_extend_callback, pattern=r"^ocr:"
     ))
+    app.add_handler(CallbackQueryHandler(
+        on_ack_callback, pattern=r"^ack:"
+    ))
     app.add_handler(CommandHandler("queue", cmd_queue))
     app.add_handler(CommandHandler("audit", cmd_audit))
     app.add_handler(CommandHandler("blocked_hosts", cmd_blocked_hosts))
@@ -4873,6 +4964,17 @@ def main():
             interval=7 * 24 * 3600,
             first=300,
             name="check_paddle_release",
+        )
+        # Hourly: any actionable alert (e.g. paddle release notice)
+        # whose ack button hasn't been tapped within 24h gets re-
+        # sent. The 24h gate lives inside notify_acks.list_due(),
+        # so a noop hourly tick is cheap. State in notify_acks.json
+        # survives bot restarts so a tap days later still works.
+        app.job_queue.run_repeating(
+            _resend_unacked_alerts,
+            interval=3600,
+            first=600,
+            name="resend_unacked_alerts",
         )
         # One-shot Telegram flood-ban release notification. Today's
         # 22207s ban (logged at 2026-05-14 01:28:56 UTC) lifts at
