@@ -1,9 +1,14 @@
 FROM python:3.11-slim
 
-# OS deps: libgl for OpenCV (paddleocr image preprocessing),
-# libglib/libsm/libxext for image lib runtime.
+# OS deps:
+#   libgomp1     — GNU OpenMP runtime required by paddlepaddle's
+#                  libpaddle.so (without it: 'libgomp.so.1: cannot
+#                  open shared object file').
+#   libgl1       — OpenCV (paddleocr image preprocessing).
+#   libglib2.0-0 — GLib runtime for image lib.
+#   libsm6/libxext6 — X11 image lib runtime (cv2 imports).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 libglib2.0-0 libsm6 libxext6 \
+    libgomp1 libgl1 libglib2.0-0 libsm6 libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
