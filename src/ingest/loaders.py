@@ -199,11 +199,13 @@ SPARSE_OCR_AUTO_CAP = int(_os.getenv("OCR_AUTO_CAP", "7"))  # pages
 # trigger only (not /ocr_extend), OCR the first PROBE pages, and only
 # spend Vision on the remaining cap if the probe yielded enough text
 # to be worth continuing. A chart-only deck where the first 3 pages
-# render <200 chars of OCR text almost never has readable content on
-# pages 4-7 either — saves 4 Vision calls (~₩6/doc) with zero recall
-# loss because the user can always extend manually via /pending_ocr.
+# render <300 chars of OCR text almost never has readable content on
+# pages 4-7 either — saves 4 Vision calls (~₩6/doc) with low recall
+# loss. Threshold 300 (was 200) leaves a margin so mixed PDFs whose
+# real text only starts on page 4-5 still get continued; the rare
+# false-skip is recoverable via /pending_ocr + /ocr_extend.
 _OCR_PROGRESSIVE_PROBE_PAGES = int(_os.getenv("OCR_PROBE_PAGES", "3"))
-_OCR_PROGRESSIVE_MIN_TEXT = int(_os.getenv("OCR_PROBE_MIN_TEXT", "200"))
+_OCR_PROGRESSIVE_MIN_TEXT = int(_os.getenv("OCR_PROBE_MIN_TEXT", "300"))
 OCR_DPI = int(_os.getenv("OCR_DPI", "100"))  # render DPI
 OCR_SPARSE_THRESHOLD = int(_os.getenv("OCR_SPARSE_THRESHOLD", "800"))  # chars/page
 
