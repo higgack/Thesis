@@ -4121,15 +4121,30 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
     # Record local_file dedup hits so the orphan scan stops re-queuing
     # them. Caught by any pipeline layer (file_hash / body_hash /
     # title) — they all surface as status='duplicate'.
-    if r and r.get("status") == "duplicate" and item.get("kind") == "local_file":
+    is_local_orphan = item.get("kind") == "local_file"
+    if r and r.get("status") == "duplicate" and is_local_orphan:
         fname = Path(item.get("path") or "").name
         if fname:
             _record_dedup_confirmed(fname)
-    summary = _format_results([r]) if r else f"(빈 결과: {title[:60]})"
-    if summary.strip():
-        await _edit_or_send(
-            ctx, chat_id, status_msg_id, f"⏰ ingest 재시도\n{summary}",
-        )
+    # Orphan recovery is the only retry kind that legitimately fires
+    # 100+ duplicates in a single drain (one per file the scan picked
+    # up that's already learned under a different source label).
+    # Surfacing each as a Telegram message floods the chat without
+    # adding signal. Suppress duplicate messages for the local_file
+    # path specifically; user-initiated retries (failed-retry, etc.)
+    # still show the ♻️ line because the user actively asked to retry.
+    if (is_local_orphan and r and r.get("status") == "duplicate"
+            and status_msg_id):
+        try:
+            await ctx.bot.delete_message(chat_id=chat_id, message_id=status_msg_id)
+        except Exception:
+            pass
+    else:
+        summary = _format_results([r]) if r else f"(빈 결과: {title[:60]})"
+        if summary.strip():
+            await _edit_or_send(
+                ctx, chat_id, status_msg_id, f"⏰ ingest 재시도\n{summary}",
+            )
     log.info("retry done [%s]: %s",
              (r or {}).get("status", "unknown"), title[:80])
 
