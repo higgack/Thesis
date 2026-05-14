@@ -379,6 +379,13 @@ def _load_persisted_state() -> None:
                     if key in seen:
                         continue
                     seen.add(key)
+                    # Restart-time recovery: any item that was being
+                    # processed when the bot stopped still has an
+                    # in_flight_ts mark. Clear it so the next retry
+                    # tick re-attempts the work — otherwise items in
+                    # flight at restart would be invisible until the
+                    # _IN_FLIGHT_TIMEOUT (12 min) elapsed.
+                    item.pop("in_flight_ts", None)
                     deduped.append(item)
                 _INGEST_RETRY_QUEUE.extend(deduped)
                 dropped = len(data) - len(deduped)
@@ -959,13 +966,59 @@ Orphan: /orphans · /recover_orphans
 <b>【11. 트러블슈팅】</b> "본문 비어있음"→차단/paywall · 봇 무응답→docker logs thesis-bot-1 · brain 에러→BM25 빌드중 30s 후 · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web 의심 · 봇 메타글→digest mode 차단 · BGE-M3 /app/data/hf_cache 보존 · backend 전환 .env EMBED_BACKEND=gemini|bge-m3"""
 
 
+# Telegram caps a single message at 4096 chars. _HELP_TEXT is hand-
+# compacted to fit, but the section list keeps growing as commands /
+# policies are added. Safety net: paragraph-aligned auto-split so a
+# future edit that pushes past the limit still delivers the full help
+# instead of silently failing.
+_TG_MSG_LIMIT = 4096
+_HELP_SOFT_LIMIT = 4000  # keep margin for parse_mode tags
+
+
+def _split_for_telegram(text: str, limit: int = _HELP_SOFT_LIMIT) -> list[str]:
+    """Split on blank-line paragraph boundaries; if a single paragraph
+    is itself too long, fall back to line-level splits. Never breaks
+    inside a line so HTML tags stay balanced."""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    buf = ""
+    for para in text.split("\n\n"):
+        if len(para) > limit:
+            # Paragraph alone exceeds limit — fall back to line splits.
+            if buf:
+                chunks.append(buf)
+                buf = ""
+            line_buf = ""
+            for line in para.split("\n"):
+                cand = (line_buf + "\n" + line) if line_buf else line
+                if len(cand) > limit and line_buf:
+                    chunks.append(line_buf)
+                    line_buf = line
+                else:
+                    line_buf = cand
+            if line_buf:
+                buf = line_buf
+            continue
+        cand = (buf + "\n\n" + para) if buf else para
+        if len(cand) > limit and buf:
+            chunks.append(buf)
+            buf = para
+        else:
+            buf = cand
+    if buf:
+        chunks.append(buf)
+    return chunks
+
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     await _typing(update, ctx)
-    await update.message.reply_text(
-        _HELP_TEXT, parse_mode="HTML", disable_web_page_preview=True,
-    )
+    for chunk in _split_for_telegram(_HELP_TEXT):
+        await update.message.reply_text(
+            chunk, parse_mode="HTML", disable_web_page_preview=True,
+        )
 
 
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -3815,17 +3868,50 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(_retry_pending_ingest(ctx))
 
 
+# Mid-processing items stay in the queue with an in_flight_ts mark
+# instead of being popped. If the bot crashes/restarts while an item
+# is being processed, the persisted queue still contains it and it
+# becomes eligible again after _IN_FLIGHT_TIMEOUT — previously the
+# pop-then-persist sequence meant in-flight items vanished from both
+# the queue and the failed log on restart.
+_IN_FLIGHT_TIMEOUT = _INGEST_TIMEOUT_SEC + 120  # 12 min
+
+
 def _pop_eligible_retry_item() -> dict | None:
-    """Walk the retry queue from the front and pop the first item whose
-    not_before_ts (set on previous failure) has elapsed. Items still in
-    backoff stay in place so other queue items keep flowing. Returns
-    None when nothing is currently eligible."""
+    """Walk the retry queue from the front and mark the first item whose
+    not_before_ts has elapsed AND is not currently in flight. The item
+    stays in the queue with an in_flight_ts stamp so a mid-processing
+    restart doesn't lose it. Use _retry_item_done / _retry_item_soft_fail
+    to release the slot."""
     now = time.time()
-    for i, candidate in enumerate(_INGEST_RETRY_QUEUE):
+    for candidate in _INGEST_RETRY_QUEUE:
+        in_flight = candidate.get("in_flight_ts")
+        if in_flight and now - in_flight < _IN_FLIGHT_TIMEOUT:
+            continue
         nb = candidate.get("not_before_ts")
         if nb is None or nb <= now:
-            return _INGEST_RETRY_QUEUE.pop(i)
+            candidate["in_flight_ts"] = now
+            _persist_retry_queue()
+            return candidate
     return None
+
+
+def _retry_item_done(item: dict) -> None:
+    """Item finished (success / duplicate / permanent failure / file
+    gone). Remove from queue and persist."""
+    try:
+        _INGEST_RETRY_QUEUE.remove(item)
+    except ValueError:
+        pass
+    _persist_retry_queue()
+
+
+def _retry_item_soft_fail(item: dict, hold_sec: int) -> None:
+    """Item failed transiently. Clear in_flight, set next-attempt time;
+    item stays in queue at its existing position."""
+    item.pop("in_flight_ts", None)
+    item["not_before_ts"] = time.time() + hold_sec
+    _persist_retry_queue()
 
 
 async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
@@ -3835,8 +3921,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
         return
     item = _pop_eligible_retry_item()
     if item is None:
-        return  # everything currently in backoff
-    _persist_retry_queue()
+        return  # everything currently in backoff or in flight
     chat_id = item["chat_id"]
     title = (
         item.get("file_name")
@@ -3860,11 +3945,13 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             if already:
                 log.info("retry skip — filename already learned: %s", fname)
                 _record_dedup_confirmed(fname)
+                _retry_item_done(item)
                 return
             # User permanently ignored this filename — drop the retry
             # request without touching the pipeline.
             if _is_ignored_filename(fname):
                 log.info("retry skip — permanently ignored: %s", fname)
+                _retry_item_done(item)
                 return
     async with _INGEST_SEM:
         retry_job_id = _register_ingest(
@@ -3991,6 +4078,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 if not pdf_path.exists():
                     log.info("pending ocr_extend: file gone, skipping %s",
                              pdf_path.name)
+                    _retry_item_done(item)
                     return
                 r = await pipeline.extend_pdf_ocr(
                     pdf_path, item["doc_id"],
@@ -4019,6 +4107,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 dest = Path(item["path"])
                 if not dest.exists():
                     log.info("orphan recovery: file gone, skipping %s", dest.name)
+                    _retry_item_done(item)
                     return
                 label = f"local:{dest.name}"
                 suffix = dest.suffix.lower()
@@ -4064,19 +4153,23 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                     try:
                         content = dest.read_text(encoding="utf-8", errors="ignore")
                     except Exception:
+                        _retry_item_done(item)
                         return
                     r = await pipeline.ingest_text(content, label)
             else:
+                _retry_item_done(item)
                 return
         except Exception as e:
             item["attempts"] += 1
             if item["attempts"] >= _MAX_RETRY_ATTEMPTS or not _is_retryable(e):
                 # Persist to /failed so the user can /failed retry later.
                 payload = {k: v for k, v in item.items() if k != "chat_id"}
+                payload.pop("in_flight_ts", None)
                 _record_failure(
                     "error", title[:140], _explain_error(e),
                     retry_payload=payload,
                 )
+                _retry_item_done(item)
                 final_fail = (
                     f"⚠️ ingest 재시도 포기 — {title[:80]}\n{_explain_error(e)}\n"
                     "/failed_retry 로 다시 시도할 수 있습니다."
@@ -4093,9 +4186,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             # _MAX_RETRY_ATTEMPTS=5 the final wait is up to 5 h before
             # /failed pickup.
             hold = _RETRY_BACKOFF_SEC * item["attempts"]
-            item["not_before_ts"] = time.time() + hold
-            _INGEST_RETRY_QUEUE.append(item)
-            _persist_retry_queue()
+            _retry_item_soft_fail(item, hold)
             wait_min = max(1, hold // 60)
             await _edit_or_send(
                 ctx, chat_id, status_msg_id,
@@ -4151,11 +4242,22 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             await _edit_or_send(
                 ctx, chat_id, status_msg_id, f"⏰ ingest 재시도\n{summary}",
             )
+    # Item reached a terminal state (ok / duplicate / empty / other).
+    # Soft-fail returns earlier via _retry_item_soft_fail, so anything
+    # reaching here is done.
+    _retry_item_done(item)
     log.info("retry done [%s]: %s",
              (r or {}).get("status", "unknown"), title[:80])
 
 
 def main():
+    if len(_HELP_TEXT) > _TG_MSG_LIMIT:
+        log.warning(
+            "/help text %d chars > Telegram limit %d — auto-splitting "
+            "on paragraph boundaries. Compact _HELP_TEXT to restore "
+            "single-message delivery.",
+            len(_HELP_TEXT), _TG_MSG_LIMIT,
+        )
     meta.init()
     obsidian.init()
     pending_store.init()
