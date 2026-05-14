@@ -987,7 +987,7 @@ Orphan: /orphans · /recover_orphans
 
 <b>【10-3. Retry/무손실 재개 (신규=재시도 동일)】</b> 5회 선형(1h→2h→3h→4h→/failed)·not_before_ts·silent retry · <b>모든 인입 시작 시 in_flight_ts 디스크 저장 → 배포·OOM·SIGKILL에도 자동 재개</b>(stop_grace 120s·부팅 시 stale 클리어 10s 픽업)·JSON persist tmp→fsync→rename+.bak 폴백·/audit 메모리/디스크/orphan 검증
 
-<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs thesis-bot-1 · brain 에러→BM25 30s 후 · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env EMBED_BACKEND=gemini|bge-m3"""
+<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs thesis-bot-1 · brain 에러→BM25 30s 후 · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env EMBED_BACKEND=gemini|bge-m3 · OCR_BACKEND=gemini|local|hybrid (local/hybrid은 docker compose --profile ocr-local up -d ocr-worker 필요)"""
 
 
 # Telegram caps a single message at 4096 chars. _HELP_TEXT is hand-

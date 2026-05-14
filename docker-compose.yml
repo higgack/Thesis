@@ -81,5 +81,35 @@ services:
       - 8.8.8.8
       - 1.1.1.1
 
+  # Local PaddleOCR worker — DORMANT BY DEFAULT (profile gating).
+  # The bot routes Vision OCR through src/ingest/ocr_client.py which
+  # picks a backend from the OCR_BACKEND env var (default 'gemini' =
+  # current behaviour, no worker needed). Set OCR_BACKEND=local or
+  # OCR_BACKEND=hybrid AND start this service to opt into PaddleOCR:
+  #
+  #     docker compose --profile ocr-local up -d ocr-worker
+  #     docker compose up -d --force-recreate bot   # picks up env
+  #
+  # Why dormant: PaddleOCR has a ~1GB image and ~3GB resident memory.
+  # Most users won't need it until daily PDF ingest volume crosses
+  # ~30/day, at which point the Vision OCR bill starts to matter.
+  # cpus: '2' caps the worker at half the VM so the bot retains
+  # full responsiveness even during a 30-PDF batch.
+  ocr-worker:
+    build: ./ocr-worker
+    profiles: ["ocr-local"]
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    cpus: '2'
+    mem_limit: 4g
+    environment:
+      OCR_QUEUE_DIR: /app/data/ocr_queue
+      OCR_RESULT_DIR: /app/data/ocr_results
+      OCR_POLL_INTERVAL: '0.5'
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
 volumes:
   tg-bot-api-data:

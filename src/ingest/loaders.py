@@ -451,10 +451,6 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = OCR_DPI,
     [start_page, start_page + max_pages - 1]."""
     try:
         import fitz  # PyMuPDF
-        from google import genai
-        from google.genai import types
-        from .. import config
-        from ..store import cost as _cost
     except Exception:
         return {"text": "", "ocrd": 0, "skipped": 0}
 
@@ -463,11 +459,12 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = OCR_DPI,
     except Exception:
         return {"text": "", "ocrd": 0, "skipped": 0}
 
-    client = genai.Client(api_key=config.GOOGLE_API_KEY)
-    prompt = (
-        "이 페이지의 모든 텍스트를 그대로 추출하세요. "
-        "단락/제목/표 구조를 유지하고, 설명이나 코멘트 없이 텍스트만 출력하세요."
-    )
+    # Vision OCR backend (gemini / local / hybrid) routed through
+    # ocr_client. Default OCR_BACKEND=gemini keeps the original
+    # inline Gemini path bit-identical; local/hybrid route to the
+    # ocr-worker container via the file queue (dormant unless
+    # docker-compose --profile ocr-local is up).
+    from . import ocr_client as _ocr_client
 
     import hashlib as _hashlib
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -513,29 +510,19 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = OCR_DPI,
             continue
         work_items.append((i, img_bytes, img_hash))
 
-    # Second pass (parallel): OCR queued pages concurrently. 7-page cap
-    # means at most 7 Vision calls in flight per PDF — well under
-    # Gemini's per-min quota even with multiple PDFs ingesting at once.
-    # ThreadPoolExecutor inside the asyncio thread is fine because
-    # genai's sync client releases GIL during the network wait.
+    # Second pass (parallel): OCR queued pages concurrently via the
+    # configured backend (Gemini direct / local worker / hybrid).
+    # max_workers=7 caps in-flight calls so Gemini per-min quota isn't
+    # bumped even with multiple PDFs ingesting; for local mode the
+    # worker itself is the bottleneck (single-process) but the queue
+    # serialises naturally, so multiple threads just block on the
+    # queue read — harmless.
 
     def _ocr_one(item):
         i, img_bytes, img_hash = item
         try:
-            resp = client.models.generate_content(
-                model=config.SUMMARY_MODEL,
-                contents=[
-                    types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
-                    types.Part.from_text(text=prompt),
-                ],
-                config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    max_output_tokens=2048,
-                ),
-            )
-            _cost.record_resp(config.SUMMARY_MODEL, resp, purpose="ingest")
-            text = (resp.text or "").strip()
-            if text:
+            text = _ocr_client.ocr_one_page(img_bytes, page_idx=i)
+            if text and not text.startswith("[OCR error"):
                 _meta.ocr_cache_put(img_hash, text)
             return (i, text)
         except Exception as e:

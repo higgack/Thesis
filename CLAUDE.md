@@ -93,6 +93,37 @@ explicit permission. PR #1 already exists for this branch.
 - OCR: `OCR_DPI=100`, `OCR_AUTO_CAP=7`, `OCR_SPARSE_THRESHOLD=800`,
   `OCR_PROBE_PAGES=3`, `OCR_PROBE_MIN_TEXT=300`
 
+## OCR backend — dormant local worker is pre-built but disabled
+
+`src/ingest/ocr_client.py` routes Vision OCR through `OCR_BACKEND`
+(default `gemini` = current behaviour). Two other backends exist but
+are dormant:
+
+- `OCR_BACKEND=local`  — every page goes through the PaddleOCR
+  `ocr-worker` container. Zero per-page API cost, but quality drops
+  ~10-20% on chart-heavy pages.
+- `OCR_BACKEND=hybrid` — PaddleOCR first; if confidence < 0.8 or
+  text < 50 chars, falls back to Gemini Vision for that one page.
+
+To activate:
+```bash
+docker compose --profile ocr-local up -d ocr-worker
+# Edit .env: OCR_BACKEND=hybrid
+docker compose up -d --force-recreate bot
+```
+
+To deactivate:
+```bash
+# Edit .env: OCR_BACKEND=gemini  (or remove the line)
+docker compose stop ocr-worker
+docker compose up -d --force-recreate bot
+```
+
+Worker uses a file queue (`data/ocr_queue/` ↔ `data/ocr_results/`)
+with atomic-write + heartbeat (`data/ocr_worker_heartbeat`). PaddleOCR
+pin: 2.7.3 (proven API). v3.x rewrite exists (3.5.0 current) — see
+`ocr-worker/worker.py` comment for upgrade notes.
+
 ## Resume-safety invariants
 
 - All persisted state files use `_atomic_write_json` (tmp → fsync →
