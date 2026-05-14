@@ -1337,7 +1337,7 @@ async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     more = f"\n... 외 {len(noisy)-15}건" if len(noisy) > 15 else ""
     await update.message.reply_text(
         f"노이즈 후보 {len(noisy)}건 (text 타입, 본문 짧음):\n{preview}{more}\n\n"
-        f"전부 삭제하려면: /cleanup confirm"
+        f"전부 삭제하려면: /cleanup_confirm"
     )
 
 
@@ -1371,7 +1371,7 @@ async def cmd_forget_forwards(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     more = f"\n... 외 {len(candidates) - 15}건" if len(candidates) > 15 else ""
     await update.message.reply_text(
         f"📋 자동 포워딩 디지스트 후보 {len(candidates)}건:\n{preview}{more}\n\n"
-        f"전부 삭제하려면: /forget_forwards confirm"
+        f"전부 삭제하려면: /forget_forwards_confirm"
     )
 
 
@@ -1413,7 +1413,7 @@ async def cmd_dedupe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"중복 {len(groups)}그룹 / 삭제 후보 {total}건\n"
         + "".join(lines) + more +
-        f"\n\n각 그룹에서 본문 가장 긴 것 1개만 남기고 삭제: /dedupe confirm"
+        f"\n\n각 그룹에서 본문 가장 긴 것 1개만 남기고 삭제: /dedupe_confirm"
     )
 
 
