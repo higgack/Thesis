@@ -66,6 +66,45 @@ _FAILED_MAX = 200
 # or how long. Critical when the user has just queued multiple 600+
 # chunk PDFs and wants to know "is it still chewing or stuck?".
 _ACTIVE_INGESTS: dict[str, dict] = {}
+# Files confirmed as duplicates by retry-handler dedup (any layer:
+# filename / file_hash / body_hash / title) get recorded here so the
+# next orphan scan skips them entirely — without this, legacy docs
+# missing file_hash kept resurfacing as orphans every restart, the
+# user kept seeing '145개 미학습 파일 발견' notifications, and the
+# retry queue cycled the same items endlessly even though every cycle
+# was a dedup no-op.
+_DEDUP_CONFIRMED_PATH = config.DATA_DIR / "orphan_dedup_confirmed.json"
+_DEDUP_CONFIRMED: set[str] = set()
+
+
+def _load_dedup_confirmed() -> None:
+    global _DEDUP_CONFIRMED
+    try:
+        import json as _json
+        if _DEDUP_CONFIRMED_PATH.exists():
+            _DEDUP_CONFIRMED = set(_json.loads(
+                _DEDUP_CONFIRMED_PATH.read_text(encoding="utf-8")
+            ))
+    except Exception:
+        log.exception("dedup_confirmed load failed")
+        _DEDUP_CONFIRMED = set()
+
+
+def _record_dedup_confirmed(filename: str) -> None:
+    """Mark a filename as 'already in our knowledge under some other
+    source label'. Persisted so the orphan scan skips it across
+    restarts."""
+    if not filename or filename in _DEDUP_CONFIRMED:
+        return
+    _DEDUP_CONFIRMED.add(filename)
+    try:
+        import json as _json
+        _DEDUP_CONFIRMED_PATH.write_text(
+            _json.dumps(sorted(_DEDUP_CONFIRMED), ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        log.exception("dedup_confirmed persist failed")
 # Live ⏳ status bubbles persisted to disk so a bot restart can clean
 # them up — otherwise the bubble freezes at whatever elapsed time
 # was last rendered ('처리 중 (2분 00초)' forever) because the updater
@@ -383,6 +422,12 @@ def _scan_orphan_files() -> list[Path]:
             fn = item.get("file_name") or ""
             if fn:
                 known.add(fn)
+    # Also exclude filenames that the retry handler already confirmed
+    # as duplicates in a previous run (different source label /
+    # body_hash / title match). Without this, legacy docs without
+    # file_hash keep resurfacing every restart.
+    known |= _DEDUP_CONFIRMED
+
     # First pass: filter by filename (cheap source-label match).
     candidates = [p for name, p in all_files.items() if name not in known]
     if not candidates:
@@ -3813,6 +3858,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 already = None
             if already:
                 log.info("retry skip — filename already learned: %s", fname)
+                _record_dedup_confirmed(fname)
                 return
     async with _INGEST_SEM:
         retry_job_id = _register_ingest(
@@ -4072,6 +4118,13 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
     #                              stuck even after the silent backoff
     #                              messages above suppress the soft
     #                              fails.
+    # Record local_file dedup hits so the orphan scan stops re-queuing
+    # them. Caught by any pipeline layer (file_hash / body_hash /
+    # title) — they all surface as status='duplicate'.
+    if r and r.get("status") == "duplicate" and item.get("kind") == "local_file":
+        fname = Path(item.get("path") or "").name
+        if fname:
+            _record_dedup_confirmed(fname)
     summary = _format_results([r]) if r else f"(빈 결과: {title[:60]})"
     if summary.strip():
         await _edit_or_send(
@@ -4240,6 +4293,7 @@ def main():
             )
 
     _load_persisted_state()
+    _load_dedup_confirmed()
     _cleanup_stale_bubbles_at_startup(app)
     _recover_orphan_files_at_startup(app)
     vector.warm_bm25_cache()  # background scan; first query stays fast
