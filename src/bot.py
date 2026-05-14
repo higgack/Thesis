@@ -2002,9 +2002,11 @@ async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """List all pending OCR / Pro decisions saved from expired
-    inline-button prompts. Each item is numbered so the user can
-    trigger /pending_ocr <N> or /pending_pro <N>."""
+    """List pending OCR / Pro decisions. OCR items are rendered as
+    individual inline-button bubbles (max 10) so the user can decide
+    per-doc by title with a single tap — same UX as the auto-prompt
+    at ingest time. Pro items stay text-only (need /pending_pro <N>
+    to invoke; the Pro flow can't be summarised in 3 buttons)."""
     if not _is_owner(update):
         return
     await _typing(update, ctx)
@@ -2015,23 +2017,55 @@ async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "📭 검토 대기 항목 없음 — 모든 확인 prompt가 처리됨."
         )
         return
-    lines = [f"📋 검토 대기 항목 ({len(ocr_items) + len(pro_items)}개)"]
+
+    # Header summary
+    header = [f"📋 검토 대기 항목 ({len(ocr_items) + len(pro_items)}개)"]
     if ocr_items:
-        lines.append(f"\n🔵 OCR 확장 가능 ({len(ocr_items)}개)")
-        for it in ocr_items[:30]:
-            remaining = max(0, it["total_pages"] - it["applied_pages"])
-            est = max(10, remaining * 3)
-            title = (it.get("title") or "(no title)")[:70]
-            lines.append(
-                f"  [{it['id']}] {title}\n"
-                f"        {it['applied_pages']}/{it['total_pages']}p · "
-                f"+{remaining}p 가능 (~₩{est})"
-            )
-        if len(ocr_items) > 30:
-            lines.append(f"  ... 외 {len(ocr_items) - 30}건")
-        lines.append("  → /pending_ocr <번호> 로 확장 시작")
+        header.append(f"🔵 OCR 확장 가능 {len(ocr_items)}개 — "
+                      f"아래 항목별 버튼으로 한 번에 결정")
     if pro_items:
-        lines.append(f"\n🟣 Pro 합성 가능 ({len(pro_items)}개)")
+        header.append(f"🟣 Pro 합성 가능 {len(pro_items)}개")
+    await update.message.reply_text("\n".join(header))
+
+    # OCR items: per-item bubble with 3 inline buttons. Cap at 10
+    # so a 30-item backlog doesn't spam 30 messages — user clears
+    # the top batch, then re-runs /pending to see the rest.
+    OCR_INLINE_CAP = 10
+    for it in ocr_items[:OCR_INLINE_CAP]:
+        remaining = max(0, it["total_pages"] - it["applied_pages"])
+        est = max(5, remaining * 3)
+        title = (it.get("title") or "(no title)")[:120]
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                f"📄 OCR 추가 ({remaining}p, ~₩{est})",
+                callback_data=f"ocr:{it['id']}:go",
+            )],
+            [InlineKeyboardButton(
+                f"📝 텍스트만 유지" + (f" ({it['applied_pages']}p)"
+                                       if it['applied_pages'] > 0 else ""),
+                callback_data=f"ocr:{it['id']}:skip",
+            )],
+            [InlineKeyboardButton(
+                "🚫 학습 취소 (문서 삭제)",
+                callback_data=f"ocr:{it['id']}:forget",
+            )],
+        ])
+        status = (f"{it['applied_pages']}/{it['total_pages']}p OCR 적용됨"
+                  if it['applied_pages'] > 0
+                  else f"총 {it['total_pages']}p · 텍스트만 추출됨")
+        await update.message.reply_text(
+            f"📊 {title}\n{status}",
+            reply_markup=kb,
+        )
+    if len(ocr_items) > OCR_INLINE_CAP:
+        await update.message.reply_text(
+            f"…외 {len(ocr_items) - OCR_INLINE_CAP}건 더 있음. "
+            f"위 항목 처리 후 /pending 다시 호출."
+        )
+
+    # Pro items stay text-only (need full question replay)
+    if pro_items:
+        lines = ["🟣 Pro 합성 가능"]
         for it in pro_items[:30]:
             est = max(80, it["count"] * 3 + 30)
             q = (it.get("question") or "")[:70]
@@ -2042,9 +2076,9 @@ async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if len(pro_items) > 30:
             lines.append(f"  ... 외 {len(pro_items) - 30}건")
         lines.append("  → /pending_pro <번호> 로 Pro 답변 시작")
-    await update.message.reply_text(
-        "\n".join(lines), disable_web_page_preview=True,
-    )
+        await update.message.reply_text(
+            "\n".join(lines), disable_web_page_preview=True,
+        )
 
 
 async def cmd_ocr_extend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
