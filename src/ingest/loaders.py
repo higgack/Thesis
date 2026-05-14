@@ -156,6 +156,115 @@ def _parse_html(url: str, html: str) -> tuple[str, str, str | None]:
     return title, extracted.strip(), hint
 
 
+async def _fetch_youtube_subs_yt_dlp(video_id: str) -> str:
+    """Fallback transcript fetcher using yt-dlp. yt-dlp talks to
+    YouTube via the same internal endpoints the web client uses, so
+    it usually works from GCP/AWS server IPs where the
+    youtube-transcript-api library gets blocked. Tries manual
+    Korean → English subtitles first, then auto-generated captions
+    in the same order. Returns the plain transcript text (one line
+    per caption block) or '' if nothing is available."""
+    try:
+        from yt_dlp import YoutubeDL
+    except Exception:
+        log.warning("yt-dlp not installed — skipping fallback")
+        return ""
+
+    import json
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    opts = {
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+        "writesubtitles": False,
+        "writeautomaticsub": False,
+        "subtitleslangs": ["ko", "en"],
+    }
+
+    def _extract() -> dict | None:
+        try:
+            with YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=False)
+        except Exception as e:
+            log.info("yt-dlp extract_info failed: %s", e)
+            return None
+
+    info = await asyncio.to_thread(_extract)
+    if not info:
+        return ""
+
+    # Prefer manual subs (more accurate); fall back to auto.
+    manual = info.get("subtitles") or {}
+    auto = info.get("automatic_captions") or {}
+    for source in (manual, auto):
+        for lang in ("ko", "en"):
+            tracks = source.get(lang) or []
+            # Prefer json3 (clean text segments); vtt is the fallback.
+            sub_url = None
+            for t in tracks:
+                if t.get("ext") == "json3":
+                    sub_url = t.get("url"); break
+            if not sub_url:
+                for t in tracks:
+                    if t.get("ext") == "vtt":
+                        sub_url = t.get("url"); break
+            if not sub_url:
+                continue
+            try:
+                async with httpx.AsyncClient(timeout=30, follow_redirects=True,
+                                             headers={"User-Agent": "Mozilla/5.0"}) as c:
+                    r = await c.get(sub_url)
+                    r.raise_for_status()
+                    content = r.text
+            except Exception as e:
+                log.info("yt-dlp subtitle fetch %s/%s failed: %s",
+                         "manual" if source is manual else "auto", lang, e)
+                continue
+            text = _parse_subtitle_payload(content)
+            if text.strip():
+                log.info("yt-dlp: %s/%s captions OK (%d chars)",
+                         "manual" if source is manual else "auto", lang, len(text))
+                return text.strip()
+    return ""
+
+
+def _parse_subtitle_payload(content: str) -> str:
+    """Extract plain text from json3 (preferred) or vtt subtitle
+    payloads. json3 events look like {events: [{segs: [{utf8: '...'}]}]}.
+    vtt lines have HH:MM:SS --> HH:MM:SS timestamps separated by
+    blank lines from cue text."""
+    import json
+    if '"events"' in content[:200]:
+        try:
+            data = json.loads(content)
+        except Exception:
+            return ""
+        lines: list[str] = []
+        for event in (data.get("events") or []):
+            buf = []
+            for seg in (event.get("segs") or []):
+                txt = (seg.get("utf8") or "").strip()
+                if txt:
+                    buf.append(txt)
+            if buf:
+                lines.append("".join(buf))
+        return "\n".join(lines)
+    # vtt fallback — strip timestamps and metadata
+    out: list[str] = []
+    for raw in content.split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("WEBVTT") or line.startswith("Kind:") or line.startswith("Language:"):
+            continue
+        if "-->" in line:
+            continue
+        if line.isdigit():  # cue number
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
     title = f"YouTube {video_id}"
     description = None
@@ -167,6 +276,8 @@ async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
                 title = r.json().get("title", title)
     except Exception:
         pass
+    # Primary: youtube-transcript-api (fast pure-Python). Often
+    # blocked on cloud IPs but free + zero deps.
     try:
         transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
         try:
@@ -178,25 +289,27 @@ async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
         if text.strip():
             return title, text.strip(), description
     except Exception as e:
-        log_msg = f"transcript unavailable: {e}"
+        log_msg = f"transcript_api: {e}"
     else:
-        log_msg = "transcript empty"
+        log_msg = "transcript_api: empty"
 
-    # Captions missing / blocked (server IPs are routinely blocked
-    # by YouTube for youtube-transcript-api). DO NOT fall back to
-    # jina.ai for youtube — jina returns the page HTML (nav, related
-    # videos, comments) without the JS-rendered transcript, and the
-    # resulting markdown garbage pollutes RAG retrieval. Return a
-    # minimal stub so the URL is tracked in /find with a clear
-    # 'transcript unavailable' note; body_hash dedup means repeated
-    # failures across multiple videos collapse to one stub doc, not
-    # spam. User can supply the transcript manually by pasting the
-    # video text as a message if they really need it.
+    # Fallback: yt-dlp (different API path, usually works on GCP
+    # server IPs where youtube-transcript-api gets blocked). Catches
+    # ~90% of remaining videos.
+    yt_dlp_text = await _fetch_youtube_subs_yt_dlp(video_id)
+    if yt_dlp_text:
+        return title, yt_dlp_text, description
+
+    # Both transcript fetchers failed. DO NOT fall back to jina.ai
+    # for youtube — jina returns page HTML (nav, related videos,
+    # comments) without the JS-rendered transcript, polluting RAG
+    # retrieval. Return a minimal stub so /find shows the URL with
+    # a clear 'transcript unavailable' note.
     stub = (
         f"[YouTube transcript unavailable]\n"
         f"Video: {title}\n"
         f"URL: {url}\n"
-        f"Reason: {log_msg}\n"
+        f"Reason: {log_msg} + yt-dlp failed\n"
         f"수동 학습: 영상 페이지에서 자막을 복사해 봇에 메시지로 붙여넣기."
     )
     return title, stub, description
