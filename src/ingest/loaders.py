@@ -187,7 +187,11 @@ def _xml_field(xml: str, tag: str, skip_first: bool = False) -> str | None:
 # the user opts in / out per document so we never silently bill ₩200+
 # on a 100-page deep-research report. Lowered 20→10 after the user
 # decided most reports' essential content sits in the first ~10 pages.
-SPARSE_OCR_AUTO_CAP = 10
+SPARSE_OCR_AUTO_CAP = 7  # 10 → 7: auto-OCR covers the first ~7 pages
+# of a chart-heavy report (typically the executive summary + key
+# slides). Pages 8+ usually duplicate the same theses with more detail
+# and are accessible via /pending_ocr if a specific report needs full
+# coverage.
 
 
 def _looks_like_title(s: str) -> bool:
@@ -255,16 +259,14 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
                 "total_pages": page_count,
                 "capped": page_count > SPARSE_OCR_AUTO_CAP,
             }
-    elif page_count > 0 and len(body) / max(page_count, 1) < 1100:
-        # Sparse text/page → likely chart/table-heavy. Augment via Vision
-        # OCR, capped so cost stays predictable. Threshold tightened
-        # 1800 → 1100 chars/page: broker reports with mostly-text +
-        # sidebar charts (typically 1100-2000 chars/page) now skip the
-        # auto-OCR pass since PyMuPDF already captured the narrative.
-        # Truly chart-heavy slides / scan-blends (<1100 chars/page)
-        # still get OCR. Saves ~₩20/PDF on borderline reports; the user
-        # can still /pending_ocr to backfill if a specific doc needs
-        # chart text.
+    elif page_count > 0 and len(body) / max(page_count, 1) < 800:
+        # Sparse text/page → likely chart/table-heavy. Tightened
+        # 1100 → 800 chars/page: only docs that are MOSTLY charts
+        # (slide decks, image-blends) hit the auto-OCR path now.
+        # Mixed broker reports with narrative + sidebar charts skip
+        # the OCR and rely on PyMuPDF + the user's optional
+        # /pending_ocr backfill. Combined with DPI 150→100 and cap
+        # 10→7, this trims auto-Vision spend by ~70-80%.
         applied = min(page_count, SPARSE_OCR_AUTO_CAP)
         r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP)
         if r["text"]:
@@ -281,9 +283,14 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
     return (title or path.stem)[:200], body, None, ocr_meta
 
 
-def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 150,
+def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 100,
                    start_page: int = 1,
                    skip_if_text_chars: int = 1500) -> dict:
+    # DPI 150 → 100: image input tokens scale roughly with pixel
+    # area, so ~55% fewer input tokens per page. Vision OCR on
+    # broker-report text (12-14pt body) reads identically at 100 dpi;
+    # only fine print (footnotes, dense table cells) would degrade,
+    # and those are usually already in the PyMuPDF text pass.
     """Render each page to PNG and ask Gemini Vision to extract text.
 
     Returns {text, ocrd, skipped} so callers can report actual cost
