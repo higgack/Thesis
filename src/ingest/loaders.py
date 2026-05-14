@@ -238,11 +238,23 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
 
     ocr_meta: dict | None = None
     if not body:
-        # Image-only PDF: every page is OCR'd (skip-if-text-dense is a
-        # no-op since there's no extracted text to compare against).
-        r = _ocr_pdf_pages(path)
+        # Image-only PDF: every page needs OCR (PyMuPDF couldn't read
+        # any text). Cap to SPARSE_OCR_AUTO_CAP so a 60-page scanned
+        # broker report doesn't pin a slot for 40+ min on Vision API
+        # calls — pages past the cap can be backfilled via the
+        # /pending_ocr resume flow once the doc is searchable.
+        r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP)
         if r["text"]:
             body = r["text"]
+        if page_count > 0:
+            ocr_meta = {
+                "kind": "image_only",
+                "applied_pages": min(page_count, SPARSE_OCR_AUTO_CAP),
+                "ocrd_pages": r["ocrd"],
+                "skipped_pages": r["skipped"],
+                "total_pages": page_count,
+                "capped": page_count > SPARSE_OCR_AUTO_CAP,
+            }
     elif page_count > 0 and len(body) / max(page_count, 1) < 1800:
         # Sparse text/page → likely chart/table-heavy. Augment via Vision
         # OCR, capped so cost stays predictable. The per-page skip
