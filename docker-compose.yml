@@ -25,6 +25,14 @@ services:
     # alongside Semaphore(4→8) so 8 parallel ingests can hold their
     # chunks + BGE-M3 weights without tripping the cleanup guards.
     mem_limit: 12000m
+    # Default 10s SIGTERM→SIGKILL is too short for any non-trivial
+    # ingest. 120s lets short jobs (URLs, text, photos, small PDFs)
+    # finish cleanly during deploys; longer jobs are still safe
+    # because every live ingest is persisted in retry_queue.json with
+    # in_flight_ts BEFORE work begins (bot.py: _enqueue_with_inflight)
+    # — startup load strips stale in_flight_ts and the retry tick
+    # resumes the work within 10 s of the new container coming up.
+    stop_grace_period: 120s
     dns:
       - 8.8.8.8
       - 1.1.1.1

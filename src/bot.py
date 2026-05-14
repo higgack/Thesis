@@ -961,7 +961,7 @@ Orphan: /orphans · /recover_orphans
 ✅ 6단 dedup ₩0 즉시 reject: ①source(URL·파일명) ②URL canonical(utm/fbclid/scheme/www/m strip, YouTube/arXiv ID) ③file_hash SHA1(PDF/PPTX/DOCX/XLSX) ④text_hash SHA1 ⑤body_hash 정규화(PDF↔PPTX 동일내용) ⑥title 정규화(재게시/paraphrase)
 • 청크 1000 토큰(CHUNK_TOKENS) 청크↓30% • 요약 단일콜 12k, partial 8k Flash-Lite 호출↓60% • Vision DPI 100(OCR_DPI) 토큰↓55% • Vision 자동캡 7p(OCR_AUTO_CAP) • Vision 트리거 800자/p(OCR_SPARSE_THRESHOLD) • 페이지 image hash dedup(반복 disclaimer Vision 0) • 빈/표지 페이지 skip • PyMuPDF 표 무료 임베딩 • PDF metadata title 휴리스틱(회사+코드면 파일명) • 짧은 forward(≤400 토큰) 요약 skip • 차단 도메인(X/Reuters/Bloomberg/paywall/LinkedIn) • .txt/.md/.csv 첨부 제외 • failed URL 즉시 skip • /failed_clear=영구 무시(orphan+URL+retry 모두 차단)
 
-<b>【10-3. Retry】</b> 최대 5회 선형 백오프(1h→2h→3h→4h→/failed) · 실패가 다른 큐 안 막음(not_before_ts) · flood-ban 회피 silent retry+RetryAfter circuit breaker · 30s live status
+<b>【10-3. Retry/무손실 재개】</b> 최대 5회 선형 백오프(1h→2h→3h→4h→/failed) · not_before_ts로 실패가 큐 안 막음 · silent retry+RetryAfter circuit breaker · 30s live status · <b>모든 인입(파일/URL/텍스트/사진/음성) 처리 시작 시 retry_queue.json에 in_flight_ts 마크 → 봇 재시작·배포에 끊겨도 자동 재개</b>(stop_grace_period 120s · 부팅 시 stale 클리어 후 10s 내 픽업)
 
 <b>【11. 트러블슈팅】</b> "본문 비어있음"→차단/paywall · 봇 무응답→docker logs thesis-bot-1 · brain 에러→BM25 빌드중 30s 후 · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web 의심 · 봇 메타글→digest mode 차단 · BGE-M3 /app/data/hf_cache 보존 · backend 전환 .env EMBED_BACKEND=gemini|bge-m3"""
 
@@ -3384,23 +3384,24 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
     results = []
 
     if msg.document:
+        doc_item = _enqueue_with_inflight({
+            "kind": "doc",
+            "file_id": msg.document.file_id,
+            "file_unique_id": msg.document.file_unique_id,
+            "file_name": msg.document.file_name,
+            "chat_id": notify_chat_id,
+        })
         try:
             results.append(await _ingest_doc_attachment(msg, ctx, on_stage=on_stage))
+            _finish_inflight(doc_item, "done")
         except Exception as e:
             log.exception("file ingest failed")
             if _is_retryable(e):
-                _INGEST_RETRY_QUEUE.append({
-                    "kind": "doc",
-                    "file_id": msg.document.file_id,
-                    "file_unique_id": msg.document.file_unique_id,
-                    "file_name": msg.document.file_name,
-                    "chat_id": notify_chat_id,
-                    "attempts": 0,
-                })
-                _persist_retry_queue()
+                _finish_inflight(doc_item, "retry")
                 results.append({"status": "queued",
                                 "title": msg.document.file_name})
             else:
+                _finish_inflight(doc_item, "done")
                 results.append({"status": "error", "error": _explain_error(e)})
 
         # Korean analyst commentary often ships as a long caption above
@@ -3413,6 +3414,9 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
                 "text": cap,
                 "label": f"tg-doc-caption:{msg.message_id}",
             }
+            cap_item = _enqueue_with_inflight(
+                {**cap_retry, "chat_id": notify_chat_id}
+            )
             try:
                 rcap = await pipeline.ingest_text(
                     cap, f"tg-doc-caption:{msg.message_id}",
@@ -3420,15 +3424,14 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
                 if rcap.get("status") in ("empty", "error"):
                     rcap["retry_payload"] = cap_retry
                 results.append(rcap)
+                _finish_inflight(cap_item, "done")
             except Exception as e:
                 log.exception("doc caption ingest failed")
                 if _is_retryable(e):
-                    _INGEST_RETRY_QUEUE.append({
-                        **cap_retry, "chat_id": notify_chat_id, "attempts": 0,
-                    })
-                    _persist_retry_queue()
+                    _finish_inflight(cap_item, "retry")
                     results.append({"status": "queued", "title": cap[:60]})
                 else:
+                    _finish_inflight(cap_item, "done")
                     results.append({"status": "error",
                                     "error": _explain_error(e),
                                     "retry_payload": cap_retry})
@@ -3441,20 +3444,22 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
             "file_unique_id": photo.file_unique_id,
             "caption": msg.caption or "",
         }
+        photo_item = _enqueue_with_inflight(
+            {**photo_retry, "chat_id": notify_chat_id}
+        )
         try:
             r = await _ingest_photo_attachment(msg, ctx)
             if r.get("status") in ("empty", "error"):
                 r["retry_payload"] = photo_retry
             results.append(r)
+            _finish_inflight(photo_item, "done")
         except Exception as e:
             log.exception("photo ingest failed")
             if _is_retryable(e):
-                _INGEST_RETRY_QUEUE.append({
-                    **photo_retry, "chat_id": notify_chat_id, "attempts": 0,
-                })
-                _persist_retry_queue()
+                _finish_inflight(photo_item, "retry")
                 results.append({"status": "queued", "title": "photo"})
             else:
+                _finish_inflight(photo_item, "done")
                 results.append({"status": "error",
                                 "error": _explain_error(e),
                                 "retry_payload": photo_retry})
@@ -3468,20 +3473,22 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
             "mime_type": voice.mime_type or "audio/ogg",
             "caption": msg.caption or "",
         }
+        voice_item = _enqueue_with_inflight(
+            {**voice_retry, "chat_id": notify_chat_id}
+        )
         try:
             r = await _ingest_voice_attachment(msg, ctx)
             if r.get("status") in ("empty", "error"):
                 r["retry_payload"] = voice_retry
             results.append(r)
+            _finish_inflight(voice_item, "done")
         except Exception as e:
             log.exception("voice ingest failed")
             if _is_retryable(e):
-                _INGEST_RETRY_QUEUE.append({
-                    **voice_retry, "chat_id": notify_chat_id, "attempts": 0,
-                })
-                _persist_retry_queue()
+                _finish_inflight(voice_item, "retry")
                 results.append({"status": "queued", "title": "voice"})
             else:
+                _finish_inflight(voice_item, "done")
                 results.append({"status": "error",
                                 "error": _explain_error(e),
                                 "retry_payload": voice_retry})
@@ -3497,21 +3504,23 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
             "mime_type": audio.mime_type or "audio/mpeg",
             "caption": msg.caption or "",
         }
+        audio_item = _enqueue_with_inflight(
+            {**audio_retry, "chat_id": notify_chat_id}
+        )
         try:
             r = await _ingest_audio_attachment(msg, ctx)
             if r.get("status") in ("empty", "error"):
                 r["retry_payload"] = audio_retry
             results.append(r)
+            _finish_inflight(audio_item, "done")
         except Exception as e:
             log.exception("audio ingest failed")
             if _is_retryable(e):
-                _INGEST_RETRY_QUEUE.append({
-                    **audio_retry, "chat_id": notify_chat_id, "attempts": 0,
-                })
-                _persist_retry_queue()
+                _finish_inflight(audio_item, "retry")
                 results.append({"status": "queued",
                                 "title": audio.file_name or "audio"})
             else:
+                _finish_inflight(audio_item, "done")
                 results.append({"status": "error",
                                 "error": _explain_error(e),
                                 "retry_payload": audio_retry})
@@ -3535,6 +3544,9 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
                             "detail": "이전에 실패한 URL — 자동 skip"})
             continue
         url_retry = {"kind": "url", "url": url}
+        url_item = _enqueue_with_inflight(
+            {**url_retry, "chat_id": notify_chat_id}
+        )
         try:
             r = await pipeline.ingest_url(url)
             r.setdefault("source", url)
@@ -3542,15 +3554,14 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
             if r.get("status") in ("empty", "error"):
                 r["retry_payload"] = url_retry
             results.append(r)
+            _finish_inflight(url_item, "done")
         except Exception as e:
             log.exception("url ingest failed: %s", url)
             if _is_retryable(e):
-                _INGEST_RETRY_QUEUE.append({
-                    **url_retry, "chat_id": notify_chat_id, "attempts": 0,
-                })
-                _persist_retry_queue()
+                _finish_inflight(url_item, "retry")
                 results.append({"status": "queued", "title": url})
             else:
+                _finish_inflight(url_item, "done")
                 results.append({"status": "error",
                                 "error": _explain_error(e),
                                 "source": url, "retry_payload": url_retry})
@@ -3562,20 +3573,22 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
             "text": plain,
             "label": f"tg-msg:{msg.message_id}",
         }
+        text_item = _enqueue_with_inflight(
+            {**text_retry, "chat_id": notify_chat_id}
+        )
         try:
             r = await pipeline.ingest_text(plain, f"tg-msg:{msg.message_id}")
             if r.get("status") in ("empty", "error"):
                 r["retry_payload"] = text_retry
             results.append(r)
+            _finish_inflight(text_item, "done")
         except Exception as e:
             log.exception("text ingest failed")
             if _is_retryable(e):
-                _INGEST_RETRY_QUEUE.append({
-                    **text_retry, "chat_id": notify_chat_id, "attempts": 0,
-                })
-                _persist_retry_queue()
+                _finish_inflight(text_item, "retry")
                 results.append({"status": "queued", "title": plain[:60]})
             else:
+                _finish_inflight(text_item, "done")
                 results.append({"status": "error",
                                 "error": _explain_error(e),
                                 "retry_payload": text_retry})
@@ -3912,6 +3925,40 @@ def _retry_item_soft_fail(item: dict, hold_sec: int) -> None:
     item.pop("in_flight_ts", None)
     item["not_before_ts"] = time.time() + hold_sec
     _persist_retry_queue()
+
+
+def _enqueue_with_inflight(item: dict) -> dict:
+    """Persist a live-path work item to the retry queue with an
+    in_flight_ts mark BEFORE the pipeline call. If the bot dies mid-
+    process (SIGTERM from auto_deploy, OOM kill, panic), the item
+    survives in retry_queue.json; startup load strips its stale
+    in_flight_ts and the next retry tick resumes the work. Without
+    this, in-flight URL/text/photo/voice/audio ingests vanished
+    silently on every restart.
+
+    File-bearing items (doc/photo/voice/audio) also have orphan-scan
+    coverage as a second safety net, but plain URL/text would
+    otherwise be unrecoverable."""
+    item.setdefault("attempts", 0)
+    item["in_flight_ts"] = time.time()
+    _INGEST_RETRY_QUEUE.append(item)
+    _persist_retry_queue()
+    return item
+
+
+def _finish_inflight(item: dict, outcome: str) -> None:
+    """Release a live-path item.
+
+    outcome:
+      'done'  — success / duplicate / permanent failure / skipped.
+                Item removed from queue.
+      'retry' — retryable failure raised. Item stays in queue with
+                in_flight_ts cleared so the next tick picks it up.
+                Live caller has already shown a 'queued' status."""
+    if outcome == "retry":
+        _retry_item_soft_fail(item, 0)
+    else:
+        _retry_item_done(item)
 
 
 async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
