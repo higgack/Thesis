@@ -200,10 +200,27 @@ OCR_SPARSE_THRESHOLD = int(_os.getenv("OCR_SPARSE_THRESHOLD", "800"))  # chars/p
 
 
 def _looks_like_title(s: str) -> bool:
-    """Reject PDF metadata.title placeholders like '2013년 0월 0일' or
-    pure-numeric strings — fall back to filename instead."""
+    """Reject PDF metadata.title placeholders so the filename is used
+    instead. Catches:
+      - empty / pure-digit / pure-symbol strings
+      - date-only stubs: '2013년 0월 0일'
+      - internal report codes: '신한투자증권20230823f', 'KB증권20240115a',
+        'samsung20230101' — company name + 6+ digits + optional letter
+      - bare ID tokens: '20230823rpt' (no separators, mostly digits)
+    """
     s = (s or "").strip()
-    return bool(re.search(r"[A-Za-z가-힣]{2,}", s))
+    if not re.search(r"[A-Za-z가-힣]{2,}", s):
+        return False
+    # Internal report code pattern: word + 6+ digits + optional letter,
+    # no spaces. Almost always less informative than the filename.
+    if re.match(r"^[가-힣A-Za-z]+\d{6,}[A-Za-z]?$", s):
+        return False
+    # Bare ID-ish token: no spaces, mostly digits — generic placeholder.
+    if " " not in s and len(s) < 25:
+        digit_ratio = sum(c.isdigit() for c in s) / max(len(s), 1)
+        if digit_ratio >= 0.4:
+            return False
+    return True
 
 
 def load_pdf(path: Path, on_stage=None) -> tuple[str, str, str | None, dict | None]:
