@@ -26,6 +26,11 @@ def _normalize_title(t: str) -> str:
 
 _DB_PATH = config.DATA_DIR / "meta.db"
 
+# Base schema: only columns + indexes that exist on every shipped
+# version. Newer columns (metadata, file_hash) and their indexes are
+# applied via ALTER TABLE in init() after the table is created, so
+# executescript can't reference a column that's missing on a legacy
+# DB and crash the whole bot startup.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
@@ -34,20 +39,19 @@ CREATE TABLE IF NOT EXISTS documents (
     title TEXT,
     summary TEXT,
     obsidian_path TEXT,
-    ingested_at TEXT NOT NULL,
-    metadata TEXT,
-    file_hash TEXT
+    ingested_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_docs_ingested ON documents(ingested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_docs_source ON documents(source);
-CREATE INDEX IF NOT EXISTS idx_docs_file_hash ON documents(file_hash);
 """
 
 
 def init():
     with _conn() as c:
         c.executescript(_SCHEMA)
-        # Migrate older DBs that pre-date the metadata column.
+        # Migrate older DBs to pick up newer columns. Each block adds
+        # the column first, then any index that depends on it, so
+        # legacy schemas don't blow up at startup.
         try:
             c.execute("SELECT metadata FROM documents LIMIT 1")
         except sqlite3.OperationalError:
@@ -56,10 +60,10 @@ def init():
             c.execute("SELECT file_hash FROM documents LIMIT 1")
         except sqlite3.OperationalError:
             c.execute("ALTER TABLE documents ADD COLUMN file_hash TEXT")
-            c.execute(
-                "CREATE INDEX IF NOT EXISTS idx_docs_file_hash "
-                "ON documents(file_hash)"
-            )
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_docs_file_hash "
+            "ON documents(file_hash)"
+        )
 
 
 @contextmanager
