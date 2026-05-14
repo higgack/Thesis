@@ -868,33 +868,51 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • web 결과는 [도메인]으로 인용
  • 인용은 자료 제목 (숫자 [1] X) · 본문 [N] 자동 매김
 
-<b>【10. 운영 / 비용 (Gemini 임베딩 + 비용절감 적용)】</b>
- • VM: n2-standard-4 16GB · bot 12000m · Semaphore(env INGEST_SEM_CAPACITY=6)
- • 명령어 응답 우선: concurrent_updates=True + HTTPX pool 32
- • 재시도 5회 + 선형 백오프 (1h/2h/3h/4h) → /failed
- • 영속: retry/failed/history/qna/cost/dashboard/ocr_cache
- • <b>임베딩: Gemini embedding-001 (3072-dim, $0.15/1M)</b>
- • LLM: Pro·Flash·Flash-Lite (Flash-Lite → Flash auto fallback on 503)
- • compare 20개+ Pro 확인 + PDF 7p+ OCR 확인
-   (5분 미선택 → /pending 자동 보관)
- • 메모리 5분 청소 (90% 즉시·95% 거부)
- • 단가 (1M 토큰): Pro ₩1,750·Flash ₩420·Lite ₩140·Embed ₩200
+<b>【10. 운영 / 인프라】</b>
+ • VM: n2-standard-4 (4 vCPU, 16GB) · bot mem_limit 12GB
+ • 동시 학습: Semaphore 6 (env INGEST_SEM_CAPACITY)
+ • 명령어 응답성: concurrent_updates=True + HTTPX pool 32
+ • 영속 데이터: retry queue / failed log / chat history /
+   qna log / cost db / dashboard / ocr_cache / active_bubbles
+ • 봇 재시작 시 stale ⏳ 버블 자동 정리 (active_bubbles.json)
+ • 메모리 자동 청소 5분 주기 (90% 즉시·95% 거부)
+ • 60s Gemini call timeout · 10분 ingest timeout
 
-<b>【10-1. 비용절감 최근 적용】</b>
+<b>【10-1. 모델 + 비용 (현재)】</b>
+ • <b>임베딩</b>: Gemini embedding-001 (3072-dim · $0.15/1M)
+ • <b>요약 / 메타</b>: Flash-Lite (Lite → Flash auto fallback on 503)
+ • <b>답변 (Q&amp;A)</b>: Flash (기본) · Pro (deep mode · /deep)
+ • <b>Vision OCR</b>: Flash-Lite (멀티모달, DPI 100)
+ • 단가 (1M 토큰): Pro ₩1,750 · Flash ₩420 · Lite ₩140 · Embed ₩200
+ • 답변 1h 인메모리 캐시 — 동일 질문 재호출 0
+
+<b>【10-2. Ingest 비용 절감 (모두 자동 적용)】</b>
+ ✅ <b>6단 dedup, 모두 비용 ₩0 즉시 reject</b>:
+   1. source 라벨 — URL/파일명 정확 매치
+   2. URL canonical — utm/fbclid/scheme/www/m strip, YouTube/arXiv ID 통일
+   3. file_hash — SHA1 바이트 매치 (PDF/PPTX/DOCX/XLSX)
+   4. text_hash — 텍스트 본문 SHA1 (forward 재포워딩)
+   5. body_hash — 추출 본문 정규화 (PDF ↔ PPTX 같은 내용)
+   6. title 정규화 — 헤드라인 매치 (재게시/paraphrase)
  • 청크 1000 토큰 (env CHUNK_TOKENS) — 임베딩 청크 ↓30%
  • 요약 단일콜 임계 12k 토큰, partial 8k — 긴 PDF Flash-Lite 호출 ↓60%
  • Vision OCR DPI 100 (env OCR_DPI) — 이미지 토큰 ↓55%
- • Vision 자동 캡 7p (env OCR_AUTO_CAP) — 페이지 ↓30%
- • Vision 트리거 800자/p (env OCR_SPARSE_THRESHOLD) — 텍스트 위주 PDF skip
- • 페이지 이미지 hash dedup — 반복 disclaimer 무료 재사용
- • 빈/단순 페이지 자동 skip — 표지/blank Vision 절감
+ • Vision 자동 캡 7p (env OCR_AUTO_CAP)
+ • Vision 트리거 800자/p (env OCR_SPARSE_THRESHOLD)
+ • 페이지 image hash dedup — 반복 disclaimer Vision 호출 0
+ • 빈/단순 페이지 자동 skip — 표지/blank
  • PyMuPDF 표 추출 — 구조화 표 무료 임베딩
- • 답변 1h 캐시 — 동일 질문 재질의 Gemini 호출 0
- • 알파스캐너 / X / paywall 도메인 자동 차단
- • 5단 dedup — source / URL canonical / file hash / text hash /
-   body hash (PDF↔PPTX) / title 정규화. 모두 비용 0
- • URL canonical — utm/fbclid 제거, YouTube/arXiv ID 통일, www/m. strip
- • 60s Gemini timeout + 15분 ingest timeout
+ • PDF metadata title 휴리스틱 — 회사+날짜 코드면 파일명 우선
+ • 짧은 forward (≤400 토큰) 요약 skip — 본문 자체가 summary
+ • 차단 도메인: X / Reuters / Bloomberg / paywall / LinkedIn 등
+ • .txt/.md/.csv 첨부 = 학습 제외 (메시지 paste 만 학습)
+ • failed URL 즉시 skip — 한 번 실패한 URL 재시도 안 함
+
+<b>【10-3. Retry 정책】</b>
+ • 최대 5회, 선형 백오프 (1h → 2h → 3h → 4h → /failed)
+ • 같은 자료가 실패해도 다른 큐 아이템 막지 않음 (not_before_ts)
+ • Telegram flood-ban 회피: silent retry 메시지 / RetryAfter circuit breaker
+ • 30s 간격 live status 갱신 (env _LIVE_EDIT_INTERVAL)
 
 <b>【11. 트러블슈팅】</b>
  • "본문 비어있음" → 차단 도메인/paywall
