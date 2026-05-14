@@ -4,6 +4,84 @@ Standing instructions / project-specific facts that need to survive
 context compaction. Anything Claude should ALWAYS remember while
 working on this repo.
 
+## Pre-push verification (MANDATORY — block on every push)
+
+User has been burned multiple times by shipped-then-immediately-
+broken code: shell scripts with `\n` literal in double-quoted
+strings, state files that don't persist and trigger infinite
+notification loops, scheduler scripts that fire every minute
+forever, etc. Each incident costs the user real time and trust.
+
+Before EVERY git push, walk this checklist:
+
+### 1. Shell scripts (cron / deploy / scheduler)
+- [ ] Trace the script with three concrete value sets:
+      (a) first run on a fresh VM, (b) idempotent re-run, (c) the
+      race-loss case (another script just did the work).
+- [ ] For every notification/side-effect, confirm the path that
+      fires it has a HARD off-switch on no-op runs. If the script
+      runs every minute, what does it send on minute N when
+      nothing changed? Must be NOTHING.
+- [ ] `\n` in double-quoted strings is LITERAL. Use `$'\n'`
+      (ANSI-C quoting), printf `\n`, or actual newline in the
+      source. NEVER ship `"...\n..."` to Telegram / curl / log.
+- [ ] State files (anything written to disk to survive between
+      runs) MUST be in a path that's:
+        • writable from the cron user's context (test with `ls -la`),
+        • NOT cleaned by `git reset --hard`, `git clean -fdx`,
+          docker volume re-create, or a parallel cron job,
+        • atomically written (tmp + rename), atomically read.
+- [ ] `bash -n script.sh` to lint syntax before commit.
+
+### 2. Python
+- [ ] `python3 -c "import ast; ast.parse(open('path').read())"`
+      on every modified .py.
+- [ ] For new code paths, mentally trace one happy path + one
+      error path with concrete values.
+- [ ] Imports for new optional deps wrapped in try/except so a
+      missing module doesn't break the rest of the bot.
+
+### 3. Cron-scheduled code
+- [ ] Pretend the script runs every minute for 24 hours. Does the
+      user get spammed? If yes, that's a bug — fix the dedup
+      condition BEFORE pushing.
+- [ ] Multi-script races: list every cron entry that touches the
+      same resource. Spell out who wins, what the loser does.
+      Loser must NOT send notifications about work it didn't do.
+
+### 4. Telegram notifications
+- [ ] Test the exact message string with substituted values
+      (write it out by hand, look for literal `\n`, `\t`, broken
+      escape sequences).
+- [ ] No new high-frequency notification source. If it could fire
+      more than ~5×/hour under any condition, add a rate limit
+      BEFORE pushing.
+
+### 5. Persistence (JSON / SQLite / state files)
+- [ ] Atomic write (`_atomic_write_json` or tmp + os.replace).
+- [ ] Recovery on read: missing file → empty default, corrupt
+      file → log + .bak fallback (per existing pattern in bot.py).
+- [ ] Path consistency: same path from host cron AND from inside
+      container? Bind-mount root differs (/app/data vs ~/Thesis/
+      data) — make sure your code uses the right one for its
+      runtime context.
+
+### 6. Forbidden patterns (lessons learned)
+- [ ] NEVER add a new cron entry. The existing ones (auto_pull.sh,
+      auto_deploy.sh, scheduler_watchdog.sh) cover all current
+      use cases.
+- [ ] NEVER ship a script whose only off-switch is a state file
+      in `./data/` — that dir gets touched by docker, git, etc.
+- [ ] NEVER use `"\n"` in a bash double-quoted string and assume
+      it's a newline.
+- [ ] NEVER tell the user "run this command yourself". See the
+      Automation-first principle below.
+
+### When in doubt → STOP, ASK before pushing.
+A 10-second confirmation costs nothing. A botched push that spams
+the user's Telegram every minute costs trust and forces an
+emergency revert. Always pick the confirmation.
+
 ## Automation-first principle (always default to schedulers)
 
 When the user wants something to happen "from now on" / "every time"
