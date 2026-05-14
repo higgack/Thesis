@@ -966,7 +966,7 @@ Orphan: /orphans · /recover_orphans
 
 <b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
 [Noah 디지스트] 📋 TG 원문 fetch / 📰 Substack URL relay / 그 외 drop
-[PLAIN] 본문 그대로(URL strip, 이미지 drop): daju_dart · Fundeasyearnings(알파스캐너 drop)
+[PLAIN] 본문 그대로(URL strip, 이미지 drop): daju_dart(DART 공시) · Fundeasyearnings(알파스캐너 drop) · aicorporateanalysisdeepdive(AI 리서치 딥다이브)
 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
 
 <b>【7. 메타데이터】</b> Flash-Lite 요약+메타 1콜 (이미지/음성/짧은 텍스트/캡션은 메타 skip) · 🏢회사 🏷태그 📅YYYY.MM
