@@ -733,10 +733,11 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  후속 질문 — 대명사 OK
 
 <b>【5. 자료 인입】</b>
- URL/PDF/PPTX/DOCX/XLSX/이미지/음성/YouTube/텍스트 그냥 보내기
- • PDF: 텍스트+OCR, 차트 많은 PDF 자동 Vision 10p (초과 시 확인)
+ URL/PDF/PPTX/DOCX/XLSX/이미지/음성/YouTube/텍스트(메시지) 그냥 보내기
+ • PDF: 텍스트+OCR(병렬), 차트 많은 PDF 자동 Vision 7p (초과 시 확인)
  • 이미지: 캡션 ≥80자 / 짧으면 OCR / [OCR] 강제 병행
  • 음성: Gemini STT · YouTube: 자막→Jina fallback
+ • <b>.txt/.md/.csv 첨부 = 학습 제외</b> (필요 시 메시지로 직접 paste)
  차단: LinkedIn/FB/IG/카스, Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
 <b>【6. 자동 포워딩 (multi-channel)】</b>
@@ -3016,6 +3017,16 @@ async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE,
                 f"{suffix}x로 변환해서 다시 보내주세요."
             ),
         }
+    if suffix in {".txt", ".md", ".csv"}:
+        fname = (msg.document.file_name or dest.name)
+        return {
+            "status": "skipped",
+            "title": fname,
+            "detail": (
+                f"{fname} — {suffix} 첨부는 학습 대상에서 제외됩니다. "
+                f"필요한 내용만 메시지로 직접 붙여넣어 주세요."
+            ),
+        }
     content = dest.read_text(encoding="utf-8", errors="ignore")
     return await pipeline.ingest_text(content, label)
 
@@ -3040,13 +3051,14 @@ _IMAGE_SUFFIX_MIME = {
 
 # Whitelist for orphan recovery + retry-queue dedup. Anything not in
 # here just stays on disk and never enters the queue, so a stray
-# .ppt / .ipynb / .zip can't burn cycles failing in a loop. Text
-# fallback (.txt/.md/.csv) is intentionally narrow — random binary
-# extensions would otherwise slip through the 'else: ingest_text'
-# branch and produce garbage chunks.
+# .ppt / .ipynb / .zip can't burn cycles failing in a loop.
+# .txt / .md / .csv removed (2026-05): plaintext attachments rarely
+# carry the kind of structured analytical content the user wants
+# searchable, and the few that do can be pasted as message text or
+# learned via /ingest_url. Existing .txt files on disk simply stop
+# matching the orphan scan and get ignored.
 _SUPPORTED_INGEST_SUFFIXES: frozenset[str] = frozenset({
     ".pdf", ".pptx", ".docx", ".xlsx",
-    ".txt", ".md", ".csv",
     *_AUDIO_SUFFIX_MIME.keys(),
     *_IMAGE_SUFFIX_MIME.keys(),
 })
