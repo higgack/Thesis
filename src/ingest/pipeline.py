@@ -54,8 +54,8 @@ async def ingest_pdf(path: Path, source_label: str,
     if file_hash and (existing := meta.find_by_file_hash(file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"],
                 "title": existing["title"]}
-    _emit(on_stage, "PDF 로드 / OCR")
-    title, body, hint, ocr_meta = await load_pdf_async(path)
+    _emit(on_stage, "PDF 로드")
+    title, body, hint, ocr_meta = await load_pdf_async(path, on_stage=on_stage)
     if not body:
         return {"status": "empty", "title": title}
     if hint is None and (m := _ARXIV_IN_PDF.search(body[:5000])):

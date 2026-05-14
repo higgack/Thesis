@@ -206,7 +206,7 @@ def _looks_like_title(s: str) -> bool:
     return bool(re.search(r"[A-Za-z가-힣]{2,}", s))
 
 
-def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
+def load_pdf(path: Path, on_stage=None) -> tuple[str, str, str | None, dict | None]:
     """Extract text from a PDF.
 
     Returns (title, body, hint, ocr_meta). `ocr_meta` is non-None when
@@ -264,7 +264,7 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
         # broker report doesn't pin a slot for 40+ min on Vision API
         # calls — pages past the cap can be backfilled via the
         # /pending_ocr resume flow once the doc is searchable.
-        r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP)
+        r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP, on_stage=on_stage)
         if r["text"]:
             body = r["text"]
         if page_count > 0:
@@ -285,7 +285,7 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
         # /pending_ocr backfill. Combined with DPI 150→100 and cap
         # 10→7, this trims auto-Vision spend by ~70-80%.
         applied = min(page_count, SPARSE_OCR_AUTO_CAP)
-        r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP)
+        r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP, on_stage=on_stage)
         if r["text"]:
             body = body + "\n\n--- Vision OCR augmentation ---\n\n" + r["text"]
         ocr_meta = {
@@ -359,7 +359,7 @@ def _page_is_blank(img_bytes: bytes, existing_text: str) -> bool:
 
 
 def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = OCR_DPI,
-                   start_page: int = 1,
+                   start_page: int = 1, on_stage=None,
                    skip_if_text_chars: int = 1500) -> dict:
     # DPI 150 → 100: image input tokens scale roughly with pixel
     # area, so ~55% fewer input tokens per page. Vision OCR on
@@ -400,75 +400,109 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = OCR_DPI,
     )
 
     import hashlib as _hashlib
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from ..store import meta as _meta
-    pages_out: list[str] = []
+    pages_out: list[tuple[int, str]] = []  # (page_idx, text) — sorted at end
     ocrd = 0
     skipped = 0
     cached_hits = 0
     blank_skips = 0
     end_page = start_page + max_pages - 1
+
+    # First pass (sequential, fast): decide per-page action — skip,
+    # cache hit, blank, or queue for Vision. Renders happen here too
+    # because PyMuPDF page objects aren't thread-safe.
+    work_items: list[tuple[int, bytes, str]] = []  # (page_idx, img_bytes, img_hash)
     for i, page in enumerate(doc, 1):
         if i < start_page:
             continue
         if i > end_page:
-            pages_out.append(f"-- Page {i}+ truncated --")
+            pages_out.append((i, f"-- Page {i}+ truncated --"))
             break
         existing_text = (page.get_text("text") or "").strip()
         if len(existing_text) >= skip_if_text_chars:
-            # PyMuPDF already extracted enough text for this page —
-            # skipping avoids duplicate chunks AND unnecessary cost.
             skipped += 1
             continue
         try:
             pix = page.get_pixmap(dpi=dpi)
             img_bytes = pix.tobytes("png")
-            # L: blank / boilerplate skip — cover, disclaimer, and empty
-            # pages waste Vision calls without contributing signal.
-            if _page_is_blank(img_bytes, existing_text):
-                blank_skips += 1
-                continue
-            # K: cross-document OCR cache. Same disclaimer / logo /
-            # template page in many broker reports hashes identically;
-            # one Vision call covers them all forever.
-            img_hash = _hashlib.sha1(img_bytes).hexdigest()
-            cached_text = _meta.ocr_cache_get(img_hash)
-            if cached_text is not None:
-                if cached_text.strip():
-                    pages_out.append(f"-- Page {i} --\n{cached_text}")
-                cached_hits += 1
-                continue
-            resp = client.models.generate_content(
-                model=config.SUMMARY_MODEL,
-                contents=[
-                    types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
-                    types.Part.from_text(text=prompt),
-                ],
-                config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    max_output_tokens=2048,
-                ),
-            )
-            _cost.record_resp(config.SUMMARY_MODEL, resp, purpose="ingest")
-            text = (resp.text or "").strip()
-            if text:
-                pages_out.append(f"-- Page {i} --\n{text}")
-                _meta.ocr_cache_put(img_hash, text)
-            ocrd += 1
         except Exception as e:
-            pages_out.append(f"-- Page {i} --\n[OCR error: {type(e).__name__}: {e}]")
-            ocrd += 1
+            pages_out.append((i, f"-- Page {i} --\n[render error: {type(e).__name__}]"))
+            continue
+        # L: blank / boilerplate skip
+        if _page_is_blank(img_bytes, existing_text):
+            blank_skips += 1
+            continue
+        # K: cross-doc OCR cache hit — no Vision call needed
+        img_hash = _hashlib.sha1(img_bytes).hexdigest()
+        cached_text = _meta.ocr_cache_get(img_hash)
+        if cached_text is not None:
+            if cached_text.strip():
+                pages_out.append((i, f"-- Page {i} --\n{cached_text}"))
+            cached_hits += 1
+            continue
+        work_items.append((i, img_bytes, img_hash))
+
+    # Second pass (parallel): OCR queued pages concurrently. 7-page cap
+    # means at most 7 Vision calls in flight per PDF — well under
+    # Gemini's per-min quota even with multiple PDFs ingesting at once.
+    # ThreadPoolExecutor inside the asyncio thread is fine because
+    # genai's sync client releases GIL during the network wait.
+    if work_items:
+        max_workers = min(len(work_items), 7)
+        completed = 0
+        total = len(work_items)
+        if on_stage:
+            on_stage(f"Vision OCR 0/{total} 페이지")
+
+        def _ocr_one(item):
+            i, img_bytes, img_hash = item
+            try:
+                resp = client.models.generate_content(
+                    model=config.SUMMARY_MODEL,
+                    contents=[
+                        types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
+                        types.Part.from_text(text=prompt),
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        max_output_tokens=2048,
+                    ),
+                )
+                _cost.record_resp(config.SUMMARY_MODEL, resp, purpose="ingest")
+                text = (resp.text or "").strip()
+                if text:
+                    _meta.ocr_cache_put(img_hash, text)
+                return (i, text)
+            except Exception as e:
+                return (i, f"[OCR error: {type(e).__name__}: {e}]")
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_ocr_one, w): w for w in work_items}
+            for fut in as_completed(futures):
+                completed += 1
+                if on_stage:
+                    on_stage(f"Vision OCR {completed}/{total} 페이지")
+                page_idx, text = fut.result()
+                if text:
+                    pages_out.append((page_idx, f"-- Page {page_idx} --\n{text}"))
+                ocrd += 1
+
+    # Sort by page index so output order matches reading order.
+    pages_out.sort(key=lambda t: t[0])
+    pages_out_str = [t[1] for t in pages_out]
     doc.close()
     if cached_hits or blank_skips:
         log.info("ocr cache hits=%d, blank skips=%d", cached_hits, blank_skips)
     return {
-        "text": "\n\n".join(pages_out).strip(),
+        "text": "\n\n".join(pages_out_str).strip(),
         "ocrd": ocrd,
         "skipped": skipped,
     }
 
 
-async def load_pdf_async(path: Path) -> tuple[str, str, str | None, dict | None]:
-    return await asyncio.to_thread(load_pdf, path)
+async def load_pdf_async(path: Path, on_stage=None) -> tuple[str, str, str | None, dict | None]:
+    return await asyncio.to_thread(load_pdf, path, on_stage)
 
 
 async def ocr_pdf_pages_async(path: Path, start_page: int, max_pages: int,
