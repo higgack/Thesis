@@ -2771,9 +2771,16 @@ async def on_ocr_extend_callback(update: Update,
         return
     if decision != "go":
         return
+    # Capture the original prompt message text + ids so we can flip
+    # the same bubble to ✅ on success — otherwise the prompt sits at
+    # 'OCR 진행 중...' forever (confusing UX) and the success message
+    # appears as a separate post elsewhere in the chat.
+    orig_chat_id = q.message.chat.id
+    orig_msg_id = q.message.message_id
+    orig_text = q.message.text or ""
     try:
         await q.edit_message_text(
-            (q.message.text or "") +
+            orig_text +
             f"\n\n→ 📄 {state['start_page']}-{state['end_page']}p OCR 진행 중..."
         )
     except Exception:
@@ -2813,22 +2820,27 @@ async def on_ocr_extend_callback(update: Update,
     if r.get("status") == "ok":
         skip_note = (f" · {r['pages_skipped']}p 텍스트 충분 스킵"
                      if r.get("pages_skipped") else "")
-        await q.message.reply_text(
-            f"✅ {title_short}\n"
-            f"   +{r['pages_ocrd']}p Vision OCR{skip_note} · "
-            f"+{r['chunks_added']} 청크"
+        final_text = (
+            f"{orig_text}\n\n"
+            f"→ ✅ {state['start_page']}-{state['end_page']}p OCR 완료 "
+            f"(+{r['pages_ocrd']}p Vision{skip_note} · "
+            f"+{r['chunks_added']} 청크)"
         )
     elif r.get("status") == "empty":
         skipped = r.get("pages_skipped", 0)
         if skipped:
-            await q.message.reply_text(
-                f"✅ {title_short}\n"
-                f"   {skipped}p 모두 텍스트 충분 → OCR 스킵 (추가 청크 없음, 비용 0)"
+            final_text = (
+                f"{orig_text}\n\n"
+                f"→ ✅ {skipped}p 모두 텍스트 충분 → OCR 스킵 "
+                f"(추가 청크 없음, 비용 0)"
             )
         else:
-            await q.message.reply_text(f"⚠️ OCR 결과 없음: {title_short}")
+            final_text = f"{orig_text}\n\n→ ⚠️ OCR 결과 없음: {title_short}"
     else:
-        await q.message.reply_text(f"⚠️ OCR 결과 없음: {title_short}")
+        final_text = f"{orig_text}\n\n→ ⚠️ OCR 결과 없음: {title_short}"
+    # Replace the in-progress prompt with the final result so the user
+    # sees one self-contained bubble, no orphan '진행 중...' state.
+    await _edit_or_send(ctx, orig_chat_id, orig_msg_id, final_text)
 
 
 async def on_pro_confirmation_callback(update: Update,
