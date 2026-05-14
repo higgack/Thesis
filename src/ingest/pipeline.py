@@ -35,14 +35,44 @@ def _doc_id(source: str) -> str:
     return hashlib.sha1(source.encode("utf-8")).hexdigest()[:16]
 
 
+_URL_TRACKING_PARAMS = {
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "fbclid", "gclid", "mc_cid", "mc_eid", "ref", "referrer",
+    "__source", "source", "share", "sharedfrom",
+}
+
+
+def _canonical_url(url: str) -> str:
+    """Strip tracking params so the SAME article fetched via three
+    different shares (twitter, email, kakao) all dedup to the same
+    source label."""
+    try:
+        from urllib.parse import urlparse, urlencode, parse_qsl, urlunparse
+        p = urlparse(url)
+        kept = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=False)
+                if k.lower() not in _URL_TRACKING_PARAMS]
+        return urlunparse((
+            p.scheme, p.netloc.lower(), p.path.rstrip("/") or "/",
+            p.params, urlencode(kept), "",
+        ))
+    except Exception:
+        return url
+
+
 async def ingest_url(url: str) -> dict:
-    if existing := meta.find_by_source(url):
+    canonical = _canonical_url(url)
+    if existing := meta.find_by_source(canonical):
+        return {"status": "duplicate", "doc_id": existing["id"],
+                "title": existing["title"], "source": canonical}
+    # Also catch the raw form (older entries may have been stored
+    # without canonicalisation).
+    if canonical != url and (existing := meta.find_by_source(url)):
         return {"status": "duplicate", "doc_id": existing["id"],
                 "title": existing["title"], "source": url}
-    title, body, hint = await load_url(url)
+    title, body, hint = await load_url(canonical)
     if not body:
-        return {"status": "empty", "title": title, "source": url}
-    return await _ingest("url", url, title, body, hint)
+        return {"status": "empty", "title": title, "source": canonical}
+    return await _ingest("url", canonical, title, body, hint)
 
 
 async def ingest_pdf(path: Path, source_label: str,
@@ -341,6 +371,20 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
                      existing["id"], source)
             return {"status": "duplicate", "doc_id": existing["id"],
                     "title": existing["title"]}
+
+    # Title-similarity fallback. Less precise than body_hash (a
+    # 4-word title 'Q1 2026 실적 발표' can clash across companies) so
+    # only trips on titles that are sufficiently distinctive — the
+    # ≥6 normalised-chars guard inside find_by_normalized_title
+    # filters generic stubs. Catches the case where the same article
+    # arrives with slightly different body wording (re-posted, paraphrased)
+    # but exactly the same headline.
+    title_existing = meta.find_by_normalized_title(title)
+    if title_existing and title_existing.get("id") != doc_id:
+        log.info("ingest title-norm duplicate of %s for %s",
+                 title_existing["id"], source)
+        return {"status": "duplicate", "doc_id": title_existing["id"],
+                "title": title_existing["title"]}
 
     _emit(on_stage, "청크 분할")
     chunks = split(body)

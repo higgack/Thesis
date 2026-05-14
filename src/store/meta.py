@@ -154,6 +154,30 @@ def find_by_file_hash(file_hash: str) -> dict | None:
         return dict(row) if row else None
 
 
+def find_by_normalized_title(title: str) -> dict | None:
+    """Title-similarity dedup — last-resort guard for cases that slip
+    past file_hash + body_hash. Useful when the same article is
+    reposted with light edits or arrives in multiple containers
+    (PDF + tg-msg text excerpt + URL). Normalisation strips boilerplate
+    prefixes / dates / punctuation; we require ≥6 normalised chars to
+    avoid false-positives on generic stubs."""
+    norm = _normalize_title(title or "")
+    if len(norm) < 6:
+        return None
+    # Pull every recent doc's title and compare normalised — cheap on
+    # a ~10K-doc corpus (the index hits in ms) and avoids storing yet
+    # another column.
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, title, source FROM documents "
+            "ORDER BY ingested_at DESC LIMIT 5000"
+        ).fetchall()
+    for row in rows:
+        if _normalize_title(row["title"] or "") == norm:
+            return dict(row)
+    return None
+
+
 def find_by_body_hash(body_hash: str) -> dict | None:
     """Cross-format content-level dedup. PDF and PPTX exports of the
     same source material have different file_hash but the extracted
