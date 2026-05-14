@@ -3791,6 +3791,15 @@ def _format_results(results: list[dict]) -> str:
             lines.append(f"✅ {r['title']}  ({r['type']}, {r['chunks']} chunks)")
         elif s == "duplicate":
             lines.append(f"♻️ 이미 있음: {r['title']}")
+        elif s in ("blocked", "skipped"):
+            # Blocked host (paywall / X / shortener / forum board) or
+            # drop-pattern match (알파 스캐너 등 narrative-free auto-
+            # generated formats). These are KNOWN-uningestable, not
+            # transient failures, so don't pile them up in /failed —
+            # just log the skip and move on.
+            log.info("ingest %s: %s — %s",
+                     s, r.get("title", "")[:80], r.get("detail", ""))
+            continue
         elif s == "empty":
             title = r.get("title", "")
             src = r.get("source", "") or title

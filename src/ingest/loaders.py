@@ -46,7 +46,26 @@ _BLOCKED_HOSTS = (
     # (한국 매체는 보통 본문 추출되니 제외; 막으면 좋은 자료까지 잃음)
     "reuters.com", "bloomberg.com", "ft.com", "wsj.com",
     "economist.com", "nytimes.com", "washingtonpost.com", "barrons.com",
+    # Korean URL shorteners — opaque redirect, trafilatura can't extract
+    # anything from the landing page. Every digest cite of these was
+    # piling up in the failed log without ever succeeding.
+    "buly.kr", "vo.la", "zrr.kr", "bit.ly", "tinyurl.com",
+    # Forum / community boards with low signal + heavy noise (long
+    # comment threads that overwhelm any analyst content).
+    "dvdprime.com",
 )
+
+
+def _is_blocked_host(url: str) -> bool:
+    """True if url's host matches the _BLOCKED_HOSTS list. Used by
+    pipeline.ingest_url to short-circuit BEFORE the failure log gets
+    touched, so blocked URLs no longer accumulate in /failed."""
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc.lower()
+        return any(h in host for h in _BLOCKED_HOSTS)
+    except Exception:
+        return False
 
 
 async def load_url(url: str) -> tuple[str, str, str | None]:

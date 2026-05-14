@@ -248,6 +248,16 @@ async def _expand_telegram_digest(client: TelegramClient, msg,
             if not orig:
                 print(f"    skip {ch}/{mid}: message not found")
                 continue
+            # Apply drop patterns BEFORE forwarding so noise formats
+            # (e.g. fundeasyearnings 알파 스캐너) don't reach the bot
+            # via digest citation. Without this the plain-relay drop
+            # only catches the live posting; Noah's digest cite of
+            # the same message slipped through.
+            orig_text = (orig.text or getattr(orig, "message", "") or "")
+            drop_patterns = _PLAIN_DROP_PATTERNS.get(ch.lower(), [])
+            if any(p.search(orig_text) for p in drop_patterns):
+                print(f"    drop {ch}/{mid}: matches drop pattern")
+                continue
             await orig.forward_to(target)
             forwarded += 1
             print(f"    fwd {ch}/{mid} ({forwarded}/{len(links)})")

@@ -99,6 +99,13 @@ async def ingest_url(url: str) -> dict:
     if canonical != url and (existing := meta.find_by_source(url)):
         return {"status": "duplicate", "doc_id": existing["id"],
                 "title": existing["title"], "source": url}
+    # Blocked host short-circuit: paywalls / X / URL shorteners / forum
+    # boards return nothing useful and previously piled up in the
+    # failed log on every digest cite. Return a 'blocked' status that
+    # the caller treats as a silent skip (no retry, no failed entry).
+    from .loaders import _is_blocked_host
+    if _is_blocked_host(canonical):
+        return {"status": "blocked", "title": canonical, "source": canonical}
     title, body, hint = await load_url(canonical)
     if not body:
         return {"status": "empty", "title": title, "source": canonical}
