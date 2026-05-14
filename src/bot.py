@@ -3595,23 +3595,44 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 label = f"tg-doc:{item['file_unique_id']}:{item['file_name']}"
                 suffix = dest.suffix.lower()
                 if suffix == ".pdf":
-                    r = await pipeline.ingest_pdf(dest, label)
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_pdf(dest, label),
+                        timeout=_INGEST_TIMEOUT_SEC,
+                    )
                 elif suffix == ".pptx":
-                    r = await pipeline.ingest_pptx(dest, label)
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_pptx(dest, label),
+                        timeout=_INGEST_TIMEOUT_SEC,
+                    )
                 elif suffix == ".docx":
-                    r = await pipeline.ingest_docx(dest, label)
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_docx(dest, label),
+                        timeout=_INGEST_TIMEOUT_SEC,
+                    )
                 elif suffix == ".xlsx":
-                    r = await pipeline.ingest_xlsx(dest, label)
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_xlsx(dest, label),
+                        timeout=_INGEST_TIMEOUT_SEC,
+                    )
                 elif suffix in _AUDIO_SUFFIX_MIME:
-                    r = await pipeline.ingest_audio(
-                        dest.read_bytes(), label,
-                        mime_type=_AUDIO_SUFFIX_MIME[suffix],
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_audio(
+                            dest.read_bytes(), label,
+                            mime_type=_AUDIO_SUFFIX_MIME[suffix],
+                        ),
+                        timeout=_INGEST_TIMEOUT_SEC,
                     )
                 else:
                     content = dest.read_text(encoding="utf-8", errors="ignore")
-                    r = await pipeline.ingest_text(content, label)
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_text(content, label),
+                        timeout=_INGEST_TIMEOUT_SEC,
+                    )
             elif kind == "url":
-                r = await pipeline.ingest_url(item["url"])
+                r = await asyncio.wait_for(
+                    pipeline.ingest_url(item["url"]),
+                    timeout=_INGEST_TIMEOUT_SEC,
+                )
             elif kind == "photo":
                 import io as _io
                 file = await ctx.bot.get_file(item["file_id"])
@@ -3684,17 +3705,32 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 label = f"local:{dest.name}"
                 suffix = dest.suffix.lower()
                 if suffix == ".pdf":
-                    r = await pipeline.ingest_pdf(dest, label)
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_pdf(dest, label),
+                        timeout=_INGEST_TIMEOUT_SEC,
+                    )
                 elif suffix == ".pptx":
-                    r = await pipeline.ingest_pptx(dest, label)
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_pptx(dest, label),
+                        timeout=_INGEST_TIMEOUT_SEC,
+                    )
                 elif suffix == ".docx":
-                    r = await pipeline.ingest_docx(dest, label)
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_docx(dest, label),
+                        timeout=_INGEST_TIMEOUT_SEC,
+                    )
                 elif suffix == ".xlsx":
-                    r = await pipeline.ingest_xlsx(dest, label)
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_xlsx(dest, label),
+                        timeout=_INGEST_TIMEOUT_SEC,
+                    )
                 elif suffix in _AUDIO_SUFFIX_MIME:
-                    r = await pipeline.ingest_audio(
-                        dest.read_bytes(), label,
-                        mime_type=_AUDIO_SUFFIX_MIME[suffix],
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_audio(
+                            dest.read_bytes(), label,
+                            mime_type=_AUDIO_SUFFIX_MIME[suffix],
+                        ),
+                        timeout=_INGEST_TIMEOUT_SEC,
                     )
                 elif suffix in _IMAGE_SUFFIX_MIME:
                     # Pictures dropped into /app/data/files (e.g.
