@@ -27,7 +27,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
-_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "4"))
+_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "6"))
 _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # How many queued retries to drain per tick + how often we tick. Tuned
 # for c3-standard-4 / n2-standard-4 (4 vCPU, 16 GiB RAM) + 12 GiB bot
@@ -767,7 +767,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 인용은 자료 제목 (숫자 [1] X) · 본문 [N] 자동 매김
 
 <b>【10. 운영 / 비용 (Gemini 임베딩 + 비용절감 적용)】</b>
- • VM: n2-standard-4 16GB · bot 12000m · Semaphore(env INGEST_SEM_CAPACITY=4)
+ • VM: n2-standard-4 16GB · bot 12000m · Semaphore(env INGEST_SEM_CAPACITY=6)
+ • 명령어 응답 우선: concurrent_updates=True + HTTPX pool 32
  • 재시도 5회 + 선형 백오프 (1h/2h/3h/4h) → /failed
  • 영속: retry/failed/history/qna/cost/dashboard/ocr_cache
  • <b>임베딩: Gemini embedding-001 (3072-dim, $0.15/1M)</b>
@@ -3883,18 +3884,25 @@ def main():
     meta.init()
     obsidian.init()
     pending_store.init()
+    # Larger pool + parallel update processing so /status, /queue, etc.
+    # never queue behind a slow ingest's ⏳ edit. concurrent_updates=True
+    # tells python-telegram-bot to process incoming updates in parallel
+    # tasks instead of strictly sequential — command handlers run on
+    # their own task and don't wait for an in-flight ingest reply to
+    # finish flushing through the HTTPX pool.
     request = HTTPXRequest(
         connect_timeout=15.0,
         read_timeout=180.0,
         write_timeout=180.0,
         pool_timeout=15.0,
-        connection_pool_size=8,
+        connection_pool_size=32,
     )
     builder = (
         Application.builder()
         .token(config.TELEGRAM_BOT_TOKEN)
         .request(request)
         .get_updates_request(request)
+        .concurrent_updates(True)
     )
     if config.TELEGRAM_BASE_URL:
         base = config.TELEGRAM_BASE_URL.rstrip("/")
