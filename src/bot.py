@@ -765,18 +765,29 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • web 결과는 [도메인]으로 인용
  • 인용은 자료 제목 (숫자 [1] X) · 본문 [N] 자동 매김
 
-<b>【10. 운영 / 비용 (Stage 1+2 절감 적용)】</b>
- • VM: n2-standard-4 16GB · bot 12000m · Semaphore(env INGEST_SEM_CAPACITY)
- • 재시도 5회×90s → /failed
- • 영속: retry/failed/history/qna/cost/dashboard/hf_cache
- • 임베딩: 로컬 BGE-M3 1024-dim (₩0, sentence-transformers)
- • Reranker: 로컬 BGE-reranker-base (₩0)
- • LLM: Gemini Pro·Flash·Flash-Lite (API)
- • compare 20개+ Pro 확인 + PDF 10p+ OCR 확인
+<b>【10. 운영 / 비용 (Gemini 임베딩 + 비용절감 적용)】</b>
+ • VM: n2-standard-4 16GB · bot 12000m · Semaphore(env INGEST_SEM_CAPACITY=4)
+ • 재시도 5회 + 선형 백오프 (1h/2h/3h/4h) → /failed
+ • 영속: retry/failed/history/qna/cost/dashboard/ocr_cache
+ • <b>임베딩: Gemini embedding-001 (3072-dim, $0.15/1M)</b>
+ • LLM: Pro·Flash·Flash-Lite (Flash-Lite → Flash auto fallback on 503)
+ • compare 20개+ Pro 확인 + PDF 7p+ OCR 확인
    (5분 미선택 → /pending 자동 보관)
  • 메모리 5분 청소 (90% 즉시·95% 거부)
- • 단가 (1M 토큰): Pro ₩1,750·Flash ₩420·Lite ₩140·Embed ₩0
- • 자동 복구 마커: /app/data/no_auto_recovery (queue_cancel_all 시 생성)
+ • 단가 (1M 토큰): Pro ₩1,750·Flash ₩420·Lite ₩140·Embed ₩200
+
+<b>【10-1. 비용절감 최근 적용】</b>
+ • 청크 700 토큰 (env CHUNK_TOKENS) — 임베딩 ↓40%
+ • Vision OCR DPI 100 (env OCR_DPI) — 이미지 토큰 ↓55%
+ • Vision 자동 캡 7p (env OCR_AUTO_CAP) — 페이지 ↓30%
+ • Vision 트리거 800자/p (env OCR_SPARSE_THRESHOLD) — 텍스트 위주 PDF skip
+ • 페이지 이미지 hash dedup — 반복 disclaimer 무료 재사용
+ • 빈/단순 페이지 자동 skip — 표지/blank Vision 절감
+ • PyMuPDF 표 추출 — 구조화 표 무료 임베딩
+ • 답변 1h 캐시 — 동일 질문 재질의 Gemini 호출 0
+ • 알파스캐너 / X / paywall 도메인 자동 차단
+ • 파일/텍스트 hash dedup — 같은 자료 재학습 0
+ • 60s Gemini timeout + 15분 ingest timeout
 
 <b>【11. 트러블슈팅】</b>
  • "본문 비어있음" → 차단 도메인/paywall

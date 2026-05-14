@@ -29,8 +29,9 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "gemini-embedding-001")
 # more local context per chunk so retrieval is at least as good — both
 # BGE-M3 and Gemini embedding handle 512+ tokens well. Overlap scales
 # proportionally to preserve cross-boundary recall.
-CHUNK_TOKENS = 700
-CHUNK_OVERLAP = 120
+# Env-overridable for fast revert if retrieval quality regresses.
+CHUNK_TOKENS = int(os.getenv("CHUNK_TOKENS", "700"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "120"))
 TOP_K = 15
 SUMMARY_MAX_TOKENS = 1000
 HINT_SUMMARY_MIN_CHARS = 200

@@ -190,11 +190,13 @@ def _xml_field(xml: str, tag: str, skip_first: bool = False) -> str | None:
 # the user opts in / out per document so we never silently bill ₩200+
 # on a 100-page deep-research report. Lowered 20→10 after the user
 # decided most reports' essential content sits in the first ~10 pages.
-SPARSE_OCR_AUTO_CAP = 7  # 10 → 7: auto-OCR covers the first ~7 pages
-# of a chart-heavy report (typically the executive summary + key
-# slides). Pages 8+ usually duplicate the same theses with more detail
-# and are accessible via /pending_ocr if a specific report needs full
-# coverage.
+import os as _os
+
+# Vision OCR quality / cost knobs — all env-overridable for fast
+# rollback if quality regression shows up on real broker reports.
+SPARSE_OCR_AUTO_CAP = int(_os.getenv("OCR_AUTO_CAP", "7"))  # pages
+OCR_DPI = int(_os.getenv("OCR_DPI", "100"))  # render DPI
+OCR_SPARSE_THRESHOLD = int(_os.getenv("OCR_SPARSE_THRESHOLD", "800"))  # chars/page
 
 
 def _looks_like_title(s: str) -> bool:
@@ -274,7 +276,7 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
                 "total_pages": page_count,
                 "capped": page_count > SPARSE_OCR_AUTO_CAP,
             }
-    elif page_count > 0 and len(body) / max(page_count, 1) < 800:
+    elif page_count > 0 and len(body) / max(page_count, 1) < OCR_SPARSE_THRESHOLD:
         # Sparse text/page → likely chart/table-heavy. Tightened
         # 1100 → 800 chars/page: only docs that are MOSTLY charts
         # (slide decks, image-blends) hit the auto-OCR path now.
@@ -356,7 +358,7 @@ def _page_is_blank(img_bytes: bytes, existing_text: str) -> bool:
     return white / len(sample) >= 0.95
 
 
-def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = 100,
+def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = OCR_DPI,
                    start_page: int = 1,
                    skip_if_text_chars: int = 1500) -> dict:
     # DPI 150 → 100: image input tokens scale roughly with pixel
