@@ -294,6 +294,14 @@ _PLAIN_URL_STRIP_PATTERNS: dict[str, list[re.Pattern]] = {
         re.compile(r"^머니터링 공시 알림\s*$", re.MULTILINE),
         re.compile(r"^공시링크\s*$", re.MULTILINE),
     ],
+    "daju_017_bot": [
+        # 다주 공시 봇 — 보통 본문 끝에 DART 원문 / 다트 URL 라인 포함.
+        # Pattern 보면서 더 추가 필요 시 sed 한 줄로 가능.
+        re.compile(r"^https?://dart\.fss\.or\.kr/\S+\s*$", re.MULTILINE),
+        re.compile(r"^https?://m\.dart\.fss\.or\.kr/\S+\s*$", re.MULTILINE),
+        re.compile(r"^원문\s*보기\s*$", re.MULTILINE),
+        re.compile(r"^공시링크\s*:?\s*$", re.MULTILINE),
+    ],
     "jubung": [
         re.compile(
             r"^주붕이가 읽은 리포트.*\(https?://[^\s)]+\)\s*$",
