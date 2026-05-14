@@ -4,6 +4,31 @@ Standing instructions / project-specific facts that need to survive
 context compaction. Anything Claude should ALWAYS remember while
 working on this repo.
 
+## Automation-first principle (always default to schedulers)
+
+When the user wants something to happen "from now on" / "every time"
+/ "automatically", the answer is ALWAYS one of:
+  - cron job (system-level, every minute / hour / day)
+  - docker compose service (restart: unless-stopped)
+  - APScheduler hook inside the bot (already used for retry tick,
+    memory cleanup, pending promotion)
+  - git hook / GitHub Action
+
+NEVER answer with "run this command yourself when needed". The user
+has explicitly rejected that posture multiple times. If a task
+involves a recurring action, the default deliverable is the
+scheduler config + the script it runs, not a manual recipe.
+
+Verification checklist before responding:
+  1. Did the user say "from now on / 매번 / 항상 / 자동으로 / 알아서"?
+     → YES means: automation only, no manual fallback offered.
+  2. Is there an existing scheduler that should handle this?
+     → Check `crontab -l` and `docker-compose.yml` mentally first.
+  3. After the work, does the user have to do anything to keep
+     it running?
+     → If yes, that's a bug — either wire it into cron / docker /
+     APScheduler, or explain why automation isn't possible.
+
 ## Docker — service vs container names
 
 `docker-compose.yml` services and their auto-generated container names:
