@@ -182,16 +182,24 @@ async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
     else:
         log_msg = "transcript empty"
 
-    # Captions missing/empty — fall back to jina.ai Reader so the
-    # title + description (and any visible page text) still gets
-    # captured instead of dropping the doc entirely.
-    try:
-        j_title, j_body, j_hint = await _load_via_jina(url)
-        if j_body:
-            return (j_title or title), j_body, (j_hint or description)
-    except Exception:
-        pass
-    return title, f"[{log_msg}]", description
+    # Captions missing / blocked (server IPs are routinely blocked
+    # by YouTube for youtube-transcript-api). DO NOT fall back to
+    # jina.ai for youtube — jina returns the page HTML (nav, related
+    # videos, comments) without the JS-rendered transcript, and the
+    # resulting markdown garbage pollutes RAG retrieval. Return a
+    # minimal stub so the URL is tracked in /find with a clear
+    # 'transcript unavailable' note; body_hash dedup means repeated
+    # failures across multiple videos collapse to one stub doc, not
+    # spam. User can supply the transcript manually by pasting the
+    # video text as a message if they really need it.
+    stub = (
+        f"[YouTube transcript unavailable]\n"
+        f"Video: {title}\n"
+        f"URL: {url}\n"
+        f"Reason: {log_msg}\n"
+        f"수동 학습: 영상 페이지에서 자막을 복사해 봇에 메시지로 붙여넣기."
+    )
+    return title, stub, description
 
 
 async def load_arxiv(arxiv_id: str) -> tuple[str, str, str | None]:
