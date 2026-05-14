@@ -1,14 +1,16 @@
-# Base image choice (2026-05): python:3.10 full (NOT slim).
-#   - paddlepaddle 2.6.x's libpaddle.so SIGSEGVs on python:3.11-slim
-#     because the slim image ships a minimal libstdc++ ABI that
-#     doesn't match paddle's binary. Confirmed via ExitCode=139 with
-#     "import paddle" alone, on an AVX-512 capable Xeon (so not a
-#     CPU instruction issue).
-#   - python:3.10 (full debian-bookworm) ships the standard libstdc++
-#     and glibc that paddle 2.6.x wheels were built against.
-#   - python 3.10 is the most-tested CPython version for paddle 2.6
-#     line (3.11 wheels exist but are flaky on minimal images).
-FROM python:3.10
+# Base image choice (2026-05): python:3.10-bullseye (Debian 11).
+#   Why bullseye and not the default (bookworm) or slim:
+#   - python:3.11-slim → ExitCode=139 SIGSEGV in `import paddle`.
+#     Slim base's minimal libstdc++ ABI doesn't match the paddle
+#     2.6.2 binary wheel.
+#   - python:3.10 (bookworm full) → "free(): invalid pointer" glibc
+#     abort. Bookworm ships glibc 2.36, paddle 2.6.x was built
+#     against glibc 2.31 — pthread/malloc ABI changed in 2.34+.
+#   - python:3.10-bullseye ships glibc 2.31 which is exactly what
+#     paddle 2.6.x wheels target. No ABI mismatch.
+# AVX-512 capable Xeon (Cascade Lake) confirmed, so this is not a
+# CPU SIMD issue.
+FROM python:3.10-bullseye
 
 # OS deps:
 #   libgomp1     — GNU OpenMP runtime required by paddlepaddle's
