@@ -31,6 +31,45 @@ def _emit(cb: StageCb, stage: str) -> None:
 _ARXIV_IN_PDF = re.compile(r"arXiv:\s*(\d{4}\.\d{4,5})", re.IGNORECASE)
 
 
+# Korean finance/investing blogs almost universally lead with a
+# boilerplate disclaimer ("주의사항 (Disclaimer) 본인은 본 글에...")
+# that ends ~500-1500 chars later, just before a section header like
+# "세 줄 요약". Without pruning, chunk #0 is half disclaimer — useless
+# noise that dilutes embeddings and hurts retrieval. Only fires when
+# BOTH the start marker (within first 500 chars) AND a known end
+# marker (within 3500 chars after) are found, so it's a no-op on
+# posts without this structure.
+_DISCLAIMER_START_RE = re.compile(
+    r"주의사항\s*[\(（]\s*Disclaimer\s*[\)）]", re.IGNORECASE
+)
+_DISCLAIMER_END_MARKERS = (
+    "세 줄 요약", "세줄 요약", "세줄요약",
+    "한 줄 요약", "한줄 요약", "한줄요약",
+    "Summary",
+)
+
+
+def _strip_disclaimer(text: str) -> str:
+    if not text:
+        return text
+    m = _DISCLAIMER_START_RE.search(text[:500])
+    if not m:
+        return text
+    start = m.start()
+    after_start = start + len(m.group(0))
+    search_window = text[after_start:after_start + 3500]
+    end_offset = -1
+    for marker in _DISCLAIMER_END_MARKERS:
+        idx = search_window.find(marker)
+        if idx > 0 and (end_offset < 0 or idx < end_offset):
+            end_offset = idx
+    if end_offset < 0:
+        return text  # no end marker found — don't risk stripping body
+    pruned = (text[:start] + text[after_start + end_offset:]).strip()
+    log.info("stripped disclaimer: %d chars removed", len(text) - len(pruned))
+    return pruned
+
+
 def _doc_id(source: str) -> str:
     return hashlib.sha1(source.encode("utf-8")).hexdigest()[:16]
 
@@ -121,6 +160,7 @@ async def ingest_url(url: str) -> dict:
         return {"status": "empty", "title": title, "source": canonical}
     # Body extracted OK — reset any prior failure count for this host.
     url_blocklist.record_success(canonical)
+    body = _strip_disclaimer(body)
     return await _ingest("url", canonical, title, body, hint)
 
 
