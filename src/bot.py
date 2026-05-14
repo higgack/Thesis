@@ -961,7 +961,7 @@ Orphan: /orphans · /recover_orphans
 🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰/비교/전체" · 📄 papers "찾아줘/논문" · 🌐 <b>web — "웹/구글/인터넷" 중 하나가 메시지에 있을 때만</b>(시간 표현은 트리거 X) · 📥 ingest "학습해줘 URL"·URL만
 
 <b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 전송
-• PDF: 텍스트+OCR 병렬, 차트 PDF 자동 Vision 7p(progressive: 첫 3p 텍스트 빈약하면 나머지 4p skip) • 이미지 캡션≥80자면 OCR skip · 짧으면 OCR · [OCR] 강제 • 음성: Gemini STT · YouTube: 자막→Jina • <b>.txt/.md/.csv 첨부=학습 제외</b>
+• PDF: 텍스트 자동 추출(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b>(OCR_AUTO_CAP=0), 학습 직후 3-버튼 prompt 발송 [📄 OCR 추가 / 📝 텍스트만 유지 / 🚫 학습 취소]. 버튼 만료 없음, pending_store에 영구 보관. 이미지-only PDF는 first 3p만 자동 OCR(OCR_IMAGE_ONLY_CAP) • 이미지 캡션≥80자면 OCR skip · 짧으면 OCR · [OCR] 강제 • 음성: Gemini STT · YouTube: 자막→Jina • <b>.txt/.md/.csv 첨부=학습 제외</b>
 차단: LinkedIn/FB/IG, Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
 <b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
@@ -1886,12 +1886,11 @@ async def cmd_ocr_extend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     Same confirmation flow as the auto-trigger at ingest time:
       * compute page count + cost estimate
       * send inline buttons (✅ proceed · ❌ cancel)
-      * 5-min TTL — unanswered prompts get promoted to /pending by
-        the periodic _promote_expired_pending job (same code path
-        as ingest-time OCR prompts).
+      * prompt rows live in pending_store (SQLite) — never expire,
+        survive bot restarts.
 
-    Reuses _PENDING_OCR + on_ocr_extend_callback infrastructure so a
-    user tap goes straight into the existing extension pipeline."""
+    Routes through the same on_ocr_extend_callback handler so a tap
+    goes straight into pipeline.extend_pdf_ocr."""
     if not _is_owner(update):
         return
     if not ctx.args:
@@ -1951,25 +1950,25 @@ async def cmd_ocr_extend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Cost estimate. ~₩3 per Vision-Lite page, text-dense pages
     # auto-skipped at extend time.
     est_cost = max(10, total_pages * 3)
-    _gc_pending_ocr()
-    short = uuid.uuid4().hex[:24]
-    _PENDING_OCR[short] = {
-        "doc_id": doc_id,
-        "pdf_path": str(pdf_path),
-        "start_page": 1,
-        "end_page": total_pages,
-        "title": title,
-        "chat_id": update.effective_chat.id,
-        "ts": time.time(),
-    }
+    row_id = await asyncio.to_thread(
+        pending_store.add_ocr,
+        chat_id=update.effective_chat.id,
+        doc_id=doc_id,
+        title=title,
+        pdf_path=str(pdf_path),
+        applied_pages=0,  # extend from page 1
+        total_pages=total_pages,
+    )
+    if row_id is None:
+        await update.message.reply_text("⚠️ pending_store 등록 실패.")
+        return
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(
             f"📄 {total_pages}p OCR (~₩{est_cost})",
-            callback_data=f"ocr:{short}:go",
+            callback_data=f"ocr:{row_id}:go",
         )],
         [InlineKeyboardButton(
-            "❌ 취소",
-            callback_data=f"ocr:{short}:skip",
+            "❌ 취소", callback_data=f"ocr:{row_id}:skip",
         )],
     ])
     title_short = (title or fname)[:80]
@@ -1977,7 +1976,7 @@ async def cmd_ocr_extend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"📊 OCR 확장 요청 — {title_short}\n"
         f"총 {total_pages}p (텍스트 충분한 페이지는 자동 skip)\n"
         f"예상 비용: ~₩{est_cost}\n\n"
-        f"5분 안에 선택해주세요 (미응답 시 /pending 자동 보관).",
+        f"버튼은 만료 없음 — 언제든 선택 가능.",
         reply_markup=kb,
     )
 
@@ -2932,38 +2931,26 @@ async def _send_pro_confirmation(update: Update, result: dict) -> None:
     )
 
 
+# Short-id → full-state-id map for the Pro confirmation flow (the
+# agent stores the full state under a uuid, but Telegram callback_data
+# caps at 64 bytes so we send the first 24 hex chars and look up the
+# rest here). OCR flow no longer uses this — it goes straight to
+# pending_store by row id.
 _PENDING_SHORT_TO_FULL: dict[str, str] = {}
-
-# Resumable Vision OCR — when a sparse-text PDF was capped at the
-# auto-OCR limit (SPARSE_OCR_AUTO_CAP=20), we keep a 10-min handle on
-# the file path + doc_id so the user can opt in to extending coverage
-# via inline buttons. Keyed by the 24-char prefix of a uuid because
-# Telegram callback_data caps at 64 bytes.
-_PENDING_OCR: dict[str, dict] = {}
-_PENDING_OCR_TTL_SEC = 300
-
-
-def _gc_pending_ocr() -> list[dict]:
-    """Pop expired OCR-extend prompts and return the popped state
-    dicts so callers can promote them to the persistent /pending
-    list. Returns [] when nothing expired."""
-    now = time.time()
-    expired_keys = [k for k, v in _PENDING_OCR.items()
-                    if now - v.get("ts", 0) > _PENDING_OCR_TTL_SEC]
-    expired: list[dict] = []
-    for k in expired_keys:
-        v = _PENDING_OCR.pop(k, None)
-        if v:
-            expired.append(v)
-    return expired
 
 
 async def _send_ocr_extend_prompts(ctx: ContextTypes.DEFAULT_TYPE,
                                    chat_id: int, results: list[dict]) -> None:
-    """For each PDF result with capped Vision OCR, send a follow-up
-    message with inline buttons offering to OCR the rest. Estimate
-    is ~₩3 per Lite Vision page (rendered + extracted text)."""
-    _gc_pending_ocr()
+    """For each PDF result with capped Vision OCR, register a pending
+    OCR row in the persistent store and send an inline-button prompt
+    keyed on that row id. Three buttons:
+      • 📄 OCR 추가 — extend OCR to the remaining pages (₩~3/p)
+      • 📝 텍스트만 — accept current text-only learning, close prompt
+      • 🚫 학습 취소 — forget the doc entirely (meta + vector delete)
+
+    Prompts no longer expire — the pending_store row stays until the
+    user taps a button or runs /pending_cancel_all. Buttons survive
+    bot restarts because their state lives in SQLite, not memory."""
     for r in results:
         oc = r.get("ocr_meta")
         if not oc or not oc.get("capped"):
@@ -2973,43 +2960,60 @@ async def _send_ocr_extend_prompts(ctx: ContextTypes.DEFAULT_TYPE,
         remaining = max(0, total - applied)
         if remaining == 0:
             continue
-        cost_est = max(10, remaining * 3)
-        short = uuid.uuid4().hex[:24]
-        _PENDING_OCR[short] = {
-            "doc_id": r.get("doc_id"),
-            "pdf_path": oc.get("pdf_path"),
-            "start_page": applied + 1,
-            "end_page": total,
-            "title": r.get("title", ""),
-            "chat_id": chat_id,
-            "ts": time.time(),
-        }
+        cost_est = max(5, remaining * 3)
+        row_id = await asyncio.to_thread(
+            pending_store.add_ocr,
+            chat_id=chat_id,
+            doc_id=str(r.get("doc_id") or ""),
+            title=str(r.get("title") or "")[:200],
+            pdf_path=str(oc.get("pdf_path") or ""),
+            applied_pages=applied,
+            total_pages=total,
+        )
+        if row_id is None:
+            log.warning("pending_store.add_ocr returned None — skipping prompt")
+            continue
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(
-                f"📄 나머지 {remaining}p 확장 OCR (최대 ~₩{cost_est})",
-                callback_data=f"ocr:{short}:go",
+                f"📄 OCR 추가 ({remaining}p, ~₩{cost_est})",
+                callback_data=f"ocr:{row_id}:go",
             )],
             [InlineKeyboardButton(
-                f"✅ {applied}p로 충분",
-                callback_data=f"ocr:{short}:skip",
+                f"📝 텍스트만 유지 ({applied}p)" if applied > 0
+                else "📝 텍스트만 유지",
+                callback_data=f"ocr:{row_id}:skip",
+            )],
+            [InlineKeyboardButton(
+                "🚫 학습 취소 (문서 삭제)",
+                callback_data=f"ocr:{row_id}:forget",
             )],
         ])
         title_short = (r.get("title") or "PDF")[:80]
+        status_line = (
+            f"총 {total}p 중 {applied}p OCR 완료 + PyMuPDF 텍스트"
+            if applied > 0 else
+            f"총 {total}p — 텍스트만 추출됨 (OCR 0p)"
+        )
         await ctx.bot.send_message(
             chat_id,
             f"📊 {title_short}\n"
-            f"총 {total}p 중 {applied}p OCR 완료 (차트/표 본 자동 OCR).\n"
-            f"딥리서치/장문 리포트라면 나머지도 OCR하면 검색 정확도 ↑.\n"
-            f"※ 텍스트가 이미 충분한 페이지는 자동 스킵 → 실제 비용은 더 적을 수 있음.\n"
-            f"5분 안에 선택해주세요 (미응답 시 /pending 으로 자동 이동).",
+            f"{status_line}.\n"
+            f"버튼은 만료 없음 — 언제든 선택 가능. /pending 에서도 확인.",
             reply_markup=kb,
         )
 
 
 async def on_ocr_extend_callback(update: Update,
                                  ctx: ContextTypes.DEFAULT_TYPE):
-    """Run pipeline.extend_pdf_ocr on user approval. Skip path just
-    edits the message to confirm the no-op."""
+    """Three-button OCR prompt handler — actions keyed on the
+    persistent pending_store row id (callback_data 'ocr:<row_id>:<go|skip|forget>').
+    Prompts never expire; rows survive bot restart.
+
+      go     → extend Vision OCR to the rest of the doc, then delete
+                the pending row
+      skip   → close the prompt, keep the doc as-is (text-only learn)
+      forget → delete the doc from meta + vector (cancel the learn)
+    """
     q = update.callback_query
     if not q:
         return
@@ -3021,39 +3025,69 @@ async def on_ocr_extend_callback(update: Update,
     parts = q.data.split(":")
     if len(parts) != 3 or parts[0] != "ocr":
         return
-    _, short, decision = parts
-    _gc_pending_ocr()
-    state = _PENDING_OCR.pop(short, None)
+    _, row_id_str, decision = parts
+    try:
+        row_id = int(row_id_str)
+    except ValueError:
+        return
+
+    state = await asyncio.to_thread(pending_store.get_ocr, row_id)
     if not state:
         try:
             await q.edit_message_text(
-                "⚠️ 확인 요청이 만료됐습니다 (5분 초과). "
-                "/pending 에서 확인할 수 있어요."
+                "⚠️ 보류 항목이 이미 처리됐거나 삭제됐습니다."
             )
         except Exception:
             pass
         return
-    if decision == "skip":
-        try:
-            await q.edit_message_text(
-                (q.message.text or "") + "\n\n→ ✅ 현재 OCR 분량으로 유지"
-            )
-        except Exception:
-            pass
-        return
-    if decision != "go":
-        return
-    # Capture the original prompt message text + ids so we can flip
-    # the same bubble to ✅ on success — otherwise the prompt sits at
-    # 'OCR 진행 중...' forever (confusing UX) and the success message
-    # appears as a separate post elsewhere in the chat.
+
     orig_chat_id = q.message.chat.id
     orig_msg_id = q.message.message_id
     orig_text = q.message.text or ""
+    title_short = (state.get("title") or "PDF")[:80]
+
+    if decision == "skip":
+        await asyncio.to_thread(pending_store.delete_ocr, row_id)
+        try:
+            await q.edit_message_text(
+                orig_text + "\n\n→ 📝 텍스트만 유지 (OCR 추가 안 함)"
+            )
+        except Exception:
+            pass
+        return
+
+    if decision == "forget":
+        # Full doc removal: meta row + every Chroma chunk. Same path
+        # /forget uses internally, just one-tap from the prompt.
+        doc_id = state.get("doc_id") or ""
+        chunks_removed = 0
+        try:
+            chunks_removed = await asyncio.to_thread(vector.delete_doc, doc_id)
+            await asyncio.to_thread(meta.delete, doc_id)
+        except Exception:
+            log.exception("ocr-prompt forget failed for doc_id=%s", doc_id)
+        await asyncio.to_thread(pending_store.delete_ocr, row_id)
+        try:
+            await q.edit_message_text(
+                f"{orig_text}\n\n"
+                f"→ 🚫 학습 취소됨: {title_short} "
+                f"(청크 {chunks_removed}개 제거)"
+            )
+        except Exception:
+            pass
+        return
+
+    if decision != "go":
+        return
+
+    # 'go' path: extend OCR for remaining pages, then drop the row.
+    pdf_path = state.get("pdf_path") or ""
+    start_page = int(state.get("applied_pages") or 0) + 1
+    end_page = int(state.get("total_pages") or 0)
     try:
         await q.edit_message_text(
             orig_text +
-            f"\n\n→ 📄 {state['start_page']}-{state['end_page']}p OCR 진행 중..."
+            f"\n\n→ 📄 {start_page}-{end_page}p OCR 진행 중..."
         )
     except Exception:
         pass
@@ -3068,19 +3102,18 @@ async def on_ocr_extend_callback(update: Update,
             _run_memory_cleanup(f"pre-ocr {pressure*100:.0f}%")
         except Exception:
             pass
-    pdf_path = state.get("pdf_path") or ""
     if not pdf_path or not Path(pdf_path).exists():
         await q.message.reply_text(
             "⚠️ 원본 PDF 파일을 찾을 수 없습니다 (자동 정리됐을 수 있음). "
             "동일 PDF를 다시 보내주세요."
         )
+        await asyncio.to_thread(pending_store.delete_ocr, row_id)
         return
     typing_task = asyncio.create_task(_sustained_typing(update, ctx))
     try:
         try:
             r = await pipeline.extend_pdf_ocr(
-                Path(pdf_path), state["doc_id"],
-                int(state["start_page"]), int(state["end_page"]),
+                Path(pdf_path), state["doc_id"], start_page, end_page,
             )
         except Exception as e:
             log.exception("extend_pdf_ocr failed")
@@ -3088,13 +3121,13 @@ async def on_ocr_extend_callback(update: Update,
             return
     finally:
         typing_task.cancel()
-    title_short = (state.get("title") or "PDF")[:80]
+    await asyncio.to_thread(pending_store.delete_ocr, row_id)
     if r.get("status") == "ok":
         skip_note = (f" · {r['pages_skipped']}p 텍스트 충분 스킵"
                      if r.get("pages_skipped") else "")
         final_text = (
             f"{orig_text}\n\n"
-            f"→ ✅ {state['start_page']}-{state['end_page']}p OCR 완료 "
+            f"→ ✅ {start_page}-{end_page}p OCR 완료 "
             f"(+{r['pages_ocrd']}p Vision{skip_note} · "
             f"+{r['chunks_added']} 청크)"
         )
@@ -3110,8 +3143,6 @@ async def on_ocr_extend_callback(update: Update,
             final_text = f"{orig_text}\n\n→ ⚠️ OCR 결과 없음: {title_short}"
     else:
         final_text = f"{orig_text}\n\n→ ⚠️ OCR 결과 없음: {title_short}"
-    # Replace the in-progress prompt with the final result so the user
-    # sees one self-contained bubble, no orphan '진행 중...' state.
     await _edit_or_send(ctx, orig_chat_id, orig_msg_id, final_text)
 
 
@@ -3847,28 +3878,11 @@ def _format_results(results: list[dict]) -> str:
 
 
 async def _promote_expired_pending(ctx: ContextTypes.DEFAULT_TYPE):
-    """Move OCR + Pro inline-button prompts that hit their 10-min
-    TTL into the persistent /pending list so the user can decide
-    later. Runs every minute. Skips silently when nothing expired."""
+    """OCR side: nothing to promote anymore — prompts now write
+    directly into pending_store (never expire). Only Pro
+    confirmation prompts still use a TTL'd in-memory dict, so they
+    still get demoted here."""
     from .agent import agent as agent_mod
-    try:
-        ocr_expired = _gc_pending_ocr()
-        for state in ocr_expired:
-            try:
-                pending_store.add_ocr(
-                    chat_id=int(state.get("chat_id") or config.TELEGRAM_OWNER_ID),
-                    doc_id=str(state.get("doc_id") or ""),
-                    title=str(state.get("title") or "")[:200],
-                    pdf_path=str(state.get("pdf_path") or ""),
-                    applied_pages=int(state.get("start_page", 1)) - 1,
-                    total_pages=int(state.get("end_page", 0) or 0),
-                )
-            except Exception:
-                log.exception("promote ocr to pending failed")
-        if ocr_expired:
-            log.info("promoted %d OCR prompts to /pending", len(ocr_expired))
-    except Exception:
-        log.exception("OCR pending promotion failed")
     try:
         pro_expired = agent_mod.gc_expired_pending()
         for state in pro_expired:

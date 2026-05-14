@@ -224,7 +224,12 @@ import os as _os
 
 # Vision OCR quality / cost knobs — all env-overridable for fast
 # rollback if quality regression shows up on real broker reports.
-SPARSE_OCR_AUTO_CAP = int(_os.getenv("OCR_AUTO_CAP", "7"))  # pages
+SPARSE_OCR_AUTO_CAP = int(_os.getenv("OCR_AUTO_CAP", "0"))  # pages
+# Image-only PDFs (PyMuPDF returns zero text) need at least a small
+# Vision pass or the doc lands in /failed as empty body. 3 pages gives
+# us a title + first-page summary so the doc is searchable, and the
+# OCR-extend prompt picks up the rest under user control.
+OCR_IMAGE_ONLY_CAP = int(_os.getenv("OCR_IMAGE_ONLY_CAP", "3"))
 # Progressive OCR ([A] cost cut, 2026-05): on the AUTO sparse/image-PDF
 # trigger only (not /ocr_extend), OCR the first PROBE pages, and only
 # spend Vision on the remaining cap if the probe yielded enough text
@@ -317,42 +322,46 @@ def load_pdf(path: Path, on_stage=None) -> tuple[str, str, str | None, dict | No
 
     ocr_meta: dict | None = None
     if not body:
-        # Image-only PDF: every page needs OCR (PyMuPDF couldn't read
-        # any text). Cap to SPARSE_OCR_AUTO_CAP so a 60-page scanned
-        # broker report doesn't pin a slot for 40+ min on Vision API
-        # calls — pages past the cap can be backfilled via the
-        # /pending_ocr resume flow once the doc is searchable.
-        r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP,
+        # Image-only PDF: PyMuPDF returned zero text, so without at
+        # least a few OCR'd pages the doc lands in /failed as empty
+        # body. OCR_IMAGE_ONLY_CAP (default 3) gives us a title +
+        # first-page summary so the doc is searchable; the rest goes
+        # through the user-controlled OCR-extend prompt.
+        r = _ocr_pdf_pages(path, max_pages=OCR_IMAGE_ONLY_CAP,
                            on_stage=on_stage, progressive=True)
         if r["text"]:
             body = r["text"]
         if page_count > 0:
             ocr_meta = {
                 "kind": "image_only",
-                "applied_pages": min(page_count, SPARSE_OCR_AUTO_CAP),
+                "applied_pages": min(page_count, OCR_IMAGE_ONLY_CAP),
                 "ocrd_pages": r["ocrd"],
                 "skipped_pages": r["skipped"],
                 "total_pages": page_count,
-                "capped": page_count > SPARSE_OCR_AUTO_CAP,
+                "capped": page_count > OCR_IMAGE_ONLY_CAP,
             }
     elif page_count > 0 and len(body) / max(page_count, 1) < OCR_SPARSE_THRESHOLD:
-        # Sparse text/page → likely chart/table-heavy. Tightened
-        # 1100 → 800 chars/page: only docs that are MOSTLY charts
-        # (slide decks, image-blends) hit the auto-OCR path now.
-        # Mixed broker reports with narrative + sidebar charts skip
-        # the OCR and rely on PyMuPDF + the user's optional
-        # /pending_ocr backfill. Combined with DPI 150→100 and cap
-        # 10→7, this trims auto-Vision spend by ~70-80%.
+        # Sparse text/page → likely chart/table-heavy. SPARSE_OCR_AUTO_CAP
+        # default 0 (2026-05): no auto OCR — every sparse PDF emits an
+        # OCR-extend prompt and the user explicitly chooses OCR /
+        # 텍스트만 / Cancel. Set OCR_AUTO_CAP=3 (or higher) via env to
+        # restore partial auto-OCR.
         applied = min(page_count, SPARSE_OCR_AUTO_CAP)
-        r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP,
-                           on_stage=on_stage, progressive=True)
-        if r["text"]:
-            body = body + "\n\n--- Vision OCR augmentation ---\n\n" + r["text"]
+        if SPARSE_OCR_AUTO_CAP > 0:
+            r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP,
+                               on_stage=on_stage, progressive=True)
+            if r["text"]:
+                body = body + "\n\n--- Vision OCR augmentation ---\n\n" + r["text"]
+            ocrd_pages = r["ocrd"]
+            skipped_pages = r["skipped"]
+        else:
+            ocrd_pages = 0
+            skipped_pages = 0
         ocr_meta = {
             "kind": "sparse",
             "applied_pages": applied,
-            "ocrd_pages": r["ocrd"],
-            "skipped_pages": r["skipped"],
+            "ocrd_pages": ocrd_pages,
+            "skipped_pages": skipped_pages,
             "total_pages": page_count,
             "capped": page_count > SPARSE_OCR_AUTO_CAP,
         }
