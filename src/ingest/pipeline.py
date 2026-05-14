@@ -32,6 +32,13 @@ async def ingest_url(url: str) -> dict:
 async def ingest_pdf(path: Path, source_label: str) -> dict:
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    # Content-hash dedup: same bytes under a different filename
+    # (re-upload, orphan recovery vs direct upload, etc.) — skip the
+    # 5+ min Vision OCR + summary + embed pipeline.
+    file_hash = _hash_file(path)
+    if file_hash and (existing := meta.find_by_file_hash(file_hash)):
+        return {"status": "duplicate", "doc_id": existing["id"],
+                "title": existing["title"]}
     title, body, hint, ocr_meta = await load_pdf_async(path)
     if not body:
         return {"status": "empty", "title": title}
@@ -46,11 +53,26 @@ async def ingest_pdf(path: Path, source_label: str) -> dict:
         except Exception as e:
             log.warning("arxiv enrich failed: %s", e)
     doc_type = "paper" if hint else "pdf"
-    result = await _ingest(doc_type, source_label, title, body, hint)
+    result = await _ingest(doc_type, source_label, title, body, hint,
+                           file_hash=file_hash)
     # Surface the OCR cap state so bot.py can offer an extend button.
     if ocr_meta and ocr_meta.get("capped") and result.get("status") == "ok":
         result["ocr_meta"] = {**ocr_meta, "pdf_path": str(path)}
     return result
+
+
+def _hash_file(path: Path) -> str:
+    """SHA-1 prefix of the file's bytes. 16 chars is plenty of entropy
+    for collision avoidance across ~10k docs. Returns '' on read
+    failure so the caller can fall back to source-label dedup only."""
+    try:
+        h = hashlib.sha1()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()[:16]
+    except Exception:
+        return ""
 
 
 async def extend_pdf_ocr(pdf_path: Path, doc_id: str,
@@ -100,28 +122,40 @@ async def extend_pdf_ocr(pdf_path: Path, doc_id: str,
 async def ingest_pptx(path: Path, source_label: str) -> dict:
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    file_hash = _hash_file(path)
+    if file_hash and (existing := meta.find_by_file_hash(file_hash)):
+        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     title, body, hint = await load_pptx_async(path)
     if not body:
         return {"status": "empty", "title": title}
-    return await _ingest("pptx", source_label, title, body, hint)
+    return await _ingest("pptx", source_label, title, body, hint,
+                         file_hash=file_hash)
 
 
 async def ingest_docx(path: Path, source_label: str) -> dict:
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    file_hash = _hash_file(path)
+    if file_hash and (existing := meta.find_by_file_hash(file_hash)):
+        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     title, body, hint = await load_docx_async(path)
     if not body:
         return {"status": "empty", "title": title}
-    return await _ingest("docx", source_label, title, body, hint)
+    return await _ingest("docx", source_label, title, body, hint,
+                         file_hash=file_hash)
 
 
 async def ingest_xlsx(path: Path, source_label: str) -> dict:
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    file_hash = _hash_file(path)
+    if file_hash and (existing := meta.find_by_file_hash(file_hash)):
+        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     title, body, hint = await load_xlsx_async(path)
     if not body:
         return {"status": "empty", "title": title}
-    return await _ingest("xlsx", source_label, title, body, hint)
+    return await _ingest("xlsx", source_label, title, body, hint,
+                         file_hash=file_hash)
 
 
 async def ingest_audio(audio_bytes: bytes, source_label: str, caption: str = "",
@@ -243,7 +277,7 @@ async def _extract_metadata(title: str, body: str, doc_type: str) -> dict:
 
 
 async def _ingest(doc_type: str, source: str, title: str, body: str,
-                  hint: str | None) -> dict:
+                  hint: str | None, file_hash: str | None = None) -> dict:
     doc_id = _doc_id(source)
     log.info("ingest %s %s (%d chars, hint=%s)",
              doc_type, source, len(body), bool(hint))
@@ -287,7 +321,7 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
             log.exception("obsidian sync failed: %s", e)
 
     meta.upsert_doc(doc_id, source, doc_type, title, summary, obsidian_path,
-                    metadata=metadata or None)
+                    metadata=metadata or None, file_hash=file_hash)
     return {
         "status": "ok",
         "doc_id": doc_id,

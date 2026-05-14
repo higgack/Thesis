@@ -35,10 +35,12 @@ CREATE TABLE IF NOT EXISTS documents (
     summary TEXT,
     obsidian_path TEXT,
     ingested_at TEXT NOT NULL,
-    metadata TEXT
+    metadata TEXT,
+    file_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_docs_ingested ON documents(ingested_at DESC);
 CREATE INDEX IF NOT EXISTS idx_docs_source ON documents(source);
+CREATE INDEX IF NOT EXISTS idx_docs_file_hash ON documents(file_hash);
 """
 
 
@@ -50,6 +52,14 @@ def init():
             c.execute("SELECT metadata FROM documents LIMIT 1")
         except sqlite3.OperationalError:
             c.execute("ALTER TABLE documents ADD COLUMN metadata TEXT")
+        try:
+            c.execute("SELECT file_hash FROM documents LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE documents ADD COLUMN file_hash TEXT")
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_docs_file_hash "
+                "ON documents(file_hash)"
+            )
 
 
 @contextmanager
@@ -65,21 +75,39 @@ def _conn():
 
 def upsert_doc(doc_id: str, source: str, doc_type: str, title: str,
                summary: str, obsidian_path: str | None,
-               metadata: dict | None = None) -> None:
+               metadata: dict | None = None,
+               file_hash: str | None = None) -> None:
     import json as _json
     metadata_json = _json.dumps(metadata, ensure_ascii=False) if metadata else None
     with _conn() as c:
         c.execute(
             """INSERT INTO documents(id, source, type, title, summary,
-                                     obsidian_path, ingested_at, metadata)
-               VALUES(?,?,?,?,?,?,?,?)
+                                     obsidian_path, ingested_at, metadata,
+                                     file_hash)
+               VALUES(?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                  title=excluded.title, summary=excluded.summary,
                  obsidian_path=excluded.obsidian_path,
-                 metadata=excluded.metadata""",
+                 metadata=excluded.metadata,
+                 file_hash=excluded.file_hash""",
             (doc_id, source, doc_type, title, summary, obsidian_path,
-             datetime.utcnow().isoformat(), metadata_json),
+             datetime.utcnow().isoformat(), metadata_json, file_hash),
         )
+
+
+def find_by_file_hash(file_hash: str) -> dict | None:
+    """Lookup any doc whose file_hash matches. Bytes-identical files
+    (same PDF re-uploaded under a slightly different filename, or
+    learned via /upload vs orphan recovery) collide here regardless
+    of source label."""
+    if not file_hash:
+        return None
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM documents WHERE file_hash=? LIMIT 1",
+            (file_hash,),
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def get_doc(doc_id: str) -> dict | None:
