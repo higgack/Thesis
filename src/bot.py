@@ -27,7 +27,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
-_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "6"))
+_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "8"))
 _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # How many queued retries to drain per tick + how often we tick. Tuned
 # for c3-standard-4 / n2-standard-4 (4 vCPU, 16 GiB RAM) + 12 GiB bot
@@ -44,7 +44,7 @@ _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # sizing. The user's earlier .env throttle (1 per 120 s, set during a
 # flood-control incident) is intentionally ignored.
 _RETRY_INGEST_INTERVAL_SEC = 10
-_RETRY_INGEST_BATCH = 6
+_RETRY_INGEST_BATCH = 8
 # After a failed retry, hold the item for this many seconds before
 # making it eligible again. Prevents one stuck item from monopolising
 # the queue's drain rate (without this, a perpetually-overloaded
@@ -947,7 +947,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
 
 <b>【10. 운영 / 인프라】</b>
  • VM: n2-standard-4 (4 vCPU, 16GB) · bot mem_limit 12GB
- • 동시 학습: Semaphore 6 (env INGEST_SEM_CAPACITY)
+ • 동시 학습: Semaphore 8 + 큐 tick batch 8 (env INGEST_SEM_CAPACITY)
  • 명령어 응답성: concurrent_updates=True + HTTPX pool 32
  • 영속 데이터: retry queue / failed log / chat history /
    qna log / cost db / dashboard / ocr_cache / active_bubbles
