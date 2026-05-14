@@ -82,6 +82,38 @@ A 10-second confirmation costs nothing. A botched push that spams
 the user's Telegram every minute costs trust and forces an
 emergency revert. Always pick the confirmation.
 
+## VM operation instructions — always step-by-step
+
+When the user has to run something on the VM that can't be
+automated yet (interactive editor, one-time setup, recovery
+after a manual config change), the response MUST include:
+
+1. **Exact command** — copy-pasteable, no placeholders the user
+   has to substitute.
+2. **For interactive editors (nano, vim, less, etc.)** — every
+   keystroke spelled out:
+     • how to move the cursor to the right line
+     • the exact shortcut to delete / save / quit
+     • what prompt appears between steps
+3. **Expected output** — the literal text that confirms success.
+   If a step is silent on success, say so explicitly.
+4. **Failure recovery** — what does it look like when it goes
+   wrong? Show the bad output and how to back out (e.g. `Ctrl+C`
+   to abort nano without saving).
+5. **Verification step** — a follow-up command (`crontab -l`,
+   `docker logs`, `git status`, etc.) plus what its output
+   should look like when correct.
+
+User's exact request: '앞으로도 꼭 다른것도 이렇게 알려줘.
+이것도 박아넣어.' Translation: 'always give VM steps in this
+much detail going forward. Lock this in too.'
+
+Anti-patterns to avoid:
+- 'Open the file in an editor and remove the line.' (Which
+  editor? Which keys?)
+- 'Save and exit.' (How? `:wq`? `Ctrl+O`+`Ctrl+X`? `:x`?)
+- 'It should work now.' (How do I verify? What if it didn't?)
+
 ## Automation-first principle (always default to schedulers)
 
 When the user wants something to happen "from now on" / "every time"
