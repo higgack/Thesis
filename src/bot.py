@@ -3937,6 +3937,30 @@ def main():
             first=180,
             name="periodic_memory_cleanup",
         )
+        # One-shot Telegram flood-ban release notification. Today's
+        # 22207s ban (logged at 2026-05-14 01:28:56 UTC) lifts at
+        # 2026-05-14 07:39:03 UTC. Schedule a single send_message at
+        # 07:40 UTC + 60s grace; if the ban is lifted the user gets a
+        # phone notification, otherwise the call fails silently and
+        # the user just doesn't get the alarm. Safe to leave in code
+        # — the run_date check below auto-skips when already past.
+        from datetime import datetime, timezone, timedelta
+        ban_release_at = datetime(2026, 5, 14, 7, 40, 0, tzinfo=timezone.utc)
+        if ban_release_at > datetime.now(timezone.utc):
+            async def _ban_release_notify(_ctx):
+                try:
+                    await app.bot.send_message(
+                        config.TELEGRAM_OWNER_ID,
+                        "🔓 텔레그램 flood ban 해제됨.\n"
+                        "/status 로 봇 정상 동작 확인하세요.",
+                    )
+                except Exception as e:
+                    log.warning("ban release notify failed: %s", e)
+            app.job_queue.run_once(
+                _ban_release_notify,
+                when=ban_release_at,
+                name="ban_release_notify",
+            )
 
     _load_persisted_state()
     _recover_orphan_files_at_startup(app)
