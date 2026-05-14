@@ -2769,29 +2769,14 @@ async def _edit_or_send(ctx, chat_id: int, msg_id: int | None, text: str) -> Non
 
 async def _live_status_updater(ctx, chat_id: int, msg_id: int,
                                label: str, job_id: str) -> None:
-    """Re-render the ⏳ status message every _LIVE_EDIT_INTERVAL
-    seconds so the user can see elapsed time tick forward. Silently
-    swallows Telegram errors (rate limit, message-too-old, etc.) so
-    the background task never crashes ingest."""
-    short_label = label[:80]
-    while True:
-        try:
-            await asyncio.sleep(_LIVE_EDIT_INTERVAL)
-        except asyncio.CancelledError:
-            return
-        info = _ACTIVE_INGESTS.get(job_id)
-        if not info:
-            return
-        elapsed = time.time() - info.get("started_at", time.time())
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=chat_id, message_id=msg_id,
-                text=f"⏳ {short_label}\n   처리 중 ({_fmt_elapsed(elapsed)})",
-            )
-        except asyncio.CancelledError:
-            return
-        except Exception:
-            pass
+    """Disabled: live edit_message_text floods Telegram's per-bot
+    rate limit and triggers multi-hour flood bans (we hit a 22207s
+    ban tonight from cumulative edit spam). The ⏳ bubble stays
+    static at its initial state; the final result message at the
+    end of ingest is the only edit. If the bot needs liveliness
+    again later we can re-enable behind an env flag, with a much
+    slower cadence and a circuit-breaker on RetryAfter."""
+    return
 
 
 async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
