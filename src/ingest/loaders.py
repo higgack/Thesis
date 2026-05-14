@@ -255,11 +255,16 @@ def load_pdf(path: Path) -> tuple[str, str, str | None, dict | None]:
                 "total_pages": page_count,
                 "capped": page_count > SPARSE_OCR_AUTO_CAP,
             }
-    elif page_count > 0 and len(body) / max(page_count, 1) < 1800:
+    elif page_count > 0 and len(body) / max(page_count, 1) < 1100:
         # Sparse text/page → likely chart/table-heavy. Augment via Vision
-        # OCR, capped so cost stays predictable. The per-page skip
-        # threshold avoids paying Vision for back-half text pages
-        # already covered by PyMuPDF.
+        # OCR, capped so cost stays predictable. Threshold tightened
+        # 1800 → 1100 chars/page: broker reports with mostly-text +
+        # sidebar charts (typically 1100-2000 chars/page) now skip the
+        # auto-OCR pass since PyMuPDF already captured the narrative.
+        # Truly chart-heavy slides / scan-blends (<1100 chars/page)
+        # still get OCR. Saves ~₩20/PDF on borderline reports; the user
+        # can still /pending_ocr to backfill if a specific doc needs
+        # chart text.
         applied = min(page_count, SPARSE_OCR_AUTO_CAP)
         r = _ocr_pdf_pages(path, max_pages=SPARSE_OCR_AUTO_CAP)
         if r["text"]:

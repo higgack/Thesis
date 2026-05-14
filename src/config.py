@@ -24,8 +24,13 @@ ANSWER_MODEL = os.getenv("ANSWER_MODEL", "gemini-2.5-flash")
 DEEP_MODEL = os.getenv("DEEP_MODEL", "gemini-2.5-pro")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "gemini-embedding-001")
 
-CHUNK_TOKENS = 400
-CHUNK_OVERLAP = 80
+# Chunk size in tokens. 700 instead of 400 reduces total chunks by
+# ~40% (less embedding cost + storage), and the larger window keeps
+# more local context per chunk so retrieval is at least as good — both
+# BGE-M3 and Gemini embedding handle 512+ tokens well. Overlap scales
+# proportionally to preserve cross-boundary recall.
+CHUNK_TOKENS = 700
+CHUNK_OVERLAP = 120
 TOP_K = 15
 SUMMARY_MAX_TOKENS = 1000
 HINT_SUMMARY_MIN_CHARS = 200
