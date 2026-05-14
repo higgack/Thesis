@@ -1444,12 +1444,11 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         title = _html.escape(_clean_text((m.get("title") or "(제목 없음)"))[:80])
         ingested = (m.get("ingested_at") or "")[:10]
         source = m.get("source") or ""
-        summary_full = _clean_text(m.get("summary") or "")
-        # 120-char snippet — recognisable without flooding the screen.
-        # Collapse internal whitespace so multi-line bullet summaries
-        # don't waste line budget on indentation. Escape so source
-        # text containing <,>,& doesn't break HTML parse_mode.
-        snippet = _html.escape(" ".join(summary_full.split())[:120])
+        # Full summary — line breaks preserved so bullet structure
+        # stays readable. /find is free (SQLite only, ₩0) so we don't
+        # truncate; _split_for_telegram fans the result across as many
+        # messages as needed.
+        summary_full = _html.escape(_clean_text(m.get("summary") or ""))
 
         loc = ""
         if source.startswith(("http://", "https://")):
@@ -1477,14 +1476,17 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 meta_bits.append(_html.escape("·".join(md["tags"][:3])))
         meta_line = " · ".join(meta_bits)
 
-        # One block per doc: title+date · location · meta · snippet
+        # One block per doc: title+date · location · meta · full summary
         item = f"\n\n📄 <b>{title}</b>  <i>{ingested}</i>"
         if loc:
             item += f"\n  {loc}"
         if meta_line:
             item += f"\n  🏷 {meta_line}"
-        if snippet:
-            item += f"\n  {snippet}"
+        if summary_full:
+            # Blank line before the summary so the bullet structure
+            # (• ...) reads as its own block rather than a runaway
+            # continuation of the meta line.
+            item += f"\n\n{summary_full}"
         blocks.append(item)
 
     out = "".join(blocks)
