@@ -79,6 +79,25 @@ def _is_blocked_host(url: str) -> bool:
         return False
 
 
+_NAVER_BLOG_RE = re.compile(
+    r"^https?://(?:m\.)?blog\.naver\.com/([^/?#]+)/(\d+)(?:[/?#].*)?$"
+)
+
+
+def _rewrite_for_better_fetch(url: str) -> str:
+    """Rewrite known JS-iframe / SPA URLs to alternative forms that
+    yield real HTML body to trafilatura. Currently:
+      • blog.naver.com/<user>/<id>  →  m.blog.naver.com/<user>/<id>
+        (mobile view ships the post body inline, desktop view loads
+         it via an iframe that trafilatura can't follow)
+    Returns the original URL when no rewrite rule matches."""
+    m = _NAVER_BLOG_RE.match(url)
+    if m:
+        user, post_id = m.group(1), m.group(2)
+        return f"https://m.blog.naver.com/{user}/{post_id}"
+    return url
+
+
 async def load_url(url: str) -> tuple[str, str, str | None]:
     """Returns (title, text, hint_summary).
 
@@ -96,17 +115,21 @@ async def load_url(url: str) -> tuple[str, str, str | None]:
             return "", "", None  # short-circuit; downstream will say empty
     except Exception:
         pass
+    # Rewrite SPA-heavy URLs to scraper-friendly alternates BEFORE the
+    # fetch so trafilatura sees real markup. Naver blog is the big
+    # one: desktop ships an iframe, mobile ships inline content.
+    fetch_url = _rewrite_for_better_fetch(url)
     title, body, hint = "", "", None
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True,
                                      headers={"User-Agent": "Mozilla/5.0 SecondBrain"}) as c:
-            r = await c.get(url)
+            r = await c.get(fetch_url)
             r.raise_for_status()
             ct = r.headers.get("content-type", "").lower()
             if "application/pdf" in ct or r.content[:5] == b"%PDF-":
                 return await _load_pdf_from_bytes(r.content, str(r.url))
             html = r.text
-        title, body, hint = await asyncio.to_thread(_parse_html, url, html)
+        title, body, hint = await asyncio.to_thread(_parse_html, fetch_url, html)
     except Exception:
         pass
 
