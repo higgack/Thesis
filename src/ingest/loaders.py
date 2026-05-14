@@ -268,21 +268,30 @@ def _parse_subtitle_payload(content: str) -> str:
     vtt lines have HH:MM:SS --> HH:MM:SS timestamps separated by
     blank lines from cue text."""
     import json
-    if '"events"' in content[:200]:
+    # json3: real YouTube payloads start with {"wireMagic":"pb3","pens":...
+    # and "events" lives ~200+ chars in, past any naive prefix check.
+    # Detect by leading '{' and try a full parse — falls through to vtt
+    # if parsing fails or there's no events array.
+    stripped = content.lstrip()
+    if stripped.startswith("{"):
         try:
-            data = json.loads(content)
+            data = json.loads(stripped)
         except Exception:
-            return ""
-        lines: list[str] = []
-        for event in (data.get("events") or []):
-            buf = []
-            for seg in (event.get("segs") or []):
-                txt = (seg.get("utf8") or "").strip()
-                if txt:
-                    buf.append(txt)
-            if buf:
-                lines.append("".join(buf))
-        return "\n".join(lines)
+            data = None
+        if isinstance(data, dict) and isinstance(data.get("events"), list):
+            # json3 splits captions into per-word segments where the
+            # leading space lives inside the next seg's utf8 ("월간",
+            # " 안테나", " 딱"). Stripping each seg destroys those
+            # spaces and yields compressed garbage ("월간안테나딱"),
+            # so we only strip the joined line.
+            lines: list[str] = []
+            for event in data["events"]:
+                buf = "".join((seg.get("utf8") or "")
+                              for seg in (event.get("segs") or []))
+                buf = buf.strip()
+                if buf:
+                    lines.append(buf)
+            return "\n".join(lines)
     # vtt fallback — strip timestamps and metadata
     out: list[str] = []
     for raw in content.split("\n"):
