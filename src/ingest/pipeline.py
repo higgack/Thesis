@@ -306,17 +306,58 @@ _TEXT_DROP_PATTERNS = (
     # here too in case the message slipped through (legacy retry-queue
     # entries, manual paste, etc.).
     re.compile(r"알파\s*스캐너", re.UNICODE),
+    # 신고가 리스트 / 신고가 종목 현황 — pure stock-name dumps with
+    # zero analyst content. Same headline repeats daily with a new
+    # date, so the body_hash dedup misses these.
+    re.compile(r"신고가\s*(리스트|종목\s*현황)", re.UNICODE),
+)
+
+# Signal-only headers from auto-alert bots — DROP unless the message
+# also carries a fresh earnings/disclosure marker (분기보고서 etc).
+# This lets 📌 분기실적 발표는 살아남되, 단순 시세/시가총액 알림은
+# 걸러내는 식으로 동작. Same '✅' or '📌' emoji is used for both, so
+# the discriminator is the body content, not the header.
+_TEXT_SIGNAL_ONLY_PATTERNS = (
+    # ✅ 종목명(+10.71%) — pure price-move alert
+    re.compile(r"^✅\s*[^\n(]+\([+\-]?\d+(?:\.\d+)?%\)",
+               re.MULTILINE | re.UNICODE),
+    # 📌 종목명(시가총액 : XXX억) — market-cap snapshot
+    re.compile(r"^📌\s*[^\n(]+\(시가총액", re.MULTILINE | re.UNICODE),
+)
+
+# Fresh-data markers that override the signal-only drop. Presence of
+# any of these means the alert was triggered by a real disclosure,
+# not just daily price movement, so it's worth learning.
+_TEXT_KEEP_MARKERS = (
+    "📁 분기보고서", "📁 사업보고서", "📁 반기보고서",
+    "📁 잠정실적", "📁 결산실적", "📁 감사보고서",
+    "분기실적 발표", "잠정실적 발표", "공시 발표",
 )
 
 
-async def ingest_text(text: str, label: str = "text") -> dict:
+def _should_drop_text(text: str) -> tuple[bool, str]:
+    """Return (drop, reason). Hard drop patterns fire unconditionally;
+    signal-only headers are checked against fresh-data markers so a
+    분기실적 발표 wrapped in a 📌 시가총액 header still gets through."""
     for pat in _TEXT_DROP_PATTERNS:
         if pat.search(text):
-            log.info("ingest text dropped (pattern %r): %s",
-                     pat.pattern, text[:60].replace("\n", " "))
-            return {"status": "skipped",
-                    "title": text.strip().splitlines()[0][:80] if text.strip() else label,
-                    "detail": "drop pattern matched"}
+            return True, f"drop pattern {pat.pattern!r}"
+    for pat in _TEXT_SIGNAL_ONLY_PATTERNS:
+        if pat.search(text):
+            if any(marker in text for marker in _TEXT_KEEP_MARKERS):
+                return False, ""
+            return True, f"signal-only header without earnings marker"
+    return False, ""
+
+
+async def ingest_text(text: str, label: str = "text") -> dict:
+    drop, reason = _should_drop_text(text)
+    if drop:
+        log.info("ingest text dropped (%s): %s",
+                 reason, text[:60].replace("\n", " "))
+        return {"status": "skipped",
+                "title": text.strip().splitlines()[0][:80] if text.strip() else label,
+                "detail": reason}
     hash8 = hashlib.sha1(text.encode()).hexdigest()[:8]
     src = f"{label}:{hash8}"
     # Exact source match handles the common case (same upload pasted
