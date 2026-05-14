@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 import sqlite3
@@ -54,9 +55,6 @@ CREATE TABLE IF NOT EXISTS ocr_cache (
 def init():
     with _conn() as c:
         c.executescript(_SCHEMA)
-        # Migrate older DBs to pick up newer columns. Each block adds
-        # the column first, then any index that depends on it, so
-        # legacy schemas don't blow up at startup.
         try:
             c.execute("SELECT metadata FROM documents LIMIT 1")
         except sqlite3.OperationalError:
@@ -68,6 +66,14 @@ def init():
         c.execute(
             "CREATE INDEX IF NOT EXISTS idx_docs_file_hash "
             "ON documents(file_hash)"
+        )
+        try:
+            c.execute("SELECT body_hash FROM documents LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE documents ADD COLUMN body_hash TEXT")
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_docs_body_hash "
+            "ON documents(body_hash)"
         )
 
 
@@ -85,22 +91,24 @@ def _conn():
 def upsert_doc(doc_id: str, source: str, doc_type: str, title: str,
                summary: str, obsidian_path: str | None,
                metadata: dict | None = None,
-               file_hash: str | None = None) -> None:
+               file_hash: str | None = None,
+               body_hash: str | None = None) -> None:
     import json as _json
     metadata_json = _json.dumps(metadata, ensure_ascii=False) if metadata else None
     with _conn() as c:
         c.execute(
             """INSERT INTO documents(id, source, type, title, summary,
                                      obsidian_path, ingested_at, metadata,
-                                     file_hash)
-               VALUES(?,?,?,?,?,?,?,?,?)
+                                     file_hash, body_hash)
+               VALUES(?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                  title=excluded.title, summary=excluded.summary,
                  obsidian_path=excluded.obsidian_path,
                  metadata=excluded.metadata,
-                 file_hash=excluded.file_hash""",
+                 file_hash=excluded.file_hash,
+                 body_hash=excluded.body_hash""",
             (doc_id, source, doc_type, title, summary, obsidian_path,
-             datetime.utcnow().isoformat(), metadata_json, file_hash),
+             datetime.utcnow().isoformat(), metadata_json, file_hash, body_hash),
         )
 
 
@@ -144,6 +152,37 @@ def find_by_file_hash(file_hash: str) -> dict | None:
             (file_hash,),
         ).fetchone()
         return dict(row) if row else None
+
+
+def find_by_body_hash(body_hash: str) -> dict | None:
+    """Cross-format content-level dedup. PDF and PPTX exports of the
+    same source material have different file_hash but the extracted
+    bodies normalise to the same hash, so this is the only catch-all
+    for 'this is the same article reformatted'."""
+    if not body_hash:
+        return None
+    with _conn() as c:
+        row = c.execute(
+            "SELECT * FROM documents WHERE body_hash=? LIMIT 1",
+            (body_hash,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def compute_body_hash(body: str) -> str:
+    """Normalised hash of the first 4000 characters of an extracted
+    document body. Whitespace collapsed and lowercased so trivial
+    formatting differences (PPT line breaks vs PDF paragraph breaks)
+    don't escape dedup. Returns '' if the body is empty / too short
+    to be meaningful."""
+    if not body:
+        return ""
+    norm = " ".join(body.lower().split())[:4000]
+    if len(norm) < 200:
+        # Too short to be a confident match — short tg-msg bodies use
+        # text_hash dedup instead.
+        return ""
+    return hashlib.sha1(norm.encode("utf-8")).hexdigest()[:16]
 
 
 def get_doc(doc_id: str) -> dict | None:

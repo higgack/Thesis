@@ -327,6 +327,21 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
     log.info("ingest %s %s (%d chars, hint=%s)",
              doc_type, source, len(body), bool(hint))
 
+    # Cross-format body dedup: catches the case where the SAME source
+    # material was already ingested in a different file format (PDF
+    # exported as PPTX, paste of an article that was also fetched via
+    # URL, etc.). Computed on the extracted body so it ignores
+    # container differences. Returned 'duplicate' bypasses chunking +
+    # summary + embedding entirely.
+    body_hash = meta.compute_body_hash(body)
+    if body_hash:
+        existing = meta.find_by_body_hash(body_hash)
+        if existing and existing.get("id") != doc_id:
+            log.info("ingest body-hash duplicate of %s for %s",
+                     existing["id"], source)
+            return {"status": "duplicate", "doc_id": existing["id"],
+                    "title": existing["title"]}
+
     _emit(on_stage, "청크 분할")
     chunks = split(body)
     chunk_items = [{
@@ -364,7 +379,8 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
             log.exception("obsidian sync failed: %s", e)
 
     meta.upsert_doc(doc_id, source, doc_type, title, summary, obsidian_path,
-                    metadata=metadata or None, file_hash=file_hash)
+                    metadata=metadata or None, file_hash=file_hash,
+                    body_hash=body_hash or None)
     return {
         "status": "ok",
         "doc_id": doc_id,
