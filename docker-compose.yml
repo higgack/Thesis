@@ -107,15 +107,21 @@ services:
       OCR_QUEUE_DIR: /app/data/ocr_queue
       OCR_RESULT_DIR: /app/data/ocr_results
       OCR_POLL_INTERVAL: '0.5'
-      # paddle 3.x ships a new IR (PIR) executor by default which
-      # crashes with 'NotImplementedError: ConvertPirAttribute2
-      # RuntimeAttribute not support [pir::ArrayAttribute<pir::
-      # DoubleAttribute>] at onednn_instruction.cc:116' on the
-      # text-detection model's oneDNN ops. Documented paddle 3.x
-      # regression. Falling back to the legacy executor side-steps
-      # the buggy PIR+MKLDNN code path without losing inference
-      # quality (slightly slower per page, ~50-100ms overhead).
+      # paddle 3.x crashes with 'NotImplementedError: Convert
+      # PirAttribute2RuntimeAttribute not support [pir::Array
+      # Attribute<pir::DoubleAttribute>] at onednn_instruction.cc:
+      # 116' on PaddleOCR's text-detection model. The crash is in
+      # paddle's oneDNN (MKL-DNN) backend's PIR adapter — a
+      # documented paddle 3.x regression. Two flags together to
+      # fully bypass the buggy path:
+      #   FLAGS_enable_pir_in_executor=0  → skip new PIR executor
+      #   FLAGS_use_mkldnn=0              → skip oneDNN backend
+      # PIR-only disable alone didn't work in practice (worker still
+      # routed through oneDNN somewhere); MKL-DNN-off forces every
+      # op to fall back to paddle's standard CPU kernels. Net
+      # impact: ~20-40% slower per page, no correctness change.
       FLAGS_enable_pir_in_executor: '0'
+      FLAGS_use_mkldnn: '0'
     dns:
       - 8.8.8.8
       - 1.1.1.1
