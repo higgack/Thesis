@@ -971,7 +971,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 <b>【1. 명령어】</b>
 조회: /find &lt;kw&gt; · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
-장애: /failed · /failed_retry · /failed_clear(영구 무시) · /queue · /queue_cancel_all · /audit(대기 전수)
+장애: /failed · /failed_retry · /failed_clear(영구 무시) · /queue · /queue_cancel_all · /audit(대기 전수) · /blocked_hosts(추출 실패 자동차단) · /reset_blocked_hosts
 Orphan: /orphans · /recover_orphans
 보류(5분): /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
 삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
@@ -1798,6 +1798,51 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if len(_INGEST_RETRY_QUEUE) > 25:
         out += f"\n... 외 {len(_INGEST_RETRY_QUEUE) - 25}건"
     await update.message.reply_text(out, disable_web_page_preview=True)
+
+
+async def cmd_blocked_hosts(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """List hosts the URL blocklist is currently tracking, including
+    the ones that have crossed the auto-block threshold. Free
+    (₩0) — just a JSON read."""
+    if not _is_owner(update):
+        return
+    from .store import url_blocklist
+    entries = await asyncio.to_thread(url_blocklist.list_all)
+    if not entries:
+        await update.message.reply_text(
+            "🟢 자동 차단된 host 없음.\n"
+            "(URL 본문 추출이 2회 연속 실패하면 그 host는 자동 차단되어 "
+            "다음번부터 즉시 skip)"
+        )
+        return
+    lines = ["🚫 자동 차단 host 추적 현황"]
+    for e in entries:
+        flag = "🔴 차단됨" if e["is_blocked"] else "🟡 경고"
+        lines.append(
+            f"{flag} {e['host']}  ({e['count']}회 실패, "
+            f"마지막 {e['last_at'][:16]})"
+        )
+        if e["last_url"]:
+            lines.append(f"   ↳ {e['last_url'][:90]}")
+    lines.append("")
+    lines.append("재시도 허용: /reset_blocked_hosts (전체 초기화)")
+    await update.message.reply_text(
+        "\n".join(lines), disable_web_page_preview=True,
+    )
+
+
+async def cmd_reset_blocked_hosts(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Wipe every host counter. Use after a paywall changes policy
+    or the user explicitly wants to retry sites that previously
+    failed."""
+    if not _is_owner(update):
+        return
+    from .store import url_blocklist
+    n = await asyncio.to_thread(url_blocklist.reset_all)
+    await update.message.reply_text(
+        f"✅ 자동 차단 host 초기화 — {n}건 정리됨.\n"
+        f"이제 모든 host가 다시 추출 시도 가능."
+    )
 
 
 async def cmd_audit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -4638,6 +4683,8 @@ def main():
     ))
     app.add_handler(CommandHandler("queue", cmd_queue))
     app.add_handler(CommandHandler("audit", cmd_audit))
+    app.add_handler(CommandHandler("blocked_hosts", cmd_blocked_hosts))
+    app.add_handler(CommandHandler("reset_blocked_hosts", cmd_reset_blocked_hosts))
     app.add_handler(CommandHandler("orphans", cmd_orphans))
     app.add_handler(CommandHandler("recover_orphans", cmd_recover_orphans))
     app.add_handler(CommandHandler("pending", cmd_pending))

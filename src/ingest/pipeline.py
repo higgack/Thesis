@@ -106,9 +106,21 @@ async def ingest_url(url: str) -> dict:
     from .loaders import _is_blocked_host
     if _is_blocked_host(canonical):
         return {"status": "blocked", "title": canonical, "source": canonical}
+    # Auto-learned blocklist: hosts that have failed body extraction
+    # N times in a row. Saves ~₩0 (no LLM call here either) but skips
+    # the wasted trafilatura + Jina fallback + empty-body failed log
+    # entry that piles up otherwise. Reset on first success.
+    from ..store import url_blocklist
+    if url_blocklist.is_blocked(canonical):
+        log.info("ingest_url skip — auto-blocked host: %s", canonical[:120])
+        return {"status": "blocked", "title": canonical, "source": canonical,
+                "detail": "auto-blocked (반복 추출 실패)"}
     title, body, hint = await load_url(canonical)
     if not body:
+        url_blocklist.record_failure(canonical)
         return {"status": "empty", "title": title, "source": canonical}
+    # Body extracted OK — reset any prior failure count for this host.
+    url_blocklist.record_success(canonical)
     return await _ingest("url", canonical, title, body, hint)
 
 
