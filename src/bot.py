@@ -383,10 +383,42 @@ def _scan_orphan_files() -> list[Path]:
             fn = item.get("file_name") or ""
             if fn:
                 known.add(fn)
-    return sorted(
-        (p for name, p in all_files.items() if name not in known),
-        key=lambda p: p.name,
-    )
+    # First pass: filter by filename (cheap source-label match).
+    candidates = [p for name, p in all_files.items() if name not in known]
+    if not candidates:
+        return []
+    # Second pass: for each surviving candidate, check file_hash
+    # against meta.documents.file_hash. Catches the case where the
+    # file is learned under an unrelated source label (URL, paste,
+    # different filename) — orphan scan would otherwise re-queue it
+    # forever even though dedup short-circuits on every retry.
+    import hashlib as _hashlib
+    try:
+        with sqlite3.connect(str(db_path)) as c:
+            rows = c.execute(
+                "SELECT file_hash FROM documents WHERE file_hash IS NOT NULL"
+            ).fetchall()
+        known_file_hashes = {h[0] for h in rows if h[0]}
+    except Exception:
+        log.exception("orphan scan: file_hash gather failed")
+        known_file_hashes = set()
+
+    def _quick_file_hash(path: Path) -> str:
+        try:
+            h = _hashlib.sha1()
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    h.update(chunk)
+            return h.hexdigest()[:16]
+        except Exception:
+            return ""
+
+    survivors = []
+    for p in candidates:
+        if _quick_file_hash(p) in known_file_hashes:
+            continue  # learned under a different source label
+        survivors.append(p)
+    return sorted(survivors, key=lambda p: p.name)
 
 
 def _enqueue_orphan_recovery(orphans: list[Path], chat_id: int) -> int:
