@@ -66,6 +66,45 @@ _FAILED_MAX = 200
 # or how long. Critical when the user has just queued multiple 600+
 # chunk PDFs and wants to know "is it still chewing or stuck?".
 _ACTIVE_INGESTS: dict[str, dict] = {}
+# Live ⏳ status bubbles persisted to disk so a bot restart can clean
+# them up — otherwise the bubble freezes at whatever elapsed time
+# was last rendered ('처리 중 (2분 00초)' forever) because the updater
+# task dies with the container. Each entry: {chat_id, msg_id, label,
+# started_at}. Updated as bubbles are sent (see _track_bubble) and
+# removed on completion (_untrack_bubble).
+_ACTIVE_BUBBLES_PATH = config.DATA_DIR / "active_bubbles.json"
+_ACTIVE_BUBBLES: list[dict] = []
+
+
+def _persist_active_bubbles() -> None:
+    try:
+        import json as _json
+        _ACTIVE_BUBBLES_PATH.write_text(
+            _json.dumps(_ACTIVE_BUBBLES, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        log.exception("active_bubbles persist failed")
+
+
+def _track_bubble(chat_id: int, msg_id: int, label: str) -> None:
+    _ACTIVE_BUBBLES.append({
+        "chat_id": chat_id, "msg_id": msg_id,
+        "label": label[:120], "started_at": time.time(),
+    })
+    _persist_active_bubbles()
+
+
+def _untrack_bubble(chat_id: int, msg_id: int | None) -> None:
+    if msg_id is None:
+        return
+    before = len(_ACTIVE_BUBBLES)
+    _ACTIVE_BUBBLES[:] = [
+        b for b in _ACTIVE_BUBBLES
+        if not (b["chat_id"] == chat_id and b["msg_id"] == msg_id)
+    ]
+    if len(_ACTIVE_BUBBLES) != before:
+        _persist_active_bubbles()
 
 
 def _ingest_label_from_msg(msg) -> tuple[str, str]:
@@ -368,6 +407,60 @@ def _enqueue_orphan_recovery(orphans: list[Path], chat_id: int) -> int:
     _persist_retry_queue()
     log.info("orphan recovery: enqueued %d files", len(orphans))
     return len(orphans)
+
+
+def _cleanup_stale_bubbles_at_startup(app) -> None:
+    """Edit any ⏳ bubble that was in flight when the previous container
+    instance shut down. Without this, restarted ingests leave their
+    original status messages frozen at whatever elapsed time was last
+    rendered (the '처리 중 (2분 00초)' UX bug).
+
+    Loads the persisted active_bubbles list, schedules an edit_message
+    job for each entry that flips it to '⏸ 학습 중단됨 — 자동 복구 큐
+    에서 재처리', then clears the list. The actual edits run after the
+    Application starts so the bot can post."""
+    import json as _json
+    if not _ACTIVE_BUBBLES_PATH.exists():
+        return
+    try:
+        entries = _json.loads(_ACTIVE_BUBBLES_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        log.exception("active_bubbles load failed")
+        try:
+            _ACTIVE_BUBBLES_PATH.unlink()
+        except Exception:
+            pass
+        return
+    if not entries:
+        try:
+            _ACTIVE_BUBBLES_PATH.unlink()
+        except Exception:
+            pass
+        return
+
+    async def _flip_bubbles(_ctx):
+        for e in entries:
+            try:
+                await app.bot.edit_message_text(
+                    chat_id=e["chat_id"], message_id=e["msg_id"],
+                    text=(
+                        f"⏸ 학습 중단됨 — {(e.get('label') or '')[:80]}\n"
+                        "재시작으로 끊겼고, 디스크에 남아있으면 자동 복구 큐에서 재처리됩니다."
+                    ),
+                )
+            except Exception as ex:
+                log.info("stale bubble edit skipped (%s)",
+                         type(ex).__name__)
+        # Clear file regardless of edit success — never re-process the
+        # same bubble list across multiple restarts.
+        try:
+            _ACTIVE_BUBBLES_PATH.unlink()
+        except Exception:
+            pass
+        log.info("cleaned %d stale bubbles", len(entries))
+
+    if app.job_queue:
+        app.job_queue.run_once(_flip_bubbles, when=3, name="cleanup_stale_bubbles")
 
 
 def _recover_orphan_files_at_startup(app) -> None:
@@ -2911,6 +3004,7 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
             )
             status_msg_id = sent.message_id
             _ACTIVE_INGESTS[job_id]["status_msg_id"] = status_msg_id
+            _track_bubble(notify_chat_id, status_msg_id, label)
         except Exception:
             log.exception("status start message failed")
 
@@ -2942,6 +3036,7 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
                 except asyncio.CancelledError:
                     pass
             _unregister_ingest(job_id)
+            _untrack_bubble(notify_chat_id, status_msg_id)
 
         # Render the final state into the live message via edit so the
         # ⏳ bubble becomes the result bubble in place — no scroll-down
@@ -3669,6 +3764,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             )
             status_msg_id = sent.message_id
             _ACTIVE_INGESTS[retry_job_id]["status_msg_id"] = status_msg_id
+            _track_bubble(chat_id, status_msg_id, f"[재시도] {title}")
         except Exception:
             log.exception("retry status start send failed")
 
@@ -3893,6 +3989,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 except asyncio.CancelledError:
                     pass
             _unregister_ingest(retry_job_id)
+            _untrack_bubble(chat_id, status_msg_id)
     # Visibility policy for drained retry items:
     #   - ok (newly learned)     → send '✅ title (chunks)' so the user
     #                              sees real progress through the queue.
@@ -4070,6 +4167,7 @@ def main():
             )
 
     _load_persisted_state()
+    _cleanup_stale_bubbles_at_startup(app)
     _recover_orphan_files_at_startup(app)
     vector.warm_bm25_cache()  # background scan; first query stays fast
     log.info("bot starting")
