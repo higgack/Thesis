@@ -948,8 +948,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
 장애: /failed · /failed_retry · /failed_clear(영구 무시) · /queue · /queue_cancel_all · /audit(대기 전수)
 Orphan: /orphans · /recover_orphans
-보류(5분): /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all(_confirm) · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
-삭제: /forget &lt;id&gt; · /forget_search[_all] &lt;kw&gt; · /forget_qna[_search] &lt;id|kw&gt; · /dedupe(_confirm) · /cleanup(_confirm) · /forget_forwards(_confirm)
+보류(5분): /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
+삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
 도구: /search_my_brain · /compare_papers · /search_papers · /web_search · /ingest_url
 기타: /start /help
 
