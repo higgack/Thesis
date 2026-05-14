@@ -1056,9 +1056,29 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     await _typing(update, ctx)
-    await update.message.reply_text(
-        _HELP_TEXT, parse_mode="HTML", disable_web_page_preview=True,
-    )
+    # Help text outgrew Telegram's 4096-char-per-message cap as we
+    # accumulated sections. Split on top-level `【N. ...】` section
+    # headers so chunks stay readable + always start at a section
+    # boundary; never split mid-paragraph.
+    chunks: list[str] = []
+    buf = ""
+    for line in _HELP_TEXT.splitlines(keepends=True):
+        # Start a new chunk on a section header IF the current chunk
+        # is already substantial — avoids one-line preambles per chunk.
+        is_section = "<b>【" in line
+        if is_section and len(buf) > 3000:
+            chunks.append(buf)
+            buf = ""
+        if len(buf) + len(line) > 3800:
+            chunks.append(buf)
+            buf = ""
+        buf += line
+    if buf:
+        chunks.append(buf)
+    for c in chunks:
+        await update.message.reply_text(
+            c, parse_mode="HTML", disable_web_page_preview=True,
+        )
 
 
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
