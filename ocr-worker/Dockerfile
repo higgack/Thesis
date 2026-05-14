@@ -1,4 +1,14 @@
-FROM python:3.11-slim
+# Base image choice (2026-05): python:3.10 full (NOT slim).
+#   - paddlepaddle 2.6.x's libpaddle.so SIGSEGVs on python:3.11-slim
+#     because the slim image ships a minimal libstdc++ ABI that
+#     doesn't match paddle's binary. Confirmed via ExitCode=139 with
+#     "import paddle" alone, on an AVX-512 capable Xeon (so not a
+#     CPU instruction issue).
+#   - python:3.10 (full debian-bookworm) ships the standard libstdc++
+#     and glibc that paddle 2.6.x wheels were built against.
+#   - python 3.10 is the most-tested CPython version for paddle 2.6
+#     line (3.11 wheels exist but are flaky on minimal images).
+FROM python:3.10
 
 # OS deps:
 #   libgomp1     — GNU OpenMP runtime required by paddlepaddle's
@@ -7,6 +17,9 @@ FROM python:3.11-slim
 #   libgl1       — OpenCV (paddleocr image preprocessing).
 #   libglib2.0-0 — GLib runtime for image lib.
 #   libsm6/libxext6 — X11 image lib runtime (cv2 imports).
+# Most of these are already present in the python:3.10 full base,
+# but we install explicitly to be deterministic across base image
+# version bumps.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 libgl1 libglib2.0-0 libsm6 libxext6 \
     && rm -rf /var/lib/apt/lists/*
