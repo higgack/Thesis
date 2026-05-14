@@ -1008,7 +1008,7 @@ async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                        ("query 답변", "query"),
                        ("기타", "unknown")):
         info = by_purpose.get(key) or {}
-        krw = info.get("total_krw") or 0.0
+        krw = info.get("cost") or 0.0
         calls = info.get("calls") or 0
         if krw or calls:
             purpose_lines.append(f"  {label}: ₩{krw:,.0f}  ({calls}콜)")
