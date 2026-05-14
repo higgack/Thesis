@@ -2861,10 +2861,11 @@ async def _live_status_updater(ctx, chat_id: int, msg_id: int,
         if not info:
             return
         elapsed = time.time() - info.get("started_at", time.time())
+        stage = info.get("stage") or "처리 중"
         try:
             await ctx.bot.edit_message_text(
                 chat_id=chat_id, message_id=msg_id,
-                text=f"⏳ {short_label}\n   처리 중 ({_fmt_elapsed(elapsed)})",
+                text=f"⏳ {short_label}\n   {stage} ({_fmt_elapsed(elapsed)})",
             )
         except asyncio.CancelledError:
             return
@@ -2892,6 +2893,15 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
         kind, label = _ingest_label_from_msg(msg)
         job_id = _register_ingest(label, kind, notify_chat_id)
 
+        # Per-job stage callback — pipeline calls it at each pipeline
+        # phase (load → OCR → summary+embed → save), bot updates the
+        # _ACTIVE_INGESTS slot, and _live_status_updater shows the
+        # current stage in the ⏳ bubble next refresh.
+        def _stage_cb(name: str) -> None:
+            slot = _ACTIVE_INGESTS.get(job_id)
+            if slot is not None:
+                slot["stage"] = name
+
         status_msg_id: int | None = None
         try:
             sent = await ctx.bot.send_message(
@@ -2915,7 +2925,7 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
         timed_out = False
         try:
             results = await asyncio.wait_for(
-                _ingest_message_locked(msg, ctx, notify_chat_id),
+                _ingest_message_locked(msg, ctx, notify_chat_id, on_stage=_stage_cb),
                 timeout=_INGEST_TIMEOUT_SEC,
             )
         except asyncio.TimeoutError:
@@ -2972,7 +2982,10 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
         return results
 
 
-async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
+async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE,
+                                 on_stage=None) -> dict:
+    if on_stage:
+        on_stage("파일 다운로드")
     file = await ctx.bot.get_file(msg.document.file_id)
     dest = Path(config.DATA_DIR) / "files" / msg.document.file_name
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -2980,13 +2993,13 @@ async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
     label = f"tg-doc:{msg.document.file_unique_id}:{msg.document.file_name}"
     suffix = dest.suffix.lower()
     if suffix == ".pdf":
-        return await pipeline.ingest_pdf(dest, label)
+        return await pipeline.ingest_pdf(dest, label, on_stage=on_stage)
     if suffix == ".pptx":
-        return await pipeline.ingest_pptx(dest, label)
+        return await pipeline.ingest_pptx(dest, label, on_stage=on_stage)
     if suffix == ".docx":
-        return await pipeline.ingest_docx(dest, label)
+        return await pipeline.ingest_docx(dest, label, on_stage=on_stage)
     if suffix == ".xlsx":
-        return await pipeline.ingest_xlsx(dest, label)
+        return await pipeline.ingest_xlsx(dest, label, on_stage=on_stage)
     if suffix in _AUDIO_SUFFIX_MIME:
         return await pipeline.ingest_audio(
             dest.read_bytes(), label,
@@ -3093,13 +3106,14 @@ def _is_retryable(e: BaseException) -> bool:
     ))
 
 
-async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
+async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
+                                 notify_chat_id: int, on_stage=None):
     text = msg.text or msg.caption or ""
     results = []
 
     if msg.document:
         try:
-            results.append(await _ingest_doc_attachment(msg, ctx))
+            results.append(await _ingest_doc_attachment(msg, ctx, on_stage=on_stage))
         except Exception as e:
             log.exception("file ingest failed")
             if _is_retryable(e):
@@ -3625,12 +3639,17 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             f"[재시도] {title}", item.get("kind", "retry"), chat_id,
         )
 
-        # Live ⏳ bubble + status updater so the user can see each
-        # retry item ticking through its embedding stage instead of
-        # waiting blindly for the final ✅. Safe to re-enable now that
-        # duplicate/soft-fail messages are silent — only ✅ outputs
-        # post, and the edit cadence (15 s × 4 concurrent) stays under
-        # Telegram's 30/sec floor with margin.
+        # Per-job stage callback (same shape as live-upload path) so the
+        # retry ⏳ bubble shows '요약 + 임베딩' / 'PDF 로드' instead of
+        # an opaque '처리 중'. _ACTIVE_INGESTS slot is keyed on
+        # retry_job_id so the live updater picks up the stage on its
+        # next refresh.
+        def _retry_stage_cb(name: str) -> None:
+            slot = _ACTIVE_INGESTS.get(retry_job_id)
+            if slot is not None:
+                slot["stage"] = name
+
+        # Live ⏳ bubble + status updater.
         status_msg_id: int | None = None
         try:
             sent = await ctx.bot.send_message(
@@ -3662,22 +3681,22 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 suffix = dest.suffix.lower()
                 if suffix == ".pdf":
                     r = await asyncio.wait_for(
-                        pipeline.ingest_pdf(dest, label),
+                        pipeline.ingest_pdf(dest, label, on_stage=_retry_stage_cb),
                         timeout=_INGEST_TIMEOUT_SEC,
                     )
                 elif suffix == ".pptx":
                     r = await asyncio.wait_for(
-                        pipeline.ingest_pptx(dest, label),
+                        pipeline.ingest_pptx(dest, label, on_stage=_retry_stage_cb),
                         timeout=_INGEST_TIMEOUT_SEC,
                     )
                 elif suffix == ".docx":
                     r = await asyncio.wait_for(
-                        pipeline.ingest_docx(dest, label),
+                        pipeline.ingest_docx(dest, label, on_stage=_retry_stage_cb),
                         timeout=_INGEST_TIMEOUT_SEC,
                     )
                 elif suffix == ".xlsx":
                     r = await asyncio.wait_for(
-                        pipeline.ingest_xlsx(dest, label),
+                        pipeline.ingest_xlsx(dest, label, on_stage=_retry_stage_cb),
                         timeout=_INGEST_TIMEOUT_SEC,
                     )
                 elif suffix in _AUDIO_SUFFIX_MIME:
@@ -3772,22 +3791,22 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 suffix = dest.suffix.lower()
                 if suffix == ".pdf":
                     r = await asyncio.wait_for(
-                        pipeline.ingest_pdf(dest, label),
+                        pipeline.ingest_pdf(dest, label, on_stage=_retry_stage_cb),
                         timeout=_INGEST_TIMEOUT_SEC,
                     )
                 elif suffix == ".pptx":
                     r = await asyncio.wait_for(
-                        pipeline.ingest_pptx(dest, label),
+                        pipeline.ingest_pptx(dest, label, on_stage=_retry_stage_cb),
                         timeout=_INGEST_TIMEOUT_SEC,
                     )
                 elif suffix == ".docx":
                     r = await asyncio.wait_for(
-                        pipeline.ingest_docx(dest, label),
+                        pipeline.ingest_docx(dest, label, on_stage=_retry_stage_cb),
                         timeout=_INGEST_TIMEOUT_SEC,
                     )
                 elif suffix == ".xlsx":
                     r = await asyncio.wait_for(
-                        pipeline.ingest_xlsx(dest, label),
+                        pipeline.ingest_xlsx(dest, label, on_stage=_retry_stage_cb),
                         timeout=_INGEST_TIMEOUT_SEC,
                     )
                 elif suffix in _AUDIO_SUFFIX_MIME:

@@ -3,6 +3,7 @@ import hashlib
 import logging
 import re
 from pathlib import Path
+from typing import Callable, Optional
 
 from .. import config
 from ..store import meta, vector, obsidian
@@ -11,6 +12,21 @@ from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load
 from .summarize import summarize, summarize_and_extract
 
 log = logging.getLogger(__name__)
+
+
+# Optional progress callback type. Bot passes a closure that writes the
+# stage name into _ACTIVE_INGESTS[job_id]['stage'] so the live status
+# bubble can show "Vision OCR" / "임베딩" instead of an opaque "처리 중".
+StageCb = Optional[Callable[[str], None]]
+
+
+def _emit(cb: StageCb, stage: str) -> None:
+    if cb is None:
+        return
+    try:
+        cb(stage)
+    except Exception:
+        pass
 
 _ARXIV_IN_PDF = re.compile(r"arXiv:\s*(\d{4}\.\d{4,5})", re.IGNORECASE)
 
@@ -29,16 +45,16 @@ async def ingest_url(url: str) -> dict:
     return await _ingest("url", url, title, body, hint)
 
 
-async def ingest_pdf(path: Path, source_label: str) -> dict:
+async def ingest_pdf(path: Path, source_label: str,
+                     on_stage: StageCb = None) -> dict:
+    _emit(on_stage, "dedup")
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
-    # Content-hash dedup: same bytes under a different filename
-    # (re-upload, orphan recovery vs direct upload, etc.) — skip the
-    # 5+ min Vision OCR + summary + embed pipeline.
     file_hash = _hash_file(path)
     if file_hash and (existing := meta.find_by_file_hash(file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"],
                 "title": existing["title"]}
+    _emit(on_stage, "PDF 로드 / OCR")
     title, body, hint, ocr_meta = await load_pdf_async(path)
     if not body:
         return {"status": "empty", "title": title}
@@ -54,8 +70,7 @@ async def ingest_pdf(path: Path, source_label: str) -> dict:
             log.warning("arxiv enrich failed: %s", e)
     doc_type = "paper" if hint else "pdf"
     result = await _ingest(doc_type, source_label, title, body, hint,
-                           file_hash=file_hash)
-    # Surface the OCR cap state so bot.py can offer an extend button.
+                           file_hash=file_hash, on_stage=on_stage)
     if ocr_meta and ocr_meta.get("capped") and result.get("status") == "ok":
         result["ocr_meta"] = {**ocr_meta, "pdf_path": str(path)}
     return result
@@ -119,43 +134,52 @@ async def extend_pdf_ocr(pdf_path: Path, doc_id: str,
     }
 
 
-async def ingest_pptx(path: Path, source_label: str) -> dict:
+async def ingest_pptx(path: Path, source_label: str,
+                      on_stage: StageCb = None) -> dict:
+    _emit(on_stage, "dedup")
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     file_hash = _hash_file(path)
     if file_hash and (existing := meta.find_by_file_hash(file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    _emit(on_stage, "PPT 로드")
     title, body, hint = await load_pptx_async(path)
     if not body:
         return {"status": "empty", "title": title}
     return await _ingest("pptx", source_label, title, body, hint,
-                         file_hash=file_hash)
+                         file_hash=file_hash, on_stage=on_stage)
 
 
-async def ingest_docx(path: Path, source_label: str) -> dict:
+async def ingest_docx(path: Path, source_label: str,
+                      on_stage: StageCb = None) -> dict:
+    _emit(on_stage, "dedup")
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     file_hash = _hash_file(path)
     if file_hash and (existing := meta.find_by_file_hash(file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    _emit(on_stage, "DOCX 로드")
     title, body, hint = await load_docx_async(path)
     if not body:
         return {"status": "empty", "title": title}
     return await _ingest("docx", source_label, title, body, hint,
-                         file_hash=file_hash)
+                         file_hash=file_hash, on_stage=on_stage)
 
 
-async def ingest_xlsx(path: Path, source_label: str) -> dict:
+async def ingest_xlsx(path: Path, source_label: str,
+                      on_stage: StageCb = None) -> dict:
+    _emit(on_stage, "dedup")
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     file_hash = _hash_file(path)
     if file_hash and (existing := meta.find_by_file_hash(file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    _emit(on_stage, "XLSX 로드")
     title, body, hint = await load_xlsx_async(path)
     if not body:
         return {"status": "empty", "title": title}
     return await _ingest("xlsx", source_label, title, body, hint,
-                         file_hash=file_hash)
+                         file_hash=file_hash, on_stage=on_stage)
 
 
 async def ingest_audio(audio_bytes: bytes, source_label: str, caption: str = "",
@@ -297,11 +321,13 @@ async def _extract_metadata(title: str, body: str, doc_type: str) -> dict:
 
 
 async def _ingest(doc_type: str, source: str, title: str, body: str,
-                  hint: str | None, file_hash: str | None = None) -> dict:
+                  hint: str | None, file_hash: str | None = None,
+                  on_stage: StageCb = None) -> dict:
     doc_id = _doc_id(source)
     log.info("ingest %s %s (%d chars, hint=%s)",
              doc_type, source, len(body), bool(hint))
 
+    _emit(on_stage, "청크 분할")
     chunks = split(body)
     chunk_items = [{
         "id": f"{doc_id}:{i}",
@@ -310,19 +336,15 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
         "idx": i,
     } for i, c in enumerate(chunks)]
 
-    # Short forwarded text rarely has useful metadata (1-line market
-    # snapshots, ticker calls, etc.) — skip the metadata extraction
-    # entirely so we don't pay a Lite call for noise.
     skip_meta = source.startswith("tg-msg:") and len(body) < 500
 
-    # Summary + metadata folded into one Lite call (was two parallel
-    # calls before). Embedding still runs concurrently — different
-    # endpoint so no contention.
+    _emit(on_stage, f"요약 + 임베딩 ({len(chunks)} 청크)")
     (summary, metadata), _ = await asyncio.gather(
         summarize_and_extract(title, body, doc_type, hint=hint, skip_meta=skip_meta),
         vector.add_chunks(doc_id, chunk_items),
     )
 
+    _emit(on_stage, "요약 임베딩")
     await vector.add_chunks(doc_id, [{
         "id": f"{doc_id}:s",
         "text": f"[요약] {title}\n{summary}",
@@ -330,6 +352,7 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
         "idx": -1,
     }])
 
+    _emit(on_stage, "저장")
     obsidian_path = None
     if obsidian.enabled():
         try:
