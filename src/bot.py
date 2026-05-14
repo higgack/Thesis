@@ -976,15 +976,15 @@ Orphan: /orphans · /recover_orphans
 
 <b>【9. 답변 품질】</b> 자료 시점 필수·부족 시 솔직히 표시 / brain 우선("최근/요즘"만으론 web X, "웹에서/오늘" 필요) / 후속도 brain 재검색 / web 결과 [도메인] 인용 / 인용=자료제목 본문 [N] 자동
 
-<b>【10. 운영】</b> VM n2-standard-4(4 vCPU/16GB) bot 12GB · Semaphore 8+큐 batch 8(INGEST_SEM_CAPACITY) · concurrent_updates=True+HTTPX pool 32 · 영속(retry/failed/history/qna/cost/dashboard/ocr_cache/active_bubbles) · 재시작 시 stale ⏳ 정리 · 메모리 청소 5분(90%즉시 95%거부) · 60s call timeout · 10분 ingest timeout
+<b>【10. 운영】</b> VM n2-standard-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8(INGEST_SEM_CAPACITY) · concurrent_updates+HTTPX pool 32 · 영속(retry/failed/history/qna/cost/dashboard/ocr_cache/bubbles) · 재시작 시 stale ⏳ 정리 · 메모리 5분(90%즉시 95%거부) · 60s call · 10분 ingest timeout
 
-<b>【10-1. 모델·단가】</b> 임베딩 Gemini embedding-001(3072-dim) · 요약/메타 Flash-Lite(Lite→Flash auto fallback on 503) · 답변 Flash(기본)·Pro(/deep) · Vision OCR Flash-Lite(DPI 100) · 1M 토큰 ₩: Pro 1,750 / Flash 420 / Lite 140 / Embed 200 · 답변 1h 인메모리 캐시
+<b>【10-1. 모델·단가】</b> 임베딩 Gemini embedding-001(3072-dim) · 요약/메타 Flash-Lite(503 시 Flash fallback) · 답변 Flash(기본)·Pro(/deep) · Vision OCR Flash-Lite DPI 100 · 1M토큰 ₩ Pro 1,750/Flash 420/Lite 140/Embed 200 · 답변 1h 캐시
 
 <b>【10-2. Ingest 절감(자동)】</b>
 ✅ 6단 dedup ₩0 즉시 reject: ①source(URL·파일명) ②URL canonical(utm/fbclid/scheme/www/m strip, YouTube/arXiv ID) ③file_hash SHA1(PDF/PPTX/DOCX/XLSX) ④text_hash SHA1 ⑤body_hash 정규화(PDF↔PPTX 동일내용) ⑥title 정규화(재게시/paraphrase)
 • 청크 1000 토큰(CHUNK_TOKENS) 청크↓30% • 요약 단일콜 12k, partial 8k Flash-Lite 호출↓60% • Vision DPI 100(OCR_DPI) 토큰↓55% • Vision 자동캡 7p(OCR_AUTO_CAP) • Vision 트리거 800자/p(OCR_SPARSE_THRESHOLD) • 페이지 image hash dedup(반복 disclaimer Vision 0) • 빈/표지 페이지 skip • PyMuPDF 표 무료 임베딩 • PDF metadata title 휴리스틱(회사+코드면 파일명) • 짧은 forward(≤400 토큰) 요약 skip • 차단 도메인(X/Reuters/Bloomberg/paywall/LinkedIn) • .txt/.md/.csv 첨부 제외 • failed URL 즉시 skip • /failed_clear=영구 무시(orphan+URL+retry 모두 차단)
 
-<b>【10-3. Retry/무손실 재개】</b> 최대 5회 선형 백오프(1h→2h→3h→4h→/failed) · not_before_ts로 실패가 큐 안 막음 · silent retry+RetryAfter circuit breaker · 30s live status · <b>모든 인입(파일/URL/텍스트/사진/음성) 처리 시작 시 retry_queue.json에 in_flight_ts 마크 → 봇 재시작·배포에 끊겨도 자동 재개</b>(stop_grace_period 120s · 부팅 시 stale 클리어 후 10s 내 픽업)
+<b>【10-3. Retry/무손실 재개 (신규=재시도 동일)】</b> 5회 선형 백오프(1h→2h→3h→4h→/failed) · not_before_ts · silent retry+RetryAfter · 30s live · <b>모든 인입(파일/URL/텍스트/사진/음성, 신규+재시도 동일) 시작 시 in_flight_ts 디스크 저장 → 배포·OOM·SIGKILL에도 자동 재개</b> (stop_grace_period 120s · 부팅 시 stale 클리어 10s 내 픽업) · JSON persist=tmp→fsync→rename 원자+.bak 폴백 → mid-write 손상 0 · /audit 메모리/디스크/orphan 합계 검증
 
 <b>【11. 트러블슈팅】</b> "본문 비어있음"→차단/paywall · 봇 무응답→docker logs thesis-bot-1 · brain 에러→BM25 빌드중 30s 후 · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web 의심 · 봇 메타글→digest mode 차단 · BGE-M3 /app/data/hf_cache 보존 · backend 전환 .env EMBED_BACKEND=gemini|bge-m3"""
 
