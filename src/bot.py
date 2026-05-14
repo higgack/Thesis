@@ -5,7 +5,7 @@ import os
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -4279,6 +4279,69 @@ async def _resend_unacked_alerts(ctx: ContextTypes.DEFAULT_TYPE):
             log.exception("alert resend failed (id=%s)", notify_id)
 
 
+_YT_DLP_RE_ARM_DAYS = int(os.getenv("YTDLP_HEALTH_REARM_DAYS", "7"))
+
+
+async def _check_yt_dlp_health(ctx: ContextTypes.DEFAULT_TYPE):
+    """Hourly: if yt-dlp failure rate in the last 24h crosses the
+    threshold, fire an actionable alert telling the user to force-
+    rebuild the bot image (which pulls a fresher yt-dlp from PyPI).
+
+    Re-arm semantics: when the user acks the alert, we suppress
+    further alerts using the same notify_id. After
+    _YT_DLP_RE_ARM_DAYS days have passed since the ack AND the
+    condition is still bad, we DELETE the acked record so the next
+    _send_actionable_alert call inserts fresh and fires again.
+    This handles the realistic timeline where YouTube breaks
+    yt-dlp again months later — the user gets a fresh alert
+    instead of being stuck with the old acked one suppressing
+    everything forever."""
+    from .store import yt_dlp_health, notify_acks
+    try:
+        if not await asyncio.to_thread(yt_dlp_health.is_unhealthy):
+            return
+        # Check existing alert state for the stable id.
+        stable_id = "yt_dlp_health"
+        existing = await asyncio.to_thread(notify_acks.get, stable_id)
+        if existing and existing.get("acked"):
+            ack_at = existing.get("ack_at") or ""
+            try:
+                ack_dt = datetime.fromisoformat(ack_at)
+            except Exception:
+                ack_dt = None
+            if ack_dt and (datetime.utcnow() - ack_dt
+                           < timedelta(days=_YT_DLP_RE_ARM_DAYS)):
+                # Acked recently — suppress.
+                return
+            # Acked long ago and condition still bad → re-arm.
+            await asyncio.to_thread(notify_acks.delete, stable_id)
+            log.info("yt_dlp_health: re-arming alert (acked %s ago)",
+                     ack_at)
+
+        summary = await asyncio.to_thread(yt_dlp_health.status_summary)
+        rate_pct = int(summary["rate"] * 100)
+        msg = (
+            f"⚠️ <b>yt-dlp 작동 이상</b>\n"
+            f"최근 24시간 yt-dlp 실패율: <b>{rate_pct}%</b> "
+            f"({summary['total']}회 시도 중)\n\n"
+            f"YouTube가 내부 API를 바꾸면서 현재 핀된 yt-dlp 버전이 "
+            f"못 따라가는 중. yt-dlp 팀이 보통 1-3일 내 fix release함.\n\n"
+            f"해결 (둘 중 하나):\n"
+            f"1. <code>docker compose up -d --build --force-recreate bot</code>\n"
+            f"   → 매 빌드 시 pip가 PyPI에서 최신 yt-dlp 자동으로 받아옴\n"
+            f"2. pyproject.toml 의 <code>yt-dlp&gt;=YYYY.MM.DD</code> 핀을 "
+            f"새 버전으로 bump 후 push → auto_pull 이 알아서 rebuild\n\n"
+            f"며칠 더 기다리고 1번 시도해도 됨. 그 사이 YouTube 학습은 "
+            f"transcript_api 가 한 번씩 성공할 때만 들어가고 나머지는 "
+            f"stub 으로 떨어져."
+        )
+        await _send_actionable_alert(
+            ctx, stable_id, msg, parse_mode="HTML",
+        )
+    except Exception:
+        log.exception("yt_dlp_health check failed")
+
+
 async def _check_paddle_release(ctx: ContextTypes.DEFAULT_TYPE):
     """Weekly check for a new paddlepaddle release. We're stuck on
     v3.3.1 because of the PIR+oneDNN ConvertPirAttribute crash; when
@@ -5046,6 +5109,16 @@ def main():
             interval=3600,
             first=600,
             name="resend_unacked_alerts",
+        )
+        # Hourly: check yt-dlp health (24h rolling failure rate). If
+        # rate ≥ 70% over ≥ 5 attempts, fire an actionable alert.
+        # Stable notify_id "yt_dlp_health" — re-arms after 7 days of
+        # being acked while condition stays bad.
+        app.job_queue.run_repeating(
+            _check_yt_dlp_health,
+            interval=3600,
+            first=900,
+            name="check_yt_dlp_health",
         )
         # One-shot Telegram flood-ban release notification. Today's
         # 22207s ban (logged at 2026-05-14 01:28:56 UTC) lifts at

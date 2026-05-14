@@ -189,8 +189,15 @@ async def _fetch_youtube_subs_yt_dlp(video_id: str) -> str:
             log.info("yt-dlp extract_info failed: %s", e)
             return None
 
+    # Health tracking — every yt-dlp call records success/failure
+    # into a 24h sliding window. The bot's hourly health-check job
+    # alerts the user (via the ack-button pattern) when failures
+    # cross threshold so they can rebuild with a fresher yt-dlp.
+    from ..store import yt_dlp_health
+
     info = await asyncio.to_thread(_extract)
     if not info:
+        yt_dlp_health.record_attempt(success=False)
         return ""
 
     # Prefer manual subs (more accurate); fall back to auto.
@@ -224,7 +231,11 @@ async def _fetch_youtube_subs_yt_dlp(video_id: str) -> str:
             if text.strip():
                 log.info("yt-dlp: %s/%s captions OK (%d chars)",
                          "manual" if source is manual else "auto", lang, len(text))
+                yt_dlp_health.record_attempt(success=True)
                 return text.strip()
+
+    # extract_info succeeded but no usable captions found
+    yt_dlp_health.record_attempt(success=False)
     return ""
 
 

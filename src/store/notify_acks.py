@@ -167,6 +167,33 @@ def list_due() -> list[tuple[str, dict]]:
     return out
 
 
+def get(notify_id: str) -> dict | None:
+    """Return the raw record for `notify_id`, or None if missing."""
+    if not notify_id:
+        return None
+    return _load().get(notify_id)
+
+
+def delete(notify_id: str) -> bool:
+    """Remove an entry entirely. Used for the periodic re-arm flow
+    (e.g. yt-dlp health check): if an alert was acked but the
+    underlying condition is still bad N days later, delete the
+    acked record so the next _send_actionable_alert call inserts
+    fresh and fires again. Returns True if a row was removed."""
+    if not notify_id:
+        return False
+    data = _load()
+    if notify_id not in data:
+        return False
+    data.pop(notify_id, None)
+    try:
+        _atomic_write(data)
+    except Exception:
+        log.exception("notify_acks delete persist failed")
+        return False
+    return True
+
+
 def list_all() -> list[dict]:
     """Snapshot of every tracked entry, ordered most-recent-first.
     Used by a future /alerts command and for debugging."""
