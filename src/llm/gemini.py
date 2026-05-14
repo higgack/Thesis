@@ -63,14 +63,22 @@ async def complete(
     for m in chain:
         for attempt in range(3):
             try:
-                resp = await _client.aio.models.generate_content(
-                    model=m,
-                    contents=user,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system,
-                        max_output_tokens=max_tokens,
-                        temperature=temperature,
+                # Per-call 60s timeout: without it, a network-stalled
+                # generate_content can block forever and pin a
+                # semaphore slot for hours (a forwarded text-only
+                # message sat at '처리 중 20초' for 1h+ because the
+                # underlying Gemini call had no upper bound).
+                resp = await asyncio.wait_for(
+                    _client.aio.models.generate_content(
+                        model=m,
+                        contents=user,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system,
+                            max_output_tokens=max_tokens,
+                            temperature=temperature,
+                        ),
                     ),
+                    timeout=60,
                 )
                 cost.record_resp(m, resp, purpose=purpose)
                 if m != model:
