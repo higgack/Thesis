@@ -381,23 +381,64 @@ def search_title(substring: str, limit: int = 20) -> list[dict]:
 
 def search_broad(substring: str, limit: int = 30) -> list[dict]:
     """Wider net than search_title — also looks in summary and metadata
-    JSON (which holds company name + tags + report_date). Used by /find
-    so a query like '몰리브덴' or '데이터센터 전력' matches even when the
-    keyword sits in the body rather than the title. Title matches are
-    sorted first; everything else falls back to ingested_at DESC."""
-    pat = f"%{substring}%"
+    JSON (which holds company name + tags + report_date).
+
+    Multi-token AND matching when the query contains whitespace: each
+    space-separated token must appear somewhere in title / summary /
+    metadata. This lets '미래 반도체' (with space) find the company
+    '미래반도체' (no space) — both '미래' and '반도체' are substrings
+    of the compound — and lets '데이터센터 전력' find docs that
+    mention both terms anywhere. Title hits across more tokens rank
+    higher; ties break by ingested_at DESC."""
+    substring = (substring or "").strip()
+    if not substring:
+        return []
+    tokens = substring.split()
+
     with _conn() as c:
+        if len(tokens) == 1:
+            # Single-token: keep the original substring behaviour.
+            pat = f"%{substring}%"
+            rows = c.execute(
+                "SELECT id, source, type, title, summary, obsidian_path, "
+                "       ingested_at, metadata, "
+                "       CASE WHEN title LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END AS rank "
+                "FROM documents "
+                "WHERE title    LIKE ? COLLATE NOCASE "
+                "   OR summary  LIKE ? COLLATE NOCASE "
+                "   OR metadata LIKE ? COLLATE NOCASE "
+                "ORDER BY rank ASC, ingested_at DESC "
+                "LIMIT ?",
+                (pat, pat, pat, pat, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+        # Multi-token AND: every token must hit somewhere; rank by
+        # number of tokens hitting the title (more = stronger match).
+        where_parts: list[str] = []
+        where_vals: list[str] = []
+        rank_parts: list[str] = []
+        rank_vals: list[str] = []
+        for tok in tokens:
+            pat = f"%{tok}%"
+            where_parts.append(
+                "(title LIKE ? COLLATE NOCASE "
+                "OR summary LIKE ? COLLATE NOCASE "
+                "OR metadata LIKE ? COLLATE NOCASE)"
+            )
+            where_vals.extend([pat, pat, pat])
+            rank_parts.append(
+                "(CASE WHEN title LIKE ? COLLATE NOCASE THEN 1 ELSE 0 END)"
+            )
+            rank_vals.append(pat)
+        where_sql = " AND ".join(where_parts)
+        rank_sql = " + ".join(rank_parts)
         rows = c.execute(
-            "SELECT id, source, type, title, summary, obsidian_path, "
-            "       ingested_at, metadata, "
-            "       CASE WHEN title LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END AS rank "
-            "FROM documents "
-            "WHERE title    LIKE ? COLLATE NOCASE "
-            "   OR summary  LIKE ? COLLATE NOCASE "
-            "   OR metadata LIKE ? COLLATE NOCASE "
-            "ORDER BY rank ASC, ingested_at DESC "
-            "LIMIT ?",
-            (pat, pat, pat, pat, limit),
+            f"SELECT id, source, type, title, summary, obsidian_path, "
+            f"       ingested_at, metadata, ({rank_sql}) AS title_hits "
+            f"FROM documents WHERE {where_sql} "
+            f"ORDER BY title_hits DESC, ingested_at DESC LIMIT ?",
+            (*rank_vals, *where_vals, limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
