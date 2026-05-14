@@ -98,11 +98,7 @@ def _record_dedup_confirmed(filename: str) -> None:
         return
     _DEDUP_CONFIRMED.add(filename)
     try:
-        import json as _json
-        _DEDUP_CONFIRMED_PATH.write_text(
-            _json.dumps(sorted(_DEDUP_CONFIRMED), ensure_ascii=False),
-            encoding="utf-8",
-        )
+        _atomic_write_json(_DEDUP_CONFIRMED_PATH, sorted(_DEDUP_CONFIRMED))
     except Exception:
         log.exception("dedup_confirmed persist failed")
 
@@ -132,14 +128,10 @@ def _load_permanently_ignored() -> None:
 
 def _persist_permanently_ignored() -> None:
     try:
-        import json as _json
-        _PERMANENTLY_IGNORED_PATH.write_text(
-            _json.dumps({
-                "filenames": sorted(_IGNORED_FILENAMES),
-                "urls": sorted(_IGNORED_URLS),
-            }, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        _atomic_write_json(_PERMANENTLY_IGNORED_PATH, {
+            "filenames": sorted(_IGNORED_FILENAMES),
+            "urls": sorted(_IGNORED_URLS),
+        })
     except Exception:
         log.exception("permanently_ignored persist failed")
 
@@ -160,13 +152,57 @@ _ACTIVE_BUBBLES_PATH = config.DATA_DIR / "active_bubbles.json"
 _ACTIVE_BUBBLES: list[dict] = []
 
 
+def _atomic_write_json(path, data) -> None:
+    """Crash-safe JSON write: serialise → write to temp → fsync → rename.
+    POSIX rename is atomic, so reader processes never see a partial
+    file even if the writer is killed (SIGTERM, OOM, container kill)
+    mid-call. Without this, _persist_retry_queue + auto_deploy +
+    heavy concurrent ingest can corrupt the file, and the next
+    startup load throws JSONDecodeError → queue silently empties →
+    every queued item disappears.
+
+    Also keeps a .bak copy of the previous good file so corruption
+    recovery on load has a fallback."""
+    import json, os
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    bak = path.with_suffix(path.suffix + ".bak")
+    payload = json.dumps(data, ensure_ascii=False)
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(payload)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass
+    if path.exists():
+        try:
+            os.replace(path, bak)
+        except OSError:
+            pass
+    os.replace(tmp, path)
+
+
+def _load_json_with_recovery(path):
+    """Load JSON, falling back to the .bak snapshot if the primary file
+    is corrupt (truncated mid-write by a previous crash). Returns None
+    on total loss so the caller can continue with an empty list."""
+    import json
+    for candidate in (path, path.with_suffix(path.suffix + ".bak")):
+        if not candidate.exists():
+            continue
+        try:
+            return json.loads(candidate.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            log.exception(
+                "%s corrupt — trying next fallback", candidate.name,
+            )
+            continue
+    return None
+
+
 def _persist_active_bubbles() -> None:
     try:
-        import json as _json
-        _ACTIVE_BUBBLES_PATH.write_text(
-            _json.dumps(_ACTIVE_BUBBLES, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        _atomic_write_json(_ACTIVE_BUBBLES_PATH, _ACTIVE_BUBBLES)
     except Exception:
         log.exception("active_bubbles persist failed")
 
@@ -344,9 +380,8 @@ def _load_persisted_state() -> None:
     duplicates here as well as fix the scanner."""
     import json
     try:
-        if _RETRY_QUEUE_PATH.exists():
-            data = json.loads(_RETRY_QUEUE_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, list):
+        data = _load_json_with_recovery(_RETRY_QUEUE_PATH)
+        if isinstance(data, list):
                 seen: set[str] = set()
                 deduped: list[dict] = []
                 dropped_unsupported = 0
@@ -402,21 +437,19 @@ def _load_persisted_state() -> None:
     except Exception:
         log.exception("retry queue load failed")
     try:
-        if _FAILED_LOG_PATH.exists():
-            data = json.loads(_FAILED_LOG_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                _INGEST_FAILED.extend(data[-_FAILED_MAX:])
-                log.info("restored %d failed entries", len(_INGEST_FAILED))
+        data = _load_json_with_recovery(_FAILED_LOG_PATH)
+        if isinstance(data, list):
+            _INGEST_FAILED.extend(data[-_FAILED_MAX:])
+            log.info("restored %d failed entries", len(_INGEST_FAILED))
     except Exception:
         log.exception("failed log load failed")
     try:
-        if _HISTORY_PATH.exists():
-            data = json.loads(_HISTORY_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                for k, v in data.items():
-                    if isinstance(v, list):
-                        _HISTORY[int(k)] = v
-                log.info("restored chat history for %d chats", len(_HISTORY))
+        data = _load_json_with_recovery(_HISTORY_PATH)
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if isinstance(v, list):
+                    _HISTORY[int(k)] = v
+            log.info("restored chat history for %d chats", len(_HISTORY))
     except Exception:
         log.exception("chat history load failed")
 
@@ -646,23 +679,17 @@ def _recover_orphan_files_at_startup(app) -> None:
 
 
 def _persist_retry_queue() -> None:
-    import json
     try:
-        _RETRY_QUEUE_PATH.write_text(
-            json.dumps(_INGEST_RETRY_QUEUE, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        _atomic_write_json(_RETRY_QUEUE_PATH, _INGEST_RETRY_QUEUE)
     except Exception:
         log.exception("retry queue persist failed")
 
 
 def _persist_chat_history() -> None:
-    import json
     try:
-        _HISTORY_PATH.write_text(
-            json.dumps({str(k): v for k, v in _HISTORY.items()},
-                       ensure_ascii=False),
-            encoding="utf-8",
+        _atomic_write_json(
+            _HISTORY_PATH,
+            {str(k): v for k, v in _HISTORY.items()},
         )
     except Exception:
         log.exception("chat history persist failed")
@@ -694,12 +721,8 @@ def _record_turn(chat_id: int, role: str, text: str,
 
 
 def _persist_failed_log() -> None:
-    import json
     try:
-        _FAILED_LOG_PATH.write_text(
-            json.dumps(_INGEST_FAILED, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        _atomic_write_json(_FAILED_LOG_PATH, _INGEST_FAILED)
     except Exception:
         log.exception("failed log persist failed")
 
@@ -923,7 +946,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 <b>【1. 명령어 전체】</b>
 조회: /find &lt;키워드&gt; · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt; (Pro 강제)
-장애: /failed · /failed_retry · /failed_clear (영구 무시) · /queue · /queue_cancel_all
+장애: /failed · /failed_retry · /failed_clear (영구 무시) · /queue · /queue_cancel_all · /audit (학습 대기 전수 검증)
 Orphan: /orphans · /recover_orphans
 보류(5분 자동보관): /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all(_confirm) · /pending_cancel_all · /ocr_extend &lt;doc_id|키워드&gt;
 삭제: /forget &lt;id&gt; · /forget_search[_all] &lt;kw&gt; · /forget_qna[_search] &lt;id|kw&gt; · /dedupe(_confirm) · /cleanup(_confirm) · /forget_forwards(_confirm)
@@ -1635,6 +1658,84 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if len(_INGEST_RETRY_QUEUE) > 25:
         out += f"\n... 외 {len(_INGEST_RETRY_QUEUE) - 25}건"
     await update.message.reply_text(out, disable_web_page_preview=True)
+
+
+async def cmd_audit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """One-shot pending-work audit. Aggregates every place a not-yet-
+    learned item could live so the user can verify nothing was lost
+    across a deploy/restart:
+      • Retry queue (in-memory + retry_queue.json on disk)
+      • Failed log (failed_log.json)
+      • Orphan files on disk (data/files not in meta.documents)
+      • Pending OCR/Pro decisions (pending_store)
+      • In-flight items (currently being processed, with stale check)
+    Total = 학습 대기 자료 표면적. 같은 자료를 다시 올릴 필요 있는지
+    이 한 줄로 판단."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+
+    queue_n = len(_INGEST_RETRY_QUEUE)
+    in_flight = sum(1 for it in _INGEST_RETRY_QUEUE
+                    if it.get("in_flight_ts"))
+    waiting = queue_n - in_flight
+    failed_n = len(_INGEST_FAILED)
+
+    try:
+        orphans = await asyncio.to_thread(_scan_orphan_files)
+    except Exception:
+        orphans = []
+    orphan_n = len(orphans)
+
+    try:
+        pending_ocr_n = len(await asyncio.to_thread(pending_store.list_ocr))
+        pending_pro_n = len(await asyncio.to_thread(pending_store.list_pro))
+    except Exception:
+        pending_ocr_n = pending_pro_n = 0
+
+    # Disk truth: read the persisted files directly so the user sees
+    # both in-memory and on-disk counts. Disk count >= memory means
+    # we have everything; disk < memory shouldn't happen under the
+    # atomic-write pattern but flag if it does.
+    disk_queue_n = disk_failed_n = -1
+    try:
+        d = _load_json_with_recovery(_RETRY_QUEUE_PATH)
+        if isinstance(d, list):
+            disk_queue_n = len(d)
+    except Exception:
+        pass
+    try:
+        d = _load_json_with_recovery(_FAILED_LOG_PATH)
+        if isinstance(d, list):
+            disk_failed_n = len(d)
+    except Exception:
+        pass
+
+    total_pending = queue_n + orphan_n + failed_n + pending_ocr_n + pending_pro_n
+
+    lines = [
+        "🔍 <b>학습 대기 감사</b>",
+        f"• 재시도 큐: <b>{queue_n}건</b>"
+        f" (처리중 {in_flight} · 대기 {waiting})",
+        f"  └ 디스크: {disk_queue_n if disk_queue_n >= 0 else '?'}건"
+        f"{' ⚠️ 메모리와 불일치' if disk_queue_n != queue_n and disk_queue_n >= 0 else ''}",
+        f"• 실패 로그: <b>{failed_n}건</b>"
+        f" (디스크 {disk_failed_n if disk_failed_n >= 0 else '?'})",
+        f"• Orphan 파일: <b>{orphan_n}건</b>"
+        " (디스크에는 있지만 미학습 — 다음 스캔/재시작 시 자동 큐 등록)",
+        f"• Pending OCR: <b>{pending_ocr_n}건</b>"
+        f" / Pending Pro: <b>{pending_pro_n}건</b>",
+        f"━━━━━━━━━━━━━━━",
+        f"📦 <b>합계 {total_pending}건</b> 학습 대기 (이 외엔 모두 처리 끝)",
+        "",
+        "💡 같은 자료를 또 올릴 필요 있는지 확인:",
+        "  → 위 합계가 0이면 다 학습됐거나 영구 무시됨 (/failed 참고)",
+        "  → 합계가 0보다 크면 자동 처리 대기중 — 더 보낼 필요 X",
+    ]
+    await update.message.reply_text(
+        "\n".join(lines), parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
 
 
 async def cmd_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -4366,6 +4467,7 @@ def main():
         on_ocr_extend_callback, pattern=r"^ocr:"
     ))
     app.add_handler(CommandHandler("queue", cmd_queue))
+    app.add_handler(CommandHandler("audit", cmd_audit))
     app.add_handler(CommandHandler("orphans", cmd_orphans))
     app.add_handler(CommandHandler("recover_orphans", cmd_recover_orphans))
     app.add_handler(CommandHandler("pending", cmd_pending))
