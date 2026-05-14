@@ -53,6 +53,17 @@ _BLOCKED_HOSTS = (
     # Forum / community boards with low signal + heavy noise (long
     # comment threads that overwhelm any analyst content).
     "dvdprime.com",
+    # Stub / placeholder hosts that extract no actual content:
+    #   • finance.naver.com / n.stock.naver.com — body is just the
+    #     "증권사 로그인 안내" boilerplate; the real price/financials
+    #     are loaded by JS and don't surface to trafilatura.
+    #   • dart.fss.or.kr — viewer URL extracts only the report table
+    #     of contents; substantive text lives in the attached PDF
+    #     which needs to be downloaded separately. Daju channel
+    #     already strips these via _PLAIN_URL_STRIP_PATTERNS so
+    #     blocking here has no downside.
+    "finance.naver.com", "n.stock.naver.com", "stock.naver.com",
+    "dart.fss.or.kr",
 )
 
 

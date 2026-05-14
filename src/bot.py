@@ -1418,8 +1418,11 @@ async def cmd_dedupe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Locate a saved doc by title fragment, return source URL / Obsidian
-    path / first-line summary so the user can jump back to the original."""
+    """Locate saved docs by title/source fragment. Compact per-item
+    format + auto-split across multiple Telegram messages so every
+    match is visible (no '나머지 N개 생략'). Snippet shortened to
+    120 chars — enough to recognise the doc, not so much it buries
+    later results."""
     if not _is_owner(update):
         return
     await _typing(update, ctx)
@@ -1427,33 +1430,39 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not query:
         await update.message.reply_text("사용법: /find <제목 일부>")
         return
-    matches = meta.search_broad(query, limit=30)
+    matches = meta.search_broad(query, limit=50)
     if not matches:
         await update.message.reply_text(f"매칭 없음: '{query}'")
         return
-    cap = 20
+
     header = f"🔍 '{query}' — {len(matches)}개 매칭"
-    if len(matches) > cap:
-        header += f" (상위 {cap}개 표시)"
-    out = header
-    LIMIT = 3800  # safety margin under Telegram 4096
-    truncated = 0
+
     import json as _json
-    for i, m in enumerate(matches[:cap]):
-        title = _clean_text((m.get("title") or "(제목 없음)"))[:70]
+    import html as _html
+    blocks: list[str] = [header]
+    for m in matches:
+        title = _html.escape(_clean_text((m.get("title") or "(제목 없음)"))[:80])
         ingested = (m.get("ingested_at") or "")[:10]
         source = m.get("source") or ""
-        obs = m.get("obsidian_path") or ""
         summary_full = _clean_text(m.get("summary") or "")
-        summary = summary_full[:500]
-        loc_bits = []
+        # 120-char snippet — recognisable without flooding the screen.
+        # Collapse internal whitespace so multi-line bullet summaries
+        # don't waste line budget on indentation. Escape so source
+        # text containing <,>,& doesn't break HTML parse_mode.
+        snippet = _html.escape(" ".join(summary_full.split())[:120])
+
+        loc = ""
         if source.startswith(("http://", "https://")):
-            loc_bits.append(f"📎 {source[:80]}")
-        elif source:
-            loc_bits.append(f"🆔 {source[:50]}")
-        if obs:
-            loc_bits.append(f"📁 {obs[:60]}")
-        meta_bits = []
+            # Drop scheme + trailing query for readability.
+            short_url = source.replace("https://", "").replace("http://", "")[:70]
+            loc = f"📎 {short_url}"
+        elif source.startswith("tg-"):
+            # tg-doc:xxxx:filename / tg-photo:xx / tg-msg:N:hash —
+            # show the prefix only, drops the hash noise.
+            kind = source.split(":", 1)[0]
+            loc = f"💬 {kind}"
+
+        meta_bits: list[str] = []
         meta_raw = m.get("metadata")
         if meta_raw:
             try:
@@ -1461,25 +1470,31 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 md = {}
             if md.get("company"):
-                meta_bits.append(f"🏢 {md['company']}")
-            if md.get("tags"):
-                meta_bits.append("🏷️ " + ", ".join(md["tags"][:5]))
+                meta_bits.append(_html.escape(md["company"]))
             if md.get("report_date"):
-                meta_bits.append(f"📅 {md['report_date']}")
-        item = f"\n\n📄 {title} ({ingested})"
-        if loc_bits:
-            item += f"\n   {' · '.join(loc_bits)}"
-        if meta_bits:
-            item += f"\n   {' · '.join(meta_bits)}"
-        if summary:
-            item += f"\n   {summary}"
-        if len(out) + len(item) > LIMIT:
-            truncated = cap - i
-            break
-        out += item
-    if truncated:
-        out += f"\n\n…(나머지 {truncated}개는 길이 제한으로 생략. 키워드를 좁혀 다시 시도)"
-    await update.message.reply_text(out, disable_web_page_preview=True)
+                meta_bits.append(_html.escape(md["report_date"]))
+            if md.get("tags"):
+                meta_bits.append(_html.escape("·".join(md["tags"][:3])))
+        meta_line = " · ".join(meta_bits)
+
+        # One block per doc: title+date · location · meta · snippet
+        item = f"\n\n📄 <b>{title}</b>  <i>{ingested}</i>"
+        if loc:
+            item += f"\n  {loc}"
+        if meta_line:
+            item += f"\n  🏷 {meta_line}"
+        if snippet:
+            item += f"\n  {snippet}"
+        blocks.append(item)
+
+    out = "".join(blocks)
+    # Reuse the help-splitter so any number of matches fits across
+    # however many Telegram messages it takes. Paragraph (blank-line)
+    # boundaries between items keep each chunk readable.
+    for chunk in _split_for_telegram(out):
+        await update.message.reply_text(
+            chunk, parse_mode="HTML", disable_web_page_preview=True,
+        )
 
 
 def _failed_retry_all(chat_id: int) -> str:
