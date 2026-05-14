@@ -881,7 +881,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇 사용법</b>
  • 단가 (1M 토큰): Pro ₩1,750·Flash ₩420·Lite ₩140·Embed ₩200
 
 <b>【10-1. 비용절감 최근 적용】</b>
- • 청크 700 토큰 (env CHUNK_TOKENS) — 임베딩 ↓40%
+ • 청크 1000 토큰 (env CHUNK_TOKENS) — 임베딩 청크 ↓30%
+ • 요약 단일콜 임계 12k 토큰, partial 8k — 긴 PDF Flash-Lite 호출 ↓60%
  • Vision OCR DPI 100 (env OCR_DPI) — 이미지 토큰 ↓55%
  • Vision 자동 캡 7p (env OCR_AUTO_CAP) — 페이지 ↓30%
  • Vision 트리거 800자/p (env OCR_SPARSE_THRESHOLD) — 텍스트 위주 PDF skip

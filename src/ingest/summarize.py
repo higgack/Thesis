@@ -37,17 +37,20 @@ Type: {doc_type}
 
 async def summarize(title: str, text: str, hint: str | None = None) -> str:
     """Summary-only path. Kept for callers that don't need metadata
-    (e.g., chained final-pass on long docs)."""
+    (e.g., chained final-pass on long docs).
+
+    Same 12k single-call / 8k partial sizing as summarize_and_extract
+    so behaviour stays consistent across both entry points."""
     if hint and config.HINT_SUMMARY_MIN_CHARS <= len(hint) <= config.HINT_SUMMARY_MAX_CHARS:
         return hint.strip()
     if token_len(text) <= 400:
         return text.strip()
-    if token_len(text) <= 6000:
+    if token_len(text) <= 12000:
         return await _summarize_one(title, text)
-    parts = split(text, size=4000, overlap=200)
+    parts = split(text, size=8000, overlap=200)
     partials = [await _summarize_one(title, p) for p in parts]
     combined = "\n\n".join(partials)
-    if token_len(combined) <= 2000:
+    if token_len(combined) <= 4000:
         return combined
     return await _summarize_one(title, combined)
 
@@ -80,16 +83,23 @@ async def summarize_and_extract(
     if skip_meta:
         return await summarize(title, body), {}
 
-    # Main path: single combined Lite call
-    if token_len(body) <= 6000:
+    # Main path: single combined Lite call.
+    # Threshold raised 6000 → 12000 tokens (2026-05). Flash-Lite handles
+    # 12k-token inputs in one shot fine and the per-call output cost
+    # dominates input, so a single 12k call is cheaper than three
+    # chained 4k calls + a final combine. 60-75% Flash-Lite call
+    # reduction on medium-long PDFs.
+    if token_len(body) <= 12000:
         return await _combined_call(title, body, doc_type)
 
     # Long doc — chain summarize first (multiple calls), then combine
-    # the final pass with metadata.
-    parts = split(body, size=4000, overlap=200)
+    # the final pass with metadata. Partial size raised 4000 → 8000 so
+    # a 100k-token PDF needs ~13 partials instead of 25 — same content
+    # coverage, half the calls.
+    parts = split(body, size=8000, overlap=200)
     partials = [await _summarize_one(title, p) for p in parts]
     combined_text = "\n\n".join(partials)
-    if token_len(combined_text) <= 6000:
+    if token_len(combined_text) <= 12000:
         return await _combined_call(title, combined_text, doc_type)
     # Very long after chain — fall back to old behaviour (rare)
     final_summary = await _summarize_one(title, combined_text)
