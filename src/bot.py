@@ -2279,18 +2279,22 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         orphans = await asyncio.to_thread(_scan_orphan_files_sorted)
         if idx < 0 or idx >= len(orphans):
-            await ctx.bot.send_message(
-                chat_id,
-                f"⚠️ #{idx + 1} 범위 초과 (현재 {len(orphans)}건)",
-            )
+            # Edit the bubble itself rather than dropping a new message —
+            # the user shouldn't have to scroll to find the result.
+            try:
+                await q.edit_message_text(
+                    f"⚠️ #{idx + 1} 범위 초과 (현재 {len(orphans)}건)"
+                )
+            except Exception:
+                pass
             return
         p = orphans[idx]
         if q.data.startswith("orphan_learn:"):
             ok = _orphan_enqueue_one(p, chat_id)
             if ok:
-                msg = f"📥 #{idx + 1} 학습 큐 등록: {p.name[:80]}"
+                msg = f"📥 #{idx + 1} 학습 큐 등록\n{p.name[:80]}"
             else:
-                msg = f"ℹ️ #{idx + 1} 이미 큐에 있음: {p.name[:80]}"
+                msg = f"ℹ️ #{idx + 1} 이미 큐에 있음\n{p.name[:80]}"
         else:
             # orphan_ignore: add to _IGNORED_FILENAMES so the scan
             # won't surface it again, and try to remove the file.
@@ -2298,17 +2302,28 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             _persist_permanently_ignored()
             try:
                 p.unlink()
-                msg = f"🗑 #{idx + 1} 영구 무시 + 파일 삭제: {p.name[:80]}"
+                msg = f"🗑 #{idx + 1} 영구 무시 + 파일 삭제됨\n{p.name[:80]}"
             except Exception:
-                msg = f"🗑 #{idx + 1} 영구 무시 (파일 삭제 실패): {p.name[:80]}"
-        await ctx.bot.send_message(chat_id, msg, disable_web_page_preview=True)
+                msg = f"🗑 #{idx + 1} 영구 무시 (파일 삭제 실패)\n{p.name[:80]}"
+        # Replace the bubble's own text + drop the buttons so the
+        # action's result is unmistakable. send_message would put
+        # the receipt below the keyboard which the user can miss.
+        try:
+            await q.edit_message_text(msg)
+        except Exception:
+            await ctx.bot.send_message(
+                chat_id, msg, disable_web_page_preview=True,
+            )
     elif q.data == "orphan_learn_all":
         orphans = await asyncio.to_thread(_scan_orphan_files_sorted)
         n = _enqueue_orphan_recovery(orphans, chat_id)
-        await ctx.bot.send_message(
-            chat_id, f"📥 {n}건 모두 학습 큐 등록",
-            disable_web_page_preview=True,
-        )
+        try:
+            await q.edit_message_text(f"📥 {n}건 모두 학습 큐 등록")
+        except Exception:
+            await ctx.bot.send_message(
+                chat_id, f"📥 {n}건 모두 학습 큐 등록",
+                disable_web_page_preview=True,
+            )
     elif q.data == "orphan_ignore_all":
         orphans = await asyncio.to_thread(_scan_orphan_files_sorted)
         ignored_count = 0
@@ -2324,9 +2339,16 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 pass
         if ignored_count or deleted_count:
             _persist_permanently_ignored()
+        result = (
+            f"🗑 {len(orphans)}건 영구 무시 (파일 {deleted_count}개 삭제됨)"
+        )
+        try:
+            await q.edit_message_text(result)
+            return
+        except Exception:
+            pass
         await ctx.bot.send_message(
-            chat_id,
-            f"🗑 {len(orphans)}건 영구 무시 (파일 {deleted_count}개 삭제됨)",
+            chat_id, result,
             disable_web_page_preview=True,
         )
     elif q.data.startswith("urldec_retry:"):
