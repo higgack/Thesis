@@ -14,13 +14,13 @@ dependencies = [
     "python-docx>=1.1.2",
     "openpyxl>=3.1.5",
     "youtube-transcript-api>=0.6.2",
-    # yt-dlp from git master — PyPI release cadence (≈ every 1–2
-    # months) lags YouTube's anti-bot changes; master usually carries
-    # bypass patches within days of a YouTube break. Trade-off:
-    # master can be momentarily broken, each rebuild may grab a
-    # different commit. Roll back to a tagged version (>= …) if a
-    # build starts failing because master is bad.
-    "yt-dlp @ git+https://github.com/yt-dlp/yt-dlp.git@master",
+    # yt-dlp fallback for YouTube captions when youtube-transcript-api
+    # is blocked (GCP server IPs are routinely blocked). yt-dlp uses a
+    # different API path that usually bypasses the block and supports
+    # auto-generated CC + manual subtitles in json3/vtt. (We tried
+    # `@ git+master` for fresher anti-bot patches but the build broke
+    # — rolled back to PyPI; revisit by pinning a specific git tag.)
+    "yt-dlp>=2026.3.17",
     "python-dotenv>=1.0.1",
     "httpx>=0.27.0",
     "tiktoken>=0.8.0",
