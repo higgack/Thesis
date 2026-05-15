@@ -280,6 +280,37 @@ explicit permission. PR #1 already exists for this branch.
   chat. If the user pastes them, warn and recommend rotation
   immediately.
 
+## /failed_clear and [🗑] semantics — permanent delete, never re-queue
+
+Both the bulk `/failed_clear` command and the per-item `[🗑 #N]`
+button (in `/failed`) and the per-item `[🗑 영구 무시 #N]` button
+(in `/recover_orphans`) do the SAME thing:
+
+1. Remove the row(s) from `_INGEST_FAILED`.
+2. Add the filename to `_IGNORED_FILENAMES` (persisted in
+   `data/ignored_filenames.json`).
+3. Add the URL to `_IGNORED_URLS` (persisted in
+   `data/ignored_urls.json`).
+4. For orphan scan: also delete the file from `data/files/` so the
+   next scan doesn't see it at all.
+
+After any of these actions the item is GONE — it does NOT move to
+pending, retry queue, or any other waiting list. It is permanently
+suppressed across:
+  • orphan scan
+  • URL ingest pipeline
+  • forward-listener relay
+  • re-forwarded telegram messages (text/file dedup)
+
+Only way to revive: edit `data/ignored_filenames.json` /
+`data/ignored_urls.json` by hand, restart the bot. There is no
+"undo /failed_clear" command.
+
+DO NOT explain this as "moved to pending" or "queued for review"
+or any other intermediate state. The user has explicitly confirmed
+this is the intended semantics ("그냥 없어지는거야 아무것으로도
+pending 이나 대기로 남지 않고 꼭 명심해").
+
 ## Cost-sensitive defaults (do not change without asking)
 
 - `SUMMARY_MODEL=gemini-2.5-flash-lite`
