@@ -320,15 +320,25 @@ async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
     except Exception:
         pass
     # Primary: youtube-transcript-api (fast pure-Python). Often
-    # blocked on cloud IPs but free + zero deps.
+    # blocked on cloud IPs but free + zero deps. v1.0 of the library
+    # made `list_transcripts` an instance method (was classmethod on
+    # 0.x); we support both by detecting the legacy attribute first.
     try:
-        transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
-        try:
-            t = transcripts.find_transcript(["ko", "en"])
-        except Exception:
-            t = next(iter(transcripts))
-        entries = t.fetch()
-        text = "\n".join(e["text"] for e in entries)
+        if hasattr(YouTubeTranscriptApi, "list_transcripts"):
+            # 0.x API
+            transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+            try:
+                t = transcripts.find_transcript(["ko", "en"])
+            except Exception:
+                t = next(iter(transcripts))
+            entries = t.fetch()
+            text = "\n".join(e["text"] for e in entries)
+        else:
+            # 1.x API — instance method, returns FetchedTranscript
+            # iterable of snippets with .text attribute.
+            api = YouTubeTranscriptApi()
+            fetched = api.fetch(video_id, languages=["ko", "en"])
+            text = "\n".join(s.text for s in fetched)
         if text.strip():
             return title, text.strip(), description
     except Exception as e:
