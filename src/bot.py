@@ -1177,6 +1177,54 @@ def _split_for_telegram(text: str, limit: int = _HELP_SOFT_LIMIT) -> list[str]:
     return chunks
 
 
+async def _send_pieces_with_throttle(
+    send_fn, pieces, *, throttle: float = 0.15, max_retries: int = 3,
+    **kw,
+) -> int | None:
+    """Send `pieces` one at a time with a small inter-message sleep
+    and per-piece retry on Telegram FloodWait/RetryAfter. Returns
+    the first sent message_id so callers can attach a reply-link
+    footer (e.g. /show and /find's `⬆️ 처음으로`).
+
+    Background: /show on a 39-chunk doc fanned out ~30 send_message
+    calls; Telegram throttled around message 7 and the raw `for ...
+    await reply_text(...)` loop crashed without catching the
+    RetryAfter, so the user got a half-dumped doc. With this helper
+    a RetryAfter just sleeps the mandated duration and re-sends the
+    same piece; other errors log and move on (partial dump > total
+    silence)."""
+    try:
+        from telegram.error import RetryAfter
+    except Exception:  # pragma: no cover
+        RetryAfter = None  # type: ignore
+    first_id = None
+    for i, piece in enumerate(pieces):
+        for attempt in range(max_retries):
+            try:
+                sent = await send_fn(piece, **kw)
+                if first_id is None and sent is not None:
+                    first_id = getattr(sent, "message_id", None)
+                break
+            except Exception as e:
+                if RetryAfter is not None and isinstance(e, RetryAfter):
+                    wait = max(int(getattr(e, "retry_after", 1)), 1) + 1
+                    log.info(
+                        "send_pieces: RetryAfter %ds on piece %d/%d "
+                        "(attempt %d), sleeping",
+                        wait, i + 1, len(pieces), attempt + 1,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                log.exception(
+                    "send_pieces: send failed on piece %d/%d",
+                    i + 1, len(pieces),
+                )
+                break
+        if throttle > 0:
+            await asyncio.sleep(throttle)
+    return first_id
+
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -1693,13 +1741,10 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # however many Telegram messages it takes. Paragraph (blank-line)
     # boundaries between items keep each chunk readable.
     pieces = _split_for_telegram(out)
-    first_message_id: int | None = None
-    for i, chunk in enumerate(pieces):
-        sent = await update.message.reply_text(
-            chunk, parse_mode="HTML", disable_web_page_preview=True,
-        )
-        if i == 0:
-            first_message_id = sent.message_id
+    first_message_id = await _send_pieces_with_throttle(
+        update.message.reply_text, pieces,
+        parse_mode="HTML", disable_web_page_preview=True,
+    )
     # "처음으로" footer — same pattern as /show. A common keyword like
     # HBM / CoWoS fans out across 30+ messages and the user has no
     # way back to the header without manually scrolling.
@@ -1857,10 +1902,10 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     first_message_id = first_sent.message_id
     body_pieces = _split_for_telegram(body) if body.strip() else []
-    for chunk in body_pieces:
-        await update.message.reply_text(
-            chunk, parse_mode="HTML", disable_web_page_preview=True,
-        )
+    await _send_pieces_with_throttle(
+        update.message.reply_text, body_pieces,
+        parse_mode="HTML", disable_web_page_preview=True,
+    )
     # "처음으로" footer that replies-to the header message —
     # Telegram renders the reply quote as tappable, scrolling the
     # chat back to that message. /show output can be 50+ messages
@@ -1956,30 +2001,17 @@ async def _handle_translate(ctx, chat_id: int, doc_id: str, q) -> None:
     out = f"{header}\n\n{_html.escape(translated)}"
     pieces = _split_for_telegram(out)
     log.info("translate sending doc=%s pieces=%d", doc_id, len(pieces))
-    sent_n = 0
-    for piece in pieces:
-        try:
-            await ctx.bot.send_message(
-                chat_id, piece,
-                parse_mode="HTML", disable_web_page_preview=True,
-            )
-            sent_n += 1
-        except Exception:
-            log.exception(
-                "translate send_message failed doc=%s piece_idx=%d "
-                "len=%d", doc_id, sent_n, len(piece)
-            )
-            # Retry without HTML in case parse_mode tripped on
-            # something we should have escaped but didn't.
-            try:
-                await ctx.bot.send_message(chat_id, piece)
-                sent_n += 1
-            except Exception:
-                log.exception(
-                    "translate plain-text retry also failed"
-                )
-    log.info("translate DONE doc=%s sent=%d/%d",
-             doc_id, sent_n, len(pieces))
+
+    async def _send(piece, **kw):
+        return await ctx.bot.send_message(chat_id, piece, **kw)
+
+    first_id = await _send_pieces_with_throttle(
+        _send, pieces,
+        parse_mode="HTML", disable_web_page_preview=True,
+    )
+    sent_n = len(pieces) if first_id is not None else 0
+    log.info("translate DONE doc=%s sent_first=%s pieces=%d",
+             doc_id, first_id, len(pieces))
     # Tidy the in-progress status row.
     if status_id:
         try:
