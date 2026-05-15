@@ -1590,6 +1590,10 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # One block per doc: title+date · location · meta · full summary
         item = f"\n\n📄 <b>{title}</b>  <i>{ingested}</i>"
+        # doc_id always shown so the user can hand it to /show or
+        # /forget for surgical operations without re-searching. The
+        # 16-char hex tap-copies in Telegram via the <code> wrapper.
+        item += f"\n  🆔 <code>{_html.escape(m.get('id') or '')}</code>"
         if loc:
             item += f"\n  {loc}"
         if meta_line:
