@@ -439,28 +439,28 @@ def search_broad(substring: str, limit: int = 30) -> list[dict]:
 
     with _conn() as c:
         if len(tokens) == 1:
-            # Single-token: keep the original substring behaviour.
+            # Single-token substring match. Sort purely by recency —
+            # title-vs-body relevance ranking was confusing in practice
+            # (오래된 글이 위로 오면서 최신 매칭이 묻혔다).
             pat = f"%{substring}%"
             rows = c.execute(
                 "SELECT id, source, type, title, summary, obsidian_path, "
-                "       ingested_at, metadata, "
-                "       CASE WHEN title LIKE ? COLLATE NOCASE THEN 0 ELSE 1 END AS rank "
+                "       ingested_at, metadata "
                 "FROM documents "
                 "WHERE title    LIKE ? COLLATE NOCASE "
                 "   OR summary  LIKE ? COLLATE NOCASE "
                 "   OR metadata LIKE ? COLLATE NOCASE "
-                "ORDER BY rank ASC, ingested_at DESC "
+                "ORDER BY ingested_at DESC "
                 "LIMIT ?",
-                (pat, pat, pat, pat, limit),
+                (pat, pat, pat, limit),
             ).fetchall()
             return [dict(r) for r in rows]
 
-        # Multi-token AND: every token must hit somewhere; rank by
-        # number of tokens hitting the title (more = stronger match).
+        # Multi-token AND: every token must hit somewhere. Sort by
+        # recency only (title-hit ranking removed for consistency
+        # with the single-token branch).
         where_parts: list[str] = []
         where_vals: list[str] = []
-        rank_parts: list[str] = []
-        rank_vals: list[str] = []
         for tok in tokens:
             pat = f"%{tok}%"
             where_parts.append(
@@ -469,18 +469,13 @@ def search_broad(substring: str, limit: int = 30) -> list[dict]:
                 "OR metadata LIKE ? COLLATE NOCASE)"
             )
             where_vals.extend([pat, pat, pat])
-            rank_parts.append(
-                "(CASE WHEN title LIKE ? COLLATE NOCASE THEN 1 ELSE 0 END)"
-            )
-            rank_vals.append(pat)
         where_sql = " AND ".join(where_parts)
-        rank_sql = " + ".join(rank_parts)
         rows = c.execute(
             f"SELECT id, source, type, title, summary, obsidian_path, "
-            f"       ingested_at, metadata, ({rank_sql}) AS title_hits "
+            f"       ingested_at, metadata "
             f"FROM documents WHERE {where_sql} "
-            f"ORDER BY title_hits DESC, ingested_at DESC LIMIT ?",
-            (*rank_vals, *where_vals, limit),
+            f"ORDER BY ingested_at DESC LIMIT ?",
+            (*where_vals, limit),
         ).fetchall()
         return [dict(r) for r in rows]
 
