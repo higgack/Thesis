@@ -1477,11 +1477,28 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     await _typing(update, ctx)
-    query = " ".join(ctx.args).strip()
+    # Trailing numeric arg overrides the default 50-cap. Lets the user
+    # widen common-keyword searches (/find 배터리 200) without burying
+    # narrow queries under 200 default results.
+    args = list(ctx.args or [])
+    limit = 50
+    # Trailing numeric arg as limit only when there are other tokens
+    # remaining — protects "/find 100" from being parsed as
+    # "search for nothing with limit 100".
+    if len(args) >= 2 and args[-1].isdigit():
+        n = int(args[-1])
+        if 10 <= n <= 500:
+            limit = n
+            args = args[:-1]
+    query = " ".join(args).strip()
     if not query:
-        await update.message.reply_text("사용법: /find <제목 일부>")
+        await update.message.reply_text(
+            "사용법: /find <제목 일부> [개수]\n"
+            "예: /find 배터리          (기본 50)\n"
+            "     /find 배터리 200    (최대 500)"
+        )
         return
-    matches = meta.search_broad(query, limit=50)
+    matches = meta.search_broad(query, limit=limit)
     if not matches:
         await update.message.reply_text(f"매칭 없음: '{query}'")
         return
