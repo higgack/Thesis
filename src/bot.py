@@ -1773,15 +1773,55 @@ def _failed_retry_one(chat_id: int, idx: int) -> str:
     return f"🔁 #{idx + 1} retry queue로 재등록: {title}"
 
 
+def _ignore_from_entry(entry: dict) -> tuple[int, int]:
+    """Add an entry's filename/URL to the permanent ignore sets.
+    Returns (files_added, urls_added) — both zero when the entry
+    has no recognizable identifier (rare; usually means it was a
+    raw text paste with no source label)."""
+    payload = entry.get("retry") or {}
+    title = entry.get("title") or ""
+    added_files = added_urls = 0
+    url = payload.get("url") or (
+        title if title.startswith(("http://", "https://")) else None
+    )
+    if url and url not in _IGNORED_URLS:
+        _IGNORED_URLS.add(url)
+        added_urls = 1
+    fname = (
+        payload.get("file_name")
+        or (Path(payload["path"]).name if payload.get("path") else None)
+    )
+    if not fname and title and not title.startswith(("http://", "https://")):
+        if any(title.lower().endswith(ext) for ext in
+               (".pdf", ".pptx", ".docx", ".xlsx", ".mp3", ".m4a",
+                ".png", ".jpg", ".jpeg", ".mp4", ".gif")):
+            fname = title
+    if fname and fname not in _IGNORED_FILENAMES:
+        _IGNORED_FILENAMES.add(fname)
+        added_files = 1
+    return added_files, added_urls
+
+
 def _failed_drop_one(idx: int) -> str:
-    """Delete a single /failed entry by #N tag (0-based). Doesn't
-    requeue, doesn't add to the auto-blocklist — just clears the row."""
+    """Delete a single /failed entry by #N tag (0-based) AND mark
+    its filename/URL as permanently ignored — same semantics as the
+    bulk /failed_clear. Without the ignore step the next orphan scan
+    re-enqueues the file and the user gets to play whack-a-mole with
+    the same row over and over."""
     entry = _failed_pop_by_display_idx(idx)
     if entry is None:
         return f"⚠️ #{idx + 1} 범위 초과 (현재 {len(_INGEST_FAILED)}건)"
+    added_files, added_urls = _ignore_from_entry(entry)
+    if added_files or added_urls:
+        _persist_permanently_ignored()
     _persist_failed_log()
     title = (entry.get("title") or "(unknown)")[:60]
-    return f"🗑 #{idx + 1} 삭제: {title}"
+    ign_tag = ""
+    if added_files:
+        ign_tag = " · 🚫 영구 무시"
+    elif added_urls:
+        ign_tag = " · 🚫 URL 영구 무시"
+    return f"🗑 #{idx + 1} 삭제{ign_tag}: {title}"
 
 
 def _failed_retry_all(chat_id: int) -> str:
@@ -1816,36 +1856,14 @@ def _failed_retry_all(chat_id: int) -> str:
 def _failed_clear_all() -> str:
     """Clear the failure log AND mark every cleared item as
     permanently ignored. After this, orphan recovery / URL ingest /
-    forward-listener all skip these items silently — no more 'tried
-    5 times, gave up, back in /failed tomorrow' cycles."""
+    forward-listener all skip these items silently."""
     n = len(_INGEST_FAILED)
     added_files = 0
     added_urls = 0
     for entry in _INGEST_FAILED:
-        payload = entry.get("retry") or {}
-        title = entry.get("title") or ""
-        # URL — explicit kind='url' OR title that LOOKS like a URL.
-        url = payload.get("url") or (title if title.startswith(("http://", "https://")) else None)
-        if url and url not in _IGNORED_URLS:
-            _IGNORED_URLS.add(url)
-            added_urls += 1
-        # Filename — from retry payload (kind='doc' / 'local_file') or
-        # from the title for entries pre-dating retry_payload.
-        fname = (
-            payload.get("file_name")
-            or (Path(payload["path"]).name if payload.get("path") else None)
-        )
-        if not fname and title and not title.startswith(("http://", "https://")):
-            # Best-effort: if the title ends in a known extension, treat
-            # it as a filename. Avoids polluting the ignore list with
-            # generic '본문 비어있음' titles.
-            if any(title.lower().endswith(ext) for ext in
-                   (".pdf", ".pptx", ".docx", ".xlsx", ".mp3", ".m4a",
-                    ".png", ".jpg", ".jpeg")):
-                fname = title
-        if fname and fname not in _IGNORED_FILENAMES:
-            _IGNORED_FILENAMES.add(fname)
-            added_files += 1
+        f, u = _ignore_from_entry(entry)
+        added_files += f
+        added_urls += u
     if added_files or added_urls:
         _persist_permanently_ignored()
     _INGEST_FAILED.clear()
