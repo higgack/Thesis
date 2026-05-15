@@ -1595,14 +1595,14 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     query = " ".join(ctx.args).strip()
 
-    # Lookup priority: exact id → keyword search with content-rich
-    # preference (url/pdf/pptx/docx > text > image > etc). Tiebreaker
-    # picks the doc with the longest summary, since /show's job is to
-    # surface the substantive content — for a YouTube link the user
-    # almost always wants the transcript doc (url, 14 chunks) over
-    # the forwarded telegram message (text, 1 chunk) that shares the
-    # same title keyword.
+    # Lookup priority: exact id → keyword search. Picker now sorts by
+    # recency primary (matches /find's order, so /show <kw> picks the
+    # same doc /find lists first), with type rank and summary length
+    # as tiebreakers when two docs share the same ingest time. Earlier
+    # the picker preferred url/pdf over text regardless of date, which
+    # surfaced week-old PDFs when the user wanted today's DART msg.
     doc = await asyncio.to_thread(meta.get_doc, query)
+    multi_match_count = 0
     if not doc:
         matches = await asyncio.to_thread(meta.search_broad, query, 20)
         if not matches:
@@ -1614,20 +1614,23 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "image": 2,
             "text": 3,
         }
-        def _pick_key(d: dict) -> tuple:
-            t = (d.get("type") or "").lower()
-            rank = _TYPE_RANK.get(t, 4)
-            # Negate summary length so longer wins under ascending sort.
-            return (rank, -len(d.get("summary") or ""))
-        matches.sort(key=_pick_key)
+        # Multi-pass stable sort: tertiary (summary length DESC) →
+        # secondary (type rank ASC) → primary (ingested_at DESC).
+        matches.sort(key=lambda d: -(len(d.get("summary") or "")))
+        matches.sort(key=lambda d: _TYPE_RANK.get(
+            (d.get("type") or "").lower(), 4))
+        matches.sort(key=lambda d: d.get("ingested_at") or "", reverse=True)
         doc = matches[0]
+        multi_match_count = len(matches)
         if len(matches) > 1:
             log.info(
                 "show: %d matches for %r, picked id=%s type=%s "
-                "summary_len=%d (others: %s)",
+                "ts=%s summary_len=%d (others: %s)",
                 len(matches), query[:50], doc["id"],
-                doc.get("type"), len(doc.get("summary") or ""),
-                [(m["id"], m.get("type")) for m in matches[1:5]],
+                doc.get("type"), doc.get("ingested_at"),
+                len(doc.get("summary") or ""),
+                [(m["id"], m.get("type"), m.get("ingested_at"))
+                 for m in matches[1:5]],
             )
 
     doc_id = doc["id"]
@@ -1650,6 +1653,11 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f" · 청크 {len(chunk_chunks)}개"
         + (f" + 요약 1" if summary_chunks else ""),
     ]
+    if multi_match_count > 1:
+        header_lines.append(
+            f"ℹ️ {multi_match_count}개 매칭 중 가장 최근 1개 표시. "
+            f"다른 doc 보려면 /show &lt;id&gt;"
+        )
     src = doc.get("source") or ""
     if src.startswith(("http://", "https://")):
         header_lines.append(f"📎 {_html.escape(src[:120])}")
