@@ -243,7 +243,14 @@ def find_by_normalized_title(title: str,
         if _normalize_title(row["title"] or "") != norm:
             continue
         row_sig = row["body_signature"]
-        if body_signature and row_sig and body_signature != row_sig:
+        # Skip when the new doc has a signature and the row's doesn't
+        # match (either differs or is NULL because the row predates
+        # the body_signature column). body_hash already differed by
+        # the time we got here, so a missing reference signature
+        # means we have no positive evidence these are the same doc
+        # — default to allowing the new ingest. Legacy data gets
+        # slightly more duplicates rather than false-positive dedup.
+        if body_signature and body_signature != row_sig:
             continue
         return dict(row)
     return None
