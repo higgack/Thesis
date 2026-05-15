@@ -45,6 +45,7 @@ import asyncio
 import os
 import re
 import sys
+from datetime import datetime
 
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError
@@ -164,6 +165,74 @@ _THROTTLE_SEC = 0.5
 # without leaving the listener stuck on one message for >10 minutes.
 _RELAY_MAX_ATTEMPTS = 3
 
+# Persistent "already forwarded" set so the listener doesn't relay
+# the same (channel, msg_id) twice. Two real sources of duplicates:
+# (a) a single Noah digest sometimes cites the same source message
+#     in multiple sections — we'd otherwise forward it once per cite,
+# (b) BACKFILL replay after a restart re-walks the same 12h of
+#     messages, re-firing every relay.
+# Bot-side source-label dedup catches the ingest cost, but the user
+# still sees the duplicate Telegram message in the RAG channel
+# because the listener already pushed it. Tracking here skips the
+# send entirely. Capped at _SEEN_MAX entries; older entries dropped
+# first when the cap is hit.
+import json as _json
+_SEEN_PATH = config.DATA_DIR / "forward_listener_seen.json"
+_SEEN_MAX = 10000
+_seen_forwards: dict[str, str] = {}
+
+
+def _seen_load() -> None:
+    global _seen_forwards
+    if not _SEEN_PATH.exists():
+        return
+    try:
+        data = _json.loads(_SEEN_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            _seen_forwards = data
+            print(f"loaded {len(_seen_forwards)} seen-forward entries")
+    except Exception as e:
+        print(f"seen-set load failed: {type(e).__name__}: {e}")
+        bak = _SEEN_PATH.with_suffix(_SEEN_PATH.suffix + ".bak")
+        if bak.exists():
+            try:
+                _seen_forwards = _json.loads(bak.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+
+def _seen_persist() -> None:
+    try:
+        tmp = _SEEN_PATH.with_suffix(_SEEN_PATH.suffix + ".tmp")
+        bak = _SEEN_PATH.with_suffix(_SEEN_PATH.suffix + ".bak")
+        tmp.write_text(
+            _json.dumps(_seen_forwards, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        if _SEEN_PATH.exists():
+            try:
+                os.replace(_SEEN_PATH, bak)
+            except OSError:
+                pass
+        os.replace(tmp, _SEEN_PATH)
+    except Exception as e:
+        print(f"seen-set persist failed: {type(e).__name__}: {e}")
+
+
+def _seen_check(key: str) -> bool:
+    return key in _seen_forwards
+
+
+def _seen_mark(key: str) -> None:
+    _seen_forwards[key] = datetime.utcnow().isoformat(timespec="seconds")
+    if len(_seen_forwards) > _SEEN_MAX:
+        # Drop the oldest 10% of entries to amortize the trim cost.
+        ordered = sorted(_seen_forwards.items(), key=lambda kv: kv[1])
+        drop_n = max(1, _SEEN_MAX // 10)
+        for k, _ in ordered[:drop_n]:
+            _seen_forwards.pop(k, None)
+    _seen_persist()
+
 
 def _all_message_urls(msg) -> list[str]:
     """Collect every URL appearing in a Telegram message — text body
@@ -246,6 +315,13 @@ async def _expand_telegram_digest(client: TelegramClient, msg,
     print(f"  TG digest msg {parent_id}: {len(links)} links to expand")
     forwarded = 0
     for ch, mid in links:
+        # Seen-set guard: same (ch, mid) already forwarded → skip.
+        # Catches both same-digest duplicate cites and digest replays
+        # after a listener restart with BACKFILL.
+        seen_key = f"{ch.lower()}/{mid}"
+        if _seen_check(seen_key):
+            print(f"    skip {ch}/{mid}: already forwarded (seen)")
+            continue
         peer = await _resolve_tg_channel(client, ch)
         if peer is None:
             continue
@@ -280,6 +356,7 @@ async def _expand_telegram_digest(client: TelegramClient, msg,
                     + (f" [retry {attempt}]" if attempt else "")
                 )
                 delivered = True
+                _seen_mark(seen_key)
                 break
             except FloodWaitError as e:
                 wait = max(e.seconds + 1, 1)
@@ -309,6 +386,10 @@ async def _expand_substack_digest(client: TelegramClient, msg,
     print(f"  Substack digest msg {parent_id}: {len(urls)} URLs to relay")
     sent = 0
     for url in urls:
+        seen_key = f"substack:{url}"
+        if _seen_check(seen_key):
+            print(f"    skip {url}: already sent (seen)")
+            continue
         delivered = False
         last_err: str | None = None
         for attempt in range(_RELAY_MAX_ATTEMPTS):
@@ -320,6 +401,7 @@ async def _expand_substack_digest(client: TelegramClient, msg,
                     + (f" [retry {attempt}]" if attempt else "")
                 )
                 delivered = True
+                _seen_mark(seen_key)
                 break
             except FloodWaitError as e:
                 wait = max(e.seconds + 1, 1)
@@ -426,6 +508,16 @@ def _strip_plain_urls(text: str, channel_key: str) -> str:
 
 async def _relay_plain(client: TelegramClient, msg, target,
                        channel_name: str) -> None:
+    # Seen-set guard — skip BACKFILL replays of messages we've
+    # already relayed (and dedup live duplicates if Telethon ever
+    # surfaces the same NewMessage event twice across reconnects).
+    seen_key = f"{channel_name.lower()}/{msg.id}"
+    if _seen_check(seen_key):
+        print(
+            f"  skip plain msg {msg.id} from {channel_name}: "
+            f"already relayed (seen)"
+        )
+        return
     text = (msg.message or "").strip()
     # Per-channel drop filter — noisy auto-generated content (ticker
     # tables, alpha scanner dumps) that has no narrative value.
@@ -461,6 +553,7 @@ async def _relay_plain(client: TelegramClient, msg, target,
                 f"({len(cleaned)} chars)"
                 + (f" [retry {attempt}]" if attempt else "")
             )
+            _seen_mark(seen_key)
             return
         except FloodWaitError as e:
             wait = max(e.seconds + 1, 1)
@@ -729,6 +822,7 @@ def main() -> None:
         )
 
     plain_channels = {c.lower() for c in _parse_channel_list("LISTEN_PLAIN_CHANNELS")}
+    _seen_load()
     asyncio.run(run(channels, plain_channels))
 
 
