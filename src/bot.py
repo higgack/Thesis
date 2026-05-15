@@ -546,6 +546,21 @@ def _scan_orphan_files() -> list[Path]:
     # /failed_clear. Those files might still be on disk but we never
     # want to attempt them again.
     known |= _IGNORED_FILENAMES
+    # Files currently in the /failed log are NOT orphans either —
+    # they've been attempted and parked for manual retry. Without
+    # this guard the periodic orphan scan re-enqueues every /failed
+    # item every hour, creating an infinite loop with
+    # _MAX_RETRY_ATTEMPTS=1 (enqueue → fail → /failed → re-enqueue).
+    for entry in _INGEST_FAILED:
+        payload = entry.get("retry") or {}
+        name = payload.get("file_name")
+        if not name and payload.get("path"):
+            try:
+                name = Path(payload["path"]).name
+            except Exception:
+                name = None
+        if name:
+            known.add(name)
 
     # First pass: filter by filename (cheap source-label match).
     candidates = [p for name, p in all_files.items() if name not in known]
