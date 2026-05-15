@@ -1678,10 +1678,18 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 def _failed_recent_snapshot() -> list[dict]:
-    """Same view that cmd_failed renders — newest first, last 50.
-    Centralised so /failed buttons and helper functions agree on the
-    index space."""
-    return list(reversed(_INGEST_FAILED[-50:]))
+    """Same view that cmd_failed renders — last 50 entries sorted by
+    file size ascending (smallest first) so the quick-to-triage items
+    surface at the top instead of being buried under multi-MB PDFs and
+    MP4 leftovers. Tiebreaker is recency (newest first). Centralised
+    so /failed buttons and helper functions agree on the index space."""
+    # Two-pass stable sort: secondary (ts DESC) → primary (size ASC).
+    # Python's sort is stable so items keep their ts ordering within
+    # the same size bucket.
+    entries = list(_INGEST_FAILED[-50:])
+    entries.sort(key=lambda r: r.get("ts") or "", reverse=True)
+    entries.sort(key=lambda r: int(r.get("file_size") or 0))
+    return entries
 
 
 def _failed_pop_by_display_idx(idx: int) -> dict | None:
@@ -1847,7 +1855,14 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         icon = "❌" if status == "error" else "⚠️"
         cycles = int(r.get("failed_cycles") or 1)
         cycle_tag = f" [{cycles}/{_FAILED_MAX_CYCLES}]" if cycles > 1 else ""
-        item = f"\n\n{icon} #{i + 1} {ts}{cycle_tag}\n   {title}"
+        size = int(r.get("file_size") or 0)
+        if size >= 1024 * 1024:
+            size_tag = f" · {size / 1024 / 1024:.1f}MB"
+        elif size >= 1024:
+            size_tag = f" · {size // 1024}KB"
+        else:
+            size_tag = ""
+        item = f"\n\n{icon} #{i + 1} {ts}{cycle_tag}{size_tag}\n   {title}"
         if detail and detail != title:
             item += f"\n   {detail}"
         if len(out) + len(item) > LIMIT:
@@ -2796,7 +2811,13 @@ async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 _OVERLOAD_MARKERS = ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "high demand", "overloaded")
-_MAX_RETRY_ATTEMPTS = 5
+# Was 5 (1h→2h→3h→4h→5h backoff = up to 15h before /failed).
+# Lowered to 1 so a single failure lands the item in /failed and the
+# next queue item proceeds immediately. Big files (multi-GB OCR
+# attempts, unsupported MP4/GIF) were clogging the queue with hours
+# of pointless retries; if a transient error needs another shot the
+# user can tap [🔁 #N] in /failed.
+_MAX_RETRY_ATTEMPTS = 1
 _RETRY_INTERVAL_SECONDS = 90
 _RETRY_QUEUE: list[dict] = []
 
@@ -4159,6 +4180,18 @@ def _record_failure(status: str, title: str, detail: str = "",
         "ts": datetime.utcnow().isoformat(),
         "failed_cycles": new_cycles,
     }
+    # Record file size if available so /failed can sort smallest-first.
+    # Big files (multi-MB OCR-heavy PDFs, MP4 videos) tend to bury the
+    # quick-to-process items the user actually wants to triage first.
+    file_size = 0
+    if retry_payload:
+        path = retry_payload.get("path") or retry_payload.get("file_path")
+        if path:
+            try:
+                file_size = Path(path).stat().st_size
+            except Exception:
+                file_size = 0
+    entry["file_size"] = file_size
     if retry_payload:
         # Stash the latest count inside the payload so /failed_retry
         # round-trips it back to us next time.
