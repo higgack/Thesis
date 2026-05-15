@@ -1588,12 +1588,16 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 meta_bits.append(_html.escape("·".join(md["tags"][:3])))
         meta_line = " · ".join(meta_bits)
 
-        # One block per doc: title+date · location · meta · full summary
+        # One block per doc: title+date · location · meta · full summary.
+        # doc_id rendered as `/show_<id>` — Telegram auto-detects the
+        # /word pattern and makes it tap-to-send, so one tap routes
+        # the user straight into cmd_show for that doc. Pairs with a
+        # MessageHandler that catches `^/show_<hex>$` and unwraps it
+        # back into `/show <hex>`.
+        doc_id = m.get("id") or ""
         item = f"\n\n📄 <b>{title}</b>  <i>{ingested}</i>"
-        # doc_id always shown so the user can hand it to /show or
-        # /forget for surgical operations without re-searching. The
-        # 16-char hex tap-copies in Telegram via the <code> wrapper.
-        item += f"\n  🆔 <code>{_html.escape(m.get('id') or '')}</code>"
+        if doc_id:
+            item += f"\n  🆔 /show_{_html.escape(doc_id)}"
         if loc:
             item += f"\n  {loc}"
         if meta_line:
@@ -1615,6 +1619,25 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
 
+_SHOW_ID_RE = re.compile(r"^/show_([a-f0-9]{6,32})\b")
+
+
+async def cmd_show_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Tap-to-send handler for `/show_<id>` — the form /find renders
+    under each match. Telegram auto-detects /word patterns and makes
+    them tappable, so the user clicks the rendered ID and lands here
+    instead of typing `/show <id>` by hand. We unwrap the suffix
+    and delegate to cmd_show with the id pre-supplied."""
+    if not _is_owner(update):
+        return
+    msg = (update.message and update.message.text) or ""
+    m = _SHOW_ID_RE.match(msg.strip())
+    if not m:
+        return
+    ctx.args = [m.group(1)]
+    await cmd_show(update, ctx)
+
+
 async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Dump every chunk of one doc across multiple Telegram messages
     so the user can read the FULL original body, not just the
@@ -1622,6 +1645,7 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     Usage: /show <doc_id 또는 제목 키워드>
     - doc_id: 16-char hex from /find's source/id area
+      (or tap the `/show_<id>` link /find renders under each match)
     - 키워드: title substring match (first hit wins)
 
     Cost: ₩0 (SQLite + Chroma local lookups only). Output can be
@@ -5471,6 +5495,12 @@ def main():
     app.add_handler(CommandHandler("find", cmd_find))
     app.add_handler(CommandHandler("find_all", cmd_find_all))
     app.add_handler(CommandHandler("show", cmd_show))
+    # Tap-to-show: /find renders each doc's id as `/show_<id>` so a
+    # single tap fires cmd_show without the user typing it.
+    app.add_handler(MessageHandler(
+        filters.Regex(r"^/show_[a-f0-9]{6,32}\b") & filters.ChatType.PRIVATE,
+        cmd_show_id,
+    ))
     app.add_handler(CommandHandler("failed", cmd_failed))
     app.add_handler(CommandHandler("failed_retry", cmd_failed_retry))
     app.add_handler(CommandHandler("failed_clear", cmd_failed_clear))
