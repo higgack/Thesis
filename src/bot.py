@@ -1015,7 +1015,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 <b>【1. 명령어】</b>
 조회: /find &lt;kw&gt; [N=50] · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
-장애: /failed(최대 3 재시도 사이클 후 자동 삭제) · /failed_retry · /failed_clear(영구 무시) · /queue · /queue_cancel_all · /audit(대기 전수) · /blocked_hosts(추출 실패 자동차단) · /reset_blocked_hosts
+장애: /failed(작은 것부터 정렬·건별 retry/drop) · /failed_retry · /failed_clear(영구 무시) · /queue · /queue_to_failed(큐→실패로) · /queue_cancel_all · /audit · /blocked_hosts · /reset_blocked_hosts
 Orphan: /orphans · /recover_orphans
 보류(5분): /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
 삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
@@ -2572,6 +2572,75 @@ async def cmd_pending_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
         return
     await update.message.reply_text(
         f"🗑 {ocr_n + pro_n}건 취소됨 (OCR {ocr_n} · Pro {pro_n})"
+    )
+
+
+def _retry_item_to_failed_entry(item: dict, reason: str) -> dict:
+    """Convert a retry-queue item into the /failed log shape so it
+    surfaces in /failed with the size tag + per-item retry button."""
+    title = (
+        item.get("file_name")
+        or item.get("url")
+        or item.get("title")
+        or (Path(item["path"]).name if item.get("path") else None)
+        or "(unknown)"
+    )[:140]
+    file_size = 0
+    path = item.get("path") or item.get("file_path")
+    if path:
+        try:
+            file_size = Path(path).stat().st_size
+        except Exception:
+            pass
+    payload = {k: v for k, v in item.items() if k != "chat_id"}
+    payload.setdefault("failed_cycles", 1)
+    return {
+        "status": "error",
+        "title": title,
+        "detail": reason[:200],
+        "ts": datetime.utcnow().isoformat(),
+        "failed_cycles": 1,
+        "file_size": file_size,
+        "retry": payload,
+    }
+
+
+async def cmd_queue_to_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Move everything in the ingest retry queue into the /failed log
+    instead of discarding them like /queue_cancel_all does. In-flight
+    items (currently being processed) can't be aborted mid-pipeline —
+    they finish and land in /failed naturally on error or get learned
+    on success. Use this when a flood of big/unsupported files clogs
+    the queue: the entries land in /failed sorted smallest-first, with
+    [🔁 #N]/[🗑 #N] buttons so the user can pick which ones deserve
+    a manual retry instead of letting all of them cycle through 5
+    auto-retries. Pending OCR/Pro buckets are left alone — those are
+    awaiting user decisions, not failures."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    moved_n = 0
+    for item in list(_INGEST_RETRY_QUEUE):
+        entry = _retry_item_to_failed_entry(
+            item, "큐에서 /failed로 수동 이동"
+        )
+        _INGEST_FAILED.append(entry)
+        moved_n += 1
+    _INGEST_RETRY_QUEUE.clear()
+    if len(_INGEST_FAILED) > _FAILED_MAX:
+        del _INGEST_FAILED[: len(_INGEST_FAILED) - _FAILED_MAX]
+    _persist_retry_queue()
+    _persist_failed_log()
+    if moved_n == 0:
+        await update.message.reply_text(
+            "📭 큐 비어있음 — 옮길 항목 없음"
+        )
+        return
+    await update.message.reply_text(
+        f"📋 retry queue → /failed 이동 완료 ({moved_n}건)\n"
+        f"💡 /failed 에서 작은 파일부터 정렬돼 보임. "
+        f"건별 [🔁 #N] 재시도 / [🗑 #N] 삭제 가능.\n"
+        f"⚠️ 처리중인 항목은 끝까지 가서 자체 결과에 따라 정착됨."
     )
 
 
@@ -5270,6 +5339,7 @@ def main():
     ))
     app.add_handler(CommandHandler("pending_cancel_all", cmd_pending_cancel_all))
     app.add_handler(CommandHandler("queue_cancel_all", cmd_queue_cancel_all))
+    app.add_handler(CommandHandler("queue_to_failed", cmd_queue_to_failed))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("cleanup_confirm", cmd_cleanup_confirm))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
