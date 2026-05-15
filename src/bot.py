@@ -1097,7 +1097,7 @@ Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【3. 도구】</b> 🧠 search_my_brain TOP_K 10 · 🧠 compare_papers 50건 통합 · 🧠 recent_docs · 📄 search_papers 15건/멀티소스(S2·arXiv·OpenAlex·CrossRef·IEEE·PubMed+PDF) · 🌐 web_search · 📥 ingest_url
+<b>【3. 도구】</b> 🧠 search_my_brain TOP_K 10 · 🧠 compare_papers 50건 통합(20+ Pro/Flash/취소) · 🧠 recent_docs · 📄 search_papers 15건/6소스 라우팅+PDF · 🌐 web_search (명시 시만) · 📥 ingest_url
 
 <b>【4. 자연어 트리거】</b>
 🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰/비교/전체" · 📄 papers "찾아줘/논문" · 🌐 <b>web — "웹/구글/인터넷" 중 하나가 메시지에 있을 때만</b>(시간 표현은 트리거 X) · 📥 ingest "학습해줘 URL"·URL만
