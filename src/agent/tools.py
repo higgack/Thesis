@@ -132,7 +132,7 @@ async def search_my_brain(query: str, k: int = 10) -> dict:
     return {"hits": out, "count": len(out), "variants": variants}
 
 
-async def search_papers(query: str, limit: int = 5) -> dict:
+async def search_papers(query: str, limit: int = 15) -> dict:
     results = await papersearch.search(query, limit=limit)
     slim = []
     for p in results:
@@ -143,7 +143,10 @@ async def search_papers(query: str, limit: int = 5) -> dict:
             "authors": p.get("authors") or [],
             "abstract": (p.get("abstract") or "")[:1200],
             "url": p.get("url") or "",
+            "pdf": p.get("pdf") or "",
+            "doi": p.get("doi") or "",
             "arxiv": p.get("arxiv"),
+            "source": p.get("source") or "",
         })
     return {"results": slim, "count": len(slim)}
 
@@ -340,7 +343,12 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
     types.FunctionDeclaration(
         name="search_papers",
         description=(
-            "Search external academic papers via Semantic Scholar / arXiv. "
+            "Search external academic papers across multiple sources: "
+            "Semantic Scholar, arXiv, OpenAlex, CrossRef, IEEE Xplore, "
+            "PubMed. The router auto-picks the best 2-3 sources based on "
+            "the query domain (e.g. semiconductor/packaging → IEEE; "
+            "biomedical → PubMed; ML/AI → arXiv). Each result returns "
+            "url + pdf when available so the user can download directly. "
             "Use when the user asks to FIND or DISCOVER papers, not for "
             "questions answerable from the saved brain."
         ),
@@ -350,7 +358,7 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                 "query": types.Schema(type=types.Type.STRING),
                 "limit": types.Schema(
                     type=types.Type.INTEGER,
-                    description="Max results (1-10). Default 5.",
+                    description="Max results (1-15). Default 15.",
                 ),
             },
             required=["query"],

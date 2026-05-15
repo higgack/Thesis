@@ -97,7 +97,7 @@ _SYSTEM = """당신은 사용자의 개인 세컨드브레인 에이전트입니
 # 도구
 - search_my_brain: 사용자가 저장한 자료에서 특정 사실/구절 검색 (단일 질문)
 - compare_papers: 같은 주제의 여러 자료 요약을 한 번에 모아 비교/종합 (다수 자료 통합)
-- search_papers: arXiv/Semantic Scholar 외부 논문 검색
+- search_papers: 외부 학술 논문 검색 (다중 소스: S2 / arXiv / OpenAlex / CrossRef / IEEE / PubMed — 쿼리 도메인에 따라 자동 라우팅). limit 기본값 15, 특별한 사유 없으면 15 그대로 사용. 결과에 url/pdf 포함되어 사용자가 바로 다운로드 가능.
 - ingest_url: 새 URL을 저장소에 영구 보관
 - recent_docs: 최근 저장한 문서 목록
 - web_search: 일반 웹 검색 (Google grounding). 최신 뉴스/시세/동향/오늘 발표 등 저장 자료에 없는 사실 확인.
@@ -276,28 +276,48 @@ async def _execute(name: str, args: dict) -> dict:
         return {"error": str(e)}
 
 
-def _harvest_sources(name: str, result: dict, sources: list[str]) -> None:
+def _harvest_sources(
+    name: str, result: dict, sources: list[str],
+    source_urls: dict[str, str] | None = None,
+) -> None:
+    """Append sources from a tool result to the running list. When
+    `source_urls` is provided, also stash a {label → direct-download URL}
+    map so the bot can render clickable links per cited source. PDF
+    links win over landing pages so the user gets a one-tap download
+    when available."""
+    sm = source_urls if source_urls is not None else {}
+
+    def _add(label: str, url: str = "") -> None:
+        if not label:
+            return
+        if label not in sources:
+            sources.append(label)
+        if url and not sm.get(label):
+            sm[label] = url
+
     if name == "search_my_brain":
         for h in result.get("hits", []):
-            t = h.get("title")
-            if t and t not in sources:
-                sources.append(t)
+            _add(h.get("title") or "")
     elif name == "search_papers":
         for p in result.get("results", []):
-            t = p.get("title")
+            t = p.get("title") or ""
+            # Prefer the arXiv tag so the legend tells the user where
+            # it came from; same logic as before.
             tag = f"arXiv:{p['arxiv']}" if p.get("arxiv") else None
             label = f"{t} [{tag}]" if tag else t
-            if label and label not in sources:
-                sources.append(label)
+            # PDF beats landing page beats DOI URL. The bot renders
+            # whatever lands here as the clickable link.
+            url = (
+                p.get("pdf")
+                or p.get("url")
+                or (f"https://doi.org/{p['doi']}" if p.get("doi") else "")
+            )
+            _add(label, url)
     elif name == "ingest_url":
-        t = result.get("title")
-        if t and t not in sources:
-            sources.append(t)
+        _add(result.get("title") or "")
     elif name == "compare_papers":
         for p in result.get("papers", []):
-            t = p.get("title")
-            if t and t not in sources:
-                sources.append(t)
+            _add(p.get("title") or "")
     elif name == "web_search":
         from urllib.parse import urlparse
         for src in result.get("sources", []):
@@ -305,8 +325,7 @@ def _harvest_sources(name: str, result: dict, sources: list[str]) -> None:
             title = src.get("title", "")
             domain = urlparse(url).netloc.replace("www.", "") if url else ""
             label = f"{title} [{domain}]" if title and domain else (title or domain)
-            if label and label not in sources:
-                sources.append(label)
+            _add(label, url)
 
 
 _ANSWER_CACHE: dict[str, tuple[float, dict]] = {}
@@ -395,6 +414,7 @@ async def run(message: str, deep: bool = False,
         "deep": deep,
         "contents": contents,
         "sources": [],
+        "source_urls": {},
         "tool_calls": [],
         "compare_papers_count": 0,
         "model": config.DEEP_MODEL if deep else config.ANSWER_MODEL,
@@ -479,7 +499,7 @@ async def resume(state_id: str, decision: str) -> dict:
         return {
             "text": "⚠️ 확인 요청이 만료됐습니다 (5분 초과). "
                     "같은 질문을 다시 보내주세요.",
-            "sources": [], "tool_calls": [],
+            "sources": [], "source_urls": {}, "tool_calls": [],
             "model": "expired",
             "query": "",
         }
@@ -488,6 +508,7 @@ async def resume(state_id: str, decision: str) -> dict:
             "text": "취소했습니다. 더 좁은 질문으로 다시 시도하시거나, "
                     "/deep <질문> 으로 의도적으로 Pro 합성을 요청할 수 있어요.",
             "sources": state["sources"],
+            "source_urls": state.get("source_urls") or {},
             "tool_calls": state["tool_calls"],
             "model": state["model"],
             "query": state["message"],
@@ -511,6 +532,7 @@ async def _loop(state: dict) -> dict:
     (`state['pro_decision']`)."""
     contents: list[types.Content] = state["contents"]
     sources: list[str] = state["sources"]
+    source_urls: dict[str, str] = state.setdefault("source_urls", {})
     tool_calls: list[str] = state["tool_calls"]
     model = state["model"]
     deep = state["deep"]
@@ -543,6 +565,7 @@ async def _loop(state: dict) -> dict:
             return {
                 "text": answer,
                 "sources": sources,
+                "source_urls": source_urls,
                 "tool_calls": tool_calls,
                 "steps": step + 1,
                 "model": model,
@@ -558,7 +581,7 @@ async def _loop(state: dict) -> dict:
                 compare_papers_count = max(
                     compare_papers_count, int(result.get("count", 0) or 0)
                 )
-            _harvest_sources(fc.name, result, sources)
+            _harvest_sources(fc.name, result, sources, source_urls)
             response_parts.append(types.Part.from_function_response(
                 name=fc.name, response=result
             ))
@@ -578,6 +601,7 @@ async def _loop(state: dict) -> dict:
                 "deep": deep,
                 "contents": contents,
                 "sources": sources,
+                "source_urls": source_urls,
                 "tool_calls": tool_calls,
                 "compare_papers_count": compare_papers_count,
                 "model": model,
@@ -592,6 +616,7 @@ async def _loop(state: dict) -> dict:
                 "state_id": state_id,
                 "count": compare_papers_count,
                 "sources": sources,
+                "source_urls": source_urls,
                 "tool_calls": tool_calls,
                 "model": model,
                 "query": message,
@@ -626,6 +651,7 @@ async def _loop(state: dict) -> dict:
     return {
         "text": text,
         "sources": sources,
+        "source_urls": source_urls,
         "tool_calls": tool_calls,
         "steps": MAX_STEPS,
         "model": model,

@@ -1097,7 +1097,7 @@ Orphan: /orphans · /recover orphans(크기순·건별 [📥]/[🗑])
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【3. 도구】</b> 🧠 search_my_brain TOP_K 10 · 🧠 compare_papers 50건 통합(20+ Pro/Flash/취소) · 🧠 recent_docs · 📄 search_papers (S2→arXiv) · 🌐 web_search (명시 시만) · 📥 ingest_url
+<b>【3. 도구】</b> 🧠 search_my_brain TOP_K 10 · 🧠 compare_papers 50건 통합 · 🧠 recent_docs · 📄 search_papers 15건/멀티소스(S2·arXiv·OpenAlex·CrossRef·IEEE·PubMed+PDF) · 🌐 web_search · 📥 ingest_url
 
 <b>【4. 자연어 트리거】</b>
 🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰/비교/전체" · 📄 papers "찾아줘/논문" · 🌐 <b>web — "웹/구글/인터넷" 중 하나가 메시지에 있을 때만</b>(시간 표현은 트리거 X) · 📥 ingest "학습해줘 URL"·URL만
@@ -3715,23 +3715,34 @@ def _is_overload(exc: BaseException) -> bool:
     return any(m in s for m in _OVERLOAD_MARKERS)
 
 
-def _format_sources_with_url(titles: list[str], cap: int | None = None) -> str:
+def _format_sources_with_url(
+    titles: list[str], cap: int | None = None,
+    source_urls: dict[str, str] | None = None,
+) -> str:
     """Look up each cited doc title in meta and append the source URL
     if it is an http(s) link, so the user can click straight from the
     bot reply to the original article. By default lists every cited
-    source — the chunked Telegram send handles oversized blocks."""
+    source — the chunked Telegram send handles oversized blocks.
+
+    `source_urls` is a {label → URL} map harvested by the agent during
+    this turn (e.g. search_papers gives every paper its direct-download
+    PDF link). It takes precedence over meta lookup because the agent's
+    map is the freshest source — papers from search_papers aren't yet
+    in meta.documents."""
     formatted: list[str] = []
     items = titles if cap is None else titles[:cap]
+    sm = source_urls or {}
     for title in items:
-        try:
-            matches = meta.search_title(title, limit=1)
-        except Exception:
-            matches = []
-        url = ""
-        if matches:
-            src = matches[0].get("source") or ""
-            if src.startswith(("http://", "https://")):
-                url = src
+        url = sm.get(title) or ""
+        if not url:
+            try:
+                matches = meta.search_title(title, limit=1)
+            except Exception:
+                matches = []
+            if matches:
+                src = matches[0].get("source") or ""
+                if src.startswith(("http://", "https://")):
+                    url = src
         if url:
             formatted.append(f"{title} → {url}")
         else:
@@ -3805,23 +3816,29 @@ def _renumber_citations(
     return _CITE_INNER_RE.sub(repl, text), ordered
 
 
-def _format_numbered_sources(labels: list[str]) -> str:
+def _format_numbered_sources(
+    labels: list[str], source_urls: dict[str, str] | None = None,
+) -> str:
     """Build the numbered legend rendered after the answer body.
-    URLs are looked up via meta.search_title so each cited label
-    keeps its clickable source link when one exists."""
+    URLs come from `source_urls` (agent's harvested map for this turn,
+    e.g. direct PDF download for /search papers results) when present,
+    otherwise fall back to meta.search_title so previously-ingested
+    docs still link to their source URL."""
     if not labels:
         return ""
+    sm = source_urls or {}
     lines: list[str] = []
     for i, label in enumerate(labels, 1):
-        url = ""
-        try:
-            matches = meta.search_title(label, limit=1)
-        except Exception:
-            matches = []
-        if matches:
-            src = matches[0].get("source") or ""
-            if src.startswith(("http://", "https://")):
-                url = src
+        url = sm.get(label) or ""
+        if not url:
+            try:
+                matches = meta.search_title(label, limit=1)
+            except Exception:
+                matches = []
+            if matches:
+                src = matches[0].get("source") or ""
+                if src.startswith(("http://", "https://")):
+                    url = src
         if url:
             lines.append(f"  [{i}] {label} → {url}")
         else:
@@ -3949,16 +3966,21 @@ async def _send_agent_reply(send, result, inherited: bool = False):
     suffix_lines = []
     if result.get("warning"):
         suffix_lines.append(result["warning"])
+    source_urls = result.get("source_urls") or {}
     if ordered_labels:
         # Use the numbered legend built from inline citations — what
         # the user sees in body [1][2] matches the [1] [2] entries
         # below.
-        suffix_lines.append("📚 출처:" + _format_numbered_sources(ordered_labels))
+        suffix_lines.append("📚 출처:" + _format_numbered_sources(
+            ordered_labels, source_urls,
+        ))
     elif result.get("sources"):
         # Tool was called but model didn't cite inline. Fall back to
         # the harvested source list so the user still gets a 출처
         # block.
-        suffix_lines.append("📚 출처:" + _format_sources_with_url(result["sources"]))
+        suffix_lines.append("📚 출처:" + _format_sources_with_url(
+            result["sources"], source_urls=source_urls,
+        ))
     if result.get("tool_calls"):
         suffix_lines.append(_format_tool_calls(result["tool_calls"]))
     await _send_chunked_html(send, body_html)
