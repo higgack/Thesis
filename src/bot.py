@@ -1881,25 +1881,45 @@ async def _handle_translate(ctx, chat_id: int, doc_id: str, q) -> None:
     translate to Korean, and post the result as fresh messages.
     Cost ≈ ₩1–5 per typical doc (4000-char body × 6000 tokens
     in+out at ₩140 / 1M)."""
+    log.info("translate START doc=%s chat=%s", doc_id, chat_id)
     try:
         await q.answer("번역 중... (10~30초)")
     except Exception:
         pass
-    chunks = await asyncio.to_thread(vector.get_doc_chunks, doc_id)
+    # Immediate "working" message so the user has visual feedback
+    # even if the LLM call takes 30+ seconds. Edited at the end into
+    # either ✅ or ⚠️ to keep one row instead of two.
+    try:
+        status_msg = await ctx.bot.send_message(
+            chat_id, "🌐 번역 중... (10~30초)"
+        )
+        status_id = status_msg.message_id
+    except Exception:
+        log.exception("translate status_msg send failed")
+        status_id = None
+    try:
+        chunks = await asyncio.to_thread(vector.get_doc_chunks, doc_id)
+    except Exception:
+        log.exception("translate get_doc_chunks failed doc=%s", doc_id)
+        await ctx.bot.send_message(
+            chat_id, "⚠️ 번역 실패: 청크 로드 에러"
+        )
+        return
     chunk_chunks = [c for c in chunks if c.get("kind") == "chunk"]
+    log.info("translate chunks doc=%s n=%d", doc_id, len(chunk_chunks))
     if not chunk_chunks:
         await ctx.bot.send_message(
             chat_id, "⚠️ 번역할 본문이 없음 (청크 0개)"
         )
         return
     body = "\n\n".join(c.get("text") or "" for c in chunk_chunks)
-    # Bound to ~12K chars to keep cost predictable on huge PDFs.
-    # User can /show a specific chunk range later if they need more.
     MAX_CHARS = 12000
     truncated = False
     if len(body) > MAX_CHARS:
         body = body[:MAX_CHARS]
         truncated = True
+    log.info("translate body doc=%s len=%d truncated=%s",
+             doc_id, len(body), truncated)
     try:
         from .llm.gemini import complete
         resp = await complete(
@@ -1913,16 +1933,19 @@ async def _handle_translate(ctx, chat_id: int, doc_id: str, q) -> None:
                 "form. Output only the translation, no preamble."
             ),
             user=body,
-            max_tokens=4096,
+            max_tokens=8192,
             temperature=0.2,
             purpose="translate",
         )
     except Exception as e:
+        log.exception("translate gemini call failed doc=%s", doc_id)
         await ctx.bot.send_message(
             chat_id, f"⚠️ 번역 실패: {_explain_error(e)}"
         )
         return
     translated = (resp or "").strip()
+    log.info("translate resp doc=%s resp_len=%d",
+             doc_id, len(translated))
     if not translated:
         await ctx.bot.send_message(chat_id, "⚠️ 번역 결과 비어있음")
         return
@@ -1931,11 +1954,41 @@ async def _handle_translate(ctx, chat_id: int, doc_id: str, q) -> None:
         header += f" <i>(앞 {MAX_CHARS:,}자만)</i>"
     import html as _html
     out = f"{header}\n\n{_html.escape(translated)}"
-    for piece in _split_for_telegram(out):
-        await ctx.bot.send_message(
-            chat_id, piece,
-            parse_mode="HTML", disable_web_page_preview=True,
-        )
+    pieces = _split_for_telegram(out)
+    log.info("translate sending doc=%s pieces=%d", doc_id, len(pieces))
+    sent_n = 0
+    for piece in pieces:
+        try:
+            await ctx.bot.send_message(
+                chat_id, piece,
+                parse_mode="HTML", disable_web_page_preview=True,
+            )
+            sent_n += 1
+        except Exception:
+            log.exception(
+                "translate send_message failed doc=%s piece_idx=%d "
+                "len=%d", doc_id, sent_n, len(piece)
+            )
+            # Retry without HTML in case parse_mode tripped on
+            # something we should have escaped but didn't.
+            try:
+                await ctx.bot.send_message(chat_id, piece)
+                sent_n += 1
+            except Exception:
+                log.exception(
+                    "translate plain-text retry also failed"
+                )
+    log.info("translate DONE doc=%s sent=%d/%d",
+             doc_id, sent_n, len(pieces))
+    # Tidy the in-progress status row.
+    if status_id:
+        try:
+            await ctx.bot.edit_message_text(
+                f"✅ 번역 완료 ({sent_n}개 메시지)",
+                chat_id=chat_id, message_id=status_id,
+            )
+        except Exception:
+            pass
 
 
 def _is_mostly_foreign(text: str, threshold: float = 0.30) -> bool:
