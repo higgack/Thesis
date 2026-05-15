@@ -1677,6 +1677,66 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
 
+def _failed_recent_snapshot() -> list[dict]:
+    """Same view that cmd_failed renders — newest first, last 50.
+    Centralised so /failed buttons and helper functions agree on the
+    index space."""
+    return list(reversed(_INGEST_FAILED[-50:]))
+
+
+def _failed_pop_by_display_idx(idx: int) -> dict | None:
+    """Remove and return the entry corresponding to the user-visible
+    #N tag (0-based). Returns None when the index is out of range —
+    can happen if the failure log changed between display and click."""
+    if idx < 0 or idx >= len(_INGEST_FAILED):
+        return None
+    # recent[i] = _INGEST_FAILED[-(i+1)]; pop by the inverted index.
+    real_idx = len(_INGEST_FAILED) - 1 - idx
+    if real_idx < 0 or real_idx >= len(_INGEST_FAILED):
+        return None
+    return _INGEST_FAILED.pop(real_idx)
+
+
+def _failed_retry_one(chat_id: int, idx: int) -> str:
+    """Retry just one /failed entry by its #N tag (0-based). Pops the
+    entry, requeues if it has a retry payload, and persists both
+    queues to disk."""
+    if idx < 0 or idx >= len(_INGEST_FAILED):
+        return f"⚠️ #{idx + 1} 범위 초과 (현재 {len(_INGEST_FAILED)}건)"
+    snapshot = _failed_recent_snapshot()
+    if idx >= len(snapshot):
+        return f"⚠️ #{idx + 1} 매칭 없음"
+    target = snapshot[idx]
+    payload = target.get("retry")
+    if not payload:
+        return (
+            f"⚠️ #{idx + 1} retry 정보 없음 — 채널/원본에서 직접 다시 "
+            "보내주세요"
+        )
+    entry = _failed_pop_by_display_idx(idx)
+    if entry is None:
+        return f"⚠️ #{idx + 1} 매칭 없음 (목록이 변경됐을 수 있음)"
+    payload = dict(payload)
+    payload["attempts"] = 0
+    payload["chat_id"] = chat_id
+    _INGEST_RETRY_QUEUE.append(payload)
+    _persist_retry_queue()
+    _persist_failed_log()
+    title = (entry.get("title") or "(unknown)")[:60]
+    return f"🔁 #{idx + 1} retry queue로 재등록: {title}"
+
+
+def _failed_drop_one(idx: int) -> str:
+    """Delete a single /failed entry by #N tag (0-based). Doesn't
+    requeue, doesn't add to the auto-blocklist — just clears the row."""
+    entry = _failed_pop_by_display_idx(idx)
+    if entry is None:
+        return f"⚠️ #{idx + 1} 범위 초과 (현재 {len(_INGEST_FAILED)}건)"
+    _persist_failed_log()
+    title = (entry.get("title") or "(unknown)")[:60]
+    return f"🗑 #{idx + 1} 삭제: {title}"
+
+
 def _failed_retry_all(chat_id: int) -> str:
     """Move every failed entry that has a saved retry_payload back into
     the auto-retry queue. Returns the user-facing summary message."""
@@ -1772,7 +1832,13 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     out = f"❌ 실패/빈본문 누적 {len(_INGEST_FAILED)}건 (최근순)"
     LIMIT = 3800
     truncated = 0
-    recent = list(reversed(_INGEST_FAILED[-50:]))
+    recent = _failed_recent_snapshot()
+    # How many entries get their own per-item retry/drop buttons.
+    # Telegram allows ~100 buttons per message and each entry adds 2
+    # — capping at 20 keeps the keyboard responsive while covering
+    # the typical "what failed today" working set.
+    PER_ITEM_BUTTON_CAP = 20
+    button_rows: list[list[InlineKeyboardButton]] = []
     for i, r in enumerate(recent):
         ts = (r.get("ts", "")[:16]).replace("T", " ")
         title = _clean_text(r.get("title", "(unknown)"))[:90]
@@ -1781,21 +1847,38 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         icon = "❌" if status == "error" else "⚠️"
         cycles = int(r.get("failed_cycles") or 1)
         cycle_tag = f" [{cycles}/{_FAILED_MAX_CYCLES}]" if cycles > 1 else ""
-        item = f"\n\n{icon} {ts}{cycle_tag}\n   {title}"
+        item = f"\n\n{icon} #{i + 1} {ts}{cycle_tag}\n   {title}"
         if detail and detail != title:
             item += f"\n   {detail}"
         if len(out) + len(item) > LIMIT:
             truncated = len(recent) - i
             break
         out += item
+        if i < PER_ITEM_BUTTON_CAP and r.get("retry"):
+            button_rows.append([
+                InlineKeyboardButton(
+                    f"🔁 #{i + 1}", callback_data=f"failed_retry_one:{i}"
+                ),
+                InlineKeyboardButton(
+                    f"🗑 #{i + 1}", callback_data=f"failed_drop_one:{i}"
+                ),
+            ])
+        elif i < PER_ITEM_BUTTON_CAP:
+            # No retry payload — only the drop button is useful here.
+            button_rows.append([
+                InlineKeyboardButton(
+                    f"🗑 #{i + 1}", callback_data=f"failed_drop_one:{i}"
+                ),
+            ])
     if truncated:
         out += f"\n\n…(나머지 {truncated}개 생략)"
-    keyboard = InlineKeyboardMarkup([[
+    button_rows.append([
         InlineKeyboardButton("🔁 일괄 재시도", callback_data="failed_retry"),
         InlineKeyboardButton("🗑 비우기", callback_data="failed_clear"),
-    ]])
+    ])
     await update.message.reply_text(
-        out, disable_web_page_preview=True, reply_markup=keyboard,
+        out, disable_web_page_preview=True,
+        reply_markup=InlineKeyboardMarkup(button_rows),
     )
 
 
@@ -1832,6 +1915,24 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(_failed_retry_all(chat_id))
     elif q.data == "failed_clear":
         await q.edit_message_text(_failed_clear_all())
+    elif q.data.startswith("failed_retry_one:"):
+        try:
+            idx = int(q.data.split(":", 1)[1])
+        except (ValueError, IndexError):
+            return
+        await ctx.bot.send_message(
+            chat_id, _failed_retry_one(chat_id, idx),
+            disable_web_page_preview=True,
+        )
+    elif q.data.startswith("failed_drop_one:"):
+        try:
+            idx = int(q.data.split(":", 1)[1])
+        except (ValueError, IndexError):
+            return
+        await ctx.bot.send_message(
+            chat_id, _failed_drop_one(idx),
+            disable_web_page_preview=True,
+        )
 
 
 async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
