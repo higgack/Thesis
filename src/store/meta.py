@@ -75,6 +75,16 @@ def init():
             "CREATE INDEX IF NOT EXISTS idx_docs_body_hash "
             "ON documents(body_hash)"
         )
+        # body_signature: hash of the leading ~300 chars of the body.
+        # Lets find_by_normalized_title distinguish docs that share a
+        # title but lead with different opening paragraphs (e.g. 같은
+        # 회사·같은 분기 실적발표 글이 '장전 실적'과 '장후 실적' 두 버전으로
+        # 들어올 때). body_hash already differs but title-norm dedup
+        # used to fire regardless; now it cross-checks signatures.
+        try:
+            c.execute("SELECT body_signature FROM documents LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE documents ADD COLUMN body_signature TEXT")
         # Chunk-level embedding cache ([B] cost cut, 2026-05): maps a
         # SHA1 of normalised chunk text to the Chroma id of the first
         # chunk that carried it. When a future doc produces the same
@@ -105,23 +115,26 @@ def upsert_doc(doc_id: str, source: str, doc_type: str, title: str,
                summary: str, obsidian_path: str | None,
                metadata: dict | None = None,
                file_hash: str | None = None,
-               body_hash: str | None = None) -> None:
+               body_hash: str | None = None,
+               body_signature: str | None = None) -> None:
     import json as _json
     metadata_json = _json.dumps(metadata, ensure_ascii=False) if metadata else None
     with _conn() as c:
         c.execute(
             """INSERT INTO documents(id, source, type, title, summary,
                                      obsidian_path, ingested_at, metadata,
-                                     file_hash, body_hash)
-               VALUES(?,?,?,?,?,?,?,?,?,?)
+                                     file_hash, body_hash, body_signature)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                  title=excluded.title, summary=excluded.summary,
                  obsidian_path=excluded.obsidian_path,
                  metadata=excluded.metadata,
                  file_hash=excluded.file_hash,
-                 body_hash=excluded.body_hash""",
+                 body_hash=excluded.body_hash,
+                 body_signature=excluded.body_signature""",
             (doc_id, source, doc_type, title, summary, obsidian_path,
-             datetime.utcnow().isoformat(), metadata_json, file_hash, body_hash),
+             datetime.utcnow().isoformat(), metadata_json, file_hash,
+             body_hash, body_signature),
         )
 
 
@@ -198,13 +211,23 @@ def find_by_file_hash(file_hash: str) -> dict | None:
         return dict(row) if row else None
 
 
-def find_by_normalized_title(title: str) -> dict | None:
+def find_by_normalized_title(title: str,
+                              body_signature: str | None = None) -> dict | None:
     """Title-similarity dedup — last-resort guard for cases that slip
     past file_hash + body_hash. Useful when the same article is
     reposted with light edits or arrives in multiple containers
     (PDF + tg-msg text excerpt + URL). Normalisation strips boilerplate
     prefixes / dates / punctuation; we require ≥6 normalised chars to
-    avoid false-positives on generic stubs."""
+    avoid false-positives on generic stubs.
+
+    `body_signature` (optional) lets the caller distinguish docs with
+    identical titles but different opening paragraphs — e.g. the same
+    earnings event covered as both pre- and post-market commentary
+    from the same channel. When both the new doc and the candidate row
+    carry signatures, mismatched signatures skip the row. Rows ingested
+    before the body_signature column existed have NULL there and fall
+    back to title-only matching (conservative — caller can /forget and
+    re-forward to re-index under the new logic)."""
     norm = _normalize_title(title or "")
     if len(norm) < 6:
         return None
@@ -213,12 +236,16 @@ def find_by_normalized_title(title: str) -> dict | None:
     # another column.
     with _conn() as c:
         rows = c.execute(
-            "SELECT id, title, source FROM documents "
+            "SELECT id, title, source, body_signature FROM documents "
             "ORDER BY ingested_at DESC LIMIT 5000"
         ).fetchall()
     for row in rows:
-        if _normalize_title(row["title"] or "") == norm:
-            return dict(row)
+        if _normalize_title(row["title"] or "") != norm:
+            continue
+        row_sig = row["body_signature"]
+        if body_signature and row_sig and body_signature != row_sig:
+            continue
+        return dict(row)
     return None
 
 
@@ -249,6 +276,21 @@ def compute_body_hash(body: str) -> str:
     if len(norm) < 200:
         # Too short to be a confident match — short tg-msg bodies use
         # text_hash dedup instead.
+        return ""
+    return hashlib.sha1(norm.encode("utf-8")).hexdigest()[:16]
+
+
+def compute_body_signature(body: str) -> str:
+    """Short prefix hash for tie-breaking title-norm dedup. Hashes the
+    first 300 chars of the normalised body — small enough that two
+    different opening paragraphs reliably yield different signatures,
+    large enough that one-character typos or date corrections still
+    collide (i.e. correctly dedup as 'same article, light edits').
+    Returns '' if the body is too short to be meaningful."""
+    if not body:
+        return ""
+    norm = " ".join(body.lower().split())[:300]
+    if len(norm) < 100:
         return ""
     return hashlib.sha1(norm.encode("utf-8")).hexdigest()[:16]
 

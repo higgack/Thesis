@@ -467,14 +467,23 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
             return {"status": "duplicate", "doc_id": existing["id"],
                     "title": existing["title"]}
 
+    # body_signature: short prefix hash used by find_by_normalized_title
+    # to distinguish docs with identical titles but different opening
+    # paragraphs (e.g. one channel posts both pre- and post-market
+    # writeups of the same earnings event with the same headline).
+    body_signature = meta.compute_body_signature(body)
+
     # Title-similarity fallback. Less precise than body_hash (a
     # 4-word title 'Q1 2026 실적 발표' can clash across companies) so
     # only trips on titles that are sufficiently distinctive — the
     # ≥6 normalised-chars guard inside find_by_normalized_title
     # filters generic stubs. Catches the case where the same article
     # arrives with slightly different body wording (re-posted, paraphrased)
-    # but exactly the same headline.
-    title_existing = meta.find_by_normalized_title(title)
+    # but exactly the same headline. body_signature cross-check rescues
+    # the legit same-title-different-content case.
+    title_existing = meta.find_by_normalized_title(
+        title, body_signature=body_signature
+    )
     if title_existing and title_existing.get("id") != doc_id:
         log.info("ingest title-norm duplicate of %s for %s",
                  title_existing["id"], source)
@@ -534,7 +543,8 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
 
     meta.upsert_doc(doc_id, source, doc_type, title, summary, obsidian_path,
                     metadata=metadata or None, file_hash=file_hash,
-                    body_hash=body_hash or None)
+                    body_hash=body_hash or None,
+                    body_signature=body_signature or None)
     return {
         "status": "ok",
         "doc_id": doc_id,
