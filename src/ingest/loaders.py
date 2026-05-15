@@ -356,14 +356,21 @@ async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
     # Both transcript fetchers failed. DO NOT fall back to jina.ai
     # for youtube — jina returns page HTML (nav, related videos,
     # comments) without the JS-rendered transcript, polluting RAG
-    # retrieval. Return a minimal stub so /find shows the URL with
-    # a clear 'transcript unavailable' note.
+    # retrieval. Return a minimal stub so /find surfaces the URL with
+    # a clean, actionable manual-paste instruction. The raw library
+    # error (huge wall of text including library URLs and ban-risk
+    # warnings) gets trimmed to a single line — the full error stays
+    # in the log for diagnostics.
+    log_short = (log_msg or "").splitlines()[0][:120] if log_msg else "unknown"
     stub = (
-        f"[YouTube transcript unavailable]\n"
-        f"Video: {title}\n"
-        f"URL: {url}\n"
-        f"Reason: {log_msg} + yt-dlp failed\n"
-        f"수동 학습: 영상 페이지에서 자막을 복사해 봇에 메시지로 붙여넣기."
+        f"📺 자막 자동 fetch 실패 (YouTube cloud-IP 차단)\n\n"
+        f"제목: {title}\n"
+        f"링크: {url}\n\n"
+        f"📋 수동 학습 (5초):\n"
+        f"1. 영상 페이지에서 ⋯ 메뉴 → '스크립트 표시' 클릭\n"
+        f"2. 전체 스크립트 텍스트 복사\n"
+        f"3. 이 봇에 메시지로 붙여넣기 (제목 자동 인식)\n\n"
+        f"[기술 사유: {log_short}]"
     )
     return title, stub, description
 
