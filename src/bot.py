@@ -5941,8 +5941,22 @@ def main():
     app.add_handler(CommandHandler("failed", cmd_failed))
     app.add_handler(CommandHandler("failed_retry", cmd_failed_retry))
     app.add_handler(CommandHandler("failed_clear", cmd_failed_clear))
+    # on_callback_query dispatches several prefixes — the pattern must
+    # admit all of them or the callback silently drops. Today's
+    # additions (xlate:, urldec_*, failed_*_one, orphan_*) all rely
+    # on this routing. Anchored start, no trailing $ so prefix
+    # variants like `failed_retry_one:5` route through too.
     app.add_handler(CallbackQueryHandler(
-        on_callback_query, pattern=r"^failed_(retry|clear)$"
+        on_callback_query,
+        pattern=(
+            r"^("
+            r"failed_(retry|clear)$"
+            r"|failed_(retry|drop)_one:\d+"
+            r"|orphan_(learn|ignore)(:\d+|_all$)"
+            r"|xlate:[A-Za-z0-9]+"
+            r"|urldec_(retry|block):[A-Fa-f0-9]+"
+            r")"
+        ),
     ))
     app.add_handler(CallbackQueryHandler(
         on_pro_confirmation_callback, pattern=r"^pro:"
