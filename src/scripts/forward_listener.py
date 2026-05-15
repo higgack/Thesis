@@ -158,6 +158,12 @@ _HTTP_URL_RE = re.compile(r"https?://[^\s)\]>]+")
 # floodwait. 0.5s = ~50s for a typical 100-link digest, safe.
 _THROTTLE_SEC = 0.5
 
+# How many times _relay_plain retries on FloodWaitError before giving
+# up on a single message. Each retry waits the full Telegram-mandated
+# duration first; 3 attempts is enough to clear typical 60–200s waits
+# without leaving the listener stuck on one message for >10 minutes.
+_RELAY_MAX_ATTEMPTS = 3
+
 
 def _all_message_urls(msg) -> list[str]:
     """Collect every URL appearing in a Telegram message — text body
@@ -245,27 +251,53 @@ async def _expand_telegram_digest(client: TelegramClient, msg,
             continue
         try:
             orig = await client.get_messages(peer, ids=mid)
-            if not orig:
-                print(f"    skip {ch}/{mid}: message not found")
-                continue
-            # Apply drop patterns BEFORE forwarding so noise formats
-            # (e.g. fundeasyearnings 알파 스캐너) don't reach the bot
-            # via digest citation. Without this the plain-relay drop
-            # only catches the live posting; Noah's digest cite of
-            # the same message slipped through.
-            orig_text = (orig.text or getattr(orig, "message", "") or "")
-            drop_patterns = _PLAIN_DROP_PATTERNS.get(ch.lower(), [])
-            if any(p.search(orig_text) for p in drop_patterns):
-                print(f"    drop {ch}/{mid}: matches drop pattern")
-                continue
-            await orig.forward_to(target)
-            forwarded += 1
-            print(f"    fwd {ch}/{mid} ({forwarded}/{len(links)})")
-        except FloodWaitError as e:
-            print(f"    flood wait {e.seconds}s on {ch}/{mid}")
-            await asyncio.sleep(e.seconds + 1)
         except Exception as e:
-            print(f"    err {ch}/{mid}: {type(e).__name__}: {e}")
+            print(f"    err get_messages {ch}/{mid}: {type(e).__name__}: {e}")
+            continue
+        if not orig:
+            print(f"    skip {ch}/{mid}: message not found")
+            continue
+        # Apply drop patterns BEFORE forwarding so noise formats
+        # (e.g. fundeasyearnings 알파 스캐너) don't reach the bot
+        # via digest citation. Without this the plain-relay drop
+        # only catches the live posting; Noah's digest cite of
+        # the same message slipped through.
+        orig_text = (orig.text or getattr(orig, "message", "") or "")
+        drop_patterns = _PLAIN_DROP_PATTERNS.get(ch.lower(), [])
+        if any(p.search(orig_text) for p in drop_patterns):
+            print(f"    drop {ch}/{mid}: matches drop pattern")
+            continue
+        # Retry forward_to on FloodWait so digest-cited messages
+        # don't silently disappear during high-volume bursts.
+        delivered = False
+        last_err: str | None = None
+        for attempt in range(_RELAY_MAX_ATTEMPTS):
+            try:
+                await orig.forward_to(target)
+                forwarded += 1
+                print(
+                    f"    fwd {ch}/{mid} ({forwarded}/{len(links)})"
+                    + (f" [retry {attempt}]" if attempt else "")
+                )
+                delivered = True
+                break
+            except FloodWaitError as e:
+                wait = max(e.seconds + 1, 1)
+                print(
+                    f"    flood wait {wait}s on {ch}/{mid} "
+                    f"(attempt {attempt + 1}/{_RELAY_MAX_ATTEMPTS})"
+                )
+                await asyncio.sleep(wait)
+                last_err = f"FloodWaitError({e.seconds}s)"
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+                print(f"    err {ch}/{mid}: {last_err}")
+                break
+        if not delivered and last_err:
+            print(
+                f"    ✗ DROP {ch}/{mid} after "
+                f"{_RELAY_MAX_ATTEMPTS} attempts (last: {last_err})"
+            )
         await asyncio.sleep(_THROTTLE_SEC)
     print(f"  TG digest msg {parent_id}: done, forwarded {forwarded}/{len(links)}")
 
@@ -277,15 +309,35 @@ async def _expand_substack_digest(client: TelegramClient, msg,
     print(f"  Substack digest msg {parent_id}: {len(urls)} URLs to relay")
     sent = 0
     for url in urls:
-        try:
-            await client.send_message(target, url, link_preview=False)
-            sent += 1
-            print(f"    sent {url} ({sent}/{len(urls)})")
-        except FloodWaitError as e:
-            print(f"    flood wait {e.seconds}s on {url}")
-            await asyncio.sleep(e.seconds + 1)
-        except Exception as e:
-            print(f"    err {url}: {type(e).__name__}: {e}")
+        delivered = False
+        last_err: str | None = None
+        for attempt in range(_RELAY_MAX_ATTEMPTS):
+            try:
+                await client.send_message(target, url, link_preview=False)
+                sent += 1
+                print(
+                    f"    sent {url} ({sent}/{len(urls)})"
+                    + (f" [retry {attempt}]" if attempt else "")
+                )
+                delivered = True
+                break
+            except FloodWaitError as e:
+                wait = max(e.seconds + 1, 1)
+                print(
+                    f"    flood wait {wait}s on {url} "
+                    f"(attempt {attempt + 1}/{_RELAY_MAX_ATTEMPTS})"
+                )
+                await asyncio.sleep(wait)
+                last_err = f"FloodWaitError({e.seconds}s)"
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+                print(f"    err {url}: {last_err}")
+                break  # non-flood: skip the rest of this URL's retries
+        if not delivered:
+            print(
+                f"    ✗ DROP {url} after {_RELAY_MAX_ATTEMPTS} attempts"
+                + (f" (last: {last_err})" if last_err else "")
+            )
         await asyncio.sleep(_THROTTLE_SEC)
     print(f"  Substack digest msg {parent_id}: done, relayed {sent}/{len(urls)}")
 
@@ -394,20 +446,40 @@ async def _relay_plain(client: TelegramClient, msg, target,
             f"{len(cleaned)} chars after URL strip"
         )
         return
-    try:
-        await client.send_message(target, cleaned, link_preview=False)
-        print(
-            f"  relayed plain msg {msg.id} from {channel_name} "
-            f"({len(cleaned)} chars)"
-        )
-    except FloodWaitError as e:
-        print(f"  flood wait {e.seconds}s on {channel_name}/{msg.id}")
-        await asyncio.sleep(e.seconds + 1)
-    except Exception as e:
-        print(
-            f"  err relay {channel_name}/{msg.id}: "
-            f"{type(e).__name__}: {e}"
-        )
+    # Retry loop for FloodWait. Before this fix, the except branch
+    # only slept and returned — the message was permanently lost
+    # whenever Telegram throttled, which happened constantly during
+    # high-volume bursts (quarter-end DART firehose) and silently
+    # caused other channels' messages to disappear too because the
+    # listener kept going after one drop.
+    last_err: str | None = None
+    for attempt in range(_RELAY_MAX_ATTEMPTS):
+        try:
+            await client.send_message(target, cleaned, link_preview=False)
+            print(
+                f"  relayed plain msg {msg.id} from {channel_name} "
+                f"({len(cleaned)} chars)"
+                + (f" [retry {attempt}]" if attempt else "")
+            )
+            return
+        except FloodWaitError as e:
+            wait = max(e.seconds + 1, 1)
+            print(
+                f"  flood wait {wait}s on {channel_name}/{msg.id} "
+                f"(attempt {attempt + 1}/{_RELAY_MAX_ATTEMPTS})"
+            )
+            await asyncio.sleep(wait)
+            last_err = f"FloodWaitError({e.seconds}s)"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            print(
+                f"  err relay {channel_name}/{msg.id}: {last_err}"
+            )
+            return  # non-flood errors: don't retry (likely persistent)
+    print(
+        f"  ✗ DROP {channel_name}/{msg.id} after "
+        f"{_RELAY_MAX_ATTEMPTS} attempts (last: {last_err})"
+    )
 
 
 # ----------------- Lifecycle -----------------
