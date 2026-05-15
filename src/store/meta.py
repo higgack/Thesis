@@ -488,19 +488,26 @@ def search_broad(substring: str, limit: int = 30) -> list[dict]:
 
 
 def find_duplicates() -> list[list[dict]]:
-    """Group docs whose normalized titles match. Each returned list has 2+
-    docs sharing essentially the same title."""
+    """Group docs whose normalized titles AND body_signatures both
+    match. Two docs sharing a title but with different signatures
+    (e.g. same company's separate DART disclosures) are treated as
+    legitimately distinct and won't surface in /dedupe. Legacy rows
+    with NULL body_signature bucket only with other NULL rows of
+    the same title — keeps pre-fix duplicates discoverable without
+    grouping them into signature-bearing rows on weak evidence."""
     with _conn() as c:
         rows = c.execute(
-            "SELECT id, source, type, title, summary, ingested_at "
+            "SELECT id, source, type, title, summary, ingested_at, "
+            "       body_signature "
             "FROM documents"
         ).fetchall()
-    groups: dict[str, list[dict]] = {}
+    groups: dict[tuple[str, str], list[dict]] = {}
     for r in rows:
         d = dict(r)
-        key = _normalize_title(d.get("title") or "")
-        if len(key) < 4:
+        key_title = _normalize_title(d.get("title") or "")
+        if len(key_title) < 4:
             continue
+        key = (key_title, d.get("body_signature") or "")
         groups.setdefault(key, []).append(d)
     return [g for g in groups.values() if len(g) >= 2]
 
