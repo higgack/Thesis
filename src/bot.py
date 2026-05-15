@@ -1086,13 +1086,13 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【1. 명령어】</b>
-조회: /find &lt;kw&gt; [N=50|all=500] · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
+조회: /find &lt;kw&gt; [N=50|all=500] · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent docs · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
-장애: /failed(크기순·건별 [🔁]/[🗑] · drop=영구 무시) · /failed_retry · /failed_clear · /queue · /queue_to_failed(큐→실패로) · /queue_cancel_all · /audit · /blocked_hosts · /reset_blocked_hosts
-Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
-보류(5분): /pending(OCR 크기순·건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
-삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
-도구: /search_my_brain · /compare_papers · /search_papers · /web_search · /ingest_url
+장애: /failed(크기순·건별 [🔁]/[🗑] · drop=영구 무시) · /failed retry · /failed clear · /queue · /queue to failed(큐→실패로) · /queue cancel all · /audit · /blocked hosts · /blocked hosts reset
+Orphan: /orphans · /recover orphans(크기순·건별 [📥]/[🗑])
+보류(5분): /pending(OCR 크기순·건별 결정) · /pending ocr &lt;N&gt; · /pending pro &lt;N&gt; · /pending approve all · /pending approve all confirm · /pending cancel all · /ocr extend &lt;id|kw&gt;
+삭제: /forget &lt;id&gt; · /forget search · /forget search all · /forget qna · /forget qna search · /dedupe · /dedupe confirm · /cleanup · /cleanup confirm · /forget forwards · /forget forwards confirm
+도구: /search my brain · /compare papers · /search papers · /web search · /ingest url
 기타: /start /help
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
@@ -1125,7 +1125,7 @@ Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
 ✅ 6단 dedup ₩0: ①source ②URL canonical ③file_hash ④text_hash ⑤body_hash ⑥title 정규화
 ✅ 청크 1000 토큰·요약 단일콜 12k/partial 8k·Vision DPI 100·sparse 자동캡 0p(OCR_AUTO_CAP)·image-only 3p(OCR_IMAGE_ONLY_CAP)·트리거 800자/p
 ✅ <b>Progressive OCR</b>(probe 3p 텍스트 &lt;300자면 나머지 skip, 환경변수 OCR_PROBE_MIN_TEXT) · <b>청크 임베딩 캐시</b>(반복 disclaimer 청크 Gemini 호출 0) · <b>메타 추출 gating</b>(이미지/음성/짧은 텍스트 skip)
-✅ 페이지 image hash dedup·빈/표지 skip·표 무료 임베딩·짧은 forward 요약 skip·차단 도메인·.txt/.md/.csv 제외·failed URL 즉시 skip·/failed_clear 영구
+✅ 페이지 image hash dedup·빈/표지 skip·표 무료 임베딩·짧은 forward 요약 skip·차단 도메인·.txt/.md/.csv 제외·failed URL 즉시 skip·/failed clear 영구
 
 <b>【10-3. Retry/무손실 재개 (신규=재시도 동일)】</b> 5회 선형(1h→2h→3h→4h→/failed)·not_before_ts·silent retry · <b>모든 인입 시작 시 in_flight_ts 디스크 저장 → 배포·OOM·SIGKILL에도 자동 재개</b>(stop_grace 120s·부팅 시 stale 클리어 10s 픽업)·JSON persist tmp→fsync→rename+.bak 폴백·/audit 메모리/디스크/orphan 검증
 
@@ -1175,6 +1175,23 @@ def _split_for_telegram(text: str, limit: int = _HELP_SOFT_LIMIT) -> list[str]:
     if buf:
         chunks.append(buf)
     return chunks
+
+
+def _consume_subcmd_prefix(ctx, prefix_tokens: list[str]) -> bool:
+    """If ctx.args starts with the given lowercase tokens, strip
+    them from ctx.args and return True. Lets a base command route
+    space-separated sub-commands (`/pending pro 3` → cmd_pending_pro
+    with args=['3']) so the help text doesn't need ugly underscores.
+    Match is case-insensitive; the prefix tokens must already be
+    lowercase."""
+    args = list(ctx.args or [])
+    n = len(prefix_tokens)
+    if len(args) < n:
+        return False
+    if [a.lower() for a in args[:n]] != prefix_tokens:
+        return False
+    ctx.args = args[n:]
+    return True
 
 
 async def _send_pieces_with_throttle(
@@ -1473,6 +1490,9 @@ async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
+    if _consume_subcmd_prefix(ctx, ["docs"]):
+        await cmd_recent_docs(update, ctx)
+        return
     await _typing(update, ctx)
     n = 10
     if ctx.args and ctx.args[0].isdigit():
@@ -1492,6 +1512,20 @@ async def cmd_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
+    # Space-separated sub-commands. Order matters: longer prefixes
+    # first so `forwards confirm` doesn't get consumed by `forwards`.
+    if _consume_subcmd_prefix(ctx, ["forwards", "confirm"]):
+        await cmd_forget_forwards_confirm(update, ctx); return
+    if _consume_subcmd_prefix(ctx, ["forwards"]):
+        await cmd_forget_forwards(update, ctx); return
+    if _consume_subcmd_prefix(ctx, ["qna", "search"]):
+        await cmd_forget_qna_search(update, ctx); return
+    if _consume_subcmd_prefix(ctx, ["qna"]):
+        await cmd_forget_qna(update, ctx); return
+    if _consume_subcmd_prefix(ctx, ["search", "all"]):
+        await cmd_forget_search_all(update, ctx); return
+    if _consume_subcmd_prefix(ctx, ["search"]):
+        await cmd_forget_search(update, ctx); return
     if not ctx.args:
         await update.message.reply_text("사용법: /forget <doc_id>")
         return
@@ -1546,7 +1580,7 @@ async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     more = f"\n... 외 {len(noisy)-15}건" if len(noisy) > 15 else ""
     await update.message.reply_text(
         f"노이즈 후보 {len(noisy)}건 (text 타입, 본문 짧음):\n{preview}{more}\n\n"
-        f"전부 삭제하려면: /cleanup_confirm"
+        f"전부 삭제하려면: /cleanup confirm"
     )
 
 
@@ -1580,7 +1614,7 @@ async def cmd_forget_forwards(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     more = f"\n... 외 {len(candidates) - 15}건" if len(candidates) > 15 else ""
     await update.message.reply_text(
         f"📋 자동 포워딩 디지스트 후보 {len(candidates)}건:\n{preview}{more}\n\n"
-        f"전부 삭제하려면: /forget_forwards_confirm"
+        f"전부 삭제하려면: /forget forwards confirm"
     )
 
 
@@ -1629,7 +1663,7 @@ async def cmd_dedupe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"중복 {len(groups)}그룹 / 삭제 후보 {total}건\n"
         + "".join(lines) + more +
-        f"\n\n각 그룹에서 본문 가장 긴 것 1개만 남기고 삭제: /dedupe_confirm"
+        f"\n\n각 그룹에서 본문 가장 긴 것 1개만 남기고 삭제: /dedupe confirm"
     )
 
 
@@ -2527,6 +2561,10 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     failures). They re-attempt every 2 minutes."""
     if not _is_owner(update):
         return
+    if _consume_subcmd_prefix(ctx, ["cancel", "all"]):
+        await cmd_queue_cancel_all(update, ctx); return
+    if _consume_subcmd_prefix(ctx, ["to", "failed"]):
+        await cmd_queue_to_failed(update, ctx); return
     await _typing(update, ctx)
     if not _INGEST_RETRY_QUEUE:
         await update.message.reply_text("재시도 큐 비어있음 ✨")
@@ -2571,7 +2609,7 @@ async def cmd_blocked_hosts(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if e["last_url"]:
             lines.append(f"   ↳ {e['last_url'][:90]}")
     lines.append("")
-    lines.append("재시도 허용: /reset_blocked_hosts (전체 초기화)")
+    lines.append("재시도 허용: /blocked hosts reset (전체 초기화)")
     await update.message.reply_text(
         "\n".join(lines), disable_web_page_preview=True,
     )
@@ -2701,7 +2739,7 @@ async def cmd_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"📂 미학습 파일 {len(orphans)}건\n  ({summary_line})\n\n"
         f"{listing}{more}\n\n"
-        f"학습 시작: /recover_orphans"
+        f"학습 시작: /recover orphans"
     )
 
 
@@ -2805,7 +2843,7 @@ async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if len(orphans) > ORPHAN_INLINE_CAP:
         await update.message.reply_text(
             f"…외 {len(orphans) - ORPHAN_INLINE_CAP}건 더 있음. "
-            f"위 처리 후 /recover_orphans 다시 호출, 또는 일괄 버튼 사용."
+            f"위 처리 후 /recover orphans 다시 호출, 또는 일괄 버튼 사용."
         )
 
     # Bulk fallback for users who don't want to triage manually.
@@ -2827,6 +2865,17 @@ async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     here so they never get lost in scroll."""
     if not _is_owner(update):
         return
+    # Space-separated sub-commands. Longer prefixes first.
+    if _consume_subcmd_prefix(ctx, ["approve", "all", "confirm"]):
+        await cmd_pending_approve_all_confirm(update, ctx); return
+    if _consume_subcmd_prefix(ctx, ["approve", "all"]):
+        await cmd_pending_approve_all(update, ctx); return
+    if _consume_subcmd_prefix(ctx, ["cancel", "all"]):
+        await cmd_pending_cancel_all(update, ctx); return
+    if _consume_subcmd_prefix(ctx, ["ocr"]):
+        await cmd_pending_ocr(update, ctx); return
+    if _consume_subcmd_prefix(ctx, ["pro"]):
+        await cmd_pending_pro(update, ctx); return
     await _typing(update, ctx)
     ocr_items = await asyncio.to_thread(pending_store.list_ocr)
     pro_items = await asyncio.to_thread(pending_store.list_pro)
@@ -2911,7 +2960,7 @@ async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
         if len(pro_items) > 30:
             lines.append(f"  ... 외 {len(pro_items) - 30}건")
-        lines.append("  → /pending_pro <번호> 로 Pro 답변 시작")
+        lines.append("  → /pending pro <번호> 로 Pro 답변 시작")
         await update.message.reply_text(
             "\n".join(lines), disable_web_page_preview=True,
         )
@@ -2970,7 +3019,7 @@ async def cmd_ocr_extend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     if not ctx.args:
         await update.message.reply_text(
-            "사용법: /ocr_extend <doc_id 또는 제목 키워드>"
+            "사용법: /ocr extend <doc_id 또는 제목 키워드>"
         )
         return
     query = " ".join(ctx.args).strip()
@@ -3063,7 +3112,7 @@ async def cmd_pending_ocr(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     if not ctx.args or not ctx.args[0].isdigit():
         await update.message.reply_text(
-            "사용법: /pending_ocr <번호>\n/pending 으로 번호 확인."
+            "사용법: /pending ocr <번호>\n/pending 으로 번호 확인."
         )
         return
     row_id = int(ctx.args[0])
@@ -3117,7 +3166,7 @@ async def cmd_pending_pro(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     if not ctx.args or not ctx.args[0].isdigit():
         await update.message.reply_text(
-            "사용법: /pending_pro <번호>\n/pending 으로 번호 확인."
+            "사용법: /pending pro <번호>\n/pending 으로 번호 확인."
         )
         return
     row_id = int(ctx.args[0])
@@ -3165,7 +3214,7 @@ async def cmd_pending_approve_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE
         f"🔵 OCR {len(ocr_items)}건 (예상 ~₩{ocr_cost:,})",
         f"🟣 Pro {len(pro_items)}건 (예상 ~₩{pro_cost:,})",
         f"   합계 {total}건 · 약 ~₩{ocr_cost + pro_cost:,}\n",
-        "진행하려면 /pending_approve_all_confirm",
+        "진행하려면 /pending approve all confirm",
     ]
     await update.message.reply_text("\n".join(lines))
 
@@ -3335,7 +3384,7 @@ async def cmd_queue_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "📭 비울 항목 없음 — 모든 큐 비어있음.\n"
             "🚫 자동 복구도 영구 중단 (재시작해도 orphan 자동 학습 X)\n"
-            "다시 학습하려면 /recover_orphans"
+            "다시 학습하려면 /recover orphans"
         )
         return
     await update.message.reply_text(
@@ -3347,7 +3396,7 @@ async def cmd_queue_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"  • 보류 Pro: {pro_n}건\n\n"
         f"🚫 자동 복구도 영구 중단 (재시작해도 orphan 자동 학습 안 됨)\n"
         f"진행 중인 ingest 1-2건은 끝까지 처리되고 새 작업은 시작 안 됨.\n"
-        f"다시 학습하려면 /recover_orphans 로 재시작 (suppress 마커 해제)"
+        f"다시 학습하려면 /recover orphans 로 재시작 (suppress 마커 해제)"
     )
 
 
@@ -3356,7 +3405,7 @@ async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     query = " ".join(ctx.args).strip()
     if not query:
-        await update.message.reply_text("사용법: /forget_search <제목 일부>")
+        await update.message.reply_text("사용법: /forget search <제목 일부>")
         return
     matches = meta.search_title(query, limit=20)
     if not matches:
@@ -3402,7 +3451,7 @@ async def cmd_forget_qna(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     if not ctx.args or not ctx.args[0].isdigit():
-        await update.message.reply_text("사용법: /forget_qna <id>")
+        await update.message.reply_text("사용법: /forget qna <id>")
         return
     qid = int(ctx.args[0])
     n = qna.delete(qid)
@@ -3423,7 +3472,7 @@ async def cmd_forget_qna_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     keyword = " ".join(ctx.args).strip()
     if not keyword:
-        await update.message.reply_text("사용법: /forget_qna_search <키워드>")
+        await update.message.reply_text("사용법: /forget qna search <키워드>")
         return
     n = qna.delete_search(keyword)
     try:
@@ -3442,7 +3491,7 @@ async def cmd_forget_search_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     query = " ".join(ctx.args).strip()
     if not query:
-        await update.message.reply_text("사용법: /forget_search_all <키워드>")
+        await update.message.reply_text("사용법: /forget search all <키워드>")
         return
     matches = meta.search_title(query, limit=500)
     if not matches:
@@ -3497,7 +3546,7 @@ async def cmd_search_my_brain(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     q = " ".join(ctx.args).strip()
     if not q:
-        await update.message.reply_text("사용법: /search_my_brain <검색어>")
+        await update.message.reply_text("사용법: /search my brain <검색어>")
         return
     await _run_agent(update, ctx,
                      f"내 저장 자료에서 '{q}' 찾아서 정리해줘", deep=False)
@@ -3508,7 +3557,7 @@ async def cmd_compare_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     q = " ".join(ctx.args).strip()
     if not q:
-        await update.message.reply_text("사용법: /compare_papers <주제>")
+        await update.message.reply_text("사용법: /compare papers <주제>")
         return
     await _run_agent(update, ctx,
                      f"내 저장 자료에서 '{q}' 관련 다수 문서를 통합·비교해서 정리해줘",
@@ -3520,7 +3569,7 @@ async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     q = " ".join(ctx.args).strip()
     if not q:
-        await update.message.reply_text("사용법: /search_papers <검색어>")
+        await update.message.reply_text("사용법: /search papers <검색어>")
         return
     await _run_agent(update, ctx,
                      f"외부 학술DB에서 '{q}' 관련 최신 논문 찾아줘", deep=False)
@@ -3531,7 +3580,7 @@ async def cmd_web_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     q = " ".join(ctx.args).strip()
     if not q:
-        await update.message.reply_text("사용법: /web_search <검색어>")
+        await update.message.reply_text("사용법: /web search <검색어>")
         return
     await _run_agent(update, ctx,
                      f"'{q}' 웹에서 검색해줘", deep=False)
@@ -3542,7 +3591,7 @@ async def cmd_ingest_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     url = " ".join(ctx.args).strip()
     if not url:
-        await update.message.reply_text("사용법: /ingest_url <URL>")
+        await update.message.reply_text("사용법: /ingest url <URL>")
         return
     await _run_agent(update, ctx, f"이 URL 학습해줘: {url}", deep=False)
 
@@ -3553,6 +3602,74 @@ async def cmd_recent_docs(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     n = " ".join(ctx.args).strip() or "10"
     await _run_agent(update, ctx,
                      f"최근 학습한 문서 {n}개 알려줘", deep=False)
+
+
+# Space-syntax dispatchers — keep the help text underscore-free
+# (`/blocked hosts` instead of `/blocked_hosts`). Each routes a
+# single sub-command to the existing underscore handler so old
+# underscore commands keep working unchanged.
+async def cmd_blocked(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    if _consume_subcmd_prefix(ctx, ["hosts", "reset"]):
+        await cmd_reset_blocked_hosts(update, ctx); return
+    if _consume_subcmd_prefix(ctx, ["hosts"]):
+        await cmd_blocked_hosts(update, ctx); return
+    await update.message.reply_text(
+        "사용법: /blocked hosts · /blocked hosts reset"
+    )
+
+
+async def cmd_recover(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    if _consume_subcmd_prefix(ctx, ["orphans"]):
+        await cmd_recover_orphans(update, ctx); return
+    await update.message.reply_text("사용법: /recover orphans")
+
+
+async def cmd_ocr(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    if _consume_subcmd_prefix(ctx, ["extend"]):
+        await cmd_ocr_extend(update, ctx); return
+    await update.message.reply_text("사용법: /ocr extend <id|kw>")
+
+
+async def cmd_compare(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    if _consume_subcmd_prefix(ctx, ["papers"]):
+        await cmd_compare_papers(update, ctx); return
+    await update.message.reply_text("사용법: /compare papers <주제>")
+
+
+async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    if _consume_subcmd_prefix(ctx, ["my", "brain"]):
+        await cmd_search_my_brain(update, ctx); return
+    if _consume_subcmd_prefix(ctx, ["papers"]):
+        await cmd_search_papers(update, ctx); return
+    await update.message.reply_text(
+        "사용법: /search my brain <kw> · /search papers <kw>"
+    )
+
+
+async def cmd_web(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    if _consume_subcmd_prefix(ctx, ["search"]):
+        await cmd_web_search(update, ctx); return
+    await update.message.reply_text("사용법: /web search <kw>")
+
+
+async def cmd_ingest(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    if _consume_subcmd_prefix(ctx, ["url"]):
+        await cmd_ingest_url(update, ctx); return
+    await update.message.reply_text("사용법: /ingest url <URL>")
 
 
 async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -5829,7 +5946,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 _retry_item_done(item)
                 final_fail = (
                     f"⚠️ ingest 재시도 포기 — {title[:80]}\n{_explain_error(e)}\n"
-                    "/failed_retry 로 다시 시도할 수 있습니다."
+                    "/failed retry 로 다시 시도할 수 있습니다."
                 )
                 await _edit_or_send(
                     ctx, chat_id, status_msg_id, final_fail,
@@ -6031,6 +6148,16 @@ def main():
     app.add_handler(CommandHandler("web_search", cmd_web_search))
     app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))
     app.add_handler(CommandHandler("recent_docs", cmd_recent_docs))
+    # Space-syntax dispatchers — underscore commands above stay
+    # registered for back-compat; these bases handle the new
+    # `/foo bar` forms shown in /help.
+    app.add_handler(CommandHandler("blocked", cmd_blocked))
+    app.add_handler(CommandHandler("recover", cmd_recover))
+    app.add_handler(CommandHandler("ocr", cmd_ocr))
+    app.add_handler(CommandHandler("compare", cmd_compare))
+    app.add_handler(CommandHandler("search", cmd_search))
+    app.add_handler(CommandHandler("web", cmd_web))
+    app.add_handler(CommandHandler("ingest", cmd_ingest))
     app.add_handler(CommandHandler("reset", cmd_reset))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
