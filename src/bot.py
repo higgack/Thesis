@@ -1686,10 +1686,26 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Reuse the help-splitter so any number of matches fits across
     # however many Telegram messages it takes. Paragraph (blank-line)
     # boundaries between items keep each chunk readable.
-    for chunk in _split_for_telegram(out):
-        await update.message.reply_text(
+    pieces = _split_for_telegram(out)
+    first_message_id: int | None = None
+    for i, chunk in enumerate(pieces):
+        sent = await update.message.reply_text(
             chunk, parse_mode="HTML", disable_web_page_preview=True,
         )
+        if i == 0:
+            first_message_id = sent.message_id
+    # "처음으로" footer — same pattern as /show. A common keyword like
+    # HBM / CoWoS fans out across 30+ messages and the user has no
+    # way back to the header without manually scrolling.
+    if first_message_id is not None and len(pieces) > 1:
+        try:
+            await update.message.reply_text(
+                "⬆️ 처음으로",
+                reply_to_message_id=first_message_id,
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.exception("find: top-link footer send failed")
 
 
 _SHOW_ID_RE = re.compile(r"^/show_([a-f0-9]{6,32})\b")
@@ -1909,6 +1925,27 @@ def _ignore_from_entry(entry: dict) -> tuple[int, int]:
         payload.get("file_name")
         or (Path(payload["path"]).name if payload.get("path") else None)
     )
+    # Source-label fallback: a /failed entry's `detail` (and sometimes
+    # `title`) carries the raw source string when payload is missing.
+    # `tg-doc:<msg_id>:<filename>` and `local:<filename>` both end in
+    # the actual filename — extract it so the user's /failed_clear or
+    # [🗑] reliably suppresses the file, even on rows that pre-dated
+    # the retry_payload schema.
+    if not fname:
+        detail = entry.get("detail") or ""
+        for src_str in (detail, title):
+            if not src_str:
+                continue
+            if src_str.startswith("tg-doc:"):
+                parts = src_str.split(":", 2)
+                if len(parts) == 3 and parts[2]:
+                    fname = parts[2]
+                    break
+            elif src_str.startswith("local:"):
+                rest = src_str.split(":", 1)[1].strip()
+                if rest:
+                    fname = rest
+                    break
     if not fname and title and not title.startswith(("http://", "https://")):
         if any(title.lower().endswith(ext) for ext in
                (".pdf", ".pptx", ".docx", ".xlsx", ".mp3", ".m4a",
