@@ -18,6 +18,7 @@ from telegram.request import HTTPXRequest
 
 from . import config
 from .store import meta, vector, obsidian, cost, qna, pending as pending_store
+from .store import pending_url_decisions
 from .ingest import pipeline
 from .agent import agent
 
@@ -721,6 +722,78 @@ def _recover_orphan_files_at_startup(app) -> None:
             log.exception("orphan recovery notify schedule failed")
     except Exception:
         log.exception("orphan recovery startup failed")
+
+
+async def _drain_pending_url_decisions(ctx) -> None:
+    """When the retry queue is idle, prompt the user about every URL
+    whose body extraction failed but hasn't been asked about yet.
+    Each entry gets its own bubble with [🔁 재시도] / [🚫 차단]
+    buttons. Cap at 5 per tick to avoid flooding the chat on big
+    backlogs; the next idle tick picks up the rest."""
+    try:
+        if _INGEST_RETRY_QUEUE:
+            # Not idle yet — wait for next tick.
+            return
+        pending = pending_url_decisions.list_unprompted()
+        if not pending:
+            return
+        if not config.TELEGRAM_OWNER_ID:
+            return
+        DRAIN_CAP = 5
+        for entry in pending[:DRAIN_CAP]:
+            url = entry.get("url") or ""
+            if not url:
+                continue
+            title = (entry.get("title") or "")[:80]
+            error = (entry.get("error") or "본문 비어있음")[:120]
+            retry_n = int(entry.get("retry_count") or 0)
+            retry_tag = f" (시도 #{retry_n + 1})" if retry_n else ""
+            text = (
+                f"⚠️ URL 본문 추출 실패{retry_tag}\n"
+                f"{url}\n"
+            )
+            if title and title != url:
+                text = f"⚠️ URL 본문 추출 실패{retry_tag}: {title}\n{url}\n"
+            text += f"오류: {error}\n\n선택해 주세요:"
+            # callback_data has a 64-byte limit; we key by URL hash
+            # because long URLs blow past that. The hash is stable
+            # per-URL so retry/block dispatch can fetch the entry by
+            # iterating pending_url_decisions.list_all().
+            import hashlib as _h
+            key = _h.sha1(url.encode("utf-8")).hexdigest()[:16]
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    "🔁 재시도",
+                    callback_data=f"urldec_retry:{key}",
+                ),
+                InlineKeyboardButton(
+                    "🚫 차단",
+                    callback_data=f"urldec_block:{key}",
+                ),
+            ]])
+            try:
+                await ctx.bot.send_message(
+                    config.TELEGRAM_OWNER_ID, text,
+                    reply_markup=kb,
+                    disable_web_page_preview=True,
+                )
+                pending_url_decisions.mark_prompted(url)
+            except Exception:
+                log.exception("urldec prompt send failed for %s", url[:120])
+    except Exception:
+        log.exception("drain pending url decisions failed")
+
+
+def _urldec_find_by_key(key: str) -> dict | None:
+    """Map the sha1-prefix callback key back to an entry. Used by
+    the retry/block callback handlers since the URL itself doesn't
+    fit in callback_data."""
+    import hashlib as _h
+    for e in pending_url_decisions.list_all():
+        url = e.get("url") or ""
+        if _h.sha1(url.encode("utf-8")).hexdigest()[:16] == key:
+            return e
+    return None
 
 
 async def _periodic_orphan_scan(ctx) -> None:
@@ -2090,6 +2163,80 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"🗑 {len(orphans)}건 영구 무시 (파일 {deleted_count}개 삭제됨)",
             disable_web_page_preview=True,
         )
+    elif q.data.startswith("urldec_retry:"):
+        key = q.data.split(":", 1)[1]
+        entry = _urldec_find_by_key(key)
+        if not entry:
+            try:
+                await q.edit_message_text("⚠️ 해당 URL을 찾을 수 없음 (이미 처리됨)")
+            except Exception:
+                pass
+            return
+        url = entry["url"]
+        try:
+            await q.edit_message_text(
+                f"🔁 재시도 중...\n{url[:120]}"
+            )
+        except Exception:
+            pass
+        try:
+            r = await pipeline.ingest_url(url)
+        except Exception as e:
+            r = {"status": "error", "error": _explain_error(e)}
+        if r.get("status") == "ok":
+            pending_url_decisions.remove(url)
+            try:
+                await q.edit_message_text(
+                    f"✅ 학습됨: {r.get('title', '')[:80]}\n"
+                    f"청크 {r.get('chunks', 0)}개"
+                )
+            except Exception:
+                pass
+        elif r.get("status") in ("duplicate", "blocked"):
+            pending_url_decisions.remove(url)
+            label = "♻️ 이미 있음" if r.get("status") == "duplicate" else "🚫 차단됨"
+            try:
+                await q.edit_message_text(
+                    f"{label}: {r.get('title', url)[:80]}"
+                )
+            except Exception:
+                pass
+        else:
+            # Still empty / error → entry surfaces in /pending
+            # immediately (mark_retry_failed pins prompted_at to
+            # OVERDUE_MIN+1 minutes ago). Replaces the prior
+            # "wait for next idle, re-prompt" behaviour per user
+            # request — 5분내 컨펌 안 하면 /pending에 머무름.
+            pending_url_decisions.mark_retry_failed(url)
+            err = (r.get("error") or r.get("detail") or "본문 비어있음")[:100]
+            try:
+                await q.edit_message_text(
+                    f"⚠️ 재시도 실패 — /pending 에서 다시 결정 가능\n"
+                    f"{url[:120]}\n오류: {err}"
+                )
+            except Exception:
+                pass
+    elif q.data.startswith("urldec_block:"):
+        key = q.data.split(":", 1)[1]
+        entry = _urldec_find_by_key(key)
+        if not entry:
+            try:
+                await q.edit_message_text("⚠️ 해당 URL을 찾을 수 없음 (이미 처리됨)")
+            except Exception:
+                pass
+            return
+        url = entry["url"]
+        if url not in _IGNORED_URLS:
+            _IGNORED_URLS.add(url)
+            _persist_permanently_ignored()
+        pending_url_decisions.remove(url)
+        try:
+            await q.edit_message_text(
+                f"🚫 영구 차단됨\n{url[:120]}\n"
+                f"  → 재포워드해도 silent skip"
+            )
+        except Exception:
+            pass
 
 
 async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2389,29 +2536,35 @@ async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """List pending OCR / Pro decisions. OCR items are rendered as
-    individual inline-button bubbles (max 10) so the user can decide
-    per-doc by title with a single tap — same UX as the auto-prompt
-    at ingest time. Pro items stay text-only (need /pending_pro <N>
-    to invoke; the Pro flow can't be summarised in 3 buttons)."""
+    """List pending OCR / Pro / URL decisions. Each section renders
+    as individual inline-button bubbles so the user can decide per-doc
+    by title with a single tap. URL decisions are entries from
+    `pending_url_decisions` whose initial bubble has been on screen
+    for ≥ OVERDUE_MIN minutes without a user response — they surface
+    here so they never get lost in scroll."""
     if not _is_owner(update):
         return
     await _typing(update, ctx)
     ocr_items = await asyncio.to_thread(pending_store.list_ocr)
     pro_items = await asyncio.to_thread(pending_store.list_pro)
-    if not ocr_items and not pro_items:
+    url_items = await asyncio.to_thread(pending_url_decisions.list_overdue)
+    if not ocr_items and not pro_items and not url_items:
         await update.message.reply_text(
             "📭 검토 대기 항목 없음 — 모든 확인 prompt가 처리됨."
         )
         return
 
     # Header summary
-    header = [f"📋 검토 대기 항목 ({len(ocr_items) + len(pro_items)}개)"]
+    total = len(ocr_items) + len(pro_items) + len(url_items)
+    header = [f"📋 검토 대기 항목 ({total}개)"]
     if ocr_items:
         header.append(f"🔵 OCR 확장 가능 {len(ocr_items)}개 — "
                       f"아래 항목별 버튼으로 한 번에 결정")
     if pro_items:
         header.append(f"🟣 Pro 합성 가능 {len(pro_items)}개")
+    if url_items:
+        header.append(f"🟠 URL 추출 실패 {len(url_items)}개 — "
+                      f"5분 이상 대기 중 (재시도/차단 선택 필요)")
     await update.message.reply_text("\n".join(header))
 
     # OCR items: per-item bubble with 3 inline buttons. Cap at 10
@@ -2479,6 +2632,44 @@ async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "\n".join(lines), disable_web_page_preview=True,
         )
+
+    # URL decisions: same per-item bubble pattern as OCR. These are
+    # entries the drain prompted ≥ OVERDUE_MIN min ago that the user
+    # never acted on, plus any retry-failed ones (mark_retry_failed
+    # back-dates prompted_at to surface immediately). Cap at 10 to
+    # keep the keyboard responsive — user reruns /pending for more.
+    if url_items:
+        import hashlib as _h
+        URL_INLINE_CAP = 10
+        for entry in url_items[:URL_INLINE_CAP]:
+            url = entry.get("url") or ""
+            if not url:
+                continue
+            title = (entry.get("title") or "")[:80]
+            error = (entry.get("error") or "본문 비어있음")[:80]
+            retry_n = int(entry.get("retry_count") or 0)
+            retry_tag = f" (시도 #{retry_n + 1})" if retry_n else ""
+            text = f"🟠 URL 추출 실패{retry_tag}\n"
+            if title and title != url:
+                text += f"{title}\n"
+            text += f"{url}\n오류: {error}"
+            key = _h.sha1(url.encode("utf-8")).hexdigest()[:16]
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    "🔁 재시도", callback_data=f"urldec_retry:{key}",
+                ),
+                InlineKeyboardButton(
+                    "🚫 차단", callback_data=f"urldec_block:{key}",
+                ),
+            ]])
+            await update.message.reply_text(
+                text, reply_markup=kb, disable_web_page_preview=True,
+            )
+        if len(url_items) > URL_INLINE_CAP:
+            await update.message.reply_text(
+                f"…외 {len(url_items) - URL_INLINE_CAP}건 더 있음. "
+                f"위 처리 후 /pending 다시 호출."
+            )
 
 
 async def cmd_ocr_extend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -4588,10 +4779,18 @@ def _format_results(results: list[dict]) -> str:
                 shown = src
                 if title and title != src and title not in src:
                     shown = f"{title}\n   {src}"
+                # URL extraction failures park in pending_url_decisions
+                # instead of /failed. The drain scheduler asks the
+                # user — when the queue is idle — to retry or block.
+                # Replaces the auto-burial that made the user feel
+                # like URLs disappeared without input.
+                pending_url_decisions.add(
+                    src, title or "", r.get("detail") or "본문 비어있음"
+                )
             else:
                 shown = title or src
-            _record_failure("empty", title or src, src,
-                            retry_payload=r.get("retry_payload"))
+                _record_failure("empty", title or src, src,
+                                retry_payload=r.get("retry_payload"))
             line = f"⚠️ 본문 비어있음: {shown}"
             guidance = _empty_url_guidance(src)
             if guidance:
@@ -5635,6 +5834,16 @@ def main():
             interval=3600,
             first=1800,
             name="periodic_orphan_scan",
+        )
+        # Every 60s: if the retry queue is empty (= bot is idle),
+        # ask the user about every URL whose body extraction failed.
+        # Each gets a [🔁 재시도] / [🚫 차단] prompt instead of being
+        # silently buried in /failed.
+        app.job_queue.run_repeating(
+            _drain_pending_url_decisions,
+            interval=60,
+            first=120,
+            name="drain_pending_url_decisions",
         )
         # One-shot Telegram flood-ban release notification. Today's
         # 22207s ban (logged at 2026-05-14 01:28:56 UTC) lifts at
