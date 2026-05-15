@@ -1811,10 +1811,27 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         text = _html.escape(c.get("text") or "")
         body_parts.append(f"\n\n<b>━━ chunk #{idx} ━━</b>\n{text}")
     out = "".join(body_parts)
-    for chunk in _split_for_telegram(out):
-        await update.message.reply_text(
+    pieces = _split_for_telegram(out)
+    first_message_id: int | None = None
+    for i, chunk in enumerate(pieces):
+        sent = await update.message.reply_text(
             chunk, parse_mode="HTML", disable_web_page_preview=True,
         )
+        if i == 0:
+            first_message_id = sent.message_id
+    # "처음으로" footer that replies-to the first chunk's message —
+    # Telegram renders the reply quote as tappable, scrolling the
+    # chat back to that message. /show output can be 50+ messages
+    # long; without this the user has no way back to the top.
+    if first_message_id is not None and len(pieces) > 1:
+        try:
+            await update.message.reply_text(
+                "⬆️ 처음으로",
+                reply_to_message_id=first_message_id,
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.exception("show: top-link footer send failed")
 
 
 def _failed_recent_snapshot() -> list[dict]:
@@ -2202,17 +2219,23 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         else:
-            # Still empty / error → entry surfaces in /pending
-            # immediately (mark_retry_failed pins prompted_at to
-            # OVERDUE_MIN+1 minutes ago). Replaces the prior
-            # "wait for next idle, re-prompt" behaviour per user
-            # request — 5분내 컨펌 안 하면 /pending에 머무름.
-            pending_url_decisions.mark_retry_failed(url)
+            # Still empty / error → auto-block. The user already
+            # said "재시도해보고 안 되면 차단" in the bubble; a
+            # second failure means the URL is genuinely uningestable
+            # so we don't keep bothering them. Adds to _IGNORED_URLS
+            # (re-forwards silent-skipped) and clears the pending
+            # entry. Replaces the prior "surface in /pending again"
+            # behaviour per user request.
+            if url not in _IGNORED_URLS:
+                _IGNORED_URLS.add(url)
+                _persist_permanently_ignored()
+            pending_url_decisions.remove(url)
             err = (r.get("error") or r.get("detail") or "본문 비어있음")[:100]
             try:
                 await q.edit_message_text(
-                    f"⚠️ 재시도 실패 — /pending 에서 다시 결정 가능\n"
-                    f"{url[:120]}\n오류: {err}"
+                    f"🚫 재시도 실패 → 자동 차단됨\n"
+                    f"{url[:120]}\n오류: {err}\n"
+                    f"  → 재포워드해도 silent skip"
                 )
             except Exception:
                 pass

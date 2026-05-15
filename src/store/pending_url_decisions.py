@@ -7,8 +7,11 @@ is quiet — with [🔁 재시도] / [🚫 차단] buttons.
 
 If the user doesn't tap within `OVERDUE_MIN` minutes the entry
 surfaces inside /pending so it never gets lost. Same buttons there.
-Entries only vanish when the user explicitly retries (and the
-retry succeeds) or blocks — there is no auto-delete by time.
+Entries vanish when:
+  • retry succeeds (learned),
+  • user taps 🚫 차단 (URL added to _IGNORED_URLS),
+  • retry FAILS — auto-blocked per user policy (one manual retry
+    is enough; if it fails again we stop bothering the user).
 
 State file: data/pending_url_decisions.json
 Schema:
@@ -156,26 +159,6 @@ def mark_prompted(url: str) -> None:
         _atomic_write(data)
     except Exception:
         log.exception("pending_url_decisions mark_prompted failed")
-
-
-def mark_retry_failed(url: str) -> None:
-    """User tapped [🔁 재시도] and the re-ingest still came back
-    empty. Bumps retry_count and pins prompted_at to OVERDUE_MIN+1
-    minutes ago so /pending picks the entry up immediately —
-    replaces the older 'next idle re-prompt' behaviour the user
-    rejected."""
-    data = _load()
-    past = (datetime.utcnow() - timedelta(minutes=OVERDUE_MIN + 1))\
-        .isoformat(timespec="seconds")
-    for e in data:
-        if e.get("url") == url:
-            e["retry_count"] = int(e.get("retry_count") or 0) + 1
-            e["prompted_at"] = past
-            break
-    try:
-        _atomic_write(data)
-    except Exception:
-        log.exception("pending_url_decisions mark_retry_failed failed")
 
 
 def remove(url: str) -> bool:
