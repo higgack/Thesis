@@ -4,6 +4,37 @@ Standing instructions / project-specific facts that need to survive
 context compaction. Anything Claude should ALWAYS remember while
 working on this repo.
 
+## Commit / push gate (CRITICAL — top priority rule)
+
+Do NOT run `git commit`, `git push`, or anything that triggers a
+deploy (touching `pyproject.toml`, `.env`, Dockerfile, anything the
+auto-deploy cron will rebuild) UNLESS the user has used an explicit
+trigger word in their most recent message:
+  • "커밋", "푸시", "배포", "deploy", "commit", "push", "올려",
+    "내보내", "ship", "release"
+
+Earlier authorisation does NOT carry over to a new request. Every
+new task starts in "edit-only" mode:
+
+1. Make the file changes.
+2. Run pre-push verification (next section).
+3. Show the user a brief summary of what changed.
+4. STOP and wait for the explicit trigger word.
+
+If the user just sends a fix description, screenshot, or feature
+request with no trigger word, the default action is: make the
+change, present it, wait. NOT push.
+
+Forbidden inferences:
+  • "fix this bug" ≠ permission to push the fix
+  • "please add X" ≠ permission to deploy X
+  • "thanks, looks good" ≠ permission to push something pending
+  • A prior session's `/ultrareview` or similar ≠ blanket push licence
+
+The user has lost work and time multiple times today because the
+agent pushed unprompted. This rule overrides any in-task assumption
+about workflow speed.
+
 ## Pre-push verification (MANDATORY — block on every push)
 
 User has been burned multiple times by shipped-then-immediately-
@@ -236,7 +267,8 @@ explicit permission. PR #1 already exists for this branch.
 ## Standing behavioural rules
 
 - Review code first; only commit when the user explicitly asks. ("리뷰
-  먼저하고 내가 요청하면 커밋")
+  먼저하고 내가 요청하면 커밋"). See the **Commit / push gate** section
+  at the top — it has authority over every other workflow assumption.
 - Every ingest-pipeline change must apply equally to new ingest AND
   retry queue — this is the default, never partial.
 - Always update `_HELP_TEXT` in `src/bot.py` when adding / renaming /
