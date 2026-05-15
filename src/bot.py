@@ -1016,8 +1016,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 조회: /find &lt;kw&gt; [N=50] · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
 장애: /failed(크기순·건별 [🔁]/[🗑] · drop=영구 무시) · /failed_retry · /failed_clear · /queue · /queue_to_failed(큐→실패로) · /queue_cancel_all · /audit · /blocked_hosts · /reset_blocked_hosts
-Orphan: /orphans · /recover_orphans
-보류(5분): /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
+Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
+보류(5분): /pending(OCR 크기순·건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
 삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
 도구: /search_my_brain · /compare_papers · /search_papers · /web_search · /ingest_url
 기타: /start /help
@@ -2005,6 +2005,63 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             chat_id, _failed_drop_one(idx),
             disable_web_page_preview=True,
         )
+    elif q.data.startswith("orphan_learn:") or q.data.startswith("orphan_ignore:"):
+        try:
+            idx = int(q.data.split(":", 1)[1])
+        except (ValueError, IndexError):
+            return
+        orphans = await asyncio.to_thread(_scan_orphan_files_sorted)
+        if idx < 0 or idx >= len(orphans):
+            await ctx.bot.send_message(
+                chat_id,
+                f"⚠️ #{idx + 1} 범위 초과 (현재 {len(orphans)}건)",
+            )
+            return
+        p = orphans[idx]
+        if q.data.startswith("orphan_learn:"):
+            ok = _orphan_enqueue_one(p, chat_id)
+            if ok:
+                msg = f"📥 #{idx + 1} 학습 큐 등록: {p.name[:80]}"
+            else:
+                msg = f"ℹ️ #{idx + 1} 이미 큐에 있음: {p.name[:80]}"
+        else:
+            # orphan_ignore: add to _IGNORED_FILENAMES so the scan
+            # won't surface it again, and try to remove the file.
+            _IGNORED_FILENAMES.add(p.name)
+            _persist_permanently_ignored()
+            try:
+                p.unlink()
+                msg = f"🗑 #{idx + 1} 영구 무시 + 파일 삭제: {p.name[:80]}"
+            except Exception:
+                msg = f"🗑 #{idx + 1} 영구 무시 (파일 삭제 실패): {p.name[:80]}"
+        await ctx.bot.send_message(chat_id, msg, disable_web_page_preview=True)
+    elif q.data == "orphan_learn_all":
+        orphans = await asyncio.to_thread(_scan_orphan_files_sorted)
+        n = _enqueue_orphan_recovery(orphans, chat_id)
+        await ctx.bot.send_message(
+            chat_id, f"📥 {n}건 모두 학습 큐 등록",
+            disable_web_page_preview=True,
+        )
+    elif q.data == "orphan_ignore_all":
+        orphans = await asyncio.to_thread(_scan_orphan_files_sorted)
+        ignored_count = 0
+        deleted_count = 0
+        for p in orphans:
+            if p.name not in _IGNORED_FILENAMES:
+                _IGNORED_FILENAMES.add(p.name)
+                ignored_count += 1
+            try:
+                p.unlink()
+                deleted_count += 1
+            except Exception:
+                pass
+        if ignored_count or deleted_count:
+            _persist_permanently_ignored()
+        await ctx.bot.send_message(
+            chat_id,
+            f"🗑 {len(orphans)}건 영구 무시 (파일 {deleted_count}개 삭제됨)",
+            disable_web_page_preview=True,
+        )
 
 
 async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2190,16 +2247,55 @@ async def cmd_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Manual orphan-file rescan. Same logic as the startup hook —
-    finds files on disk not present in meta.documents and pushes
-    them onto the retry queue. Safe to run multiple times: the second
-    run just enqueues anything that drifted since the last scan.
+def _scan_orphan_files_sorted() -> list[Path]:
+    """_scan_orphan_files() result sorted by file size ASC so
+    /recover_orphans surfaces small/quick files at the top — same
+    triage UX as /failed."""
+    orphans = _scan_orphan_files()
+    try:
+        return sorted(orphans, key=lambda p: p.stat().st_size)
+    except Exception:
+        return orphans
 
-    Also clears the suppress marker so the next container boot's
-    auto-scan resumes (a previous /queue_cancel_all may have set it).
-    Running this command is the explicit 'I want orphan recovery
-    back on' signal."""
+
+def _format_size(size: int) -> str:
+    if size >= 1024 * 1024:
+        return f"{size / 1024 / 1024:.1f}MB"
+    if size >= 1024:
+        return f"{size // 1024}KB"
+    return f"{size}B"
+
+
+def _orphan_enqueue_one(orphan_path: Path, chat_id: int) -> bool:
+    """Push a single orphan onto the retry queue. Returns True on
+    enqueue, False on a duplicate (already queued under the same name)."""
+    name = orphan_path.name
+    for item in _INGEST_RETRY_QUEUE:
+        if item.get("kind") == "local_file" and Path(
+                item.get("path") or ""
+        ).name == name:
+            return False
+    _INGEST_RETRY_QUEUE.append({
+        "kind": "local_file",
+        "path": str(orphan_path),
+        "file_name": name,
+        "chat_id": chat_id,
+        "attempts": 0,
+    })
+    _persist_retry_queue()
+    return True
+
+
+async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Per-item orphan approval. Smallest files surface first so the
+    user can clear quick wins without scrolling past multi-MB PDFs
+    and unsupported MP4 leftovers. Each bubble shows filename + size
+    with [📥 학습 #N] and [🗑 영구 무시 #N] buttons. Bulk buttons at
+    the end fall back to the old all-or-nothing behavior.
+
+    Side effect: clears the _RECOVERY_SUPPRESS_PATH marker so the
+    hourly auto-scan resumes. Old /queue_cancel_all set that marker
+    to silence background work."""
     if not _is_owner(update):
         return
     await _typing(update, ctx)
@@ -2210,26 +2306,58 @@ async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             marker_was_present = True
     except Exception:
         log.exception("failed to clear recovery suppress marker")
-    orphans = await asyncio.to_thread(_scan_orphan_files)
+    orphans = await asyncio.to_thread(_scan_orphan_files_sorted)
     if not orphans:
         msg = "✨ 미학습 파일 없음 — 모든 디스크 파일이 meta에 기록됨."
         if marker_was_present:
             msg += "\n🔓 자동 복구 다시 활성화됨 (재시작 시 자동 스캔 재개)"
         await update.message.reply_text(msg)
         return
-    count = _enqueue_orphan_recovery(orphans, update.effective_chat.id)
-    per_min = max(1, _RETRY_INGEST_BATCH * 60 // _RETRY_INGEST_INTERVAL_SEC)
-    eta_min = max(1, count // per_min)
-    preview = "\n".join(f"  • {p.name[:80]}" for p in orphans[:15])
-    more = f"\n... 외 {len(orphans) - 15}건" if len(orphans) > 15 else ""
-    resume_note = "\n🔓 자동 복구도 재활성화됨" if marker_was_present else ""
-    await update.message.reply_text(
-        f"🔄 {count}개 미학습 파일 → 재학습 큐에 추가됨{resume_note}\n"
-        f"   {_RETRY_INGEST_INTERVAL_SEC}초 간격으로 최대 "
-        f"{_RETRY_INGEST_BATCH}개씩 처리 (~{eta_min}분 소요 예상)\n"
-        f"   /queue 로 진행 상황 확인 가능\n\n"
-        f"{preview}{more}"
+    header_lines = [
+        f"📂 미학습 파일 {len(orphans)}건 (작은 것부터)",
+    ]
+    if marker_was_present:
+        header_lines.append("🔓 자동 복구도 재활성화됨")
+    header_lines.append(
+        "건별 [📥 학습] / [🗑 영구 무시] · 또는 맨 아래 일괄 버튼"
     )
+    await update.message.reply_text("\n".join(header_lines))
+
+    # Per-item bubbles, cap at 10 to keep the keyboard responsive.
+    # User can re-run /recover_orphans to see the next batch.
+    ORPHAN_INLINE_CAP = 10
+    for i, p in enumerate(orphans[:ORPHAN_INLINE_CAP]):
+        try:
+            size = p.stat().st_size
+        except Exception:
+            size = 0
+        size_tag = _format_size(size)
+        title = f"📄 #{i + 1} · {size_tag}\n{p.name[:100]}"
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                f"📥 학습 #{i + 1}",
+                callback_data=f"orphan_learn:{i}",
+            ),
+            InlineKeyboardButton(
+                f"🗑 영구 무시 #{i + 1}",
+                callback_data=f"orphan_ignore:{i}",
+            ),
+        ]])
+        await update.message.reply_text(title, reply_markup=kb)
+    if len(orphans) > ORPHAN_INLINE_CAP:
+        await update.message.reply_text(
+            f"…외 {len(orphans) - ORPHAN_INLINE_CAP}건 더 있음. "
+            f"위 처리 후 /recover_orphans 다시 호출, 또는 일괄 버튼 사용."
+        )
+
+    # Bulk fallback for users who don't want to triage manually.
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📥 전체 학습", callback_data="orphan_learn_all"),
+        InlineKeyboardButton(
+            "🗑 전체 영구 무시", callback_data="orphan_ignore_all"
+        ),
+    ]])
+    await update.message.reply_text("일괄 작업:", reply_markup=kb)
 
 
 async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2260,12 +2388,25 @@ async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # OCR items: per-item bubble with 3 inline buttons. Cap at 10
     # so a 30-item backlog doesn't spam 30 messages — user clears
-    # the top batch, then re-runs /pending to see the rest.
+    # the top batch, then re-runs /pending to see the rest. Sorted
+    # by file size ASC so small PDFs surface first; the user gets
+    # quick wins instead of bumping into a 200-page chart deck at
+    # the top.
+    def _ocr_size(it: dict) -> int:
+        path = it.get("pdf_path")
+        if not path:
+            return 0
+        try:
+            return Path(path).stat().st_size
+        except Exception:
+            return 0
+    ocr_items_sorted = sorted(ocr_items, key=_ocr_size)
     OCR_INLINE_CAP = 10
-    for it in ocr_items[:OCR_INLINE_CAP]:
+    for it in ocr_items_sorted[:OCR_INLINE_CAP]:
         remaining = max(0, it["total_pages"] - it["applied_pages"])
         est = max(5, remaining * 3)
         title = (it.get("title") or "(no title)")[:120]
+        size_tag = _format_size(_ocr_size(it))
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(
                 f"📄 OCR 추가 ({remaining}p, ~₩{est})",
@@ -2285,7 +2426,7 @@ async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                   if it['applied_pages'] > 0
                   else f"총 {it['total_pages']}p · 텍스트만 추출됨")
         await update.message.reply_text(
-            f"📊 {title}\n{status}",
+            f"📊 {title} · {size_tag}\n{status}",
             reply_markup=kb,
         )
     if len(ocr_items) > OCR_INLINE_CAP:
