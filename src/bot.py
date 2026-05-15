@@ -59,6 +59,11 @@ _INGEST_FAILED: list[dict] = []
 _ACTIVE_AGENT_RUNS = 0
 _LAST_REPLY_AT: datetime | None = None
 _FAILED_MAX = 200
+# Max times an item can land in /failed before getting dropped entirely.
+# Each /failed_retry round trip counts as one cycle. Without this the
+# user-triggered retry loop could ping-pong an unfixable item forever
+# (paywall, removed URL, permanently 404'd). 3 = "tried hard enough".
+_FAILED_MAX_CYCLES = 3
 
 # Per-ingest tracking — populated while a semaphore slot is actually
 # running work so /status can show filename + elapsed time. Earlier
@@ -971,7 +976,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 <b>【1. 명령어】</b>
 조회: /find &lt;kw&gt; [N=50] · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
-장애: /failed · /failed_retry · /failed_clear(영구 무시) · /queue · /queue_cancel_all · /audit(대기 전수) · /blocked_hosts(추출 실패 자동차단) · /reset_blocked_hosts
+장애: /failed(최대 3 재시도 사이클 후 자동 삭제) · /failed_retry · /failed_clear(영구 무시) · /queue · /queue_cancel_all · /audit(대기 전수) · /blocked_hosts(추출 실패 자동차단) · /reset_blocked_hosts
 Orphan: /orphans · /recover_orphans
 보류(5분): /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
 삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
@@ -1766,7 +1771,9 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         status = r.get("status", "error")
         detail = _clean_text(r.get("detail", ""))[:120]
         icon = "❌" if status == "error" else "⚠️"
-        item = f"\n\n{icon} {ts}\n   {title}"
+        cycles = int(r.get("failed_cycles") or 1)
+        cycle_tag = f" [{cycles}/{_FAILED_MAX_CYCLES}]" if cycles > 1 else ""
+        item = f"\n\n{icon} {ts}{cycle_tag}\n   {title}"
         if detail and detail != title:
             item += f"\n   {detail}"
         if len(out) + len(item) > LIMIT:
@@ -4016,14 +4023,38 @@ def _record_failure(status: str, title: str, detail: str = "",
                     retry_payload: dict | None = None) -> None:
     """Append to in-memory failure log + persist so /failed survives
     restart. retry_payload (kind/file_id/url/text/...) lets
-    /failed retry re-enqueue the item automatically."""
+    /failed retry re-enqueue the item automatically.
+
+    Tracks `failed_cycles` per item across /failed_retry round trips:
+    cycle 1 = first time it landed here, cycle 2 = it came back after
+    a manual retry, cycle 3 = same. After cycle 3 we drop the entry
+    entirely so the user doesn't have to /failed_clear paywalled or
+    permanently-404'd URLs by hand."""
+    prior_cycles = 0
+    if retry_payload:
+        try:
+            prior_cycles = int(retry_payload.get("failed_cycles") or 0)
+        except (TypeError, ValueError):
+            prior_cycles = 0
+    new_cycles = prior_cycles + 1
+    if new_cycles > _FAILED_MAX_CYCLES:
+        log.info(
+            "failed-log drop after %d cycles: %s (%s)",
+            prior_cycles, (title or "")[:60], (detail or "")[:60],
+        )
+        return
     entry: dict = {
         "status": status,
         "title": (title or "(unknown)")[:140],
         "detail": (detail or "")[:200],
         "ts": datetime.utcnow().isoformat(),
+        "failed_cycles": new_cycles,
     }
     if retry_payload:
+        # Stash the latest count inside the payload so /failed_retry
+        # round-trips it back to us next time.
+        retry_payload = dict(retry_payload)
+        retry_payload["failed_cycles"] = new_cycles
         entry["retry"] = retry_payload
     _INGEST_FAILED.append(entry)
     if len(_INGEST_FAILED) > _FAILED_MAX:
