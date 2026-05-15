@@ -1086,7 +1086,7 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【1. 명령어】</b>
-조회: /find &lt;kw&gt; [N=50] · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
+조회: /find &lt;kw&gt; [N=50|all=500] · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
 장애: /failed(크기순·건별 [🔁]/[🗑] · drop=영구 무시) · /failed_retry · /failed_clear · /queue · /queue_to_failed(큐→실패로) · /queue_cancel_all · /audit · /blocked_hosts · /reset_blocked_hosts
 Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
@@ -1594,14 +1594,19 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     await _typing(update, ctx)
-    # Trailing numeric arg overrides the default 50-cap. Lets the user
-    # widen common-keyword searches (/find 배터리 200) without burying
-    # narrow queries under 200 default results.
+    # Argument parsing:
+    #   `/find <kw>`           → 50 results (default)
+    #   `/find <kw> <N>`       → N results (10..500)
+    #   `/find all <kw>`       → 500 results (= "show me everything")
+    # `all` as the first token swaps in the 500-cap; trailing numeric
+    # still wins if both are present. Protects /find 100 (numeric-only
+    # query) by requiring ≥2 args before treating a trailing digit as
+    # a limit.
     args = list(ctx.args or [])
     limit = 50
-    # Trailing numeric arg as limit only when there are other tokens
-    # remaining — protects "/find 100" from being parsed as
-    # "search for nothing with limit 100".
+    if args and args[0].lower() == "all":
+        limit = 500
+        args = args[1:]
     if len(args) >= 2 and args[-1].isdigit():
         n = int(args[-1])
         if 10 <= n <= 500:
@@ -1610,9 +1615,10 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = " ".join(args).strip()
     if not query:
         await update.message.reply_text(
-            "사용법: /find <제목 일부> [개수]\n"
+            "사용법: /find <제목 일부> [개수|all]\n"
             "예: /find 배터리          (기본 50)\n"
-            "     /find 배터리 200    (최대 500)"
+            "     /find 배터리 200    (10~500 지정)\n"
+            "     /find all 배터리   (= 500)"
         )
         return
     matches = meta.search_broad(query, limit=limit)
@@ -3243,18 +3249,6 @@ async def cmd_forget_search_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # operations as one-tap; the original /dedupe and /cleanup still need
 # 'confirm' typed manually as a guard, so these wrappers replicate
 # that behavior with the arg pre-supplied.
-async def cmd_find_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Alias for /find <kw> 500 — surface every match up to the cap
-    on common keywords (배터리, AI, 반도체) without typing the
-    number. No-op when invoked without args; cmd_find shows usage."""
-    if not _is_owner(update):
-        return
-    args = list(ctx.args or [])
-    if args:
-        ctx.args = args + ["500"]
-    await cmd_find(update, ctx)
-
-
 async def cmd_dedupe_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -5752,7 +5746,6 @@ def main():
     app.add_handler(CommandHandler("forget_qna", cmd_forget_qna))
     app.add_handler(CommandHandler("forget_qna_search", cmd_forget_qna_search))
     app.add_handler(CommandHandler("find", cmd_find))
-    app.add_handler(CommandHandler("find_all", cmd_find_all))
     app.add_handler(CommandHandler("show", cmd_show))
     # Tap-to-show: /find renders each doc's id as `/show_<id>` so a
     # single tap fires cmd_show without the user typing it.
