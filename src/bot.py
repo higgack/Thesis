@@ -969,7 +969,7 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【1. 명령어】</b>
-조회: /find &lt;kw&gt; · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
+조회: /find &lt;kw&gt; [N=50] · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
 장애: /failed · /failed_retry · /failed_clear(영구 무시) · /queue · /queue_cancel_all · /audit(대기 전수) · /blocked_hosts(추출 실패 자동차단) · /reset_blocked_hosts
 Orphan: /orphans · /recover_orphans
@@ -2566,6 +2566,18 @@ async def cmd_forget_search_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # operations as one-tap; the original /dedupe and /cleanup still need
 # 'confirm' typed manually as a guard, so these wrappers replicate
 # that behavior with the arg pre-supplied.
+async def cmd_find_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Alias for /find <kw> 500 — surface every match up to the cap
+    on common keywords (배터리, AI, 반도체) without typing the
+    number. No-op when invoked without args; cmd_find shows usage."""
+    if not _is_owner(update):
+        return
+    args = list(ctx.args or [])
+    if args:
+        ctx.args = args + ["500"]
+    await cmd_find(update, ctx)
+
+
 async def cmd_dedupe_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -5013,6 +5025,7 @@ def main():
     app.add_handler(CommandHandler("forget_qna", cmd_forget_qna))
     app.add_handler(CommandHandler("forget_qna_search", cmd_forget_qna_search))
     app.add_handler(CommandHandler("find", cmd_find))
+    app.add_handler(CommandHandler("find_all", cmd_find_all))
     app.add_handler(CommandHandler("show", cmd_show))
     app.add_handler(CommandHandler("failed", cmd_failed))
     app.add_handler(CommandHandler("failed_retry", cmd_failed_retry))
