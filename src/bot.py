@@ -1015,7 +1015,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 <b>【1. 명령어】</b>
 조회: /find &lt;kw&gt; [N=50] · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
-장애: /failed(작은 것부터 정렬·건별 retry/drop) · /failed_retry · /failed_clear(영구 무시) · /queue · /queue_to_failed(큐→실패로) · /queue_cancel_all · /audit · /blocked_hosts · /reset_blocked_hosts
+장애: /failed(크기순·건별 [🔁]/[🗑] · drop=영구 무시) · /failed_retry · /failed_clear · /queue · /queue_to_failed(큐→실패로) · /queue_cancel_all · /audit · /blocked_hosts · /reset_blocked_hosts
 Orphan: /orphans · /recover_orphans
 보류(5분): /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
 삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
