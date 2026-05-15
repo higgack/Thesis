@@ -1827,25 +1827,45 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         header_lines.append(f"💬 {_html.escape(src.split(':', 1)[0])}")
     header = "\n".join(header_lines)
 
-    body_parts: list[str] = [header]
+    # Compute body upfront so we can decide whether to attach the
+    # translate button. Hangul ratio < 30% across the joined body
+    # implies the doc is primarily foreign (English / CJK other) and
+    # the user might want a Korean translation.
+    raw_body = "\n".join(c.get("text") or "" for c in chunk_chunks)
+    show_xlate_btn = _is_mostly_foreign(raw_body)
+    header_kb = None
+    if show_xlate_btn:
+        header_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                "🌐 한국어 번역",
+                callback_data=f"xlate:{doc_id}",
+            ),
+        ]])
+
+    body_parts: list[str] = []
     for c in chunk_chunks:
         idx = c.get("idx", 0)
         text = _html.escape(c.get("text") or "")
         body_parts.append(f"\n\n<b>━━ chunk #{idx} ━━</b>\n{text}")
-    out = "".join(body_parts)
-    pieces = _split_for_telegram(out)
-    first_message_id: int | None = None
-    for i, chunk in enumerate(pieces):
-        sent = await update.message.reply_text(
+    body = "".join(body_parts)
+
+    # Header is its own message so the translate button is attached
+    # cleanly (one inline keyboard per message). Body chunks follow.
+    first_sent = await update.message.reply_text(
+        header, parse_mode="HTML", disable_web_page_preview=True,
+        reply_markup=header_kb,
+    )
+    first_message_id = first_sent.message_id
+    body_pieces = _split_for_telegram(body) if body.strip() else []
+    for chunk in body_pieces:
+        await update.message.reply_text(
             chunk, parse_mode="HTML", disable_web_page_preview=True,
         )
-        if i == 0:
-            first_message_id = sent.message_id
-    # "처음으로" footer that replies-to the first chunk's message —
+    # "처음으로" footer that replies-to the header message —
     # Telegram renders the reply quote as tappable, scrolling the
     # chat back to that message. /show output can be 50+ messages
     # long; without this the user has no way back to the top.
-    if first_message_id is not None and len(pieces) > 1:
+    if body_pieces:
         try:
             await update.message.reply_text(
                 "⬆️ 처음으로",
@@ -1854,6 +1874,92 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
         except Exception:
             log.exception("show: top-link footer send failed")
+
+
+async def _handle_translate(ctx, chat_id: int, doc_id: str, q) -> None:
+    """Fetch the doc's full body, run a single Flash-Lite call to
+    translate to Korean, and post the result as fresh messages.
+    Cost ≈ ₩1–5 per typical doc (4000-char body × 6000 tokens
+    in+out at ₩140 / 1M)."""
+    try:
+        await q.answer("번역 중... (10~30초)")
+    except Exception:
+        pass
+    chunks = await asyncio.to_thread(vector.get_doc_chunks, doc_id)
+    chunk_chunks = [c for c in chunks if c.get("kind") == "chunk"]
+    if not chunk_chunks:
+        await ctx.bot.send_message(
+            chat_id, "⚠️ 번역할 본문이 없음 (청크 0개)"
+        )
+        return
+    body = "\n\n".join(c.get("text") or "" for c in chunk_chunks)
+    # Bound to ~12K chars to keep cost predictable on huge PDFs.
+    # User can /show a specific chunk range later if they need more.
+    MAX_CHARS = 12000
+    truncated = False
+    if len(body) > MAX_CHARS:
+        body = body[:MAX_CHARS]
+        truncated = True
+    try:
+        from .llm.gemini import complete
+        resp = await complete(
+            model=config.SUMMARY_MODEL,
+            system=(
+                "You are a precise translator. Translate the user's "
+                "text into natural Korean. Preserve structure: "
+                "headers, bullet points, table layouts, line breaks. "
+                "Keep technical terms (model names, company names, "
+                "acronyms like LAB / TCNCP / HBM) in their original "
+                "form. Output only the translation, no preamble."
+            ),
+            user=body,
+            max_tokens=4096,
+            temperature=0.2,
+            purpose="translate",
+        )
+    except Exception as e:
+        await ctx.bot.send_message(
+            chat_id, f"⚠️ 번역 실패: {_explain_error(e)}"
+        )
+        return
+    translated = (resp or "").strip()
+    if not translated:
+        await ctx.bot.send_message(chat_id, "⚠️ 번역 결과 비어있음")
+        return
+    header = "🌐 <b>한국어 번역</b>"
+    if truncated:
+        header += f" <i>(앞 {MAX_CHARS:,}자만)</i>"
+    import html as _html
+    out = f"{header}\n\n{_html.escape(translated)}"
+    for piece in _split_for_telegram(out):
+        await ctx.bot.send_message(
+            chat_id, piece,
+            parse_mode="HTML", disable_web_page_preview=True,
+        )
+
+
+def _is_mostly_foreign(text: str, threshold: float = 0.30) -> bool:
+    """True when Hangul characters make up less than `threshold`
+    of the (alphabetic + Hangul + CJK) character count. Used by
+    /show to decide whether to surface the [🌐 한국어 번역] button —
+    pure Korean docs don't get the offer, English / Chinese /
+    Japanese do."""
+    if not text:
+        return False
+    hangul = 0
+    foreign = 0
+    for ch in text:
+        if "가" <= ch <= "힯":  # Hangul syllables
+            hangul += 1
+        elif ch.isalpha() or (
+            "一" <= ch <= "鿿"      # CJK unified
+            or "぀" <= ch <= "ヿ"   # Hiragana/Katakana
+        ):
+            foreign += 1
+    total = hangul + foreign
+    if total < 200:
+        return False  # Too short to be confident — skip the button.
+    return (hangul / total) < threshold
 
 
 def _failed_recent_snapshot() -> list[dict]:
@@ -2282,6 +2388,10 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception:
                 pass
+    elif q.data.startswith("xlate:"):
+        doc_id = q.data.split(":", 1)[1]
+        await _handle_translate(ctx, chat_id, doc_id, q)
+        return
     elif q.data.startswith("urldec_block:"):
         key = q.data.split(":", 1)[1]
         entry = _urldec_find_by_key(key)
