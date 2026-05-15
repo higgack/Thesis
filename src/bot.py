@@ -708,6 +708,30 @@ def _recover_orphan_files_at_startup(app) -> None:
         log.exception("orphan recovery startup failed")
 
 
+async def _periodic_orphan_scan(ctx) -> None:
+    """Hourly orphan scan to catch files dropped on disk without a
+    matching meta.documents entry (e.g. forwarded files saved by the
+    bot but ingest crashed before the doc row got written, manual
+    copies, partial restores). Boot-time scan covers the immediate
+    case; this catches drift during long uptimes.
+
+    Quiet operation — no Telegram notification on every scan, just a
+    log line. The boot-scan notification is kept as-is so the user
+    still gets the visible recovery message after restarts. Respects
+    the suppress marker so /queue_cancel_all stays effective."""
+    if _RECOVERY_SUPPRESS_PATH.exists():
+        return
+    try:
+        orphans = await asyncio.to_thread(_scan_orphan_files)
+        if not orphans:
+            return
+        count = _enqueue_orphan_recovery(orphans, config.TELEGRAM_OWNER_ID)
+        if count > 0:
+            log.info("periodic orphan scan: enqueued %d files", count)
+    except Exception:
+        log.exception("periodic orphan scan failed")
+
+
 def _persist_retry_queue() -> None:
     try:
         _atomic_write_json(_RETRY_QUEUE_PATH, _INGEST_RETRY_QUEUE)
@@ -5322,6 +5346,17 @@ def main():
             interval=3600,
             first=900,
             name="check_yt_dlp_health",
+        )
+        # Hourly: rescan disk for orphan files. Boot-time scan covers
+        # the post-deploy case; this catches drift during long uptimes
+        # (forward-listener wrote a file but bot crashed before the
+        # doc row got persisted, etc). Quiet — no Telegram ping per
+        # scan; only the log records new finds.
+        app.job_queue.run_repeating(
+            _periodic_orphan_scan,
+            interval=3600,
+            first=1800,
+            name="periodic_orphan_scan",
         )
         # One-shot Telegram flood-ban release notification. Today's
         # 22207s ban (logged at 2026-05-14 01:28:56 UTC) lifts at
