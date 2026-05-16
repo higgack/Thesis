@@ -936,7 +936,19 @@ def _collect_message_urls(msg) -> tuple[list[str], str]:
     else:
         urls = urls[:_MAX_URLS_PER_MSG]
     return urls, plain
-_MERMAID_BLOCK_RE = re.compile(r"```mermaid\s*\n(.*?)\n```", re.DOTALL)
+_MERMAID_BLOCK_RE = re.compile(
+    # Tolerate leading indentation on both the opening and closing
+    # fences — Gemini sometimes wraps mermaid blocks inside a bulleted
+    # / numbered section and indents the whole code fence. When the
+    # closing ``` is indented the original `\n```` pattern doesn't
+    # match, leaving the raw mermaid content in the body where
+    # `_renumber_citations` then mangles every `[2026E]` / `[342.6]`
+    # array literal into a fake citation number. Optional ` ` / `\t`
+    # runs before each fence fixes both extraction and the citation
+    # collision.
+    r"^[ \t]*```mermaid[^\n]*\n(.*?)\n[ \t]*```",
+    re.DOTALL | re.MULTILINE,
+)
 _NUMBERED_SECTION_RE = re.compile(
     r"^(\s*)(\d+)\.\s+(.{3,100}?)[:：]?\s*$", re.MULTILINE
 )
