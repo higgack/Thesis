@@ -1944,10 +1944,15 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def _handle_translate(ctx, chat_id: int, doc_id: str, q) -> None:
-    """Fetch the doc's full body, run a single Flash-Lite call to
-    translate to Korean, and post the result as fresh messages.
-    Cost ≈ ₩1–5 per typical doc (4000-char body × 6000 tokens
-    in+out at ₩140 / 1M)."""
+    """Translate a doc's full body to Korean. Hybrid strategy:
+      • ≤ SINGLE_CHAR_CAP (30k): one Flash-Lite call, max_tokens 32k —
+        fits a typical article + headroom, ~₩5.
+      • >  SINGLE_CHAR_CAP: pack chunks into ~BATCH_CHAR_TARGET (10k)
+        buckets along existing chunk boundaries, translate each in
+        parallel (bounded), concat. Guarantees full-body translation
+        for arbitrarily long docs without losing paragraph structure
+        (we never split mid-chunk).
+    Cost ≈ ₩5/short doc, ₩20-40/100k-char doc."""
     log.info("translate START doc=%s chat=%s", doc_id, chat_id)
     try:
         await q.answer("번역 중... (10~30초)")
@@ -1979,46 +1984,92 @@ async def _handle_translate(ctx, chat_id: int, doc_id: str, q) -> None:
             chat_id, "⚠️ 번역할 본문이 없음 (청크 0개)"
         )
         return
-    body = "\n\n".join(c.get("text") or "" for c in chunk_chunks)
-    MAX_CHARS = 12000
-    truncated = False
-    if len(body) > MAX_CHARS:
-        body = body[:MAX_CHARS]
-        truncated = True
-    log.info("translate body doc=%s len=%d truncated=%s",
-             doc_id, len(body), truncated)
+
+    SINGLE_CHAR_CAP = 30000
+    BATCH_CHAR_TARGET = 10000
+    PARALLEL_CAP = 5
+    body_total = sum(len(c.get("text") or "") for c in chunk_chunks)
+    log.info("translate body doc=%s total_chars=%d", doc_id, body_total)
+
+    from .llm.gemini import complete
+    _TRANSLATE_SYSTEM = (
+        "You are a precise translator. Translate the user's "
+        "text into natural Korean. Preserve structure: "
+        "headers, bullet points, table layouts, line breaks. "
+        "Keep technical terms (model names, company names, "
+        "acronyms like LAB / TCNCP / HBM) in their original "
+        "form. Output only the translation, no preamble."
+    )
+
+    batches_n = 0
     try:
-        from .llm.gemini import complete
-        resp = await complete(
-            model=config.SUMMARY_MODEL,
-            system=(
-                "You are a precise translator. Translate the user's "
-                "text into natural Korean. Preserve structure: "
-                "headers, bullet points, table layouts, line breaks. "
-                "Keep technical terms (model names, company names, "
-                "acronyms like LAB / TCNCP / HBM) in their original "
-                "form. Output only the translation, no preamble."
-            ),
-            user=body,
-            max_tokens=8192,
-            temperature=0.2,
-            purpose="translate",
-        )
+        if body_total <= SINGLE_CHAR_CAP:
+            # Single-call path. Output cap 32k tokens — generous so the
+            # Korean translation (≈1.5× input token count) never gets
+            # mid-sentence truncated.
+            body = "\n\n".join(c.get("text") or "" for c in chunk_chunks)
+            resp = await complete(
+                model=config.SUMMARY_MODEL,
+                system=_TRANSLATE_SYSTEM,
+                user=body,
+                max_tokens=32768,
+                temperature=0.2,
+                purpose="translate",
+            )
+            translated = (resp or "").strip()
+        else:
+            # Batch path. Pack chunks into ~BATCH_CHAR_TARGET buckets
+            # without splitting individual chunks — paragraph structure
+            # only stays intact when each batch sees whole chunks.
+            batches: list[list[dict]] = []
+            cur: list[dict] = []
+            cur_chars = 0
+            for c in chunk_chunks:
+                t = c.get("text") or ""
+                if cur_chars + len(t) > BATCH_CHAR_TARGET and cur:
+                    batches.append(cur)
+                    cur = []
+                    cur_chars = 0
+                cur.append(c)
+                cur_chars += len(t)
+            if cur:
+                batches.append(cur)
+            batches_n = len(batches)
+            log.info("translate batched doc=%s batches=%d", doc_id, batches_n)
+
+            sem = asyncio.Semaphore(PARALLEL_CAP)
+
+            async def _translate_batch(batch: list[dict]) -> str:
+                text = "\n\n".join(c.get("text") or "" for c in batch)
+                async with sem:
+                    r = await complete(
+                        model=config.SUMMARY_MODEL,
+                        system=_TRANSLATE_SYSTEM,
+                        user=text,
+                        max_tokens=32768,
+                        temperature=0.2,
+                        purpose="translate",
+                    )
+                return (r or "").strip()
+
+            parts = await asyncio.gather(
+                *(_translate_batch(b) for b in batches)
+            )
+            translated = "\n\n".join(p for p in parts if p).strip()
     except Exception as e:
         log.exception("translate gemini call failed doc=%s", doc_id)
         await ctx.bot.send_message(
             chat_id, f"⚠️ 번역 실패: {_explain_error(e)}"
         )
         return
-    translated = (resp or "").strip()
     log.info("translate resp doc=%s resp_len=%d",
              doc_id, len(translated))
     if not translated:
         await ctx.bot.send_message(chat_id, "⚠️ 번역 결과 비어있음")
         return
     header = "🌐 <b>한국어 번역</b>"
-    if truncated:
-        header += f" <i>(앞 {MAX_CHARS:,}자만)</i>"
+    if batches_n > 1:
+        header += f" <i>(전체 {body_total:,}자 · {batches_n}배치)</i>"
     import html as _html
     out = f"{header}\n\n{_html.escape(translated)}"
     pieces = _split_for_telegram(out)
