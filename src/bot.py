@@ -1098,7 +1098,7 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【1. 명령어】</b>
-조회: /find &lt;kw&gt; [N=50] · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 전체 청크 dump) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
+조회: /find &lt;kw&gt; [N=50](헤더 학습/발행/청크수) · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 dump + [🌐 한국어 번역]) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
 장애: /failed(크기순·건별 [🔁]/[🗑] · drop=영구 무시) · /failed_retry · /failed_clear · /queue · /queue_to_failed(큐→실패로) · /queue_cancel_all · /audit · /blocked_hosts · /reset_blocked_hosts
 Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
@@ -1111,37 +1111,37 @@ Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
 
 <b>【3. 도구】</b> 🧠 search_my_brain TOP_K 10 · 🧠 compare_papers 50건 통합(20+ Pro/Flash/취소) · 🧠 recent_docs · 📄 search_papers 15건/6소스 라우팅+PDF · 🌐 web_search (명시 시만) · 📥 ingest_url
 
+<b>【3-1. 회사 분석】</b> "회사명+실적/매출/영업이익/가이던스" → 본문 + 신사업 키포인트(·합의 N건) + 📌 실적 데이터(맨끝): 연간/분기 표(A./F.·YoY·QoQ·"—") + xychart(bar=중앙값·line=max/min) + 분석가별 가이던스(브로커리지/이름/발행일) + 웹 추가(참고용·brain/web 분리). 숫자 audit(매출=OP·마진&gt;70% 등) 자동 경고.
+
 <b>【4. 자연어 트리거】</b>
 🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰/비교/전체" · 📄 papers "찾아줘/논문" · 🌐 <b>web — "웹/구글/인터넷" 중 하나가 메시지에 있을 때만</b>(시간 표현은 트리거 X) · 📥 ingest "학습해줘 URL"·URL만
 
 <b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 전송
-• PDF: 텍스트 자동 추출(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b>(OCR_AUTO_CAP=0), 학습 직후 3-버튼 prompt 발송 [📄 OCR 추가 / 📝 텍스트만 유지 / 🚫 학습 취소]. 버튼 만료 없음, pending_store에 영구 보관. 이미지-only PDF는 first 3p만 자동 OCR(OCR_IMAGE_ONLY_CAP) • 이미지 캡션≥80자면 OCR skip · 짧으면 OCR · [OCR] 강제 • 음성: Gemini STT · YouTube: 자막→Jina • <b>.txt/.md/.csv 첨부=학습 제외</b>
+• PDF: 텍스트 자동 추출(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b>(OCR_AUTO_CAP=0), 학습 직후 3-버튼 prompt [📄 OCR 추가 / 📝 텍스트만 / 🚫 취소], 만료 없음. image-only PDF first 3p만 자동 OCR · 이미지 캡션≥80자면 OCR skip · 짧으면 OCR · [OCR] 강제 · 음성: Gemini STT · YouTube: 자막→Jina · <b>.txt/.md/.csv 첨부=학습 제외</b>
 차단: LinkedIn/FB/IG, Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
 <b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
 [Noah 디지스트] 📋 TG 원문 fetch / 📰 Substack URL relay / 그 외 drop
-[PLAIN] 본문 그대로(URL strip, 이미지 drop): daju_dart(DART 공시) · Fundeasyearnings(알파스캐너 drop) · aicorporateanalysisdeepdive(AI 리서치 딥다이브) · benineb9(블로그 글)
+[PLAIN] 본문 그대로(URL strip, 이미지 drop): daju_dart · Fundeasyearnings · aicorporateanalysisdeepdive · benineb9
 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
 
-<b>【7. 메타데이터】</b> Flash-Lite 요약+메타 1콜 (이미지/음성/짧은 텍스트/캡션은 메타 skip) · 🏢회사 🏷태그 📅YYYY.MM
+<b>【7. 메타데이터】</b> Flash-Lite 요약+메타 1콜 · 🏢회사 🏷태그 📅YYYY.MM · 📊브로커리지·애널리스트(리포트 자동 추출, 회사 분석에 활용)
 
-<b>【8. 대시보드】</b> http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html · Basic Auth(.env) · 60s 자동 갱신·다크 19~07
+<b>【8. 대시보드】</b> http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html · Basic Auth(.env) · 60s 갱신·다크 19~07
 
-<b>【9. 답변 품질】</b> 자료 시점 필수·부족시 솔직히 표시 / 후속 질문도 brain 재검색 / web 결과 [도메인] / 인용=자료제목 본문 [N] 자동
+<b>【9. 답변 품질】</b> 자료 시점 필수·부족시 솔직 / brain 재검색 의무 / web [도메인] · 인용 [N] 자동 / 회사 분석 숫자 자동 audit · _verify Flash-Lite 출처-주제+숫자 검증 (₩1/회)
 
 <b>【10. 운영】</b> VM n2-standard-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8 · concurrent_updates+HTTPX 32 · 영속(retry/failed/history/qna/cost/ocr_cache/chunk_cache/bubbles) · 메모리 5분(90%즉시 95%거부) · 60s call · 10분 ingest
 
-<b>【10-1. 모델·단가】</b> 임베딩 Gemini embedding-001 3072d · 요약/메타 Flash-Lite(503→Flash) · 답변 Flash·Pro(/deep) · Vision Flash-Lite DPI 100 · 1M ₩ Pro 1,750/Flash 420/Lite 140/Embed 200 · 답변 1h 캐시
+<b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 3072d · 요약/메타/번역 gemini-2.5-flash-lite(503→2.5-flash) · 답변 2.5-flash · /deep 2.5-pro · Vision 2.5-flash-lite DPI 100 · 1M ₩ Pro 1,750/Flash 420/Lite 140/Embed 200 · 답변 1h 캐시(200건) · 번역: 30k 이하 단일콜 ₩3-5, 30k+ 자동 배치(10k×병렬5, ₩20-40/100k자)
 
-<b>【10-2. 비용 절감(자동)】</b>
-✅ 6단 dedup ₩0: ①source ②URL canonical ③file_hash ④text_hash ⑤body_hash ⑥title 정규화
-✅ 청크 1000 토큰·요약 단일콜 12k/partial 8k·Vision DPI 100·sparse 자동캡 0p(OCR_AUTO_CAP)·image-only 3p(OCR_IMAGE_ONLY_CAP)·트리거 800자/p
-✅ <b>Progressive OCR</b>(probe 3p 텍스트 &lt;300자면 나머지 skip, 환경변수 OCR_PROBE_MIN_TEXT) · <b>청크 임베딩 캐시</b>(반복 disclaimer 청크 Gemini 호출 0) · <b>메타 추출 gating</b>(이미지/음성/짧은 텍스트 skip)
-✅ 페이지 image hash dedup·빈/표지 skip·표 무료 임베딩·짧은 forward 요약 skip·차단 도메인·.txt/.md/.csv 제외·failed URL 즉시 skip·/failed_clear 영구
+<b>【10-2. 비용 절감 (자동)】</b>
+✅ 6단 dedup ₩0(source·URL canonical·file_hash·text_hash·body_hash·title 정규화) · 청크 1000·요약 12k/partial 8k·Vision DPI 100·OCR 자동캡 0p·image-only 3p
+✅ Progressive OCR(probe 3p &lt;300자→skip) · 청크 임베딩 캐시 · 메타 gating(이미지/음성/짧은 텍스트) · page hash dedup · 차단 도메인 · .txt/.md/.csv 제외 · failed URL 즉시 skip · /failed_clear 영구
 
-<b>【10-3. Retry/무손실 재개 (신규=재시도 동일)】</b> 5회 선형(1h→2h→3h→4h→/failed)·not_before_ts·silent retry · <b>모든 인입 시작 시 in_flight_ts 디스크 저장 → 배포·OOM·SIGKILL에도 자동 재개</b>(stop_grace 120s·부팅 시 stale 클리어 10s 픽업)·JSON persist tmp→fsync→rename+.bak 폴백·/audit 메모리/디스크/orphan 검증
+<b>【10-3. Retry/무손실 재개】</b> 5회 선형(1h→2h→3h→4h→/failed)·silent retry · 인입 시작 in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개(stop_grace 120s, 부팅 stale 클리어 10s)·atomic JSON+.bak·/audit 메모리·디스크·orphan 검증
 
-<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs thesis-bot-1 · brain 에러→BM25 30s 후 · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env EMBED_BACKEND=gemini|bge-m3 · OCR_BACKEND=gemini|local|hybrid (local/hybrid은 docker compose --profile ocr-local up -d ocr-worker 필요)"""
+<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env EMBED_BACKEND·OCR_BACKEND (옵션 CLAUDE.md 참조)"""
 
 
 # Telegram caps a single message at 4096 chars. _HELP_TEXT is hand-
