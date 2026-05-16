@@ -3645,7 +3645,7 @@ async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     # "특허 검색해줘" 식 자연어로 보내면 agent 가 search_patents 트리거.
     await _run_agent(update, ctx,
-                     f"USPTO 특허에서 '{q}' 관련 patent 찾아줘", deep=False)
+                     f"특허 데이터베이스에서 '{q}' 관련 patent 찾아줘", deep=False)
 
 
 async def cmd_web_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):

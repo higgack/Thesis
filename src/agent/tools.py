@@ -407,11 +407,13 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
     types.FunctionDeclaration(
         name="search_patents",
         description=(
-            "Search external patents via USPTO PatentsView (Phase 1: US "
-            "patents, ~8M corpus). Each result returns patent number, "
-            "title, abstract, inventors, assignee, filing date, claims "
-            "count, plus a Google Patents URL. Use when the user asks "
-            "to FIND patents, prior art, IP filings — keywords like "
+            "Search external patents via The Lens (95M+ global "
+            "patents — US + EU + WIPO + JP + KR + ...). Each result "
+            "returns patent number with jurisdiction prefix "
+            "(US11234567 / EP3456789), title, abstract, inventors, "
+            "assignee/applicant, publication date, claims count, "
+            "plus a Google Patents URL. Use when the user asks to "
+            "FIND patents, prior art, IP filings — keywords like "
             "'특허/patent/출원/IP/prior art'. Not for paper search."
         ),
         parameters=types.Schema(

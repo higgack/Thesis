@@ -1,10 +1,18 @@
-"""USPTO PatentsView patent search.
+"""The Lens patent search.
 
-Phase 1 patent backend — USPTO PatentsView REST API.
-Free, requires X-Api-Key (get at https://patentsview.org/api).
-Coverage: ~8M US granted patents from 1976. Future phases will
-add EPO OPS (Espacenet, EU/WIPO coverage) and The Lens (global)
-following the same multi-source pattern as papersearch.search().
+Phase 1 patent backend — The Lens (https://www.lens.org).
+Free with Bearer token (LENS_API_KEY env, register at
+https://www.lens.org/lens/user/subscriptions → Patent API token).
+Coverage: 95M+ global patents (US + EU + WIPO + JP + KR + ...).
+
+Earlier draft targeted USPTO PatentsView but PatentsView has been
+folded into USPTO Open Data Portal whose registration requires
+ID.me identity verification (video call for international users,
+1-3 days). The Lens registers in ~5 min with no identity check
+and gives broader global coverage, so it's the better fit for a
+personal research bot. Phase 2/3 can still layer EPO OPS or
+USPTO ODP on top following papersearch.search()'s multi-source
+pattern when needed.
 """
 import logging
 import os
@@ -14,7 +22,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 log = logging.getLogger(__name__)
 
-_PATENTSVIEW_API = "https://search.patentsview.org/api/v1/patent/"
+_LENS_API = "https://api.lens.org/patent/search"
 
 
 def _empty(p: dict, source: str) -> dict:
@@ -33,93 +41,133 @@ def _empty(p: dict, source: str) -> dict:
     }
 
 
+def _pick_lang_text(items, prefer_lang: str = "en") -> str:
+    """The Lens returns title/abstract as
+    [{"text": "...", "lang": "en"}, ...] for multilingual coverage.
+    Pick the English entry first, otherwise the first non-empty."""
+    if not items:
+        return ""
+    if isinstance(items, dict):
+        items = [items]
+    for x in items:
+        if (x.get("lang") or "").startswith(prefer_lang):
+            t = (x.get("text") or "").strip()
+            if t:
+                return t
+    for x in items:
+        t = (x.get("text") or "").strip()
+        if t:
+            return t
+    return ""
+
+
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=1, max=4))
-async def _patentsview(query: str, limit: int) -> list[dict]:
-    """USPTO PatentsView v1. Free with X-Api-Key.
-    Skipped silently when no key is set so search() can still run
-    (returning empty) instead of crashing."""
-    key = os.getenv("PATENTSVIEW_API_KEY", "").strip()
+async def _lens(query: str, limit: int) -> list[dict]:
+    """The Lens patent search. Free with Bearer token.
+    Silently skips when no key set so search() returns []
+    instead of crashing."""
+    key = os.getenv("LENS_API_KEY", "").strip()
     if not key:
-        log.info("patentsview: no PATENTSVIEW_API_KEY set, skipping")
+        log.info("lens: no LENS_API_KEY set, skipping")
         return []
     body = {
-        # Match every word of the query in title OR abstract.
-        # _text_all is "all words must appear (any order)" — better
-        # signal than _text_any for multi-word queries.
-        "q": {
-            "_or": [
-                {"_text_all": {"patent_title": query}},
-                {"_text_all": {"patent_abstract": query}},
-            ]
-        },
-        "f": [
-            "patent_id", "patent_title", "patent_date",
-            "patent_abstract", "inventors", "assignees",
-            "patent_num_claims",
+        # `query_string` runs the full Lucene query syntax across
+        # title + abstract + claims. The Lens default ranking is
+        # BM25 relevance — what "find me patents about X" wants —
+        # so we don't override `sort`.
+        "query": {"query_string": {"query": query}},
+        "size": min(limit, 25),
+        # Trim the response to fields we actually render — Lens
+        # bibliographic records are huge by default.
+        "include": [
+            "lens_id", "doc_key", "doc_number",
+            "biblio.invention_title", "biblio.publication_reference",
+            "biblio.parties.inventors", "biblio.parties.applicants",
+            "biblio.abstract", "abstract",
+            "claim_count",
         ],
-        # Sort newest first — PatentsView doesn't expose a pure
-        # relevance score, and `_text_all` already filters to
-        # docs that hit every query term. Newest-first surfaces
-        # current state-of-the-art ahead of historical filings
-        # which is what "patent search for X" queries usually want.
-        "s": [{"patent_date": "desc"}],
-        "o": {"size": min(limit, 25)},
     }
-    headers = {"X-Api-Key": key, "User-Agent": "SecondBrainBot"}
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "User-Agent": "SecondBrainBot",
+    }
     async with httpx.AsyncClient(timeout=20, follow_redirects=True,
                                  headers=headers) as c:
-        r = await c.post(_PATENTSVIEW_API, json=body)
+        r = await c.post(_LENS_API, json=body)
         r.raise_for_status()
+
     out = []
-    for p in r.json().get("patents", []):
-        pid = (p.get("patent_id") or "").strip()
-        title = (p.get("patent_title") or "").strip()
-        date = (p.get("patent_date") or "").strip()
-        year = None
-        if date[:4].isdigit():
-            year = int(date[:4])
-        inv: list[str] = []
-        for i in (p.get("inventors") or [])[:3]:
-            first = (i.get("inventor_name_first") or "").strip()
-            last = (i.get("inventor_name_last") or "").strip()
-            name = f"{first} {last}".strip()
+    for p in r.json().get("data", []):
+        biblio = p.get("biblio") or {}
+        # Title (multilingual list)
+        title = _pick_lang_text(biblio.get("invention_title"))
+
+        # Patent number = jurisdiction + doc_number (US11234567, EP3456789)
+        pub_ref = biblio.get("publication_reference") or {}
+        juris = (pub_ref.get("jurisdiction") or "").strip()
+        doc_num = (pub_ref.get("doc_number") or p.get("doc_number") or "").strip()
+        patent_number = f"{juris}{doc_num}" if juris and doc_num else doc_num
+
+        date = (pub_ref.get("date") or "").strip()
+        year = int(date[:4]) if date[:4].isdigit() else None
+
+        # Parties (inventors + applicants/assignees)
+        parties = biblio.get("parties") or {}
+        inventors: list[str] = []
+        for i in (parties.get("inventors") or [])[:3]:
+            name = ((i.get("extracted_name") or {}).get("value") or "").strip()
             if name:
-                inv.append(name)
+                inventors.append(name)
         assignee = ""
-        for a in (p.get("assignees") or [])[:1]:
-            assignee = (a.get("assignee_organization") or "").strip()
-            if not assignee:
-                first = (a.get("assignee_first_name") or "").strip()
-                last = (a.get("assignee_last_name") or "").strip()
-                assignee = f"{first} {last}".strip()
-        # Google Patents resolves USPTO numbers reliably (no
-        # netacgi nph-Parser URL building, no auth needed).
-        url = f"https://patents.google.com/patent/US{pid}" if pid else ""
+        for a in (parties.get("applicants") or [])[:1]:
+            assignee = ((a.get("extracted_name") or {}).get("value") or "").strip()
+
+        # Abstract — Lens nests it under biblio.abstract in newer
+        # versions but legacy data sometimes still uses root-level
+        # abstract. Try both.
+        abstract = _pick_lang_text(biblio.get("abstract"))
+        if not abstract:
+            abstract = _pick_lang_text(p.get("abstract"))
+
+        # URL — Google Patents resolves the {jurisdiction+number}
+        # form reliably for any jurisdiction. Falls back to Lens
+        # detail page when patent_number is missing.
+        if patent_number:
+            url = f"https://patents.google.com/patent/{patent_number}"
+        elif p.get("lens_id"):
+            url = f"https://www.lens.org/lens/patent/{p['lens_id']}"
+        else:
+            url = ""
+
         out.append(_empty({
             "title": title,
-            "patent_number": f"US{pid}" if pid else "",
+            "patent_number": patent_number,
             "date": date,
             "year": year,
-            "inventors": inv,
+            "inventors": inventors,
             "assignee": assignee,
-            "abstract": p.get("patent_abstract") or "",
-            "claims_count": p.get("patent_num_claims"),
+            "abstract": abstract,
+            "claims_count": p.get("claim_count"),
             "url": url,
-        }, "USPTO"))
+        }, "Lens"))
     return out
 
 
 async def search(query: str, limit: int = 15) -> list[dict]:
     """Patent search entry point.
 
-    Phase 1: PatentsView only (US patents). When the key isn't set,
-    or the backend fails, returns []. Future phases will add EPO
-    OPS + The Lens with a domain-routed multi-source fan-out
-    mirroring papersearch.search().
+    Phase 1: The Lens only (95M+ global patents). Phase 2/3 may
+    add EPO OPS or USPTO ODP using the same multi-source pattern
+    papersearch.search() uses, when the use case justifies the
+    extra registration overhead.
+
+    Failures swallowed — returns [] so the agent can continue
+    answering rather than erroring out the whole turn.
     """
     try:
-        return await _patentsview(query, limit)
+        return await _lens(query, limit)
     except Exception as e:
-        log.warning("patent_search patentsview failed (%s)",
+        log.warning("patent_search lens failed (%s)",
                     type(e).__name__)
         return []

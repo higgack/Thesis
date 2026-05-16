@@ -98,7 +98,7 @@ _SYSTEM = """당신은 사용자의 개인 세컨드브레인 에이전트입니
 - search_my_brain: 사용자가 저장한 자료에서 특정 사실/구절 검색 (단일 질문)
 - compare_papers: 같은 주제의 여러 자료 요약을 한 번에 모아 비교/종합 (다수 자료 통합)
 - search_papers: 외부 학술 논문 검색 (다중 소스: S2 / arXiv / OpenAlex / CrossRef / IEEE / PubMed — 쿼리 도메인에 따라 자동 라우팅). limit 기본값 15, 특별한 사유 없으면 15 그대로 사용. 결과에 url/pdf 포함되어 사용자가 바로 다운로드 가능.
-- search_patents: 외부 특허 검색 (USPTO PatentsView, US 특허 ~8M). limit 기본 15. 결과에 patent_number / inventors / assignee / filing date / claims_count / Google Patents URL 포함. "특허/patent/출원/IP/prior art" 키워드에 트리거.
+- search_patents: 외부 특허 검색 (The Lens, 95M+ 글로벌 특허 — US+EU+WIPO+JP+KR 등 다국가). limit 기본 15. 결과에 patent_number (jurisdiction prefix 포함, US11234567/EP3456789), inventors, assignee, publication date, claims_count, Google Patents URL 포함. "특허/patent/출원/IP/prior art" 키워드에 트리거.
 - ingest_url: 새 URL을 저장소에 영구 보관
 - recent_docs: 최근 저장한 문서 목록
 - web_search: 일반 웹 검색 (Google grounding). 최신 뉴스/시세/동향/오늘 발표 등 저장 자료에 없는 사실 확인.
