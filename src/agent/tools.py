@@ -141,7 +141,13 @@ async def search_papers(query: str, limit: int = 15) -> dict:
             "year": p.get("year"),
             "venue": p.get("venue"),
             "authors": p.get("authors") or [],
-            "abstract": (p.get("abstract") or "")[:1200],
+            # Abstract cap raised 1200→2500 so the agent has room to
+            # write 3-5 line summaries (methodology / results /
+            # contribution) for the top papers instead of 1-line
+            # title paraphrases. Input-side cost rises by ~₩1-2/call
+            # (Flash @ ₩420/1M); negligible.
+            "abstract": (p.get("abstract") or "")[:2500],
+            "citations": p.get("citations"),
             "url": p.get("url") or "",
             "pdf": p.get("pdf") or "",
             "doi": p.get("doi") or "",

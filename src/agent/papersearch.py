@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 # Endpoints
 # ---------------------------------------------------------------------------
 _S2_API = "https://api.semanticscholar.org/graph/v1/paper/search"
-_S2_FIELDS = "title,abstract,authors.name,year,venue,openAccessPdf,externalIds,url"
+_S2_FIELDS = "title,abstract,authors.name,year,venue,openAccessPdf,externalIds,url,citationCount"
 _ARXIV_API = "https://export.arxiv.org/api/query"
 _OPENALEX_API = "https://api.openalex.org/works"
 _CROSSREF_API = "https://api.crossref.org/works"
@@ -113,8 +113,9 @@ def _route_backends(query: str) -> list[str]:
 
 # ---------------------------------------------------------------------------
 # Backend clients — each returns a list[dict] with the unified schema:
-#   {title, year, venue, authors, abstract, url, pdf, doi, arxiv, source}
-# `source` tags which backend produced the row so the bot can show it.
+#   {title, year, venue, authors, abstract, citations, url, pdf, doi, arxiv, source}
+# `citations` = peer citation count when the backend exposes it
+# (S2 only today). `source` tags which backend produced the row.
 # ---------------------------------------------------------------------------
 
 def _empty(p: dict, source: str) -> dict:
@@ -125,6 +126,7 @@ def _empty(p: dict, source: str) -> dict:
         "venue": p.get("venue") or "",
         "authors": p.get("authors") or [],
         "abstract": (p.get("abstract") or "").strip(),
+        "citations": p.get("citations"),
         "url": p.get("url") or "",
         "pdf": p.get("pdf") or "",
         "doi": p.get("doi") or "",
@@ -161,6 +163,7 @@ async def _semantic_scholar(query: str, limit: int) -> list[dict]:
             "venue": p.get("venue"),
             "authors": [a.get("name") for a in (p.get("authors") or [])][:3],
             "abstract": p.get("abstract") or "",
+            "citations": p.get("citationCount"),
             "url": link,
             "pdf": pdf,
             "doi": doi,
