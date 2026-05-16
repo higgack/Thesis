@@ -3625,15 +3625,128 @@ async def cmd_compare_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                      deep=False)
 
 
+def _format_papers_text(query: str, results: list[dict]) -> str:
+    """Direct deterministic render for /search_papers command output.
+
+    Mirrors _format_patents_text — bypasses the agent's tool-routing
+    dance so the request is guaranteed even when Gemini gets cute and
+    refuses to call search_papers. Per-paper block: 📄 N. title +
+    (year) + meta line (first author et al. · venue · 인용 N회) +
+    abstract excerpt + PDF/DOI/URL link. Zero LLM cost."""
+    import html as _html
+    if not results:
+        return (f"🔍 '<b>{_html.escape(query)}</b>' 관련 논문 결과 없음.\n"
+                f"검색어를 좁히거나 영문 키워드로 시도하면 결과 ↑.")
+    out = [
+        f"📄 <b>논문 검색 결과 — '{_html.escape(query)}'</b>",
+        f"<i>{len(results)}건 · 6소스 라우팅 (S2 / arXiv / OpenAlex / "
+        f"CrossRef / IEEE / PubMed)</i>",
+    ]
+    for i, p in enumerate(results, 1):
+        title = _html.escape((p.get("title") or "(제목 없음)"))[:240]
+        year = p.get("year")
+        venue = _html.escape((p.get("venue") or "")[:80])
+        auths = p.get("authors") or []
+        first_auth = _html.escape(auths[0]) if auths else ""
+        if first_auth and len(auths) > 1:
+            first_auth += " et al."
+        citations = p.get("citations")
+        source = p.get("source") or ""
+        abstract = _html.escape((p.get("abstract") or "")[:400]).strip()
+        pdf = p.get("pdf") or ""
+        url = p.get("url") or ""
+        doi = p.get("doi") or ""
+
+        meta_parts: list[str] = []
+        if first_auth:
+            meta_parts.append(first_auth)
+        if venue:
+            meta_parts.append(venue)
+        if isinstance(citations, int) and citations >= 1:
+            meta_parts.append(f"인용 {citations}회")
+        if source and source not in ("S2",):
+            # Tag where it came from when not the default S2 hit.
+            meta_parts.append(f"[{source}]")
+        meta_line = " · ".join(meta_parts)
+
+        block = [f"\n📄 <b>{i}. {title}</b>"]
+        if year:
+            block.append(f"  <i>({year})</i>")
+        if meta_line:
+            block.append(f"   {meta_line}")
+        if abstract:
+            block.append(f"   {abstract}")
+        # PDF wins over landing URL wins over DOI link.
+        if pdf:
+            block.append(f"   → PDF: {pdf}")
+        elif url:
+            block.append(f"   → {url}")
+        elif doi:
+            block.append(f"   → https://doi.org/{doi}")
+        out.append("\n".join(block))
+    return "\n".join(out)
+
+
 async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Direct /search_papers — bypasses the agent.
+
+    Same rationale as cmd_search_patents: the agent loop has dropped
+    explicit tool requests in the past ("agent skipped tools" then
+    nudge-then-refuse), and the LLM rendering cost is real if we go
+    that path twice (compose + verify). Direct call ensures the user
+    always gets results when the backends have them, and the
+    deterministic renderer is consistent with the patents path.
+
+    Natural-language "논문 찾아줘" / "papers" queries still route
+    through the agent + (P) framework for the richer prose rendering
+    when the model cooperates."""
     if not _is_owner(update):
         return
     q = " ".join(ctx.args).strip()
     if not q:
         await update.message.reply_text("사용법: /search_papers <검색어>")
         return
-    await _run_agent(update, ctx,
-                     f"외부 학술DB에서 '{q}' 관련 최신 논문 찾아줘", deep=False)
+    await _typing(update, ctx)
+    status = await update.message.reply_text(f"🔍 '{q}' 논문 검색 중...")
+    try:
+        from .agent import papersearch
+        results = await papersearch.search(q, limit=15)
+    except Exception as e:
+        log.exception("search_papers direct call failed for %r", q)
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=f"⚠️ 논문 검색 실패: {_explain_error(e)}",
+            )
+        except Exception:
+            pass
+        return
+    body = _format_papers_text(q, results)
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.warning("search_papers status edit failed, sending fresh")
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("search_papers fallback send failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("search_papers chunked send failed")
 
 
 def _format_patents_text(query: str, results: list[dict]) -> str:
