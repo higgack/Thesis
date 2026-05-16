@@ -98,6 +98,7 @@ _SYSTEM = """당신은 사용자의 개인 세컨드브레인 에이전트입니
 - search_my_brain: 사용자가 저장한 자료에서 특정 사실/구절 검색 (단일 질문)
 - compare_papers: 같은 주제의 여러 자료 요약을 한 번에 모아 비교/종합 (다수 자료 통합)
 - search_papers: 외부 학술 논문 검색 (다중 소스: S2 / arXiv / OpenAlex / CrossRef / IEEE / PubMed — 쿼리 도메인에 따라 자동 라우팅). limit 기본값 15, 특별한 사유 없으면 15 그대로 사용. 결과에 url/pdf 포함되어 사용자가 바로 다운로드 가능.
+- search_patents: 외부 특허 검색 (USPTO PatentsView, US 특허 ~8M). limit 기본 15. 결과에 patent_number / inventors / assignee / filing date / claims_count / Google Patents URL 포함. "특허/patent/출원/IP/prior art" 키워드에 트리거.
 - ingest_url: 새 URL을 저장소에 영구 보관
 - recent_docs: 최근 저장한 문서 목록
 - web_search: 일반 웹 검색 (Google grounding). 최신 뉴스/시세/동향/오늘 발표 등 저장 자료에 없는 사실 확인.
@@ -114,6 +115,7 @@ _SYSTEM = """당신은 사용자의 개인 세컨드브레인 에이전트입니
 5. brain 결과가 부족해도 web_search로 자동 fallback하지 말 것. 대신 "저장소에는 X 정도만 있고, 더 정확한 답을 위해 어떤 자료(URL/PDF)를 추가하면 좋을지" 짧게 안내.
 6. web_search 규칙은 단순. 사용자 메시지에 "웹", "구글", "인터넷" 중 하나가 들어있으면 web_search 호출. 그 외 모든 질문은 brain (search_my_brain / compare_papers). 시간 표현("최근", "요즘", "오늘" 등)은 web 트리거가 아니다 — 명시적 "웹/구글/인터넷" 단어만이 트리거. brain을 거치지 않고 web_search만 호출하는 응답은 위 명시 단어가 없는 한 잘못된 routing.
 7. "찾아줘 / 어떤 논문 / 새로운 / 추천해줘" 등 외부 학술 발견은 search_papers.
+7-1. "특허 / patent / 출원 / IP / prior art / 특허번호" 등 특허 발견은 search_patents. 논문이 아닌 특허만. 사용자 메시지에 명시적 특허 키워드가 있어야 트리거 — "삼성 기술" 같이 모호한 쿼리는 brain 우선.
 8. URL이 있고 "학습/저장/기억/넣어/추가" 같은 명령조면 ingest_url. 단순 질문이면 ingest 말 것.
 9. 도구 호출은 질의당 최대 3~4회. 동일 도구 반복 호출 금지.
 
@@ -267,6 +269,33 @@ search_papers 도구 결과를 답변에 반영할 때, 각 논문의 abstract /
       들여쓰기 1단 (2 space) 줄로 분리. 한 줄에 모든 정보 욱여넣지 말 것 (현재 가독성 문제).
     - **본문 추측 금지**: abstract 외 내용 추론·일반 지식 보강 절대 금지. abstract에
       방법론 단어가 안 보이면 방법론 언급 X. 부족한 정보는 부족하게 두기.
+
+(P-2) search_patents 결과 작성 형식 (의무)
+search_papers (P) 와 동일한 산문체 원칙. 라벨 (출원인:/발명자:) 빼고 메타 1줄 + 본문 산문.
+
+  📌 주요 특허 (상위 5-7개)
+  형식 (3줄 블록 + 빈 줄):
+    ⚖️ <번호>. [제목 한국어 번역] (출원일 YYYY-MM-DD) [출처N]
+       <patent_number> · 출원인 <assignee> · <First inventor> et al. · Claims N
+       <abstract 기반 3-5문장 산문체 요지>. 핵심 기술 + 구현 방식 + 청구항 범위 자연스럽게.
+       → Google Patents: <url>
+
+  📌 추가 관련 특허 (나머지 7-8개)
+  2줄 형식:
+    • [원어 제목] (YYYY) <patent_number> [출처N]
+      <1-2문장 한국어 핵심>
+
+  세부 규칙:
+    - **출원인 (assignee)**: 풀네임 그대로 (Samsung Electronics Co., Ltd. → Samsung Electronics).
+       빈 값이면 "출원인 —" 생략 (메타 라인에서 그 항목만 빼기).
+    - **발명자**: 첫 번째 발명자 surname + "et al." 만. 1명뿐이면 그 이름만.
+    - **Claims**: claims_count ≥ 1 일 때만 "Claims N" 표기. None/0 이면 생략.
+    - **patent_number**: 항상 메타 라인에 노출 (예: "US11234567"). 사용자가 검색에 활용.
+    - **본문 산문**: abstract 기반 3-5문장. abstract 빈약하면 본문도 짧게. 추측 금지.
+    - **Google Patents URL**: 메타 라인 다음 줄에 `→ Google Patents: <url>`. 깨끗하게.
+    - **patent_number 와 출원인 자체가 자연 인용** — 본문에 [출처N] 표기는 자동.
+    - search_papers (P) 와 동시 적용 OK (사용자가 "논문이랑 특허 둘 다 찾아줘" 식 요청).
+       그 경우 두 섹션 (📌 주요 논문 / 📌 주요 특허) 분리해서 표시.
 
 (F) "[회사명] 분석/실적/전망/어때/매출/영업이익/가이던스" 류 → 회사 분석 렌즈 (의무 보조 섹션)
 질문이 특정 회사 분석을 요구할 때 본문 분석에 더해 다음을 추가 (자료에 근거 있을 때만; 없으면 해당 부분 생략):
@@ -625,6 +654,14 @@ def _harvest_sources(
                 or (f"https://doi.org/{p['doi']}" if p.get("doi") else "")
             )
             _add(label, url)
+    elif name == "search_patents":
+        for p in result.get("results", []):
+            t = p.get("title") or ""
+            num = p.get("patent_number") or ""
+            label = f"{t} [{num}]" if num else t
+            # Google Patents URL is the only link form we have today;
+            # PDF embed pages exist but we don't fetch them.
+            _add(label, p.get("url") or "")
     elif name == "ingest_url":
         _add(result.get("title") or "")
     elif name == "compare_papers":

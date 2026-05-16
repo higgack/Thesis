@@ -13,7 +13,7 @@ from google.genai import types
 from .. import config
 from ..store import meta, vector, cost
 from ..ingest import pipeline
-from . import retrieve, papersearch
+from . import retrieve, papersearch, patentsearch
 
 log = logging.getLogger(__name__)
 
@@ -152,6 +152,33 @@ async def search_papers(query: str, limit: int = 15) -> dict:
             "pdf": p.get("pdf") or "",
             "doi": p.get("doi") or "",
             "arxiv": p.get("arxiv"),
+            "source": p.get("source") or "",
+        })
+    return {"results": slim, "count": len(slim)}
+
+
+async def search_patents(query: str, limit: int = 15) -> dict:
+    """Phase 1: USPTO PatentsView only (US patents).
+
+    Returns the same skinny shape as search_papers so the agent can
+    render both with the same '(P-2) 특허 결과 작성 형식' block.
+    abstract is capped at 2500 chars to leave the model room to
+    write a 3-5 sentence summary per top patent (~₩1-2 input
+    overhead per call, negligible).
+    """
+    results = await patentsearch.search(query, limit=limit)
+    slim = []
+    for p in results:
+        slim.append({
+            "title": p["title"],
+            "patent_number": p.get("patent_number") or "",
+            "date": p.get("date") or "",
+            "year": p.get("year"),
+            "inventors": p.get("inventors") or [],
+            "assignee": p.get("assignee") or "",
+            "abstract": (p.get("abstract") or "")[:2500],
+            "claims_count": p.get("claims_count"),
+            "url": p.get("url") or "",
             "source": p.get("source") or "",
         })
     return {"results": slim, "count": len(slim)}
@@ -322,6 +349,7 @@ async def compare_papers(topic: str, limit: int = 50,
 TOOL_DISPATCH = {
     "search_my_brain": search_my_brain,
     "search_papers": search_papers,
+    "search_patents": search_patents,
     "ingest_url": ingest_url,
     "recent_docs": recent_docs,
     "compare_papers": compare_papers,
@@ -363,6 +391,28 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
             "url + pdf when available so the user can download directly. "
             "Use when the user asks to FIND or DISCOVER papers, not for "
             "questions answerable from the saved brain."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-15). Default 15.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_patents",
+        description=(
+            "Search external patents via USPTO PatentsView (Phase 1: US "
+            "patents, ~8M corpus). Each result returns patent number, "
+            "title, abstract, inventors, assignee, filing date, claims "
+            "count, plus a Google Patents URL. Use when the user asks "
+            "to FIND patents, prior art, IP filings — keywords like "
+            "'특허/patent/출원/IP/prior art'. Not for paper search."
         ),
         parameters=types.Schema(
             type=types.Type.OBJECT,

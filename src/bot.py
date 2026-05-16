@@ -962,6 +962,7 @@ _TOOL_EMOJI = {
     "compare_papers": "🧠",
     "recent_docs": "🧠",
     "search_papers": "📄",
+    "search_patents": "⚖️",
     "web_search": "🌐",
     "ingest_url": "📥",
 }
@@ -1104,17 +1105,17 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
 보류(5분): /pending(OCR 크기순·건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
 삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
-도구: /search_my_brain · /compare_papers · /search_papers · /web_search · /ingest_url
+도구: /search_my_brain · /compare_papers · /search_papers · /search_patents · /web_search · /ingest_url
 기타: /start /help
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【3. 도구】</b> 🧠 search_my_brain TOP_K 10 · 🧠 compare_papers 50건 통합(20+ Pro/Flash/취소) · 🧠 recent_docs · 📄 search_papers 15건/6소스 라우팅+PDF (상위 5-7개 abstract 기반 방법·결과·기여 3-5줄 풀이, 인용수 표기) · 🌐 web_search (명시 시만) · 📥 ingest_url
+<b>【3. 도구】</b> 🧠 search_my_brain TOP_K 10 · 🧠 compare_papers 50건 · 🧠 recent_docs · 📄 search_papers 15건/6소스+PDF · ⚖️ search_patents 15건/USPTO+Google Patents URL · 🌐 web_search · 📥 ingest_url (모든 결과 산문 요지 형식)
 
 <b>【3-1. 회사 분석】</b> "회사명+실적/매출/영업이익/가이던스" → 본문 + 신사업 키포인트(·합의 N건) + 📌 실적 데이터(맨끝): 연간/분기 표(A./F.·YoY·QoQ·"—") + xychart(bar=중앙값·line=max/min) + 분석가별 가이던스(브로커리지/이름/발행일) + 웹 추가(참고용·brain/web 분리). 숫자 audit(매출=OP·마진&gt;70% 등) 자동 경고.
 
 <b>【4. 자연어 트리거】</b>
-🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰/비교/전체" · 📄 papers "찾아줘/논문" · 🌐 <b>web — "웹/구글/인터넷" 중 하나가 메시지에 있을 때만</b>(시간 표현은 트리거 X) · 📥 ingest "학습해줘 URL"·URL만
+🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰/비교" · 📄 papers "찾아줘/논문" · ⚖️ patents "특허/patent" · 🌐 <b>web — "웹/구글/인터넷"만</b>(시간 표현 X) · 📥 ingest "학습해줘 URL"·URL만
 
 <b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 전송
 • PDF: 텍스트 자동 추출(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b>(OCR_AUTO_CAP=0), 학습 직후 3-버튼 prompt [📄 OCR 추가 / 📝 텍스트만 / 🚫 취소], 만료 없음. image-only PDF first 3p만 자동 OCR · 이미지 캡션≥80자면 OCR skip · 짧으면 OCR · [OCR] 강제 · 음성: Gemini STT · YouTube: 자막→Jina · <b>.txt/.md/.csv 첨부=학습 제외</b>
@@ -3633,6 +3634,18 @@ async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await _run_agent(update, ctx,
                      f"외부 학술DB에서 '{q}' 관련 최신 논문 찾아줘", deep=False)
+
+
+async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /search_patents <검색어>")
+        return
+    # "특허 검색해줘" 식 자연어로 보내면 agent 가 search_patents 트리거.
+    await _run_agent(update, ctx,
+                     f"USPTO 특허에서 '{q}' 관련 patent 찾아줘", deep=False)
 
 
 async def cmd_web_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -6310,6 +6323,7 @@ def main():
     app.add_handler(CommandHandler("search_my_brain", cmd_search_my_brain))
     app.add_handler(CommandHandler("compare_papers", cmd_compare_papers))
     app.add_handler(CommandHandler("search_papers", cmd_search_papers))
+    app.add_handler(CommandHandler("search_patents", cmd_search_patents))
     app.add_handler(CommandHandler("web_search", cmd_web_search))
     app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))
     app.add_handler(CommandHandler("recent_docs", cmd_recent_docs))
