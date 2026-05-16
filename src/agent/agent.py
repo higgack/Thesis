@@ -404,6 +404,25 @@ N=7). 다른 모든 numbered 섹션 (배경/주요 사실/의미/미해결 질�
   - 본문 1~5 섹션 → brain + web 혼용 OK (현재 그대로, 출처 [도메인]/[제목] 구분)
   - 절대 web 숫자를 (F-2) 차트/표에 섞지 말 것 — 사용자 명시 요청.
 
+⚠️ (F-2) 숫자 정합성 룰 (이번 사용자 테스트에서 발견된 오류 패턴 — 매번 self-check):
+
+  • **연간 row → YoY only, 분기 row → QoQ only.** 절대 혼동 금지. 연간 표에서 QoQ 표기,
+    분기 표에서 YoY 표기는 자동 검증 단계에서 잡힘 — 그 row 통째로 사용자 신뢰 잃음.
+  • **매출 ≠ OP**. 매출과 영업이익이 같은 값으로 나오면 100% 데이터 오독. OP는 매출의
+    부분집합 (OP = 매출 − 비용). 같은 자료 한 페이지에 같은 숫자 두 번 나왔다고 양쪽 다
+    매핑하지 말 것. 예: "삼성전자 2028 시총 495조" → 시총이지 매출 아님. 매출/OP 추출 시
+    반드시 자료 문맥("매출액", "OP", "영업이익", "Revenue", "Operating profit") 매핑 확인.
+  • **OP > 매출 절대 불가능**. OP > 매출이면 데이터 flipped 또는 단위 혼동 (조 vs 억).
+  • **OP 마진 OP/매출 > 70% 거의 불가능** — 일반 산업 5-20%, IT 대기업 25-35%, 핀테크
+    /지주사 outlier 빼면 70% 넘는 케이스 없음. 70% 넘는 숫자 보이면 한 쪽이 잘못 추출됨.
+  • **단일 자료 (분석가 1건만)에서 growth rate 자동 생성 금지**. baseline (전년/전분기)
+    값이 자료에 없으면 YoY/QoQ를 만들지 말 것 (모델이 fabricate 또는 brain↔web 혼합 위반).
+    그 셀에 `?` 표기 또는 growth rate 자체 생략.
+  • **단위 일관성**: 같은 표 안에서 매출/OP 단위는 동일 (조원 → 조원, 억원 → 억원).
+    매출은 조 단위, OP는 억 단위로 섞이지 말 것. y-axis 라벨과 표 단위도 일치.
+  • **출처 매핑 검증**: 각 row 숫자 입력 전 self-prompt — "이 숫자가 분명 OP/매출 라고
+    명시된 위치에서 추출됐는가? 시총·자본금·자산 등 다른 재무 항목 아닌가?"
+
 xychart-beta 엄격 문법 (어기면 mermaid.ink/kroki 400 — 차트 깨짐):
   - **mermaid 코드 펜스는 줄 맨 앞에 붙여 쓸 것** — 들여쓰기 금지. ```mermaid (O), 앞에
     공백 2칸 두고 `  ```mermaid` (X). 들여쓴 펜스는 추출 regex가 매치 못 하고 mermaid
@@ -911,7 +930,19 @@ async def _loop(state: dict) -> dict:
 async def _verify(question: str, answer: str, sources: list[str]) -> str | None:
     """Audit the answer with a cheap Gemini call. Return a short warning
     string when confidence is low, otherwise None. Failures are swallowed
-    silently — verification is best-effort and must never block a reply."""
+    silently — verification is best-effort and must never block a reply.
+
+    Three checks bundled into one Flash-Lite call (~₩0.5-1 each):
+      1. answer-vs-sources grounding (long-standing)
+      2. company-name confusion (삼성전기 vs 삼성전자, etc.)
+      3. (F-2) numerical sanity — flags rows where 매출 == OP,
+         OP > 매출, OP margin > 70%, growth-rate label mismatched
+         to period kind (연간 vs 분기). The deterministic audit
+         in bot._audit_f2_numbers already catches the obvious
+         cases free; this LLM layer adds context awareness for
+         cases like "그 자료의 '시총' 숫자를 매출로 끌어다 쓴 듯"
+         which arithmetic alone can't detect.
+    """
     if not answer or len(answer) < 50:
         return None
     if not sources:
@@ -920,13 +951,18 @@ async def _verify(question: str, answer: str, sources: list[str]) -> str | None:
         f"질문: {question}\n\n"
         f"답변:\n{answer[:1800]}\n\n"
         f"인용 출처: {', '.join(sources[:8])}\n\n"
-        "다음 두 가지를 점검:\n"
+        "다음 세 가지를 점검:\n"
         "1) 답변이 출처로 충분히 뒷받침되는가?\n"
         "2) 인용된 출처가 정말 질문 대상과 같은 회사/주제인가? "
         "삼성전기 vs 삼성전자, LG이노텍 vs LG전자, SK하이닉스 vs SKC 같은 "
-        "혼동 없는가? 다른 회사/주제 자료가 답변 본문에 섞여 있으면 issue로 표시.\n\n"
+        "혼동 없는가? 다른 회사/주제 자료가 답변 본문에 섞여 있으면 issue로 표시.\n"
+        "3) (F-2) 실적 데이터 표(연간/분기, 매출/영업이익)에 명백한 숫자 오류가 "
+        "있는가? 매출과 OP가 같은 값(예: 매출 495조 OP 495조), OP > 매출, OP 마진 "
+        ">70%, 시가총액·자본금·자산 같은 다른 재무 항목을 매출/OP로 끌어다 쓴 "
+        "흔적, 단일 자료뿐인데 YoY/QoQ growth %가 적힌 행, 연간 row에 QoQ 표기 — "
+        "이런 패턴 발견되면 issue에 'F-2 숫자: <어느 row가 왜 의심됨>' 형식으로 표시.\n\n"
         "JSON으로 응답:\n"
-        '{"confidence": 1-10, "issue": "문제점 한 줄(특히 잘못 인용된 출처가 있으면 \\"X 자료는 다른 회사임\\"로), 문제없으면 빈 문자열"}'
+        '{"confidence": 1-10, "issue": "문제점 한 줄(특히 잘못 인용된 출처 또는 F-2 숫자 오류), 문제없으면 빈 문자열"}'
     )
     try:
         resp = await complete(

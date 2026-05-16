@@ -3940,6 +3940,92 @@ def _annotate_learn_date(body: str, sources: list[str]) -> str:
     )
 
 
+# (F-2) numerical-sanity audit. Catches the obvious failures that the
+# LLM verifier sometimes misses because it's looking at sources, not
+# arithmetic: 매출 == OP (same hex stamped on both fields), OP > 매출
+# (data flipped), 영업이익 마진 >70% (model picked an unrelated number),
+# annual row labelled QoQ / quarterly row labelled YoY. All checks are
+# regex + arithmetic — zero LLM cost, runs on every reply.
+_F2_ROW_RE = re.compile(
+    # `A. 2025  매출 258.9조 (...) | OP 6.6조 (...)` — captures the
+    # A/F prefix, the period token (year or quarter), and the matching
+    # 매출 + OP cells through end-of-line. Tolerant of optional units
+    # (조/억) and arbitrary parenthetical annotation inside each cell.
+    r"^[ \t]*([AF])\.\s+([A-Za-z0-9]+)\s+"
+    r"매출\s+(.+?)\s*\|\s*"
+    r"OP\s+(.+?)\s*$",
+    re.MULTILINE,
+)
+_F2_FIRST_NUM_RE = re.compile(r"(\d+(?:\.\d+)?)")
+
+
+def _audit_f2_numbers(body: str) -> list[str]:
+    """Scan the (F-2) 실적 데이터 tables and return user-facing
+    warnings for obvious anomalies. Empty list ⇒ tables look sane.
+    Free, deterministic — runs on every agent reply. Anomalies the
+    LLM has historically slipped through:
+      • 매출 == OP — model duplicated one number across both fields
+        (e.g. SamsungElec 2028 매출 495 / OP 495 = 시총 숫자 오매핑)
+      • OP > 매출 — data flipped
+      • OP/매출 > 70% — implausible margin (fintech/holdings excepted)
+      • 연간 row carries QoQ tag (or quarterly row carries YoY)
+    """
+    warnings: list[str] = []
+    seen: set[str] = set()
+
+    def _add(msg: str) -> None:
+        if msg not in seen:
+            seen.add(msg)
+            warnings.append(msg)
+
+    def _first_num(cell: str) -> float | None:
+        cell = cell.strip()
+        if not cell or cell.startswith(("—", "-")):
+            return None
+        m = _F2_FIRST_NUM_RE.search(cell)
+        if not m:
+            return None
+        try:
+            return float(m.group(1))
+        except ValueError:
+            return None
+
+    for m in _F2_ROW_RE.finditer(body):
+        af, period, rev_cell, op_cell = m.groups()
+        rev = _first_num(rev_cell)
+        op = _first_num(op_cell)
+        is_quarter = "Q" in period.upper()
+
+        if rev is not None and op is not None and rev > 0.1:
+            if rev == op:
+                _add(
+                    f"{af}. {period}: 매출과 OP가 동일 ({rev}) — "
+                    "데이터 추출 오류 가능성 (같은 숫자 두 번 매핑)"
+                )
+            elif op > rev > 0.01:
+                _add(
+                    f"{af}. {period}: OP {op} > 매출 {rev} — "
+                    "데이터 오독 (OP는 매출의 일부여야 함)"
+                )
+            else:
+                margin = op / rev
+                # 70%+ margin is implausible for ops we typically
+                # cover (반도체/IT/금융 holdings 같은 outlier 빼면).
+                if margin > 0.7:
+                    _add(
+                        f"{af}. {period}: OP 마진 {margin * 100:.0f}% — "
+                        "비현실적 (대부분 산업 <30%)"
+                    )
+
+        combined = rev_cell + " " + op_cell
+        if not is_quarter and "QoQ" in combined:
+            _add(f"{af}. {period}: 연간 row에 QoQ 표기 — YoY 여야 함")
+        if is_quarter and "YoY" in combined:
+            _add(f"{af}. {period}: 분기 row에 YoY 표기 — QoQ 여야 함")
+
+    return warnings
+
+
 async def _send_agent_reply(send, result, send_photo=None, inherited: bool = False):
     # `inherited` is retained for the historical call-site shape but
     # is now always False — the inheritance fallback was removed
@@ -3987,6 +4073,12 @@ async def _send_agent_reply(send, result, send_photo=None, inherited: bool = Fal
         suffix_lines.append("📚 출처:" + _format_sources_with_url(
             result["sources"], source_urls=source_urls,
         ))
+    audit = _audit_f2_numbers(body)
+    if audit:
+        suffix_lines.append(
+            "⚠️ 숫자 검증 경고 (자동 감지):\n"
+            + "\n".join(f"  • {a}" for a in audit)
+        )
     if result.get("tool_calls"):
         suffix_lines.append(_format_tool_calls(result["tool_calls"]))
 
