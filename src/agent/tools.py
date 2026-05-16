@@ -275,7 +275,13 @@ async def compare_papers(topic: str, limit: int = 50,
                 continue
             digest_kept += 1
         bundles.append({
-            "doc_id": doc_id,
+            # doc_id intentionally omitted from the bundle. Earlier we
+            # exposed it for follow-up lookups, but the model latched
+            # onto the hex string as a citation key (writing
+            # `[dbd2c79191dd6a96]` inline), the citation renumberer
+            # then surfaced those hashes in the 출처 legend instead of
+            # the human-readable titles. Title alone is enough — the
+            # bot resolves citations back to docs via meta.search_title.
             "title": title,
             "type": doc.get("type", ""),
             "summary": summary[:1500],

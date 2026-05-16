@@ -238,9 +238,12 @@ graph TD
 질문이 특정 회사 분석을 요구할 때 본문 분석에 더해 다음을 추가 (자료에 근거 있을 때만; 없으면 해당 부분 생략):
 
 (F-1) 📌 신사업 키포인트 — 본문 중간 (현재 위치) 그대로 유지, 별도 numbered 섹션
-  • 사업명 — 1줄 핵심 요지 [출처]
-  • 분석가 합의 표시: 같은 신사업을 자료 2건 이상이 언급하면 끝에 "[합의 N건]" 추가
-  • 분석가별 의견이 다르면 "[견해 차이: A는 X, B는 Y]" 한 줄로 양쪽 동시 표시
+  • 사업명 — 1줄 핵심 요지 [출처N]
+  • 분석가 합의 표시: 같은 신사업을 자료 2건 이상이 언급하면 끝에 " · 합의 N건" 추가
+    (대괄호 `[합의 N건]` 형식은 절대 쓰지 말 것 — citation regex와 충돌해서 출처
+     legend가 "[15] 합의 2건" 같은 쓰레기로 오염됨. 항상 dot-bullet 형태만 사용.)
+  • 분석가별 의견이 다르면 " · 견해 차이: A는 X, B는 Y" 한 줄로 양쪽 동시 표시
+    (역시 대괄호 금지.)
   • (최대 5개, 신사업/신제품/신규 파이프라인이 자료에 명시된 경우만)
 
 (F-2) 📌 N. 실적 데이터 — 답변의 가장 마지막 numbered 섹션 (예: 본문에 1~6 섹션이 있으면
@@ -301,11 +304,16 @@ N=7). 다른 모든 numbered 섹션 (배경/주요 사실/의미/미해결 질�
       1Q27  매출 — | OP —
       2Q27  매출 — | OP —
 
-    📈 분기 매출 차트 — x-axis 윈도우 = 현재 ±4분기 (총 9분기). 차트에는 자료에 실제 숫자가
-       있는 분기만 plot (mermaid는 null 금지이므로 빈 분기는 x-axis에서도 제외).
-    📈 분기 영업이익 차트 — 동일 윈도우, 동일 규칙
+    📈 분기 매출/영업이익 차트 — **표시 조건: 윈도우 안에 실제 숫자(실적+가이던스 통합)가
+       4분기 이상 있을 때만 차트 그림.** 3분기 이하면 차트 자체 생략 (표만 유지 — sparse
+       data로 차트 그리면 가독성 해침, 사용자 명시 요청).
+       x-axis 윈도우 = 현재 ±4분기 (총 9분기). 차트에는 자료에 실제 숫자가 있는 분기만
+       plot (mermaid는 null 금지이므로 빈 분기는 x-axis에서도 제외).
 
-  [분석가별 가이던스 상세] — 자료가 2건 이상이면 의무. 어느 분석가가 어떤 숫자를 줬는지 투명하게.
+  ▶ 분석가별 가이던스 상세 — 자료가 2건 이상이면 의무. 어느 분석가가 어떤 숫자를 줬는지 투명하게.
+    (섹션 헤더는 대괄호 `[분석가별 가이던스 상세]` 금지 — citation regex 충돌. 위처럼
+     ▶ 또는 📋 같은 unicode 기호 + 일반 텍스트로 표기.)
+
     형식:
       • NH투자증권 / 황지현 / 2026.05.15 [출처N]
           2026E 매출 13.79조 / OP 1.74조
@@ -315,10 +323,10 @@ N=7). 다른 모든 numbered 섹션 (배경/주요 사실/의미/미해결 질�
           2027E 매출 — / OP 2.67조
     - 각 분석가별로 두 줄: 헤더 (브로커리지/이름/날짜/출처) + 들여쓴 가이던스 숫자 줄 (연도별).
     - 숫자 없는 연도는 "—" 로 표시.
-    - 위 [참여 분석가 N건] 블록을 흡수해서 이걸로 대체. 즉 (F-2) 끝에 한 번만 등장.
 
-  [참여 분석가 N건] — 가이던스 데이터가 한 줄도 없는 분석가까지 포함하는 risk · 신사업 키포인트의
-  출처용 명단. [분석가별 가이던스 상세]에 이미 등장한 분석가도 여기 중복 표기 OK (가독성).
+  ▶ 참여 분석가 N건 — 가이던스 데이터가 한 줄도 없는 분석가까지 포함하는 출처용 명단.
+  위 ▶ 분석가별 가이던스 상세에 등장한 분석가도 여기 중복 표기 OK (가독성).
+    (역시 섹션 헤더는 대괄호 금지.)
     • 형식: 브로커리지명 / 애널리스트명 / YYYY.MM.DD 발행 [출처N]
     • brokerage / analyst / report_date 는 자료 메타데이터(`brokerage`, `analyst`,
        `report_date` 필드)와 자료 본문 첫 페이지에서 추출. 학습일자 절대 사용 금지.
@@ -390,6 +398,31 @@ xychart-beta
 - 자료가 부족하면 솔직히 말하고, 무엇을 더 저장하면 좋을지 제안.
 - 추측을 사실처럼 단정하지 말 것.
 """
+
+
+def _system_for_today() -> str:
+    """Prepend the current date + derived current year/quarter to the
+    static system prompt so the (F-2) windowing rules ('작년·올해·
+    내년', 9-quarter window around the current quarter) have a
+    deterministic anchor. Previously the prompt told the model to
+    infer 'today' from the latest source's report_date — but that let
+    the model anchor on an old report (2024-ish) and produce charts
+    with 2023A as the base year even when the actual current year
+    was 2026, defeating the whole windowing logic."""
+    from datetime import datetime
+    now = datetime.utcnow()
+    year = now.year
+    quarter = (now.month - 1) // 3 + 1
+    header = (
+        f"# 시점 (BOT RUNTIME, GROUND TRUTH)\n"
+        f"오늘 날짜: {now.strftime('%Y-%m-%d')}\n"
+        f"올해 = {year}, 작년 = {year - 1}, 내년 = {year + 1}, 내후년 = {year + 2}\n"
+        f"현재 분기 = {quarter}Q{year % 100:02d} "
+        f"(±4분기 = {quarter}Q{(year - 1) % 100:02d} ~ {quarter}Q{(year + 1) % 100:02d})\n"
+        f"⚠️ (F-2) 차트 윈도우는 이 기준만 따를 것. 자료 안의 report_date가 더 오래된 "
+        f"값이어도 그것을 '올해'로 착각하지 말 것.\n\n"
+    )
+    return header + _SYSTEM
 
 
 def _extract_calls(content: types.Content) -> list[types.FunctionCall]:
@@ -677,7 +710,7 @@ async def _loop(state: dict) -> dict:
     compare_papers_count = state["compare_papers_count"]
 
     cfg = types.GenerateContentConfig(
-        system_instruction=_SYSTEM,
+        system_instruction=_system_for_today(),
         tools=[TOOL_DECLARATIONS],
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         temperature=0.2,
@@ -773,7 +806,7 @@ async def _loop(state: dict) -> dict:
             )],
         )],
         config=types.GenerateContentConfig(
-            system_instruction=_SYSTEM,
+            system_instruction=_system_for_today(),
             temperature=0.2,
             max_output_tokens=8192,
         ),
