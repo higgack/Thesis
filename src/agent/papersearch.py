@@ -342,8 +342,13 @@ async def _ieee(query: str, limit: int) -> list[dict]:
         "apikey": key,
         "querytext": query,
         "max_records": min(limit, 25),
-        "sort_order": "desc",
-        "sort_field": "article_number",
+        # No sort_field / sort_order — IEEE API doesn't expose a
+        # 'relevance' sort value (only article_number / title / author
+        # / publication_year), so omitting the parameter entirely lets
+        # IEEE's own search-ranking engine (keyword + citation + venue
+        # weight) order the results. Previously hard-coded
+        # `article_number desc` which is newest-by-article-id and
+        # buried landmark papers under whatever IEEE indexed today.
     }
     async with httpx.AsyncClient(timeout=20, follow_redirects=True,
                                  headers={"User-Agent": "SecondBrainBot"}) as c:
