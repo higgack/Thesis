@@ -244,3 +244,23 @@ def get_doc_chunks(doc_id: str) -> list[dict]:
 
 def chunk_count() -> int:
     return _collection.count()
+
+
+def chunk_counts(doc_ids: list[str]) -> dict[str, int]:
+    """Map doc_id → chunk count. Single ChromaDB metadata-only query
+    so /find can label every result with its size (e.g. '35청크')
+    without firing N separate get-by-doc round trips. Excludes the
+    idx=-1 summary row so the number reflects body chunks only."""
+    if not doc_ids:
+        return {}
+    res = _collection.get(
+        where={"doc_id": {"$in": list(doc_ids)}},
+        include=["metadatas"],
+    )
+    counts: dict[str, int] = {d: 0 for d in doc_ids}
+    for md in res.get("metadatas") or []:
+        did = (md or {}).get("doc_id")
+        kind = (md or {}).get("kind", "chunk")
+        if did in counts and kind == "chunk":
+            counts[did] += 1
+    return counts

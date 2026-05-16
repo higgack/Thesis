@@ -1672,6 +1672,16 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     import json as _json
     import html as _html
+    # Bulk chunk-count fetch so each match can show its size without
+    # firing 50+ individual ChromaDB queries. Fails open (empty map →
+    # size omitted) so /find never breaks just because vector store
+    # blipped.
+    try:
+        doc_ids = [m.get("id") for m in matches if m.get("id")]
+        chunk_counts = await asyncio.to_thread(vector.chunk_counts, doc_ids)
+    except Exception:
+        log.exception("find: chunk_counts bulk fetch failed")
+        chunk_counts = {}
     blocks: list[str] = [header]
     for m in matches:
         title = _html.escape(_clean_text((m.get("title") or "(제목 없음)"))[:80])
@@ -1694,7 +1704,11 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             kind = source.split(":", 1)[0]
             loc = f"💬 {kind}"
 
+        # report_date (본문 발행일 YYYY.MM) lifted into the header line
+        # next to ingested date — user couldn't tell publish vs learn
+        # date when both were buried in the same 🏷 tag line.
         meta_bits: list[str] = []
+        published = ""
         meta_raw = m.get("metadata")
         if meta_raw:
             try:
@@ -1704,19 +1718,33 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if md.get("company"):
                 meta_bits.append(_html.escape(md["company"]))
             if md.get("report_date"):
-                meta_bits.append(_html.escape(md["report_date"]))
+                published = _html.escape(md["report_date"])
             if md.get("tags"):
                 meta_bits.append(_html.escape("·".join(md["tags"][:3])))
         meta_line = " · ".join(meta_bits)
 
-        # One block per doc: title+date · location · meta · full summary.
-        # doc_id rendered as `/show_<id>` — Telegram auto-detects the
-        # /word pattern and makes it tap-to-send, so one tap routes
-        # the user straight into cmd_show for that doc. Pairs with a
-        # MessageHandler that catches `^/show_<hex>$` and unwraps it
-        # back into `/show <hex>`.
+        # One block per doc: title · dates · size · location · meta ·
+        # full summary. doc_id rendered as `/show_<id>` — Telegram
+        # auto-detects the /word pattern and makes it tap-to-send, so
+        # one tap routes the user straight into cmd_show for that doc.
+        # Pairs with a MessageHandler that catches `^/show_<hex>$` and
+        # unwraps it back into `/show <hex>`.
         doc_id = m.get("id") or ""
-        item = f"\n\n📄 <b>{title}</b>  <i>{ingested}</i>"
+        # Header second line: 학습 YYYY-MM-DD · 발행 YYYY.MM · N청크.
+        # Each bit is optional — omitted when the data is missing so
+        # docs without a Gemini-inferred publish date or with zero
+        # chunks (shouldn't happen, defensive) don't show empty fields.
+        info_bits: list[str] = []
+        if ingested:
+            info_bits.append(f"학습 {ingested}")
+        if published:
+            info_bits.append(f"발행 {published}")
+        n_chunks = int(chunk_counts.get(doc_id, 0) or 0)
+        if n_chunks:
+            info_bits.append(f"{n_chunks}청크")
+        item = f"\n\n📄 <b>{title}</b>"
+        if info_bits:
+            item += f"\n  <i>{' · '.join(info_bits)}</i>"
         if doc_id:
             item += f"\n  🆔 /show_{_html.escape(doc_id)}"
         if loc:
