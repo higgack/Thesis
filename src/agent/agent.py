@@ -782,9 +782,12 @@ async def run(message: str, deep: bool = False,
 _NUDGE_MESSAGE = (
     "[자동 시스템 경고] 직전 답변에서 도구를 한 번도 호출하지 않았습니다. "
     "이 봇은 도구 결과 없는 답변을 허용하지 않습니다. "
-    "지금 즉시 search_my_brain 또는 compare_papers를 호출해 저장된 자료를 "
-    "조회한 뒤 답변하세요. brain에 자료가 없으면 '저장된 자료 부족' 이라고만 "
-    "솔직히 답하세요. 어떠한 추측·일반 지식 답변도 금지."
+    "지금 즉시 사용자 질문에 가장 적합한 도구를 호출하세요:\n"
+    "- 특허/patent/출원/IP/prior art 키워드면 → search_patents\n"
+    "- 논문/papers/찾아줘/추천 키워드면 → search_papers\n"
+    "- 그 외 일반 질문은 → search_my_brain 또는 compare_papers (brain 검색)\n"
+    "어떠한 추측·일반 지식 답변도 금지. brain·외부 모두 자료 부족하면 "
+    "'저장된 자료 부족' 이라고만 솔직히 답하세요."
 )
 
 _REFUSAL_TEXT = (

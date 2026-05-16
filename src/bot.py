@@ -3643,9 +3643,15 @@ async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not q:
         await update.message.reply_text("사용법: /search_patents <검색어>")
         return
-    # "특허 검색해줘" 식 자연어로 보내면 agent 가 search_patents 트리거.
+    # 명령어로 호출한 경우 모델이 잘못 라우팅하지 못하도록 search_patents
+    # 도구 사용을 명시적으로 강제. "patent 찾아줘" 같은 자연어 표현만으로는
+    # 모델이 brain 검색이나 자체 지식 답변으로 빠지는 케이스가 있어서 룰을
+    # 직접 박아둠.
     await _run_agent(update, ctx,
-                     f"특허 데이터베이스에서 '{q}' 관련 patent 찾아줘", deep=False)
+                     f"search_patents 도구를 호출해서 '{q}' 관련 특허를 "
+                     f"검색해줘. 반드시 search_patents 도구를 사용할 것 — "
+                     f"brain 검색이나 자체 지식 답변 금지.",
+                     deep=False)
 
 
 async def cmd_web_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
