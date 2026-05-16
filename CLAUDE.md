@@ -136,9 +136,11 @@ Before EVERY git push, walk this checklist:
       runtime context.
 
 ### 6. Forbidden patterns (lessons learned)
-- [ ] NEVER add a new cron entry. The existing ones (auto_pull.sh,
-      auto_deploy.sh, scheduler_watchdog.sh) cover all current
-      use cases.
+- [ ] NEVER add a recurring cron entry. The existing ones (auto_pull.sh
+      every minute, scheduler_watchdog.sh every 5 minutes, @reboot
+      http.server) cover all current use cases. One-off pinned-date
+      reminders (e.g. `0 0 18 5 * curl ... EPO reminder`) are OK when
+      the user explicitly asks for a future-date alert.
 - [ ] NEVER ship a script whose only off-switch is a state file
       in `./data/` — that dir gets touched by docker, git, etc.
 - [ ] NEVER use `"\n"` in a bash double-quoted string and assume
@@ -260,24 +262,46 @@ Rules:
 
 ## Auto-deploy is ALREADY active — do NOT suggest manual git pull
 
-**VM has these cron entries running every minute** (verified via `crontab -l`):
+**VM has these cron entries** (verified via `crontab -l`):
 
 ```
 * * * * * cd /home/higgack/Thesis && bash scripts/auto_pull.sh
-* * * * * ~/Thesis/scripts/auto_deploy.sh
+@reboot cd ~/.summary_archive && nohup python3 -m http.server 8080 --bind 0.0.0.0 > /dev/null 2>&1 &
 */5 * * * * bash /home/higgack/scheduler_watchdog.sh >> ~/deploy.log 2>&1
+0 0 18 5 * source /home/higgack/Thesis/.env && curl -s ".../sendMessage" -d "text=📬 EPO OPS Phase B 시작..."
 ```
+
+`scripts/auto_pull.sh` is the **all-in-one deploy script**. The legacy
+`scripts/auto_deploy.sh` row (from an earlier setup) has been
+consolidated into auto_pull.sh — do NOT re-add it. The script itself
+has an inline comment ("legacy auto_deploy.sh won the race") warning
+that running both creates a race that drops 배포 시작 + 배포 완료
+notifications. Stick to auto_pull.sh alone.
+
+`scripts/auto_pull.sh` (matching this branch's HEAD) does, every minute:
+  1. `git fetch origin <BRANCH>` — checks for new commits.
+  2. If `LOCAL == REMOTE` → silent exit (no spam).
+  3. If new commits → send "🚀 배포 시작: <old> → <new>\n<title>" to
+     TELEGRAM_OWNER_ID via curl.
+  4. `git pull --ff-only` + `docker compose --profile local-api up -d
+     --build --remove-orphans`. On compose failure, force-remove stale
+     containers and retry once.
+  5. `docker inspect thesis-bot-1` → if `running` send "✅ 배포 완료
+     <sha> <title>"; else send "❌ 컨테이너 상태 …" with `docker
+     compose logs --tail=10`.
 
 What this means for the agent:
 - After ANY `git push`, the VM auto-pulls the branch within 60 seconds
   and recreates the bot/forward-listener/dashboard containers.
-- The bot then sends a "🚀 배포 완료 <sha> <title>" notification to the
-  owner's Telegram on every successful redeploy.
+- The user sees "🚀 배포 시작" → "✅ 배포 완료 <sha>" on Telegram for
+  every successful redeploy.
 - **NEVER** tell the user to run `git pull` / `docker compose up -d` /
   `docker compose restart` themselves. They've heard that 10× already
   and it wastes their time.
-- **NEVER** add new cron entries. The existing ones do the job — adding
-  duplicates causes race conditions.
+- **NEVER** add new cron entries (only exception: a one-off reminder
+  pinned to a specific date+month like the EPO line above is OK if
+  explicitly requested). The repeating ones cover all current cases —
+  adding duplicates causes race conditions.
 - After pushing, the correct closing line is: "푸시 완료 (sha). 1분 내
   자동 배포 + 텔레그램 알림 갈 거야." That's it.
 
