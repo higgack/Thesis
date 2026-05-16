@@ -3636,22 +3636,120 @@ async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                      f"외부 학술DB에서 '{q}' 관련 최신 논문 찾아줘", deep=False)
 
 
+def _format_patents_text(query: str, results: list[dict]) -> str:
+    """Direct deterministic render for /search_patents command output.
+
+    Bypasses the agent so the result is guaranteed regardless of
+    Gemini's tool-selection behaviour (which has been observed
+    refusing to call search_patents even with explicit prompt
+    coercion, then serving the "no source" refusal). Uses the same
+    information density as the agent's (P-2) framework but without
+    an LLM call — title + meta line + abstract excerpt + URL per
+    patent, sized for Telegram readability."""
+    import html as _html
+    if not results:
+        return (f"🔍 '<b>{_html.escape(query)}</b>' 관련 특허 결과 없음.\n"
+                f"검색어를 영문 키워드로 좁히면 결과가 나올 가능성 ↑.")
+    out = [
+        f"⚖️ <b>특허 검색 결과 — '{_html.escape(query)}'</b>",
+        f"<i>{len(results)}건 · The Lens</i>",
+    ]
+    for i, p in enumerate(results, 1):
+        title = _html.escape((p.get("title") or "(제목 없음)"))[:240]
+        date = (p.get("date") or "")[:10]
+        num = p.get("patent_number") or ""
+        assignee_raw = (p.get("assignee") or "").strip()
+        assignee = _html.escape(assignee_raw[:60])
+        inv_list = p.get("inventors") or []
+        inv = _html.escape(inv_list[0]) if inv_list else ""
+        if inv and len(inv_list) > 1:
+            inv += " et al."
+        claims = p.get("claims_count")
+        abstract = _html.escape((p.get("abstract") or "")[:400]).strip()
+        url = p.get("url") or ""
+
+        meta_parts: list[str] = []
+        if num:
+            meta_parts.append(num)
+        if assignee:
+            meta_parts.append(f"출원인 {assignee}")
+        if inv:
+            meta_parts.append(inv)
+        if claims:
+            meta_parts.append(f"Claims {claims}")
+        meta_line = " · ".join(meta_parts)
+
+        block = [f"\n⚖️ <b>{i}. {title}</b>"]
+        if date:
+            block.append(f"  <i>출원 {date}</i>")
+        if meta_line:
+            block.append(f"   {meta_line}")
+        if abstract:
+            block.append(f"   {abstract}")
+        if url:
+            block.append(f"   → {url}")
+        out.append("\n".join(block))
+    return "\n".join(out)
+
+
 async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Direct /search_patents — bypasses the agent.
+
+    Live test showed Gemini repeatedly skipping search_patents even
+    with hard prompts ("반드시 search_patents 사용 ... 다른 도구 금지")
+    plus a tool-aware nudge — it kept defaulting to text-only refusal.
+    The Lens API itself works; the failure was 100% routing-side. The
+    command now calls patentsearch.search() directly and formats the
+    response in bot code, so the user gets deterministic results from
+    an explicit command. Natural-language "특허 찾아줘" still flows
+    through the agent + (P-2) framework when the model cooperates."""
     if not _is_owner(update):
         return
     q = " ".join(ctx.args).strip()
     if not q:
         await update.message.reply_text("사용법: /search_patents <검색어>")
         return
-    # 명령어로 호출한 경우 모델이 잘못 라우팅하지 못하도록 search_patents
-    # 도구 사용을 명시적으로 강제. "patent 찾아줘" 같은 자연어 표현만으로는
-    # 모델이 brain 검색이나 자체 지식 답변으로 빠지는 케이스가 있어서 룰을
-    # 직접 박아둠.
-    await _run_agent(update, ctx,
-                     f"search_patents 도구를 호출해서 '{q}' 관련 특허를 "
-                     f"검색해줘. 반드시 search_patents 도구를 사용할 것 — "
-                     f"brain 검색이나 자체 지식 답변 금지.",
-                     deep=False)
+    await _typing(update, ctx)
+    status = await update.message.reply_text(f"🔍 '{q}' 특허 검색 중...")
+    try:
+        from .agent import patentsearch
+        results = await patentsearch.search(q, limit=15)
+    except Exception as e:
+        log.exception("search_patents direct call failed for %r", q)
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"⚠️ 특허 검색 실패: {_explain_error(e)}",
+        )
+        return
+    body = _format_patents_text(q, results)
+    pieces = _split_for_telegram(body)
+    # Edit the status row into the first piece (HTML mode needed for
+    # the <b> tags in the formatter), fall back to a fresh send if
+    # the edit fails. Remaining pieces go out as new messages.
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.warning("search_patents status edit failed, sending fresh")
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("search_patents fallback send failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("search_patents chunked send failed")
 
 
 async def cmd_web_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
