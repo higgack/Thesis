@@ -3656,7 +3656,9 @@ def _format_papers_text(query: str, results: list[dict]) -> str:
         citations = p.get("citations")
         source = p.get("source") or ""
         abstract_src = (p.get("abstract_ko") or p.get("abstract") or "")
-        abstract = _html.escape(abstract_src[:500]).strip()
+        abstract = _html.escape(
+            _truncate_at_sentence(abstract_src.strip(), 900)
+        )
         pdf = p.get("pdf") or ""
         url = p.get("url") or ""
         doi = p.get("doi") or ""
@@ -3759,6 +3761,43 @@ async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 log.exception("search_papers chunked send failed")
 
 
+def _truncate_at_sentence(text: str, cap: int) -> str:
+    """Trim `text` to roughly `cap` chars, breaking at the nearest
+    sentence boundary inside the cap window. Adds " …" suffix when
+    truncated. Korean sentences usually end with 다./요./니다./까? +
+    space; English ends with ". ". Uses whichever endpoint is
+    closest to the cap. Falls back to a hard char cut + "…" when no
+    sentence boundary is found inside the search window."""
+    if not text or len(text) <= cap:
+        return text
+    cutoff = text[:cap]
+    # Search the last ~250 chars of the cap for any sentence end.
+    search_from = max(0, cap - 250)
+    candidates = [
+        cutoff.rfind("다. ", search_from),
+        cutoff.rfind("다.\n", search_from),
+        cutoff.rfind("요. ", search_from),
+        cutoff.rfind("요.\n", search_from),
+        cutoff.rfind("니다. ", search_from),
+        cutoff.rfind("니다.\n", search_from),
+        cutoff.rfind(". ", search_from),
+        cutoff.rfind(".\n", search_from),
+        cutoff.rfind("? ", search_from),
+        cutoff.rfind("! ", search_from),
+    ]
+    end = max(candidates)
+    if end < 0:
+        return cutoff.rstrip() + "…"
+    # Include the punctuation that defined the sentence end.
+    sep_len = 2  # most candidates are 2 chars ("다.", ". ", etc.)
+    # but "니다." is 3 chars + trailing space — handle generically by
+    # walking forward to next whitespace.
+    end_with_punct = end
+    while end_with_punct < len(cutoff) and cutoff[end_with_punct] not in (" ", "\n"):
+        end_with_punct += 1
+    return cutoff[:end_with_punct] + " …"
+
+
 async def _translate_results_korean(results: list[dict]) -> list[dict]:
     """Batch-translate title + abstract of each result to Korean in a
     single Flash-Lite call. Mutates each row by adding `title_ko` and
@@ -3777,7 +3816,7 @@ async def _translate_results_korean(results: list[dict]) -> list[dict]:
     lines: list[str] = []
     for i, r in enumerate(results, 1):
         title = (r.get("title") or "").strip()
-        abstract = (r.get("abstract") or "").strip()[:600]
+        abstract = (r.get("abstract") or "").strip()[:1200]
         lines.append(f"[{i}]")
         if title:
             lines.append(f"TITLE: {title}")
@@ -3860,7 +3899,9 @@ def _format_patents_text(query: str, results: list[dict]) -> str:
             inv += " et al."
         claims = p.get("claims_count")
         abstract_src = (p.get("abstract_ko") or p.get("abstract") or "")
-        abstract = _html.escape(abstract_src[:500]).strip()
+        abstract = _html.escape(
+            _truncate_at_sentence(abstract_src.strip(), 900)
+        )
         url = p.get("url") or ""
 
         meta_parts: list[str] = []
