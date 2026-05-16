@@ -2015,6 +2015,18 @@ async def _handle_translate(ctx, chat_id: int, doc_id: str, q) -> None:
             )
         except Exception:
             pass
+    # "처음으로" footer — same pattern as /show. A translated doc can
+    # span 10+ messages; tap the reply-quote to jump back to the
+    # translation's first message.
+    if first_id is not None:
+        try:
+            await ctx.bot.send_message(
+                chat_id, "⬆️ 처음으로",
+                reply_to_message_id=first_id,
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.exception("translate: top-link footer send failed")
 
 
 def _is_mostly_foreign(text: str, threshold: float = 0.30) -> bool:
