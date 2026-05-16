@@ -3928,45 +3928,101 @@ def _annotate_learn_date(body: str, sources: list[str]) -> str:
     )
 
 
-async def _send_agent_reply(send, result, inherited: bool = False):
+async def _send_agent_reply(send, result, send_photo=None, inherited: bool = False):
     # `inherited` is retained for the historical call-site shape but
     # is now always False — the inheritance fallback was removed
     # because it masked routing failures (model skipped brain search,
     # made up citations, then we stamped unrelated old sources).
-    raw, mermaid_blocks = _extract_mermaid(result["text"])
-    body = _strip_markdown(raw)
-    # Pass harvested sources so '[1]'-style digit refs resolve to the
-    # real doc title (previously they ended up as '[1] 1' in the
-    # legend because the digit became the label).
+    #
+    # Mermaid handling:
+    #   • Each ```mermaid``` block is replaced with a sentinel token
+    #     before post-processing so the text-only steps (renumber
+    #     citations, annotate learn date, strip markdown, format HTML)
+    #     never touch raw mermaid syntax — xychart-beta's `[2024, 2025]`
+    #     x-axis would otherwise collide with the citation regex.
+    #   • When `send_photo` is provided we walk the post-processed body
+    #     in segment order: text segment → HTML-format & send; mermaid
+    #     segment → render & send photo. The chart appears at the
+    #     position the model placed it (inline near its referencing
+    #     section), instead of always at the very end.
+    #   • Without `send_photo` we fall back to the legacy shape:
+    #     return (body, mermaid_blocks) and the caller renders photos
+    #     itself after the body. Kept for call sites that haven't been
+    #     refactored to provide a photo callable.
+    raw = result["text"]
+    blocks: list[str] = []
+
+    def _stash(m: "re.Match[str]") -> str:
+        idx = len(blocks)
+        blocks.append(m.group(1).strip())
+        return f"__MERMAID_BLOCK_{idx}__"
+
+    text_only = _MERMAID_BLOCK_RE.sub(_stash, raw)
+    body = _strip_markdown(text_only)
     body, ordered_labels = _renumber_citations(
         body, result.get("sources") or [],
     )
     body = _annotate_learn_date(body, result.get("sources") or [])
-    body_html = _format_body_html(body)
     suffix_lines = []
     if result.get("warning"):
         suffix_lines.append(result["warning"])
     source_urls = result.get("source_urls") or {}
     if ordered_labels:
-        # Use the numbered legend built from inline citations — what
-        # the user sees in body [1][2] matches the [1] [2] entries
-        # below.
         suffix_lines.append("📚 출처:" + _format_numbered_sources(
             ordered_labels, source_urls,
         ))
     elif result.get("sources"):
-        # Tool was called but model didn't cite inline. Fall back to
-        # the harvested source list so the user still gets a 출처
-        # block.
         suffix_lines.append("📚 출처:" + _format_sources_with_url(
             result["sources"], source_urls=source_urls,
         ))
     if result.get("tool_calls"):
         suffix_lines.append(_format_tool_calls(result["tool_calls"]))
+
+    if send_photo is not None and blocks:
+        # Inline mode. Split on placeholder tokens, walk parts in
+        # order. The split keeps the captured index group so we know
+        # which mermaid block to render at each break.
+        parts = re.split(r"__MERMAID_BLOCK_(\d+)__", body)
+        # parts alternates: text, idx_str, text, idx_str, ..., text
+        for i, part in enumerate(parts):
+            if i % 2 == 0:
+                txt = part.strip()
+                if txt:
+                    await _send_chunked_html(send, _format_body_html(txt))
+            else:
+                try:
+                    block_idx = int(part)
+                except ValueError:
+                    continue
+                if 0 <= block_idx < len(blocks):
+                    code = blocks[block_idx]
+                    try:
+                        png = await _render_mermaid_png(code)
+                        await send_photo(png)
+                    except Exception as e:
+                        log.warning("inline mermaid render failed: %s", e)
+                        try:
+                            await send(
+                                f"(다이어그램 렌더 실패: "
+                                f"{_explain_error(e)})"
+                            )
+                        except Exception:
+                            pass
+        if suffix_lines:
+            await _send_chunked(send, "\n".join(suffix_lines))
+        # Returned blocks list is empty so legacy callers don't
+        # double-render the photos we already sent inline.
+        body_no_ph = re.sub(r"__MERMAID_BLOCK_\d+__", "", body).strip()
+        return body_no_ph, []
+
+    # Legacy mode — drop placeholders from body, return the mermaid
+    # list so the caller can render photos after the text send.
+    body_no_ph = re.sub(r"__MERMAID_BLOCK_\d+__", "", body).strip()
+    body_html = _format_body_html(body_no_ph)
     await _send_chunked_html(send, body_html)
     if suffix_lines:
         await _send_chunked(send, "\n".join(suffix_lines))
-    return body, mermaid_blocks
+    return body_no_ph, blocks
 
 
 async def _retry_pending(ctx: ContextTypes.DEFAULT_TYPE):
@@ -3988,17 +4044,22 @@ async def _retry_pending(ctx: ContextTypes.DEFAULT_TYPE):
         _RETRY_QUEUE.append(item)
         return
     chat_id = item["chat_id"]
+    _retry_prefix = {"sent": False}
 
-    async def _send(text):
-        await ctx.bot.send_message(chat_id, f"⏰ 재시도 성공\n\n{text}")
+    async def _send(text, **kw):
+        # Prefix the very first text send with the "⏰ 재시도 성공"
+        # header so subsequent chunks/photos don't repeat it.
+        if not _retry_prefix["sent"]:
+            text = f"⏰ 재시도 성공\n\n{text}"
+            _retry_prefix["sent"] = True
+        await ctx.bot.send_message(chat_id, text, **kw)
 
-    _, mermaid_blocks = await _send_agent_reply(_send, result)
-    for code in mermaid_blocks:
-        try:
-            png = await _render_mermaid_png(code)
-            await ctx.bot.send_photo(chat_id, photo=png, caption="🧩 다이어그램")
-        except Exception:
-            pass
+    async def _send_photo(png: bytes):
+        await ctx.bot.send_photo(
+            chat_id, photo=png, caption="🧩 다이어그램",
+        )
+
+    await _send_agent_reply(_send, result, send_photo=_send_photo)
 
 
 
@@ -4124,8 +4185,12 @@ async def _finalize_agent_reply(message, ctx: ContextTypes.DEFAULT_TYPE,
         # knowledge, made up citation labels in the body, then we
         # stamped unrelated old sources on top). Now an empty sources
         # set surfaces honestly as the verify '출처 없음' warning.
-        body, mermaid_blocks = await _send_agent_reply(
-            message.reply_text, result, inherited=False,
+        async def _photo_inline(png: bytes):
+            await message.reply_photo(photo=png, caption="🧩 다이어그램")
+
+        body, _ = await _send_agent_reply(
+            message.reply_text, result, send_photo=_photo_inline,
+            inherited=False,
         )
         _record_turn(chat_id, "user", text)
         _record_turn(
@@ -4147,15 +4212,6 @@ async def _finalize_agent_reply(message, ctx: ContextTypes.DEFAULT_TYPE,
             dashboard_regen.regenerate()
         except Exception:
             log.exception("dashboard regen failed")
-        for code in mermaid_blocks:
-            try:
-                png = await _render_mermaid_png(code)
-                await message.reply_photo(photo=png, caption="🧩 다이어그램")
-            except Exception as e:
-                log.warning("mermaid render failed: %s", e)
-                await message.reply_text(
-                    f"(다이어그램 렌더 실패: {_explain_error(e)})\n\n{code[:500]}"
-                )
     except Exception as e:
         log.exception("post-agent reply failed")
         try:
@@ -5547,10 +5603,18 @@ async def _drain_pending_pro(ctx: ContextTypes.DEFAULT_TYPE):
                 f"⚠️ Pro 답변 실패: {question[:60]}\n{_explain_error(e)}",
             )
             return
-        async def _send(text):
-            await ctx.bot.send_message(chat_id, text, disable_web_page_preview=True)
+        async def _send(text, **kw):
+            kw.setdefault("disable_web_page_preview", True)
+            await ctx.bot.send_message(chat_id, text, **kw)
+
+        async def _send_photo(png: bytes):
+            await ctx.bot.send_photo(
+                chat_id, photo=png, caption="🧩 다이어그램",
+            )
         try:
-            body, mermaid_blocks = await _send_agent_reply(_send, result)
+            body, _ = await _send_agent_reply(
+                _send, result, send_photo=_send_photo,
+            )
         except Exception:
             log.exception("pending pro reply render failed")
             return
@@ -5572,12 +5636,6 @@ async def _drain_pending_pro(ctx: ContextTypes.DEFAULT_TYPE):
             dashboard_regen.regenerate()
         except Exception:
             log.exception("pending pro qna/dashboard record failed")
-        for code in mermaid_blocks:
-            try:
-                png = await _render_mermaid_png(code)
-                await ctx.bot.send_photo(chat_id, photo=png, caption="🧩 다이어그램")
-            except Exception:
-                log.warning("pending pro mermaid render failed")
     finally:
         _ACTIVE_AGENT_RUNS = max(0, _ACTIVE_AGENT_RUNS - 1)
         _LAST_REPLY_AT = datetime.utcnow()
