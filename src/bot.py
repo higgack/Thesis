@@ -3643,7 +3643,10 @@ def _format_papers_text(query: str, results: list[dict]) -> str:
         f"CrossRef / IEEE / PubMed)</i>",
     ]
     for i, p in enumerate(results, 1):
-        title = _html.escape((p.get("title") or "(제목 없음)"))[:240]
+        # Prefer the Korean translation when _translate_results_korean
+        # populated it; fall back to the original English otherwise.
+        title_src = (p.get("title_ko") or p.get("title") or "(제목 없음)")
+        title = _html.escape(title_src)[:300]
         year = p.get("year")
         venue = _html.escape((p.get("venue") or "")[:80])
         auths = p.get("authors") or []
@@ -3652,7 +3655,8 @@ def _format_papers_text(query: str, results: list[dict]) -> str:
             first_auth += " et al."
         citations = p.get("citations")
         source = p.get("source") or ""
-        abstract = _html.escape((p.get("abstract") or "")[:400]).strip()
+        abstract_src = (p.get("abstract_ko") or p.get("abstract") or "")
+        abstract = _html.escape(abstract_src[:500]).strip()
         pdf = p.get("pdf") or ""
         url = p.get("url") or ""
         doi = p.get("doi") or ""
@@ -3707,7 +3711,9 @@ async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("사용법: /search_papers <검색어>")
         return
     await _typing(update, ctx)
-    status = await update.message.reply_text(f"🔍 '{q}' 논문 검색 중...")
+    status = await update.message.reply_text(
+        f"🔍 '{q}' 논문 검색 중... (한국어 번역 포함)"
+    )
     try:
         from .agent import papersearch
         results = await papersearch.search(q, limit=15)
@@ -3721,6 +3727,10 @@ async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         return
+    # Batch translation: title + abstract → Korean. Single Flash-Lite
+    # call (~₩5-7), populates title_ko/abstract_ko on each row. The
+    # formatter prefers those when present.
+    results = await _translate_results_korean(results)
     body = _format_papers_text(q, results)
     pieces = _split_for_telegram(body)
     if pieces:
@@ -3749,6 +3759,76 @@ async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 log.exception("search_papers chunked send failed")
 
 
+async def _translate_results_korean(results: list[dict]) -> list[dict]:
+    """Batch-translate title + abstract of each result to Korean in a
+    single Flash-Lite call. Mutates each row by adding `title_ko` and
+    `abstract_ko` fields; falls back to English originals when the
+    LLM call fails. ~₩5-7 per search (15 papers × ~400-char abstracts
+    ≈ 8k input + 5k output tokens at Flash-Lite ₩140/1M / ₩420/1M).
+    Shared by /search_papers and /search_patents so the formatters
+    treat title_ko / abstract_ko as the canonical render fields when
+    present."""
+    if not results:
+        return results
+    import json as _json
+    import re as _re
+    # Numbered packing — keeps the response aligned with the request
+    # order so partial completions still map cleanly.
+    lines: list[str] = []
+    for i, r in enumerate(results, 1):
+        title = (r.get("title") or "").strip()
+        abstract = (r.get("abstract") or "").strip()[:600]
+        lines.append(f"[{i}]")
+        if title:
+            lines.append(f"TITLE: {title}")
+        if abstract:
+            lines.append(f"ABSTRACT: {abstract}")
+        lines.append("")
+    user_text = "\n".join(lines)
+    system_prompt = (
+        "You are a precise English-to-Korean translator for academic "
+        "papers and patents. Translate each TITLE and ABSTRACT into "
+        "natural Korean. Preserve technical terms (model names, "
+        "company names, acronyms like HBM/CMP/Cu-Cu/FC-BGA/LLM) in "
+        "their original form. Output JSON only:\n"
+        '{"items": [{"n": 1, "title_ko": "...", "abstract_ko": "..."}, ...]}\n'
+        "Omit fields that were missing in the input. No preamble."
+    )
+    try:
+        from .llm.gemini import complete
+        resp = await complete(
+            model=config.SUMMARY_MODEL,
+            system=system_prompt,
+            user=user_text,
+            max_tokens=8192,
+            temperature=0.1,
+            purpose="translate",
+        )
+        m = _re.search(r"\{.*\}", resp, _re.DOTALL)
+        if not m:
+            return results
+        data = _json.loads(m.group(0))
+        by_n: dict[int, dict] = {}
+        for item in (data.get("items") or []):
+            try:
+                by_n[int(item.get("n"))] = item
+            except (TypeError, ValueError):
+                continue
+        for i, r in enumerate(results, 1):
+            t = by_n.get(i)
+            if not t:
+                continue
+            tk = (t.get("title_ko") or "").strip()
+            ak = (t.get("abstract_ko") or "").strip()
+            if tk:
+                r["title_ko"] = tk
+            if ak:
+                r["abstract_ko"] = ak
+    except Exception:
+        log.exception("translate_results_korean failed; using originals")
+    return results
+
+
 def _format_patents_text(query: str, results: list[dict]) -> str:
     """Direct deterministic render for /search_patents command output.
 
@@ -3768,7 +3848,8 @@ def _format_patents_text(query: str, results: list[dict]) -> str:
         f"<i>{len(results)}건 · The Lens</i>",
     ]
     for i, p in enumerate(results, 1):
-        title = _html.escape((p.get("title") or "(제목 없음)"))[:240]
+        title_src = (p.get("title_ko") or p.get("title") or "(제목 없음)")
+        title = _html.escape(title_src)[:300]
         date = (p.get("date") or "")[:10]
         num = p.get("patent_number") or ""
         assignee_raw = (p.get("assignee") or "").strip()
@@ -3778,7 +3859,8 @@ def _format_patents_text(query: str, results: list[dict]) -> str:
         if inv and len(inv_list) > 1:
             inv += " et al."
         claims = p.get("claims_count")
-        abstract = _html.escape((p.get("abstract") or "")[:400]).strip()
+        abstract_src = (p.get("abstract_ko") or p.get("abstract") or "")
+        abstract = _html.escape(abstract_src[:500]).strip()
         url = p.get("url") or ""
 
         meta_parts: list[str] = []
@@ -3823,7 +3905,9 @@ async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("사용법: /search_patents <검색어>")
         return
     await _typing(update, ctx)
-    status = await update.message.reply_text(f"🔍 '{q}' 특허 검색 중...")
+    status = await update.message.reply_text(
+        f"🔍 '{q}' 특허 검색 중... (한국어 번역 포함)"
+    )
     try:
         from .agent import patentsearch
         results = await patentsearch.search(q, limit=15)
@@ -3834,6 +3918,7 @@ async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"⚠️ 특허 검색 실패: {_explain_error(e)}",
         )
         return
+    results = await _translate_results_korean(results)
     body = _format_patents_text(q, results)
     pieces = _split_for_telegram(body)
     # Edit the status row into the first piece (HTML mode needed for

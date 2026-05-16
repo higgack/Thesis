@@ -95,6 +95,17 @@ async def _lens(query: str, limit: int) -> list[dict]:
     async with httpx.AsyncClient(timeout=20, follow_redirects=True,
                                  headers=headers) as c:
         r = await c.post(_LENS_API, json=body)
+        if r.status_code != 200:
+            # Log the body so we can see WHY Lens rejected us — the
+            # bare status code (401/403) doesn't tell us if it's
+            # "token not activated", "wrong API scope", "invalid
+            # format" etc. Truncate to keep logs sane on huge HTML
+            # error pages.
+            body_preview = r.text[:500].replace("\n", " ")
+            log.warning(
+                "lens %d on patent/search — key_prefix=%r body=%r",
+                r.status_code, key[:8], body_preview,
+            )
         r.raise_for_status()
 
     out = []
