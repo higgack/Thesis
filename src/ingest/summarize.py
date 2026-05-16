@@ -31,7 +31,9 @@ Type: {doc_type}
   "summary": "한국어 요약, 불릿 형식, 핵심 주장·고유명사·숫자·날짜·결론 보존. 전문용어는 원어 그대로.",
   "company": "주 분석/언급 대상 회사명 한 개. 모호하면 빈 문자열. 삼성전자/삼성전기/삼성SDI 같은 계열사 구분 정확히. 산업 동향·매크로면 빈 문자열.",
   "tags": ["반도체"|"AI"|"바이오"|"방산"|"로봇"|"보고서"|"뉴스"|"실적"|"분석"|"차트"|"공시"|"인터뷰"|"리포트" 등 1~5개],
-  "report_date": "본문 발행일 YYYY.MM 형태, 없으면 빈 문자열"
+  "report_date": "본문 발행일 YYYY.MM 또는 YYYY.MM.DD 형태, 없으면 빈 문자열",
+  "brokerage": "리포트 발행 증권사/연구소/언론사 이름 (NH투자증권/신한투자증권/SK증권/현대차증권/Goldman Sachs/Bloomberg 등). 본문 첫 페이지·하단 footer·작성자 라인에서 추출. 없으면 빈 문자열.",
+  "analyst": "리포트 작성 애널리스트 이름 1명 (예: 김XX 또는 John Smith). 본문 첫 페이지 헤더/footer/email 라인에서 추출. 여러 명이면 첫 번째만. 없으면 빈 문자열."
 }}"""
 
 
@@ -143,6 +145,8 @@ async def _combined_call(title: str, body: str, doc_type: str) -> tuple[str, dic
                 "tags": [t.strip() for t in tags_raw
                          if isinstance(t, str) and t.strip()][:8],
                 "report_date": (data.get("report_date") or "").strip() or None,
+                "brokerage": (data.get("brokerage") or "").strip() or None,
+                "analyst": (data.get("analyst") or "").strip() or None,
             }
             if summary:
                 return summary, metadata
@@ -160,7 +164,9 @@ async def _extract_metadata_only(title: str, body: str, doc_type: str) -> dict:
         '{"company": "주 분석/언급 대상 회사명 한 개 (모호하면 빈 문자열)",\n'
         ' "tags": ["반도체"|"AI"|"바이오"|"방산"|"로봇"|"보고서"|"뉴스"|"실적"|'
         '"분석"|"차트"|"공시"|"인터뷰"|"리포트" 등 1~5개],\n'
-        ' "report_date": "본문 발행일 YYYY.MM 형태, 없으면 빈 문자열"}\n\n'
+        ' "report_date": "본문 발행일 YYYY.MM 또는 YYYY.MM.DD, 없으면 빈 문자열",\n'
+        ' "brokerage": "발행 증권사/연구소/언론사 (예: NH투자증권, Goldman Sachs), 없으면 빈 문자열",\n'
+        ' "analyst": "리포트 작성 애널리스트 1명 (본문 첫 페이지/footer/email 라인), 없으면 빈 문자열"}\n\n'
         f"Title: {title}\nType: {doc_type}\nBody:\n{sample}"
     )
     try:
@@ -183,6 +189,8 @@ async def _extract_metadata_only(title: str, body: str, doc_type: str) -> dict:
                 "tags": [t.strip() for t in tags_raw
                          if isinstance(t, str) and t.strip()][:8],
                 "report_date": (data.get("report_date") or "").strip() or None,
+                "brokerage": (data.get("brokerage") or "").strip() or None,
+                "analyst": (data.get("analyst") or "").strip() or None,
             }
     except Exception as e:
         log.warning("metadata extract failed: %s", e)

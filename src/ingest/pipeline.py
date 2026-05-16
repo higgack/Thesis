@@ -395,12 +395,17 @@ _META_EXTRACT_PROMPT = (
     '{"company": "주 분석/언급 대상 회사명 한 개 (모호하면 빈 문자열)",\n'
     ' "tags": ["반도체"|"AI"|"바이오"|"방산"|"로봇"|"보고서"|"뉴스"|"실적"|'
     '"분석"|"차트"|"공시"|"인터뷰"|"리포트" 등 적절한 1~5개],\n'
-    ' "report_date": "본문 내 발행일 YYYY.MM 형태, 없으면 빈 문자열"}\n\n'
+    ' "report_date": "본문 내 발행일 YYYY.MM 또는 YYYY.MM.DD, 없으면 빈 문자열",\n'
+    ' "brokerage": "발행 증권사/연구소/언론사 (NH투자증권/신한투자증권/SK증권/'
+    '현대차증권/Goldman Sachs/Bloomberg 등), 없으면 빈 문자열",\n'
+    ' "analyst": "리포트 작성 애널리스트 1명 (본문 첫 페이지/footer/email '
+    '라인에서 추출), 없으면 빈 문자열"}\n\n'
     "Rules:\n"
     "- company는 정확한 회사명만. 삼성전자/삼성전기/삼성SDI 구분.\n"
     "- 산업 동향/매크로/일반 분석이면 company는 빈 문자열.\n"
     "- 다국적/해외 기업도 OK (예: NVIDIA, TSMC, ARM).\n"
-    "- tags는 일반 카테고리 + 핵심 주제."
+    "- tags는 일반 카테고리 + 핵심 주제.\n"
+    "- brokerage / analyst 는 본문에 명시된 경우만 채움. 추측 금지."
 )
 
 
@@ -439,6 +444,8 @@ async def _extract_metadata(title: str, body: str, doc_type: str) -> dict:
                 "company": company or None,
                 "tags": [t.strip() for t in tags if isinstance(t, str) and t.strip()][:8],
                 "report_date": (data.get("report_date") or "").strip() or None,
+                "brokerage": (data.get("brokerage") or "").strip() or None,
+                "analyst": (data.get("analyst") or "").strip() or None,
             }
     except Exception as e:
         log.warning("metadata extract failed: %s", e)
