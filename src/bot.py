@@ -1110,7 +1110,7 @@ Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【3. 도구】</b> 🧠 search_my_brain TOP_K 10 · 🧠 compare_papers 50건 · 🧠 recent_docs · 📄 search_papers 15건/6소스+PDF · ⚖️ search_patents 15건/USPTO+Google Patents URL · 🌐 web_search · 📥 ingest_url (모든 결과 산문 요지 형식)
+<b>【3. 도구】</b> 🧠 search_my_brain TOP_K 10 · 🧠 compare_papers 50건 · 🧠 recent_docs · 📄 search_papers 15건/6소스+PDF · ⚖️ search_patents 15건/Lens 글로벌(US+EU+WIPO+JP+KR) · 🌐 web_search · 📥 ingest_url (검색 결과 한국어 자동 번역, agent 우회 명령어)
 
 <b>【3-1. 회사 분석】</b> "회사명+실적/매출/영업이익/가이던스" → 본문 + 신사업 키포인트(·합의 N건) + 📌 실적 데이터(맨끝): 연간/분기 표(A./F.·YoY·QoQ·"—") + xychart(bar=중앙값·line=max/min) + 분석가별 가이던스(브로커리지/이름/발행일) + 웹 추가(참고용·brain/web 분리). 숫자 audit(매출=OP·마진&gt;70% 등) 자동 경고.
 
