@@ -4,12 +4,12 @@ Standing instructions / project-specific facts that need to survive
 context compaction. Anything Claude should ALWAYS remember while
 working on this repo.
 
-## Commit / push gate (CRITICAL — top priority rule)
+## Commit / push gate (CRITICAL — top priority rule, VIOLATED REPEATEDLY)
 
 Do NOT run `git commit`, `git push`, or anything that triggers a
 deploy (touching `pyproject.toml`, `.env`, Dockerfile, anything the
 auto-deploy cron will rebuild) UNLESS the user has used an explicit
-trigger word in their most recent message:
+trigger word in their MOST RECENT message:
   • "커밋", "푸시", "배포", "deploy", "commit", "push", "올려",
     "내보내", "ship", "release"
 
@@ -21,19 +21,57 @@ new task starts in "edit-only" mode:
 3. Show the user a brief summary of what changed.
 4. STOP and wait for the explicit trigger word.
 
-If the user just sends a fix description, screenshot, or feature
-request with no trigger word, the default action is: make the
-change, present it, wait. NOT push.
+### MANDATORY pre-commit self-check (paste-the-message rule)
 
-Forbidden inferences:
+Before running ANY `git commit` or `git push` Bash call, do this
+explicit mental step (no shortcuts):
+
+  a. Re-read the user's most recent message verbatim.
+  b. Scan it for ONE of the trigger words above (Korean or English,
+     exact match, case-insensitive). Trigger words appearing in your
+     OWN earlier output don't count. Trigger words inside a quoted
+     code snippet or pasted log the user shared don't count either.
+  c. If no trigger word: STOP. Present the diff/summary instead.
+     Ask "푸시할까?" only if you genuinely need confirmation —
+     otherwise just end the turn cleanly.
+
+This step exists because the agent has violated the gate multiple
+times in single sessions, always with the same self-justification
+pattern ("the user clearly wants this fixed, so they'd want it
+pushed"). They wouldn't. They want it presented first.
+
+### Forbidden inferences (none of these are trigger words)
+
   • "fix this bug" ≠ permission to push the fix
   • "please add X" ≠ permission to deploy X
   • "thanks, looks good" ≠ permission to push something pending
   • A prior session's `/ultrareview` or similar ≠ blanket push licence
+  • Test result feedback ("이렇게 나왔어", "여기 결과", screenshot)
+    ≠ permission to push the next fix
+  • Bug report or unexpected output ≠ permission to push patch
+  • Analytical question ("왜 그래?", "이건 데이터 부족인가?")
+    ≠ permission to push
+  • Asking a clarifying question ("Q: should X work?") ≠ permission
+    to push your answer
+  • "이번건은 그냥 넘어가" (let this one slide) about a past unauthorized
+    push ≠ blanket permission for future pushes
 
-The user has lost work and time multiple times today because the
-agent pushed unprompted. This rule overrides any in-task assumption
-about workflow speed.
+### Common violation pattern (the one that keeps happening)
+
+After a multi-step implementation: edits → syntax check → diff
+preview → it feels "done" → the agent reflexively reaches for
+`git commit && git push`. THIS IS WRONG. "Done with edits" ≠
+"ready to push". The default end-of-task state is uncommitted
+changes on disk + a summary message to the user. Pushing without
+trigger overrides their explicit workflow.
+
+If the auto-stop-hook nags about uncommitted changes, that is NOT
+permission to push. It's just a reminder; the gate still requires a
+user trigger word.
+
+The user has lost work and time multiple times because the agent
+pushed unprompted. This rule overrides any in-task assumption about
+workflow speed, "completion feel", or hook nagging.
 
 ## Pre-push verification (MANDATORY — block on every push)
 
