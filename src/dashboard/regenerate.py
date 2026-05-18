@@ -701,12 +701,16 @@ _INDEX_JS = r"""
 
 
 def _card_data_text(it: dict) -> str:
-    """Searchable haystack for the JS filter — lowercased, ascii-safe."""
+    """Searchable haystack for the JS filter — lowercased, ascii-safe.
+    Intentionally limited to question + answer only. Including tool
+    names and source titles in the haystack caused confusing matches
+    where a card surfaced because the keyword appeared in a referenced
+    document's title (not the visible Q&A text), so the user couldn't
+    see why it matched. Tool-based filtering happens through the
+    chips instead."""
     parts = [
         it.get("question") or "",
         it.get("answer") or "",
-        " ".join(it.get("tools") or []),
-        " ".join(it.get("sources") or []),
     ]
     return _esc(" ".join(parts).lower())[:5000]
 
