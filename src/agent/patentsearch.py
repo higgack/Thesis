@@ -31,6 +31,8 @@ log = logging.getLogger(__name__)
 
 _KIPRIS_API = "http://plus.kipris.or.kr/openapi/rest"
 _KIPRIS_APPLICANT_PATH = "/patUtiModInfoSearchSevice/applicantNameSearchInfo"
+_KIPRIS_APPNUM_PATH = "/patUtiModInfoSearchSevice/applicationNumberSearchInfo"
+_KIPRIS_CITING_PATH = "/CitingService/citingInfo"
 
 
 def _empty(p: dict, source: str) -> dict:
@@ -183,6 +185,135 @@ async def search_by_applicant(applicant: str, limit: int = 15) -> list[dict]:
         return await _kipris_by_applicant(applicant, limit)
     except Exception as e:
         log.warning("patent search_by_applicant kipris failed (%s)",
+                    type(e).__name__)
+        return []
+
+
+@retry(stop=stop_after_attempt(2), wait=wait_exponential(min=1, max=4))
+async def _kipris_patent_detail(application_number: str) -> dict | None:
+    """Fetch a single KIPRIS patent's detail block by application
+    number. Returns the unified-schema dict (incl. abstract) so the
+    bot can deep-link from /company_patents results."""
+    key = os.getenv("KIPRIS_API_KEY", "").strip()
+    if not key:
+        log.info("kipris: no KIPRIS_API_KEY set, skipping detail fetch")
+        return None
+    params = {
+        "applicationNumber": application_number,
+        "docsStart": "1",
+        "accessKey": key,
+    }
+    import xml.etree.ElementTree as _ET
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True,
+                                 headers={"User-Agent": "SecondBrainBot"}) as c:
+        r = await c.get(_KIPRIS_API + _KIPRIS_APPNUM_PATH, params=params)
+        if r.status_code != 200:
+            log.warning(
+                "kipris %d on detail — body=%r",
+                r.status_code, r.text[:300].replace("\n", " "),
+            )
+            r.raise_for_status()
+    try:
+        root = _ET.fromstring(r.content)
+    except _ET.ParseError as e:
+        log.warning("kipris detail XML parse failed: %s", e)
+        return None
+    item = root.find(".//PatentUtilityInfo")
+    if item is None:
+        return None
+    row = _kipris_to_unified(item)
+    # The detail endpoint returns Abstract + IPC fields not present
+    # in the applicant-search list response. Patch them in.
+    abstract_el = item.find("Abstract")
+    if abstract_el is not None and abstract_el.text:
+        row["abstract"] = abstract_el.text.strip()
+    ipc_el = item.find("InternationalpatentclassificationNumber")
+    if ipc_el is not None and ipc_el.text:
+        # IPC class stuffed into the venue slot so the existing
+        # formatter ("· venue ·") renders it.
+        row["venue"] = ipc_el.text.strip()
+    return row
+
+
+async def get_patent_detail(application_number: str) -> dict | None:
+    """Public entry — single-patent detail by KR application number.
+    Returns None on failure / missing key so callers can fall back."""
+    try:
+        return await _kipris_patent_detail(application_number)
+    except Exception as e:
+        log.warning("patent_detail kipris failed (%s)",
+                    type(e).__name__)
+        return None
+
+
+@retry(stop=stop_after_attempt(2), wait=wait_exponential(min=1, max=4))
+async def _kipris_citing(application_number: str) -> list[dict]:
+    """Patents that CITE the given application number. KIPRIS
+    Citing API returns lightweight rows (target's app#, target's
+    status, citation literature type). We map each into the shared
+    schema so the bot can render them via _format_patents_text."""
+    key = os.getenv("KIPRIS_API_KEY", "").strip()
+    if not key:
+        log.info("kipris: no KIPRIS_API_KEY set, skipping citing fetch")
+        return []
+    params = {
+        "standardCitationApplicationNumber": application_number,
+        "accessKey": key,
+    }
+    import xml.etree.ElementTree as _ET
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True,
+                                 headers={"User-Agent": "SecondBrainBot"}) as c:
+        r = await c.get(_KIPRIS_API + _KIPRIS_CITING_PATH, params=params)
+        if r.status_code != 200:
+            log.warning(
+                "kipris %d on citing — body=%r",
+                r.status_code, r.text[:300].replace("\n", " "),
+            )
+            r.raise_for_status()
+    try:
+        root = _ET.fromstring(r.content)
+    except _ET.ParseError as e:
+        log.warning("kipris citing XML parse failed: %s", e)
+        return []
+    out = []
+    for item in root.findall(".//citingInfo"):
+        def _t(tag: str) -> str:
+            child = item.find(tag)
+            if child is None or not child.text:
+                return ""
+            return child.text.strip()
+        citing_app = _t("ApplicationNumber")
+        status_name = _t("StandardStatusCodeName")
+        cite_type = _t("CitationLiteratureTypeCodeName")
+        if not citing_app:
+            continue
+        # Build a thin unified row — title/abstract not in citing
+        # response (would need a second detail fetch per row).
+        url = (
+            f"https://kpat.kipris.or.kr/kpat/biblioa.do?"
+            f"method=biblioFrame&applno={citing_app}"
+        )
+        out.append(_empty({
+            "title": f"[인용 특허] {status_name or '상태 미상'}",
+            "patent_number": f"KR-출원{citing_app}",
+            "date": "",
+            "year": None,
+            "inventors": [],
+            "assignee": cite_type or "",
+            "abstract": "",
+            "claims_count": None,
+            "url": url,
+        }, "KIPRIS"))
+    return out
+
+
+async def get_citing_patents(application_number: str) -> list[dict]:
+    """Public entry — patents that cite the given KR application.
+    Returns [] on failure / missing key."""
+    try:
+        return await _kipris_citing(application_number)
+    except Exception as e:
+        log.warning("citing_patents kipris failed (%s)",
                     type(e).__name__)
         return []
 

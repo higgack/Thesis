@@ -1106,12 +1106,12 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
 보류(5분): /pending(OCR 크기순·건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
 삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
-도구: /search_my_brain · /compare_papers · /search_papers · /search_patents · /company_patents · /web_search · /ingest_url
+도구: /search_my_brain · /compare_papers · /search_papers · /search_patents · /company_patents · /patent_detail · /citing_patents · /web_search · /ingest_url
 기타: /start /help
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【3. 도구】</b> 🧠 brain·compare·recent_docs · 📄 search_papers 6소스+PDF · ⚖️ search_patents (글로벌, EPO 대기) · 🇰🇷 company_patents KIPRIS 한국 출원인 · 🌐 web_search · 📥 ingest_url (한국어 번역+agent 우회)
+<b>【3. 도구】</b> 🧠 brain·compare·recent · 📄 papers 6소스+PDF · 🇰🇷 KIPRIS(company/detail/citing) · ⚖️ patents (EPO 대기) · 🌐 web · 📥 ingest_url · 한국어 자동번역
 
 <b>【3-1. 회사 분석】</b> "회사명+실적/매출/영업이익/가이던스" → 본문 + 신사업 키포인트(·합의 N건) + 📌 실적 데이터(맨끝): 연간/분기 표(A./F.·YoY·QoQ·"—") + xychart(bar=중앙값·line=max/min) + 분석가별 가이던스(브로커리지/이름/발행일) + 웹 추가(참고용·brain/web 분리). 숫자 audit(매출=OP·마진&gt;70% 등) 자동 경고.
 
@@ -4074,6 +4074,167 @@ async def cmd_company_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 log.exception("company_patents chunked send failed")
 
 
+async def cmd_patent_detail(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/patent_detail <KR 출원번호> — KIPRIS 단건 상세 조회.
+
+    Use case: /company_patents 결과의 KR-출원####### 번호를 보고
+    abstract / IPC / 상세 정보가 더 필요할 때 그 번호로 deep-link.
+    Detail endpoint returns Abstract + InternationalpatentclassificationNumber
+    that the list endpoint omits.
+    """
+    if not _is_owner(update):
+        return
+    app_num = " ".join(ctx.args).strip()
+    if not app_num:
+        await update.message.reply_text(
+            "사용법: /patent_detail <KR 출원번호 13자리>\n"
+            "예: /patent_detail 1020230012345\n"
+            "(/company_patents 결과의 'KR-출원…' 뒤 숫자를 그대로 입력)"
+        )
+        return
+    # Tolerant of "KR-출원####" prefix users might copy from /company_patents
+    digits = "".join(ch for ch in app_num if ch.isdigit())
+    if not digits:
+        await update.message.reply_text(
+            "출원번호는 숫자만 인식. 예: 1020230012345"
+        )
+        return
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"🔍 출원 {digits} 상세 조회 중... (KIPRIS · 한국어 번역 포함)"
+    )
+    try:
+        from .agent import patentsearch
+        row = await patentsearch.get_patent_detail(digits)
+    except Exception as e:
+        log.exception("patent_detail call failed for %r", digits)
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=f"⚠️ KIPRIS 상세 조회 실패: {_explain_error(e)}",
+            )
+        except Exception:
+            pass
+        return
+    if not row:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=f"🔍 출원번호 {digits} — KIPRIS 매칭 없음 "
+                     "(번호 오타 또는 비공개 출원).",
+            )
+        except Exception:
+            pass
+        return
+    results = await _translate_results_korean([row])
+    body = _format_patents_text(f"출원번호 {digits} 상세", results)
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.warning("patent_detail status edit failed, sending fresh")
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("patent_detail fallback send failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("patent_detail chunked send failed")
+
+
+async def cmd_citing_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/citing_patents <KR 출원번호> — 이 특허를 인용한 후행 특허 조회.
+
+    KIPRIS Citing 서비스 결과는 인용 측 출원번호 + 상태 + 인용 문헌
+    type 정도만 줘서 thin row 로 렌더링. 더 자세한 인용 특허 정보가
+    필요하면 결과의 KR 출원번호로 /patent_detail 한 번 더.
+    """
+    if not _is_owner(update):
+        return
+    app_num = " ".join(ctx.args).strip()
+    if not app_num:
+        await update.message.reply_text(
+            "사용법: /citing_patents <KR 출원번호 13자리>\n"
+            "예: /citing_patents 1020200012345\n"
+            "(이 출원을 인용한 후행 특허 목록 조회)"
+        )
+        return
+    digits = "".join(ch for ch in app_num if ch.isdigit())
+    if not digits:
+        await update.message.reply_text(
+            "출원번호는 숫자만 인식. 예: 1020200012345"
+        )
+        return
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"🔍 출원 {digits} 인용 특허 조회 중... (KIPRIS)"
+    )
+    try:
+        from .agent import patentsearch
+        rows = await patentsearch.get_citing_patents(digits)
+    except Exception as e:
+        log.exception("citing_patents call failed for %r", digits)
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=f"⚠️ KIPRIS 인용 조회 실패: {_explain_error(e)}",
+            )
+        except Exception:
+            pass
+        return
+    if not rows:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=f"🔍 출원 {digits} 를 인용한 후행 특허 없음 "
+                     "(또는 KIPRIS 미수록).",
+            )
+        except Exception:
+            pass
+        return
+    # Translation is cheap on these (no abstract) but title shells
+    # are formulaic — skip the LLM call. Use raw rows.
+    body = _format_patents_text(f"출원번호 {digits} 인용 특허", rows)
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.warning("citing_patents status edit failed, sending fresh")
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("citing_patents fallback send failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("citing_patents chunked send failed")
+
+
 async def cmd_web_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -6751,6 +6912,8 @@ def main():
     app.add_handler(CommandHandler("search_papers", cmd_search_papers))
     app.add_handler(CommandHandler("search_patents", cmd_search_patents))
     app.add_handler(CommandHandler("company_patents", cmd_company_patents))
+    app.add_handler(CommandHandler("patent_detail", cmd_patent_detail))
+    app.add_handler(CommandHandler("citing_patents", cmd_citing_patents))
     app.add_handler(CommandHandler("web_search", cmd_web_search))
     app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))
     app.add_handler(CommandHandler("recent_docs", cmd_recent_docs))
