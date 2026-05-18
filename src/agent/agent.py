@@ -98,7 +98,8 @@ _SYSTEM = """당신은 사용자의 개인 세컨드브레인 에이전트입니
 - search_my_brain: 사용자가 저장한 자료에서 특정 사실/구절 검색 (단일 질문)
 - compare_papers: 같은 주제의 여러 자료 요약을 한 번에 모아 비교/종합 (다수 자료 통합)
 - search_papers: 외부 학술 논문 검색 (다중 소스: S2 / arXiv / OpenAlex / CrossRef / IEEE / PubMed — 쿼리 도메인에 따라 자동 라우팅). limit 기본값 15, 특별한 사유 없으면 15 그대로 사용. 결과에 url/pdf 포함되어 사용자가 바로 다운로드 가능.
-- search_patents: 외부 특허 검색 (The Lens, 95M+ 글로벌 특허 — US+EU+WIPO+JP+KR 등 다국가). limit 기본 15. 결과에 patent_number (jurisdiction prefix 포함, US11234567/EP3456789), inventors, assignee, publication date, claims_count, Google Patents URL 포함. "특허/patent/출원/IP/prior art" 키워드에 트리거.
+- search_patents: 외부 특허 검색 (The Lens, 95M+ 글로벌 특허 — US+EU+WIPO+JP+KR 등 다국가). limit 기본 15. 결과에 patent_number (jurisdiction prefix 포함, US11234567/EP3456789), inventors, assignee, publication date, claims_count, Google Patents URL 포함. "특허/patent/출원/IP/prior art" **키워드** 에 트리거 (free-text query).
+- search_company_patents: KIPRIS Plus 출원인명 검색 (한국 특허 전용). 입력은 **회사명/기관명** (출원인), 키워드 아님. "[삼성전기/SK하이닉스/LG에너지솔루션 등 한국 회사] 특허/IP 알려줘/보유" 류 트리거. 결과: 출원번호·등록번호·출원일·등록일·제목·출원인·Google Patents URL. 외국 회사 (NVIDIA/TSMC/Intel) 는 search_patents 사용.
 - ingest_url: 새 URL을 저장소에 영구 보관
 - recent_docs: 최근 저장한 문서 목록
 - web_search: 일반 웹 검색 (Google grounding). 최신 뉴스/시세/동향/오늘 발표 등 저장 자료에 없는 사실 확인.
@@ -115,7 +116,8 @@ _SYSTEM = """당신은 사용자의 개인 세컨드브레인 에이전트입니
 5. brain 결과가 부족해도 web_search로 자동 fallback하지 말 것. 대신 "저장소에는 X 정도만 있고, 더 정확한 답을 위해 어떤 자료(URL/PDF)를 추가하면 좋을지" 짧게 안내.
 6. web_search 규칙은 단순. 사용자 메시지에 "웹", "구글", "인터넷" 중 하나가 들어있으면 web_search 호출. 그 외 모든 질문은 brain (search_my_brain / compare_papers). 시간 표현("최근", "요즘", "오늘" 등)은 web 트리거가 아니다 — 명시적 "웹/구글/인터넷" 단어만이 트리거. brain을 거치지 않고 web_search만 호출하는 응답은 위 명시 단어가 없는 한 잘못된 routing.
 7. "찾아줘 / 어떤 논문 / 새로운 / 추천해줘" 등 외부 학술 발견은 search_papers.
-7-1. "특허 / patent / 출원 / IP / prior art / 특허번호" 등 특허 발견은 search_patents. 논문이 아닌 특허만. 사용자 메시지에 명시적 특허 키워드가 있어야 트리거 — "삼성 기술" 같이 모호한 쿼리는 brain 우선.
+7-1. "특허 / patent / 출원 / IP / prior art / 특허번호" 등 특허 발견은 search_patents (free-text 키워드). 논문이 아닌 특허만. 사용자 메시지에 명시적 특허 키워드가 있어야 트리거 — "삼성 기술" 같이 모호한 쿼리는 brain 우선.
+7-2. "[한국회사명] 특허/IP 알려줘/보유" 류 — 한국 회사명(삼성전기/SK하이닉스/LG/현대차 등 + 학교/연구소) 명시되고 특허 키워드 있으면 search_company_patents (출원인 검색, KIPRIS). 글로벌 회사(NVIDIA/TSMC/Apple/Intel)면 search_patents 그대로.
 8. URL이 있고 "학습/저장/기억/넣어/추가" 같은 명령조면 ingest_url. 단순 질문이면 ingest 말 것.
 9. 도구 호출은 질의당 최대 3~4회. 동일 도구 반복 호출 금지.
 
@@ -661,6 +663,17 @@ def _harvest_sources(
             label = f"{t} [{num}]" if num else t
             # Google Patents URL is the only link form we have today;
             # PDF embed pages exist but we don't fetch them.
+            _add(label, p.get("url") or "")
+    elif name == "search_company_patents":
+        # Same unified schema as search_patents — KIPRIS just fills
+        # the patent_number with KR* prefixes and the url with the
+        # KIPRIS biblio frame when Google Patents doesn't yet index
+        # the application. Reuse the patent-style label so the
+        # legend renders consistently across both backends.
+        for p in result.get("results", []):
+            t = p.get("title") or ""
+            num = p.get("patent_number") or ""
+            label = f"{t} [{num}]" if num else t
             _add(label, p.get("url") or "")
     elif name == "ingest_url":
         _add(result.get("title") or "")

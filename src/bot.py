@@ -963,6 +963,7 @@ _TOOL_EMOJI = {
     "recent_docs": "🧠",
     "search_papers": "📄",
     "search_patents": "⚖️",
+    "search_company_patents": "🇰🇷",
     "web_search": "🌐",
     "ingest_url": "📥",
 }
@@ -1105,17 +1106,17 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
 보류(5분): /pending(OCR 크기순·건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
 삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
-도구: /search_my_brain · /compare_papers · /search_papers · /search_patents · /web_search · /ingest_url
+도구: /search_my_brain · /compare_papers · /search_papers · /search_patents · /company_patents · /web_search · /ingest_url
 기타: /start /help
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【3. 도구】</b> 🧠 search_my_brain TOP_K 10 · 🧠 compare_papers 50건 · 🧠 recent_docs · 📄 search_papers 15건/6소스+PDF · ⚖️ search_patents 15건/Lens 글로벌(US+EU+WIPO+JP+KR) · 🌐 web_search · 📥 ingest_url (검색 결과 한국어 자동 번역, agent 우회 명령어)
+<b>【3. 도구】</b> 🧠 brain·compare·recent_docs · 📄 search_papers 6소스+PDF · ⚖️ search_patents (글로벌, EPO 대기) · 🇰🇷 company_patents KIPRIS 한국 출원인 · 🌐 web_search · 📥 ingest_url (한국어 번역+agent 우회)
 
 <b>【3-1. 회사 분석】</b> "회사명+실적/매출/영업이익/가이던스" → 본문 + 신사업 키포인트(·합의 N건) + 📌 실적 데이터(맨끝): 연간/분기 표(A./F.·YoY·QoQ·"—") + xychart(bar=중앙값·line=max/min) + 분석가별 가이던스(브로커리지/이름/발행일) + 웹 추가(참고용·brain/web 분리). 숫자 audit(매출=OP·마진&gt;70% 등) 자동 경고.
 
 <b>【4. 자연어 트리거】</b>
-🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰/비교" · 📄 papers "찾아줘/논문" · ⚖️ patents "특허/patent" · 🌐 <b>web — "웹/구글/인터넷"만</b>(시간 표현 X) · 📥 ingest "학습해줘 URL"·URL만
+🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL"
 
 <b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 전송
 • PDF: 텍스트 자동 추출(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b>(OCR_AUTO_CAP=0), 학습 직후 3-버튼 prompt [📄 OCR 추가 / 📝 텍스트만 / 🚫 취소], 만료 없음. image-only PDF first 3p만 자동 OCR · 이미지 캡션≥80자면 OCR skip · 짧으면 OCR · [OCR] 강제 · 음성: Gemini STT · YouTube: 자막→Jina · <b>.txt/.md/.csv 첨부=학습 제외</b>
@@ -3931,26 +3932,34 @@ def _format_patents_text(query: str, results: list[dict]) -> str:
 async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Direct /search_patents — bypasses the agent.
 
-    Live test showed Gemini repeatedly skipping search_patents even
-    with hard prompts ("반드시 search_patents 사용 ... 다른 도구 금지")
-    plus a tool-aware nudge — it kept defaulting to text-only refusal.
-    The Lens API itself works; the failure was 100% routing-side. The
-    command now calls patentsearch.search() directly and formats the
-    response in bot code, so the user gets deterministic results from
-    an explicit command. Natural-language "특허 찾아줘" still flows
-    through the agent + (P-2) framework when the model cooperates."""
+    Global free-text patent search. Currently no backend is wired
+    up (The Lens was removed for being paid-only; EPO OPS pending
+    activation). When patentsearch.has_global_backend() flips True
+    we run the full search → translate → format → send flow.
+    Korean company patent lookup stays available via
+    /company_patents which routes through KIPRIS regardless."""
     if not _is_owner(update):
         return
     q = " ".join(ctx.args).strip()
     if not q:
         await update.message.reply_text("사용법: /search_patents <검색어>")
         return
+    from .agent import patentsearch
+    if not patentsearch.has_global_backend():
+        await update.message.reply_text(
+            "⚠️ 글로벌 특허 검색 백엔드 미활성.\n"
+            "Lens 무료 tier 종료로 제거됨. EPO OPS 계정 활성화 대기 중 "
+            "(승인되면 자동 복구).\n\n"
+            "💡 한국 회사 특허는 지금 바로:\n"
+            "    /company_patents 삼성전기\n"
+            "    /company_patents SK하이닉스"
+        )
+        return
     await _typing(update, ctx)
     status = await update.message.reply_text(
         f"🔍 '{q}' 특허 검색 중... (한국어 번역 포함)"
     )
     try:
-        from .agent import patentsearch
         results = await patentsearch.search(q, limit=15)
     except Exception as e:
         log.exception("search_patents direct call failed for %r", q)
@@ -3989,6 +3998,80 @@ async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception:
                 log.exception("search_patents chunked send failed")
+
+
+async def cmd_company_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Direct /company_patents — KIPRIS Plus applicant-name lookup.
+
+    Same bypass-the-agent pattern as /search_patents and
+    /search_papers: deterministic backend call + shared formatter +
+    Korean translation, so the user gets a predictable result block.
+    The agent's natural-language path (e.g. "삼성전기 특허 알려줘")
+    can still route through search_company_patents tool, but the
+    slash command short-circuits the LLM round trip entirely.
+    """
+    if not _is_owner(update):
+        return
+    applicant = " ".join(ctx.args).strip()
+    if not applicant:
+        await update.message.reply_text(
+            "사용법: /company_patents <한국 회사명>\n"
+            "예: /company_patents 삼성전기\n"
+            "    /company_patents SK하이닉스\n"
+            "    /company_patents 한양대학교 산학협력단"
+        )
+        return
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"🔍 '{applicant}' 한국 특허 검색 중... (KIPRIS · 한국어 번역 포함)"
+    )
+    try:
+        from .agent import patentsearch
+        results = await patentsearch.search_by_applicant(applicant, limit=15)
+    except Exception as e:
+        log.exception("company_patents direct call failed for %r", applicant)
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=f"⚠️ KIPRIS 검색 실패: {_explain_error(e)}",
+            )
+        except Exception:
+            pass
+        return
+    # KIPRIS list response has no abstract (applicantNameSearchInfo
+    # endpoint design), but titles are Korean already — translation
+    # call still runs in case mixed-language titles or future
+    # detail-fetched abstracts surface. Cheap with empty abstracts
+    # (~₩1).
+    results = await _translate_results_korean(results)
+    body = _format_patents_text(
+        f"{applicant} (KIPRIS 출원인 검색)", results,
+    )
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.warning("company_patents status edit failed, sending fresh")
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("company_patents fallback send failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("company_patents chunked send failed")
 
 
 async def cmd_web_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -6667,6 +6750,7 @@ def main():
     app.add_handler(CommandHandler("compare_papers", cmd_compare_papers))
     app.add_handler(CommandHandler("search_papers", cmd_search_papers))
     app.add_handler(CommandHandler("search_patents", cmd_search_patents))
+    app.add_handler(CommandHandler("company_patents", cmd_company_patents))
     app.add_handler(CommandHandler("web_search", cmd_web_search))
     app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))
     app.add_handler(CommandHandler("recent_docs", cmd_recent_docs))

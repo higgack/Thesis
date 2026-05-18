@@ -1,18 +1,25 @@
-"""The Lens patent search.
+"""Patent search backends.
 
-Phase 1 patent backend — The Lens (https://www.lens.org).
-Free with Bearer token (LENS_API_KEY env, register at
-https://www.lens.org/lens/user/subscriptions → Patent API token).
-Coverage: 95M+ global patents (US + EU + WIPO + JP + KR + ...).
+Active:
+  • KIPRIS Plus (Korean Intellectual Property Office) — free with
+    KIPRIS_API_KEY, registered at https://plus.kipris.or.kr →
+    활용신청 → 특허/실용신안 정보검색서비스. Korean patents only,
+    applicant-name lookup (search_by_applicant) — different shape
+    from a free-text search.
 
-Earlier draft targeted USPTO PatentsView but PatentsView has been
-folded into USPTO Open Data Portal whose registration requires
-ID.me identity verification (video call for international users,
-1-3 days). The Lens registers in ~5 min with no identity check
-and gives broader global coverage, so it's the better fit for a
-personal research bot. Phase 2/3 can still layer EPO OPS or
-USPTO ODP on top following papersearch.search()'s multi-source
-pattern when needed.
+Disabled / pending:
+  • The Lens — removed. 14-day trial only, institutional access
+    required ITK subscription approval which never came through.
+    Per user policy (5/17) we don't keep paid backends around.
+  • EPO OPS — user registered 5/16, account activation pending
+    (1-2 business days, then OAuth + XML parsing). Will be added
+    here once credentials land.
+  • USPTO ODP — deferred (ID.me identity-verification overhead).
+
+The global free-text `search()` entry point therefore returns []
+right now; `/search_patents <keyword>` shows a message pointing to
+/company_patents instead. When EPO OPS activates we drop the EPO
+backend into `search()` here without touching the bot layer.
 """
 import logging
 import os
@@ -22,7 +29,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 log = logging.getLogger(__name__)
 
-_LENS_API = "https://api.lens.org/patent/search"
+_KIPRIS_API = "http://plus.kipris.or.kr/openapi/rest"
+_KIPRIS_APPLICANT_PATH = "/patUtiModInfoSearchSevice/applicantNameSearchInfo"
 
 
 def _empty(p: dict, source: str) -> dict:
@@ -41,144 +49,170 @@ def _empty(p: dict, source: str) -> dict:
     }
 
 
-def _pick_lang_text(items, prefer_lang: str = "en") -> str:
-    """The Lens returns title/abstract as
-    [{"text": "...", "lang": "en"}, ...] for multilingual coverage.
-    Pick the English entry first, otherwise the first non-empty."""
-    if not items:
-        return ""
-    if isinstance(items, dict):
-        items = [items]
-    for x in items:
-        if (x.get("lang") or "").startswith(prefer_lang):
-            t = (x.get("text") or "").strip()
-            if t:
-                return t
-    for x in items:
-        t = (x.get("text") or "").strip()
-        if t:
-            return t
-    return ""
+def _kipris_to_unified(item) -> dict:
+    """Map a KIPRIS PatentUtilityInfo XML node into our shared schema."""
+    def _t(tag: str) -> str:
+        child = item.find(tag)
+        if child is None or not child.text:
+            return ""
+        return child.text.strip()
+
+    app_num = _t("ApplicationNumber")
+    title = _t("InventionName")
+    app_date_raw = _t("ApplicationDate")  # YYYYMMDD
+    applicant = _t("Applicant")
+    reg_num = _t("RegistrationNumber")
+    reg_date_raw = _t("RegistrationDate")
+    open_num = _t("OpeningNumber")
+    open_date_raw = _t("OpeningDate")
+
+    def _fmt_date(yyyymmdd: str) -> str:
+        if len(yyyymmdd) == 8 and yyyymmdd.isdigit():
+            return f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
+        return yyyymmdd
+
+    # Show registration date when granted, otherwise application date.
+    primary_raw = reg_date_raw or open_date_raw or app_date_raw
+    date = _fmt_date(primary_raw)
+    year = None
+    if len(primary_raw) >= 4 and primary_raw[:4].isdigit():
+        year = int(primary_raw[:4])
+
+    # patent_number = registered KR number if granted, else KR-A
+    # (published / application). Google Patents resolves both forms.
+    if reg_num:
+        patent_number = f"KR{reg_num}"
+        url = f"https://patents.google.com/patent/KR{reg_num}"
+    elif open_num:
+        patent_number = f"KR{open_num}A"
+        url = f"https://patents.google.com/patent/KR{open_num}A"
+    else:
+        patent_number = f"KR-출원{app_num}" if app_num else ""
+        # KIPRIS biblio frame works for raw application numbers
+        # (this is the KIPRIS web detail page when Google Patents has
+        # no match yet).
+        url = (
+            f"https://kpat.kipris.or.kr/kpat/biblioa.do?"
+            f"method=biblioFrame&applno={app_num}"
+        ) if app_num else ""
+
+    return _empty({
+        "title": title,
+        "patent_number": patent_number,
+        "date": date,
+        "year": year,
+        # KIPRIS applicantNameSearchInfo doesn't return inventor or
+        # abstract in the list response — only application number,
+        # title, applicant, dates, status. We could fetch detail per
+        # patent (applicationNumberSearchInfo + Abstract) but that's
+        # N extra round trips — defer until we see real demand.
+        "inventors": [],
+        "assignee": applicant,
+        "abstract": "",
+        "claims_count": None,
+        "url": url,
+    }, "KIPRIS")
 
 
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=1, max=4))
-async def _lens(query: str, limit: int) -> list[dict]:
-    """The Lens patent search. Free with Bearer token.
-    Silently skips when no key set so search() returns []
-    instead of crashing."""
-    key = os.getenv("LENS_API_KEY", "").strip()
+async def _kipris_by_applicant(applicant: str, limit: int) -> list[dict]:
+    """Search Korean patents by applicant name (출원인) via KIPRIS Plus.
+
+    Free, requires KIPRIS_API_KEY (register at https://plus.kipris.or.kr
+    → 활용신청 → 특허/실용신안 정보검색서비스). Silently returns []
+    when no key is set so the bot keeps working.
+
+    Backend used by /company_patents and by the agent when a question
+    targets a specific Korean entity (삼성전자 / SK하이닉스 etc.).
+    Returns most-recent-first.
+    """
+    key = os.getenv("KIPRIS_API_KEY", "").strip()
     if not key:
-        log.info("lens: no LENS_API_KEY set, skipping")
+        log.info("kipris: no KIPRIS_API_KEY set, skipping")
         return []
-    body = {
-        # `query_string` runs the full Lucene query syntax across
-        # title + abstract + claims. The Lens default ranking is
-        # BM25 relevance — what "find me patents about X" wants —
-        # so we don't override `sort`.
-        "query": {"query_string": {"query": query}},
-        "size": min(limit, 25),
-        # Trim the response to fields we actually render — Lens
-        # bibliographic records are huge by default.
-        "include": [
-            "lens_id", "doc_key", "doc_number",
-            "biblio.invention_title", "biblio.publication_reference",
-            "biblio.parties.inventors", "biblio.parties.applicants",
-            "biblio.abstract", "abstract",
-            "claim_count",
-        ],
+    params = {
+        "applicant": applicant,
+        "docsStart": "1",
+        # KIPRIS allows up to 500 per page; we cap at 30 to keep the
+        # XML response small + give the user a curated top slice.
+        "docsCount": str(min(limit, 30)),
+        "patent": "true",
+        "utility": "false",
+        # status: A=공개, R=등록, J=거절, 빈값=전체. Pull everything;
+        # _kipris_to_unified surfaces the latest published/granted
+        # form so the user sees what actually exists.
+        "lastvalue": "",
+        "accessKey": key,
     }
-    headers = {
-        "Authorization": f"Bearer {key}",
-        "Content-Type": "application/json",
-        "User-Agent": "SecondBrainBot",
-    }
+    import xml.etree.ElementTree as _ET
     async with httpx.AsyncClient(timeout=20, follow_redirects=True,
-                                 headers=headers) as c:
-        r = await c.post(_LENS_API, json=body)
+                                 headers={"User-Agent": "SecondBrainBot"}) as c:
+        r = await c.get(_KIPRIS_API + _KIPRIS_APPLICANT_PATH, params=params)
         if r.status_code != 200:
-            # Log the body so we can see WHY Lens rejected us — the
-            # bare status code (401/403) doesn't tell us if it's
-            # "token not activated", "wrong API scope", "invalid
-            # format" etc. Truncate to keep logs sane on huge HTML
-            # error pages.
-            body_preview = r.text[:500].replace("\n", " ")
             log.warning(
-                "lens %d on patent/search — key_prefix=%r body=%r",
-                r.status_code, key[:8], body_preview,
+                "kipris %d on applicant search — key_prefix=%r body=%r",
+                r.status_code, key[:8], r.text[:300].replace("\n", " "),
             )
-        r.raise_for_status()
-
+            r.raise_for_status()
+    try:
+        root = _ET.fromstring(r.content)
+    except _ET.ParseError as e:
+        log.warning("kipris XML parse failed: %s", e)
+        return []
     out = []
-    for p in r.json().get("data", []):
-        biblio = p.get("biblio") or {}
-        # Title (multilingual list)
-        title = _pick_lang_text(biblio.get("invention_title"))
-
-        # Patent number = jurisdiction + doc_number (US11234567, EP3456789)
-        pub_ref = biblio.get("publication_reference") or {}
-        juris = (pub_ref.get("jurisdiction") or "").strip()
-        doc_num = (pub_ref.get("doc_number") or p.get("doc_number") or "").strip()
-        patent_number = f"{juris}{doc_num}" if juris and doc_num else doc_num
-
-        date = (pub_ref.get("date") or "").strip()
-        year = int(date[:4]) if date[:4].isdigit() else None
-
-        # Parties (inventors + applicants/assignees)
-        parties = biblio.get("parties") or {}
-        inventors: list[str] = []
-        for i in (parties.get("inventors") or [])[:3]:
-            name = ((i.get("extracted_name") or {}).get("value") or "").strip()
-            if name:
-                inventors.append(name)
-        assignee = ""
-        for a in (parties.get("applicants") or [])[:1]:
-            assignee = ((a.get("extracted_name") or {}).get("value") or "").strip()
-
-        # Abstract — Lens nests it under biblio.abstract in newer
-        # versions but legacy data sometimes still uses root-level
-        # abstract. Try both.
-        abstract = _pick_lang_text(biblio.get("abstract"))
-        if not abstract:
-            abstract = _pick_lang_text(p.get("abstract"))
-
-        # URL — Google Patents resolves the {jurisdiction+number}
-        # form reliably for any jurisdiction. Falls back to Lens
-        # detail page when patent_number is missing.
-        if patent_number:
-            url = f"https://patents.google.com/patent/{patent_number}"
-        elif p.get("lens_id"):
-            url = f"https://www.lens.org/lens/patent/{p['lens_id']}"
-        else:
-            url = ""
-
-        out.append(_empty({
-            "title": title,
-            "patent_number": patent_number,
-            "date": date,
-            "year": year,
-            "inventors": inventors,
-            "assignee": assignee,
-            "abstract": abstract,
-            "claims_count": p.get("claim_count"),
-            "url": url,
-        }, "Lens"))
+    for item in root.findall(".//PatentUtilityInfo"):
+        try:
+            out.append(_kipris_to_unified(item))
+        except Exception:
+            log.exception("kipris row parse failed (skipping)")
     return out
 
 
-async def search(query: str, limit: int = 15) -> list[dict]:
-    """Patent search entry point.
+async def search_by_applicant(applicant: str, limit: int = 15) -> list[dict]:
+    """Korean company patent lookup via KIPRIS.
 
-    Phase 1: The Lens only (95M+ global patents). Phase 2/3 may
-    add EPO OPS or USPTO ODP using the same multi-source pattern
-    papersearch.search() uses, when the use case justifies the
-    extra registration overhead.
+    Separate entry point from search() because the input is an
+    applicant name (회사명), not a free-text query — KIPRIS's
+    applicantNameSearchInfo endpoint doesn't do keyword matching
+    against the title/abstract.
 
-    Failures swallowed — returns [] so the agent can continue
-    answering rather than erroring out the whole turn.
+    Returns [] on backend failure so callers (bot command, agent
+    tool) can render an empty-result message instead of crashing.
     """
     try:
-        return await _lens(query, limit)
+        return await _kipris_by_applicant(applicant, limit)
     except Exception as e:
-        log.warning("patent_search lens failed (%s)",
+        log.warning("patent search_by_applicant kipris failed (%s)",
                     type(e).__name__)
         return []
+
+
+def has_global_backend() -> bool:
+    """True when at least one global free-text patent backend is
+    configured. Used by the bot to show a helpful "no backend yet"
+    message on /search_patents instead of a silent empty result.
+    EPO OPS will flip this to True once OAuth credentials are in
+    .env (EPO_API_KEY + EPO_API_SECRET)."""
+    # Future: return bool(os.getenv("EPO_API_KEY")) or
+    #         bool(os.getenv("USPTO_ODP_API_KEY"))
+    return False
+
+
+async def search(query: str, limit: int = 15) -> list[dict]:
+    """Free-text patent search entry point.
+
+    Currently returns [] — Lens was removed (paid trial only), EPO
+    OPS pending account activation, USPTO ODP deferred (ID.me
+    overhead). When EPO comes online we plug its async function in
+    here behind a `try: await _epo(...) except: []` block matching
+    papersearch.search()'s pattern.
+
+    Korean company patent lookup goes through search_by_applicant()
+    (KIPRIS), which is wired up regardless of global-backend status.
+    """
+    log.info(
+        "patent search: no global backend active "
+        "(Lens removed, EPO OPS pending). Returning [] for %r.",
+        query[:60],
+    )
+    return []

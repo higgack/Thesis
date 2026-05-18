@@ -157,6 +157,32 @@ async def search_papers(query: str, limit: int = 15) -> dict:
     return {"results": slim, "count": len(slim)}
 
 
+async def search_company_patents(applicant: str, limit: int = 15) -> dict:
+    """KIPRIS Plus applicant-name patent lookup. Korean patents only.
+
+    Different from search_patents: input is a company/applicant name
+    (출원인), NOT a free-text query. KIPRIS's applicantNameSearchInfo
+    doesn't keyword-match on title/abstract — it filters by exact
+    applicant string. Use for "삼성전기 특허 알려줘" type questions.
+    """
+    results = await patentsearch.search_by_applicant(applicant, limit=limit)
+    slim = []
+    for p in results:
+        slim.append({
+            "title": p["title"],
+            "patent_number": p.get("patent_number") or "",
+            "date": p.get("date") or "",
+            "year": p.get("year"),
+            "inventors": p.get("inventors") or [],
+            "assignee": p.get("assignee") or "",
+            "abstract": (p.get("abstract") or "")[:2500],
+            "claims_count": p.get("claims_count"),
+            "url": p.get("url") or "",
+            "source": p.get("source") or "",
+        })
+    return {"results": slim, "count": len(slim)}
+
+
 async def search_patents(query: str, limit: int = 15) -> dict:
     """Phase 1: USPTO PatentsView only (US patents).
 
@@ -350,6 +376,7 @@ TOOL_DISPATCH = {
     "search_my_brain": search_my_brain,
     "search_papers": search_papers,
     "search_patents": search_patents,
+    "search_company_patents": search_company_patents,
     "ingest_url": ingest_url,
     "recent_docs": recent_docs,
     "compare_papers": compare_papers,
@@ -407,14 +434,15 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
     types.FunctionDeclaration(
         name="search_patents",
         description=(
-            "Search external patents via The Lens (95M+ global "
-            "patents — US + EU + WIPO + JP + KR + ...). Each result "
-            "returns patent number with jurisdiction prefix "
-            "(US11234567 / EP3456789), title, abstract, inventors, "
-            "assignee/applicant, publication date, claims count, "
-            "plus a Google Patents URL. Use when the user asks to "
-            "FIND patents, prior art, IP filings — keywords like "
-            "'특허/patent/출원/IP/prior art'. Not for paper search."
+            "Free-text patent search across global jurisdictions "
+            "(US + EU + WIPO + JP + KR + ...). CURRENTLY DISABLED — "
+            "the previous backend (The Lens) was removed because the "
+            "free tier was only a 14-day trial. EPO OPS is registered "
+            "and pending account activation; this tool will start "
+            "returning real results once those credentials land. "
+            "Until then prefer search_company_patents for any "
+            "specific Korean entity, or just answer the user that "
+            "global patent search is temporarily offline."
         ),
         parameters=types.Schema(
             type=types.Type.OBJECT,
@@ -426,6 +454,39 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                 ),
             },
             required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_company_patents",
+        description=(
+            "Look up Korean patents filed by a specific company via "
+            "KIPRIS Plus (Korean Intellectual Property Office). Input "
+            "is an APPLICANT NAME (출원인) — Korean company / "
+            "university / institution — NOT a free-text keyword. "
+            "Returns the most-recent KR patents that entity filed, "
+            "with application/registration numbers, dates, titles, "
+            "and Google Patents URLs. Use when the question targets "
+            "what a specific Korean entity has patented "
+            "(e.g., '삼성전기 특허 알려줘', 'SK하이닉스가 보유한 HBM "
+            "특허'). For free-text keyword search use search_patents."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "applicant": types.Schema(
+                    type=types.Type.STRING,
+                    description=(
+                        "Korean applicant name, exactly as it appears "
+                        "in KIPRIS records. Examples: '삼성전기', "
+                        "'SK하이닉스', '한양대학교 산학협력단'."
+                    ),
+                ),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-30). Default 15.",
+                ),
+            },
+            required=["applicant"],
         ),
     ),
     types.FunctionDeclaration(
