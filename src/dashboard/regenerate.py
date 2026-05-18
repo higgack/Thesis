@@ -43,6 +43,8 @@ _BASE_CSS = """
   --primary: #10b981;
   --warning-text: #78350f;
   --tool-brain: #ec4899; --tool-paper: #a855f7;
+  --tool-patent: #3b82f6; --tool-report: #14b8a6;
+  --tool-data: #f43f5e;
   --tool-web: #10b981; --tool-ingest: #f59e0b;
   --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
 }
@@ -53,6 +55,8 @@ _BASE_CSS = """
   --primary: #10b981;
   --warning-text: #fcd34d;
   --tool-brain: #f472b6; --tool-paper: #c084fc;
+  --tool-patent: #60a5fa; --tool-report: #2dd4bf;
+  --tool-data: #fb7185;
   --tool-web: #34d399; --tool-ingest: #fbbf24;
   --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.4);
 }
@@ -66,6 +70,21 @@ body {
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
+
+/* Search-keyword highlight (Noah-style yellow). Used on the
+   index card body when the search input matches, and on the
+   detail page when the URL carries a ?kw= param. */
+mark.kw-highlight {
+  background: #fef08a; color: inherit;
+  padding: 0 2px; border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.06);
+}
+[data-theme="dark"] mark.kw-highlight {
+  background: #fbbf24; color: #0f172a;
+}
+mark.kw-highlight.kw-current {
+  outline: 2px solid #f59e0b; outline-offset: 1px;
+}
 """
 
 # Inline at the top of <head> so the theme is applied before paint —
@@ -153,6 +172,9 @@ header .sub { color: var(--muted); font-size: 13px; }
 .chip.active { color: #fff; }
 .chip.brain.active  { background: var(--tool-brain); border-color: var(--tool-brain); }
 .chip.paper.active  { background: var(--tool-paper); border-color: var(--tool-paper); }
+.chip.patent.active { background: var(--tool-patent); border-color: var(--tool-patent); }
+.chip.report.active { background: var(--tool-report); border-color: var(--tool-report); }
+.chip.data.active   { background: var(--tool-data); border-color: var(--tool-data); }
 .chip.web.active    { background: var(--tool-web); border-color: var(--tool-web); }
 .chip.ingest.active { background: var(--tool-ingest); border-color: var(--tool-ingest); }
 
@@ -202,6 +224,9 @@ header .sub { color: var(--muted); font-size: 13px; }
 }
 .tool-brain  { background: rgba(236,72,153,0.12); color: var(--tool-brain); }
 .tool-paper  { background: rgba(168,85,247,0.12); color: var(--tool-paper); }
+.tool-patent { background: rgba(59,130,246,0.12); color: var(--tool-patent); }
+.tool-report { background: rgba(20,184,166,0.12); color: var(--tool-report); }
+.tool-data   { background: rgba(244,63,94,0.12);  color: var(--tool-data); }
 .tool-web    { background: rgba(16,185,129,0.12); color: var(--tool-web); }
 .tool-ingest { background: rgba(245,158,11,0.12); color: var(--tool-ingest); }
 .tool-other  { background: rgba(107,114,128,0.10); color: var(--muted); }
@@ -275,6 +300,57 @@ header .sub { color: var(--muted); font-size: 13px; }
   font-size: 11px; color: var(--muted);
   border-top: 1px solid var(--border-soft);
 }
+"""
+
+_DETAIL_JS = r"""
+(function(){
+  // Pull ?kw= off the URL; if present, highlight all matches in the
+  // answer body and smooth-scroll the first one into view. Same
+  // shape as the index-page highlighter so the two stay visually
+  // consistent.
+  var params = new URLSearchParams(location.search);
+  var kw = params.get('kw');
+  if (!kw) return;
+  var answer = document.querySelector('.answer');
+  if (!answer) return;
+  function escapeRegex(s){
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  var regex = new RegExp(escapeRegex(kw), 'gi');
+  var walker = document.createTreeWalker(answer, NodeFilter.SHOW_TEXT, null);
+  var nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  var firstMark = null;
+  nodes.forEach(function(node){
+    var text = node.nodeValue;
+    if (!regex.test(text)) return;
+    regex.lastIndex = 0;
+    var frag = document.createDocumentFragment();
+    var last = 0, m;
+    while ((m = regex.exec(text)) !== null){
+      if (m[0].length === 0){ regex.lastIndex++; continue; }
+      if (m.index > last)
+        frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      var mk = document.createElement('mark');
+      mk.className = 'kw-highlight';
+      mk.textContent = m[0];
+      if (!firstMark){
+        mk.classList.add('kw-current');
+        firstMark = mk;
+      }
+      frag.appendChild(mk);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length)
+      frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  });
+  if (firstMark){
+    setTimeout(function(){
+      firstMark.scrollIntoView({behavior: 'smooth', block: 'center'});
+    }, 80);
+  }
+})();
 """
 
 _DETAIL_CSS = _BASE_CSS + """
@@ -351,33 +427,55 @@ def _source_li(title: str) -> str:
     )
 
 
-def _tool_class(name: str) -> str:
+def _tool_bucket(name: str) -> str:
+    """Single bucket name for chip filter + colour. Order matters —
+    `compare_papers` must hit brain before paper, `research_data` must
+    hit data before paper. Keep this in sync with _card_data_tools and
+    the chip HTML in _index_html."""
     n = name.lower()
     if "brain" in n or "compare" in n or "recent" in n:
-        return "tool tool-brain"
+        return "brain"
+    if "patent" in n or "citing" in n:
+        # all patent flavours: search_patents (EPO), search_company_patents
+        # (KIPRIS), get_patent_detail, get_citing_patents,
+        # search_kr_patents_kisti, get_kr_patent_detail,
+        # get_kr_patent_citations.
+        return "patent"
+    if "research_data" in n:
+        # DataON datasets — check BEFORE the paper bucket since
+        # 'research_data' doesn't contain 'paper'/'patent' but the
+        # word order matters for future name variants.
+        return "data"
+    if ("report" in n or "rnd_projects" in n
+            or "related_content" in n or "classification" in n):
+        # KR R&D bucket: ScienceON reports + NTIS projects /
+        # classification recommend / related content.
+        return "report"
     if "paper" in n:
-        return "tool tool-paper"
+        return "paper"
     if "web" in n:
-        return "tool tool-web"
+        return "web"
     if "ingest" in n:
-        return "tool tool-ingest"
-    return "tool tool-other"
+        return "ingest"
+    return "other"
+
+
+_TOOL_EMOJI_MAP = {
+    "brain": "🧠", "paper": "📄", "patent": "⚖️",
+    "report": "📑", "data": "💾",
+    "web": "🌐", "ingest": "📥",
+}
+
+
+def _tool_class(name: str) -> str:
+    return f"tool tool-{_tool_bucket(name)}"
 
 
 def _tool_emoji(name: str) -> str:
-    n = name.lower()
-    if "brain" in n or "compare" in n or "recent" in n:
-        return "🧠"
-    if "paper" in n:
-        return "📄"
-    if "web" in n:
-        return "🌐"
-    if "ingest" in n:
-        return "📥"
-    return "🔧"
+    return _TOOL_EMOJI_MAP.get(_tool_bucket(name), "🔧")
 
 
-_INDEX_JS = """
+_INDEX_JS = r"""
 (function(){
   var search = document.getElementById('q');
   var resetBtn = document.getElementById('reset');
@@ -387,19 +485,99 @@ _INDEX_JS = """
   var counter = document.getElementById('count');
 
   var activeTools = new Set();
+  // Track which cards we auto-opened so we can re-close them when
+  // the query is cleared (user-clicked opens stay open).
+  var autoOpened = new WeakSet();
+
+  function escapeRegex(s){
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function highlightTextNodes(root, regex){
+    if (!root || !regex) return 0;
+    var matches = 0;
+    var walker = document.createTreeWalker(
+      root, NodeFilter.SHOW_TEXT,
+      { acceptNode: function(n){
+          // Skip text already inside a <mark> or inside <script>/<style>.
+          var p = n.parentNode;
+          while (p && p !== root){
+            var tag = (p.tagName || '').toLowerCase();
+            if (tag === 'mark' || tag === 'script' || tag === 'style')
+              return NodeFilter.FILTER_REJECT;
+            p = p.parentNode;
+          }
+          return regex.test(n.nodeValue)
+            ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        } });
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach(function(node){
+      var text = node.nodeValue;
+      regex.lastIndex = 0;
+      var frag = document.createDocumentFragment();
+      var last = 0, m;
+      while ((m = regex.exec(text)) !== null){
+        if (m[0].length === 0){ regex.lastIndex++; continue; }
+        if (m.index > last)
+          frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        var mk = document.createElement('mark');
+        mk.className = 'kw-highlight';
+        mk.textContent = m[0];
+        frag.appendChild(mk);
+        last = m.index + m[0].length;
+        matches++;
+      }
+      if (last < text.length)
+        frag.appendChild(document.createTextNode(text.slice(last)));
+      if (last > 0) node.parentNode.replaceChild(frag, node);
+    });
+    return matches;
+  }
+
+  function clearHighlights(root){
+    if (!root) return;
+    var marks = root.querySelectorAll('mark.kw-highlight');
+    marks.forEach(function(m){
+      m.parentNode.replaceChild(document.createTextNode(m.textContent), m);
+    });
+    root.normalize();
+  }
 
   function apply(){
-    var q = (search.value || '').trim().toLowerCase();
+    var q = (search.value || '').trim();
+    var qLower = q.toLowerCase();
     var visible = 0;
+    var regex = q ? new RegExp(escapeRegex(q), 'gi') : null;
     cards.forEach(function(c){
       if (c.classList.contains('removed')) return;
       var text = c.dataset.text || '';
       var tools = (c.dataset.tools || '').split(' ');
-      var matchesQuery = !q || text.indexOf(q) !== -1;
+      var matchesQuery = !qLower || text.indexOf(qLower) !== -1;
       var matchesTool = activeTools.size === 0 ||
         tools.some(function(t){ return activeTools.has(t); });
       var show = matchesQuery && matchesTool;
       c.classList.toggle('hidden', !show);
+      // Clear stale highlights from previous queries
+      clearHighlights(c);
+      var details = c.querySelector('details');
+      if (show && regex){
+        var qEl = c.querySelector('.question');
+        var aEl = c.querySelector('.answer');
+        highlightTextNodes(qEl, regex);
+        var bodyHits = highlightTextNodes(aEl, regex);
+        // Auto-open the answer if the match is only in the body
+        // (so the user can see WHERE it matched, like Noah's preview).
+        if (details && bodyHits > 0 && !details.open){
+          details.open = true;
+          autoOpened.add(details);
+        }
+      } else if (!regex && details && autoOpened.has(details)){
+        // Query cleared — fold back the cards we auto-opened, leave
+        // user-opened cards open.
+        details.open = false;
+        autoOpened.delete(details);
+      }
       if (show) visible++;
     });
     sections.forEach(function(s){
@@ -427,6 +605,21 @@ _INDEX_JS = """
         c.classList.add('active');
       }
       apply();
+    });
+  });
+
+  // Propagate the current search query to the detail page URL so the
+  // q-N.html page can jump to the matching keyword in the full answer.
+  cards.forEach(function(c){
+    var link = c.querySelector('.question a');
+    if (!link) return;
+    link.addEventListener('click', function(e){
+      var q = (search.value || '').trim();
+      if (!q) return;  // no query, default link works fine
+      var base = link.getAttribute('href');
+      if (!base || base.indexOf('?') !== -1) return;
+      e.preventDefault();
+      location.href = base + '?kw=' + encodeURIComponent(q);
     });
   });
 
@@ -477,19 +670,7 @@ def _card_data_text(it: dict) -> str:
 
 def _card_data_tools(it: dict) -> str:
     """Space-separated bucket names so the JS filter can match by group."""
-    buckets = set()
-    for t in (it.get("tools") or []):
-        n = t.lower()
-        if "brain" in n or "compare" in n or "recent" in n:
-            buckets.add("brain")
-        elif "paper" in n:
-            buckets.add("paper")
-        elif "web" in n:
-            buckets.add("web")
-        elif "ingest" in n:
-            buckets.add("ingest")
-        else:
-            buckets.add("other")
+    buckets = {_tool_bucket(t) for t in (it.get("tools") or [])}
     return " ".join(sorted(buckets))
 
 
@@ -577,6 +758,9 @@ def _render_index(rows: list[dict], stats: dict) -> str:
         "<div class='chips'>",
         "<span class='chip brain' data-tool='brain'>🧠 brain</span>",
         "<span class='chip paper' data-tool='paper'>📄 papers</span>",
+        "<span class='chip patent' data-tool='patent'>⚖️ patents</span>",
+        "<span class='chip report' data-tool='report'>📑 R&amp;D</span>",
+        "<span class='chip data' data-tool='data'>💾 data</span>",
         "<span class='chip web' data-tool='web'>🌐 web</span>",
         "<span class='chip ingest' data-tool='ingest'>📥 ingest</span>",
         "</div>",
@@ -690,7 +874,9 @@ def _render_detail(item: dict, token_dir: str) -> str:
         warn,
         f"<div class='answer'>{_esc(item['answer'])}</div>",
         sources_html,
-        "</main></body></html>",
+        "</main>",
+        f"<script>{_DETAIL_JS}</script>",
+        "</body></html>",
     ])
 
 
