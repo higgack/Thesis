@@ -506,6 +506,16 @@ def _strip_plain_urls(text: str, channel_key: str) -> str:
     return out
 
 
+# PLAIN channels that want FULL ingestion (text + URLs intact +
+# attachments forwarded as-is). Defaulting PLAIN channels strip URLs
+# and drop attachments because their feeds are high-volume noise
+# (DART filings, alpha-scanner ticker tables). These two are user-
+# curated research feeds where every PDF / Word / PPT / image / audio
+# carries signal the bot should learn. Add a channel handle (lower
+# case) here to switch it from "text-only" to "full ingestion".
+_PLAIN_FULL_INGEST = {"aicorporateanalysisdeepdive", "benineb9"}
+
+
 async def _relay_plain(client: TelegramClient, msg, target,
                        channel_name: str) -> None:
     # Seen-set guard — skip BACKFILL replays of messages we've
@@ -521,8 +531,8 @@ async def _relay_plain(client: TelegramClient, msg, target,
     text = (msg.message or "").strip()
     # Per-channel drop filter — noisy auto-generated content (ticker
     # tables, alpha scanner dumps) that has no narrative value.
-    # Matches against the raw body before URL stripping so the
-    # header pattern stays visible.
+    # Matches against the raw body BEFORE URL stripping / forwarding
+    # so the header pattern stays visible on both paths.
     drop_patterns = _PLAIN_DROP_PATTERNS.get(channel_name.lower(), [])
     for pat in drop_patterns:
         if pat.search(text):
@@ -531,26 +541,91 @@ async def _relay_plain(client: TelegramClient, msg, target,
                 f"matched drop pattern {pat.pattern!r}"
             )
             return
-    cleaned = _strip_plain_urls(text, channel_name.lower())
-    if len(cleaned) < _PLAIN_MIN_CHARS:
-        print(
-            f"  drop plain msg {msg.id} from {channel_name}: "
-            f"{len(cleaned)} chars after URL strip"
+
+    full_ingest = channel_name.lower() in _PLAIN_FULL_INGEST
+
+    # FULL-ingest path (per user policy for research feeds):
+    # forward the message as-is — bot's on_channel_post →
+    # _ingest_message catches msg.document / photo / audio / voice /
+    # video and runs them through the normal ingest pipeline, and
+    # URLs in the text body get extracted + ingested by
+    # _ingest_message_locked's URL loop.
+    if full_ingest:
+        has_media = bool(
+            getattr(msg, "document", None)
+            or getattr(msg, "photo", None)
+            or getattr(msg, "audio", None)
+            or getattr(msg, "voice", None)
+            or getattr(msg, "video", None)
         )
-        return
-    # Retry loop for FloodWait. Before this fix, the except branch
-    # only slept and returned — the message was permanently lost
-    # whenever Telegram throttled, which happened constantly during
-    # high-volume bursts (quarter-end DART firehose) and silently
-    # caused other channels' messages to disappear too because the
-    # listener kept going after one drop.
+        if has_media:
+            last_err: str | None = None
+            for attempt in range(_RELAY_MAX_ATTEMPTS):
+                try:
+                    await client.forward_messages(target, msg)
+                    print(
+                        f"  forwarded full plain msg {msg.id} from "
+                        f"{channel_name} (media attached)"
+                        + (f" [retry {attempt}]" if attempt else "")
+                    )
+                    _seen_mark(seen_key)
+                    return
+                except FloodWaitError as e:
+                    wait = max(e.seconds + 1, 1)
+                    print(
+                        f"  flood wait {wait}s on {channel_name}/{msg.id} "
+                        f"(media, attempt {attempt + 1}/{_RELAY_MAX_ATTEMPTS})"
+                    )
+                    await asyncio.sleep(wait)
+                    last_err = f"FloodWaitError({e.seconds}s)"
+                except Exception as e:
+                    last_err = f"{type(e).__name__}: {e}"
+                    print(
+                        f"  err forward media {channel_name}/{msg.id}: "
+                        f"{last_err}"
+                    )
+                    return
+            print(
+                f"  ✗ DROP media {channel_name}/{msg.id} after "
+                f"{_RELAY_MAX_ATTEMPTS} attempts (last: {last_err})"
+            )
+            return
+        # Text-only message on a full-ingest channel — relay with URLs
+        # intact (no strip). Bot's URL canonical dedup makes repeated
+        # links cheap (₩0 LLM cost on dedup hit).
+        outgoing = text
+        if len(outgoing) < _PLAIN_MIN_CHARS:
+            print(
+                f"  drop plain msg {msg.id} from {channel_name}: "
+                f"{len(outgoing)} chars below {_PLAIN_MIN_CHARS}"
+            )
+            return
+    else:
+        # TEXT-ONLY path (daju_dart, fundeasyearnings): strip the
+        # channel-specific URL noise patterns, drop attachments by
+        # not forwarding them. Per user policy these feeds are noisy
+        # and attachments would inflate cost.
+        outgoing = _strip_plain_urls(text, channel_name.lower())
+        if len(outgoing) < _PLAIN_MIN_CHARS:
+            print(
+                f"  drop plain msg {msg.id} from {channel_name}: "
+                f"{len(outgoing)} chars after URL strip"
+            )
+            return
+
+    # Common send loop with FloodWait retry. Before this loop the
+    # except branch only slept and returned — the message was
+    # permanently lost whenever Telegram throttled (quarter-end DART
+    # firehose) and silently caused other channels' messages to
+    # disappear too because the listener kept going after one drop.
     last_err: str | None = None
     for attempt in range(_RELAY_MAX_ATTEMPTS):
         try:
-            await client.send_message(target, cleaned, link_preview=False)
+            await client.send_message(target, outgoing, link_preview=False)
+            mode = "full" if full_ingest else "plain"
             print(
-                f"  relayed plain msg {msg.id} from {channel_name} "
-                f"({len(cleaned)} chars)"
+                f"  relayed {mode} msg {msg.id} from {channel_name} "
+                f"({len(outgoing)} chars)"
                 + (f" [retry {attempt}]" if attempt else "")
             )
             _seen_mark(seen_key)
@@ -638,8 +713,11 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
         )
         if plain_channels:
             print(
-                f"plain-relay mode: {sorted(plain_channels)} "
-                "(text only, URL lines stripped, attachments dropped)"
+                f"plain-relay mode: {sorted(plain_channels)} — "
+                f"text-only (URL strip, attachments dropped) for "
+                f"{sorted(plain_channels - _PLAIN_FULL_INGEST)}, "
+                f"full ingest (text + URLs + attachments) for "
+                f"{sorted(plain_channels & _PLAIN_FULL_INGEST)}"
             )
         print("running... Ctrl+C to stop\n")
 

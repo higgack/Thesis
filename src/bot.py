@@ -1123,7 +1123,7 @@ Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
 
 <b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
 [Noah 디지스트] 📋 TG 원문 fetch / 📰 Substack URL relay / 그 외 drop
-[PLAIN] 본문 그대로(URL strip, 이미지 drop): daju_dart · Fundeasyearnings · aicorporateanalysisdeepdive · benineb9
+[PLAIN] 텍스트만: daju_dart·Fundeasyearnings / 전체(텍스트+URL+첨부): aicorporateanalysisdeepdive·benineb9
 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
 
 <b>【7. 메타데이터】</b> Flash-Lite 요약+메타 1콜 · 🏢회사 🏷태그 📅YYYY.MM · 📊브로커리지·애널리스트(리포트 자동 추출, 회사 분석에 활용)
