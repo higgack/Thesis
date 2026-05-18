@@ -218,6 +218,16 @@ header .sub { color: var(--muted); font-size: 13px; }
   word-break: break-word;
 }
 .qna-card .question a { color: inherit; }
+.qna-card .snippet {
+  margin-top: 6px;
+  font-size: 13px; line-height: 1.55;
+  color: var(--muted);
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.qna-card .snippet mark.kw-highlight { color: inherit; }
 .tool {
   display: inline-block; padding: 2px 9px; border-radius: 12px;
   font-size: 11px; font-weight: 600;
@@ -485,12 +495,39 @@ _INDEX_JS = r"""
   var counter = document.getElementById('count');
 
   var activeTools = new Set();
-  // Track which cards we auto-opened so we can re-close them when
-  // the query is cleared (user-clicked opens stay open).
-  var autoOpened = new WeakSet();
 
   function escapeRegex(s){
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function escapeHtml(s){
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // Build a single-line (max 2-line clamp via CSS) preview of the
+  // body around the FIRST keyword match. Adds ellipses on whichever
+  // side was truncated, then re-highlights matches inside the slice.
+  // Centred on the first hit so the user always sees their term in
+  // context even if the body is several KB.
+  function buildSnippet(text, query){
+    if (!text || !query) return '';
+    var lower = text.toLowerCase();
+    var qLower = query.toLowerCase();
+    var idx = lower.indexOf(qLower);
+    if (idx < 0) return '';
+    var qLen = query.length;
+    var contextChars = 80;  // ~80 chars on each side of the match
+    var start = Math.max(0, idx - contextChars);
+    var end = Math.min(text.length, idx + qLen + contextChars);
+    var head = start > 0 ? '…' : '';
+    var tail = end < text.length ? '…' : '';
+    var slice = text.slice(start, end);
+    var regex = new RegExp(escapeRegex(query), 'gi');
+    var body = escapeHtml(slice).replace(regex, function(m){
+      return '<mark class="kw-highlight">' + m + '</mark>';
+    });
+    return head + body + tail;
   }
 
   function highlightTextNodes(root, regex){
@@ -558,25 +595,31 @@ _INDEX_JS = r"""
         tools.some(function(t){ return activeTools.has(t); });
       var show = matchesQuery && matchesTool;
       c.classList.toggle('hidden', !show);
-      // Clear stale highlights from previous queries
+      // Clear stale highlights + snippet preview from previous query.
       clearHighlights(c);
-      var details = c.querySelector('details');
+      var oldSnip = c.querySelector('.snippet');
+      if (oldSnip) oldSnip.remove();
       if (show && regex){
         var qEl = c.querySelector('.question');
         var aEl = c.querySelector('.answer');
+        // Highlight in-place inside both question and (still-folded)
+        // answer. The answer DOM stays hidden under <details> until
+        // the user clicks the card open — at that point the highlights
+        // are already there waiting.
         highlightTextNodes(qEl, regex);
-        var bodyHits = highlightTextNodes(aEl, regex);
-        // Auto-open the answer if the match is only in the body
-        // (so the user can see WHERE it matched, like Noah's preview).
-        if (details && bodyHits > 0 && !details.open){
-          details.open = true;
-          autoOpened.add(details);
+        highlightTextNodes(aEl, regex);
+        // Body preview: ±80 chars around the first match, only when
+        // the keyword actually appears in the body (so cards that
+        // only matched on the question don't get a redundant snippet).
+        if (aEl){
+          var snipHTML = buildSnippet(aEl.textContent, q);
+          if (snipHTML && qEl && qEl.parentNode){
+            var snip = document.createElement('div');
+            snip.className = 'snippet';
+            snip.innerHTML = snipHTML;
+            qEl.parentNode.insertBefore(snip, qEl.nextSibling);
+          }
         }
-      } else if (!regex && details && autoOpened.has(details)){
-        // Query cleared — fold back the cards we auto-opened, leave
-        // user-opened cards open.
-        details.open = false;
-        autoOpened.delete(details);
       }
       if (show) visible++;
     });
