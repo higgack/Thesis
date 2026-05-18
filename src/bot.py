@@ -971,6 +971,11 @@ _TOOL_EMOJI = {
     "get_kr_patent_citations": "🇰🇷⚖️",
     "search_kr_reports": "🇰🇷📑",
     "get_kr_report_detail": "🇰🇷📑",
+    "search_kr_rnd_projects": "🇰🇷🔬",
+    "recommend_kr_classifications": "🇰🇷🏷️",
+    "get_kr_related_content": "🇰🇷🔗",
+    "search_kr_research_data": "🇰🇷💾",
+    "get_kr_research_data_detail": "🇰🇷💾",
     "web_search": "🌐",
     "ingest_url": "📥",
 }
@@ -1109,17 +1114,17 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 <b>【1. 명령어】</b>
 조회: /find &lt;kw&gt; [N=50](헤더 학습/발행/청크수) · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 dump + [🌐 한국어 번역]) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
-장애: /failed(크기순·건별 [🔁]/[🗑] · drop=영구 무시) · /failed_retry · /failed_clear · /queue · /queue_to_failed(큐→실패로) · /queue_cancel_all · /audit · /blocked_hosts · /reset_blocked_hosts
-Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
-보류(5분): /pending(OCR 크기순·건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
+장애: /failed(건별 [🔁]/[🗑]·drop=영구) · /failed_retry · /failed_clear · /queue · /queue_to_failed · /queue_cancel_all · /audit · /blocked_hosts · /reset_blocked_hosts
+Orphan: /orphans · /recover_orphans(건별 [📥]/[🗑])
+보류(5분): /pending(건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
 삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
 도구: /search_my_brain · /compare_papers · /search_papers · /search_patents · /web_search · /ingest_url
-한국 (KR): /company_patents · /patent_detail · /citing_patents (KIPRIS) · /kr_papers · /kr_patents · /kr_reports (ScienceON)
+한국 (KR): /company_patents · /patent_detail · /citing_patents (KIPRIS) · /kr_papers · /kr_patents · /kr_reports (ScienceON) · /kr_rnd_projects (NTIS) · /kr_research_data (DataON)
 기타: /start /help
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【3. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON KR 논문/특허/보고서 · ⚖️ patents (EPO 대기) · 🌐 web · 📥 ingest · 한국어번역
+<b>【3. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS·DataON · ⚖️ patents (EPO 대기) · 🌐 web · 📥 ingest · 한국어번역
 
 <b>【3-1. 회사 분석】</b> "회사명+실적/매출/영업이익/가이던스" → 본문 + 신사업 키포인트(·합의 N건) + 📌 실적 데이터(맨끝): 연간/분기 표(A./F.·YoY·QoQ·"—") + xychart(bar=중앙값·line=max/min) + 분석가별 가이던스(브로커리지/이름/발행일) + 웹 추가(참고용·brain/web 분리). 숫자 audit(매출=OP·마진&gt;70% 등) 자동 경고.
 
@@ -1143,7 +1148,7 @@ Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
 
 <b>【10. 운영】</b> VM n2-standard-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8 · concurrent_updates+HTTPX 32 · 영속(retry/failed/history/qna/cost/ocr_cache/chunk_cache/bubbles) · 메모리 5분(90%즉시 95%거부) · 60s call · 10분 ingest
 
-<b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 3072d · 요약/메타/번역 gemini-2.5-flash-lite(503→2.5-flash) · 답변 2.5-flash · /deep 2.5-pro · Vision 2.5-flash-lite DPI 100 · 1M ₩ Pro 1,750/Flash 420/Lite 140/Embed 200 · 답변 1h 캐시(200건) · 번역 30k 단일/30k+ 배치 ₩3-40
+<b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 · 요약/메타/번역 flash-lite(503→flash) · 답변 flash · /deep pro · Vision flash-lite · 1M ₩ Pro 1,750/Flash 420/Lite 140/Embed 200 · 답변 1h 캐시(200건) · 번역 30k+ 배치 ₩3-40
 
 <b>【10-2. 비용 절감 (자동)】</b>
 ✅ 6단 dedup ₩0(source·URL canonical·file_hash·text_hash·body_hash·title 정규화) · 청크 1000·요약 12k/partial 8k·Vision DPI 100·OCR 자동캡 0p·image-only 3p
@@ -4408,6 +4413,203 @@ async def cmd_kr_reports(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def _format_ntis_projects(query: str, rows: list[dict]) -> str:
+    """NTIS public_project rows use Korean tag names (과제번호, 과제명,
+    수행기관, 연구책임자, 연구기간, 연구비). Field names vary across
+    upstream XML — try common variants."""
+    import html as _html
+    if not rows:
+        return (
+            f"🔍 '<b>{_html.escape(query)}</b>' NTIS 국가R&D 결과 없음.\n"
+            f"(NTIS_API_KEY 미설정 시에도 동일 메시지 — ntis.go.kr 활용신청 필요.)"
+        )
+    out = [
+        f"🔬 <b>NTIS 국가R&D 과제 검색 결과 — '{_html.escape(query)}'</b>",
+        f"<i>{len(rows)}건 · NTIS</i>",
+    ]
+    for i, r in enumerate(rows, 1):
+        title = _html.escape(
+            (r.get("ProjectTitle") or r.get("과제명")
+             or r.get("title") or "(제목 없음)")
+        )[:240]
+        pjt_id = (r.get("ProjectNumber") or r.get("과제번호")
+                  or r.get("pjtId") or "").strip()
+        agency = (r.get("ResearchAgency") or r.get("수행기관")
+                  or r.get("agency") or "").strip()
+        leader = (r.get("ResearchLeader") or r.get("연구책임자")
+                  or r.get("leader") or "").strip()
+        period = (r.get("ResearchPeriod") or r.get("연구기간")
+                  or r.get("period") or "").strip()
+        budget = (r.get("ResearchExpenses") or r.get("연구비")
+                  or r.get("budget") or "").strip()
+        parts: list[str] = []
+        if pjt_id:
+            parts.append(f"과제번호 {_html.escape(pjt_id)}")
+        if agency:
+            parts.append(f"수행기관 {_html.escape(agency[:60])}")
+        if leader:
+            parts.append(f"책임자 {_html.escape(leader[:40])}")
+        if period:
+            parts.append(f"기간 {_html.escape(period[:40])}")
+        if budget:
+            parts.append(f"연구비 {_html.escape(budget[:30])}")
+        block = [f"\n🔬 <b>{i}. {title}</b>"]
+        if parts:
+            block.append(f"   {' · '.join(parts[:5])}")
+        out.append("\n".join(block))
+    return "\n".join(out)
+
+
+async def cmd_kr_rnd_projects(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_rnd_projects <키워드> — NTIS 국가R&D 과제 검색."""
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kr_rnd_projects <검색어>")
+        return
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"🔍 '{q}' NTIS 국가R&D 검색 중..."
+    )
+    try:
+        from .agent import kisti_ntis as _ntis
+        rows = await _ntis.search_projects(q, limit=10)
+    except Exception as e:
+        log.exception("ntis projects failed for %r", q)
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=f"⚠️ NTIS 검색 실패: {_explain_error(e)}",
+            )
+        except Exception:
+            pass
+        return
+    body = _format_ntis_projects(q, rows)
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("ntis projects fallback send failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("ntis projects chunked send failed")
+
+
+def _format_dataon_results(query: str, rows: list[dict]) -> str:
+    """DataON dataset rows. Field shapes vary by endpoint version
+    — try the documented English keys then fall back to Korean."""
+    import html as _html
+    if not rows:
+        return (
+            f"🔍 '<b>{_html.escape(query)}</b>' DataON 연구데이터 결과 없음.\n"
+            f"(DATAON_RESEARCHDATA_API_KEY 미설정 시에도 동일 메시지.)"
+        )
+    out = [
+        f"💾 <b>DataON 연구데이터 검색 결과 — '{_html.escape(query)}'</b>",
+        f"<i>{len(rows)}건 · DataON</i>",
+    ]
+    for i, r in enumerate(rows, 1):
+        title = _html.escape(
+            (r.get("title") or r.get("Title") or r.get("제목")
+             or "(제목 없음)")
+        )[:240]
+        svc_id = (r.get("svcId") or r.get("id") or "").strip()
+        creator = (r.get("creator") or r.get("작성자") or "").strip()
+        doi = (r.get("doi") or r.get("DOI") or "").strip()
+        pub = (r.get("publishedDate") or r.get("발행일")
+               or r.get("date") or "").strip()
+        license_ = (r.get("license") or r.get("라이선스") or "").strip()
+        parts: list[str] = []
+        if svc_id:
+            parts.append(f"svcId {_html.escape(svc_id)}")
+        if creator:
+            parts.append(f"작성자 {_html.escape(creator[:60])}")
+        if pub:
+            parts.append(f"발행 {_html.escape(pub[:20])}")
+        if doi:
+            parts.append(f"DOI {_html.escape(doi[:60])}")
+        if license_:
+            parts.append(f"License {_html.escape(license_[:30])}")
+        block = [f"\n💾 <b>{i}. {title}</b>"]
+        if parts:
+            block.append(f"   {' · '.join(parts[:5])}")
+        if svc_id:
+            block.append(
+                f"   → https://dataon.kisti.re.kr/search/view.do?svcId={svc_id}"
+            )
+        out.append("\n".join(block))
+    return "\n".join(out)
+
+
+async def cmd_kr_research_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_research_data <키워드> — KISTI DataON 연구데이터 검색."""
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kr_research_data <검색어>")
+        return
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"🔍 '{q}' DataON 연구데이터 검색 중..."
+    )
+    try:
+        from .agent import kisti_dataon as _dataon
+        rows = await _dataon.search_research_data(q, limit=10)
+    except Exception as e:
+        log.exception("dataon search failed for %r", q)
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=f"⚠️ DataON 검색 실패: {_explain_error(e)}",
+            )
+        except Exception:
+            pass
+        return
+    body = _format_dataon_results(q, rows)
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("dataon fallback send failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("dataon chunked send failed")
+
+
 async def cmd_web_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -7090,6 +7292,8 @@ def main():
     app.add_handler(CommandHandler("kr_papers", cmd_kr_papers))
     app.add_handler(CommandHandler("kr_patents", cmd_kr_patents))
     app.add_handler(CommandHandler("kr_reports", cmd_kr_reports))
+    app.add_handler(CommandHandler("kr_rnd_projects", cmd_kr_rnd_projects))
+    app.add_handler(CommandHandler("kr_research_data", cmd_kr_research_data))
     app.add_handler(CommandHandler("web_search", cmd_web_search))
     app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))
     app.add_handler(CommandHandler("recent_docs", cmd_recent_docs))

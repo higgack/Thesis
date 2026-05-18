@@ -13,7 +13,8 @@ from google.genai import types
 from .. import config
 from ..store import meta, vector, cost
 from ..ingest import pipeline
-from . import retrieve, papersearch, patentsearch, kisti_scienceon
+from . import (retrieve, papersearch, patentsearch,
+               kisti_scienceon, kisti_ntis, kisti_dataon)
 
 log = logging.getLogger(__name__)
 
@@ -258,6 +259,50 @@ async def get_kr_report_detail(cn: str) -> dict:
     return {"result": row, "found": row is not None}
 
 
+# ---------------------------------------------------------------------------
+# KISTI NTIS tools — national R&D project + classification +
+# related-content. NTIS_API_KEY single env var covers all three
+# endpoints (still needs separate 활용신청 per service on ntis.go.kr).
+# ---------------------------------------------------------------------------
+
+async def search_kr_rnd_projects(query: str, limit: int = 10) -> dict:
+    rows = await kisti_ntis.search_projects(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
+async def recommend_kr_classifications(
+    abstract: str, classification_type: str = "standard",
+) -> dict:
+    rows = await kisti_ntis.recommend_classifications(
+        abstract, classification_type=classification_type,
+    )
+    return {"results": rows, "count": len(rows)}
+
+
+async def get_kr_related_content(
+    pjt_id: str, collection_type: str = "researchreport",
+) -> dict:
+    rows = await kisti_ntis.related_content(
+        pjt_id, collection_type=collection_type,
+    )
+    return {"results": rows, "count": len(rows)}
+
+
+# ---------------------------------------------------------------------------
+# KISTI DataON tools — public research dataset registry. Two
+# separate API keys (search vs metadata detail).
+# ---------------------------------------------------------------------------
+
+async def search_kr_research_data(query: str, limit: int = 10) -> dict:
+    rows = await kisti_dataon.search_research_data(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
+async def get_kr_research_data_detail(svc_id: str) -> dict:
+    row = await kisti_dataon.get_research_data_detail(svc_id)
+    return {"result": row, "found": row is not None}
+
+
 async def ingest_url(url: str) -> dict:
     r = await pipeline.ingest_url(url)
     return {
@@ -432,6 +477,11 @@ TOOL_DISPATCH = {
     "get_kr_patent_citations": get_kr_patent_citations,
     "search_kr_reports": search_kr_reports,
     "get_kr_report_detail": get_kr_report_detail,
+    "search_kr_rnd_projects": search_kr_rnd_projects,
+    "recommend_kr_classifications": recommend_kr_classifications,
+    "get_kr_related_content": get_kr_related_content,
+    "search_kr_research_data": search_kr_research_data,
+    "get_kr_research_data_detail": get_kr_research_data_detail,
     "ingest_url": ingest_url,
     "recent_docs": recent_docs,
     "compare_papers": compare_papers,
@@ -756,6 +806,124 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                 "cn": types.Schema(type=types.Type.STRING),
             },
             required=["cn"],
+        ),
+    ),
+    # KISTI NTIS tools — government R&D projects + classification
+    # codes + related content recommendations. Single NTIS_API_KEY
+    # covers all three (still needs per-service 활용신청 on the
+    # NTIS portal). Use when the question is about who is doing
+    # what national R&D ("국가 R&D 과제 / 정부 지원사업 / 연구 분류").
+    types.FunctionDeclaration(
+        name="search_kr_rnd_projects",
+        description=(
+            "Korean national R&D project search via NTIS. Returns "
+            "rows with 과제번호 (pjtId, used by "
+            "get_kr_related_content) + 과제명 + 수행기관 + "
+            "연구책임자 + 연구비 + 기간. Use for '정부 R&D 사업', "
+            "'국가 R&D 과제', 'XX 과제 누가 하나' style questions."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="recommend_kr_classifications",
+        description=(
+            "Given a research abstract, recommend Korea's standard "
+            "sci-tech classification codes via NTIS. Useful when the "
+            "user has a 과제 초록 and wants to know what 분류코드 to "
+            "apply for grant submission etc."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "abstract": types.Schema(
+                    type=types.Type.STRING,
+                    description="Korean research abstract / 과제 초록.",
+                ),
+                "classification_type": types.Schema(
+                    type=types.Type.STRING,
+                    description=(
+                        "'standard' (과학기술표준분류, default) / "
+                        "'health' (보건의료기술) / 'industry' (산업기술)."
+                    ),
+                ),
+            },
+            required=["abstract"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="get_kr_related_content",
+        description=(
+            "Given a project ID (pjtId from search_kr_rnd_projects), "
+            "surface related content. collection_type chooses what "
+            "to surface: 'paper' / 'patent' / 'researchreport' "
+            "(default) / 'project'."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "pjt_id": types.Schema(
+                    type=types.Type.STRING,
+                    description="과제번호 from search_kr_rnd_projects.",
+                ),
+                "collection_type": types.Schema(
+                    type=types.Type.STRING,
+                    description=(
+                        "'paper' / 'patent' / 'researchreport' / 'project'."
+                    ),
+                ),
+            },
+            required=["pjt_id"],
+        ),
+    ),
+    # KISTI DataON tools — public research dataset registry.
+    # Separate search vs metadata-detail API keys.
+    types.FunctionDeclaration(
+        name="search_kr_research_data",
+        description=(
+            "Korean public research dataset search via DataON. "
+            "Returns dataset rows with svcId (used by "
+            "get_kr_research_data_detail) + 제목 + 작성자 + DOI "
+            "+ 발행일 + license. Use for '연구데이터 / 데이터셋 / "
+            "공공 데이터' style questions."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="get_kr_research_data_detail",
+        description=(
+            "Dataset metadata detail by svcId. Returns license, "
+            "format, rights, DOI, contributors. Uses the separate "
+            "DataON metadata API key (user must activate both keys)."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "svc_id": types.Schema(
+                    type=types.Type.STRING,
+                    description="DataON svcId from search results.",
+                ),
+            },
+            required=["svc_id"],
         ),
     ),
 ])
