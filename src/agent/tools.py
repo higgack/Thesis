@@ -13,7 +13,7 @@ from google.genai import types
 from .. import config
 from ..store import meta, vector, cost
 from ..ingest import pipeline
-from . import retrieve, papersearch, patentsearch
+from . import retrieve, papersearch, patentsearch, kisti_scienceon
 
 log = logging.getLogger(__name__)
 
@@ -210,6 +210,54 @@ async def search_patents(query: str, limit: int = 15) -> dict:
     return {"results": slim, "count": len(slim)}
 
 
+# ---------------------------------------------------------------------------
+# KISTI ScienceON tools — Korean / international research portal.
+# Records come back as metaCode-keyed dicts (TI=Title, AU=Author,
+# AB=Abstract, CN=control number, DOI, IPC for patents, etc.). We
+# pass them through largely unchanged so the agent can pick the
+# fields it needs per question; CN is the key for deep-link
+# follow-ups (paper_detail / patent_detail / patent_citations /
+# report_detail all take a CN).
+# ---------------------------------------------------------------------------
+
+async def search_kr_papers(query: str, limit: int = 10) -> dict:
+    rows = await kisti_scienceon.search_papers(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
+async def get_kr_paper_detail(cn: str) -> dict:
+    row = await kisti_scienceon.get_paper_detail(cn)
+    return {"result": row, "found": row is not None}
+
+
+async def search_kr_patents_kisti(query: str, limit: int = 10) -> dict:
+    """KISTI's patent index (international + KR) — keyword search,
+    different from /search_patents (Lens, currently disabled) and
+    /company_patents (KIPRIS applicant-only)."""
+    rows = await kisti_scienceon.search_patents(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
+async def get_kr_patent_detail(cn: str) -> dict:
+    row = await kisti_scienceon.get_patent_detail(cn)
+    return {"result": row, "found": row is not None}
+
+
+async def get_kr_patent_citations(cn: str) -> dict:
+    rows = await kisti_scienceon.get_patent_citations(cn)
+    return {"results": rows, "count": len(rows)}
+
+
+async def search_kr_reports(query: str, limit: int = 10) -> dict:
+    rows = await kisti_scienceon.search_reports(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
+async def get_kr_report_detail(cn: str) -> dict:
+    row = await kisti_scienceon.get_report_detail(cn)
+    return {"result": row, "found": row is not None}
+
+
 async def ingest_url(url: str) -> dict:
     r = await pipeline.ingest_url(url)
     return {
@@ -377,6 +425,13 @@ TOOL_DISPATCH = {
     "search_papers": search_papers,
     "search_patents": search_patents,
     "search_company_patents": search_company_patents,
+    "search_kr_papers": search_kr_papers,
+    "get_kr_paper_detail": get_kr_paper_detail,
+    "search_kr_patents_kisti": search_kr_patents_kisti,
+    "get_kr_patent_detail": get_kr_patent_detail,
+    "get_kr_patent_citations": get_kr_patent_citations,
+    "search_kr_reports": search_kr_reports,
+    "get_kr_report_detail": get_kr_report_detail,
     "ingest_url": ingest_url,
     "recent_docs": recent_docs,
     "compare_papers": compare_papers,
@@ -569,6 +624,138 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                 ),
             },
             required=["query"],
+        ),
+    ),
+    # KISTI ScienceON tools — 7 functions covering paper / patent /
+    # report search + their CN-based detail lookups + patent citation
+    # network. Use when the question targets Korean research output
+    # specifically. Each call needs SCIENCEON_API_KEY + CLIENT_ID +
+    # MAC_ADDRESS in .env (registered at scienceon.kisti.re.kr).
+    types.FunctionDeclaration(
+        name="search_kr_papers",
+        description=(
+            "Search Korean / international papers via KISTI ScienceON "
+            "(99%+ SCIE / SCOPUS / KSCI coverage). Use when the user "
+            "wants Korean academic research specifically, or when "
+            "search_papers returns weak results for a Korean-language "
+            "topic. Returns CN-keyed records — feed CN to "
+            "get_kr_paper_detail for full abstract / authors / DOI."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="get_kr_paper_detail",
+        description=(
+            "Full paper detail (abstract, DOI, keywords, related "
+            "papers) by ScienceON CN. Call after search_kr_papers "
+            "when the user wants depth on a specific row."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "cn": types.Schema(
+                    type=types.Type.STRING,
+                    description="ScienceON control number from search results.",
+                ),
+            },
+            required=["cn"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_kr_patents_kisti",
+        description=(
+            "Patent search via KISTI ScienceON — different coverage "
+            "from /search_patents (Lens, currently disabled) and "
+            "/company_patents (KIPRIS applicant-only). ScienceON's "
+            "patent index spans international + KR records and "
+            "supports free-text keyword queries. Returns CN-keyed "
+            "records — feed CN to get_kr_patent_detail / "
+            "get_kr_patent_citations for IPC, status, citation links."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="get_kr_patent_detail",
+        description=(
+            "Patent detail (IPC classifications, status, applicant) "
+            "by ScienceON CN. Call after search_kr_patents_kisti."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "cn": types.Schema(type=types.Type.STRING),
+            },
+            required=["cn"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="get_kr_patent_citations",
+        description=(
+            "Forward + backward citation network for a patent CN. "
+            "Use for prior-art / influence analysis."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "cn": types.Schema(type=types.Type.STRING),
+            },
+            required=["cn"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_kr_reports",
+        description=(
+            "R&D report search via KISTI ScienceON — national R&D "
+            "project deliverables (정부 R&D 보고서) and technology "
+            "trend reports. Use for '국가 R&D 보고서 / 기술동향 "
+            "보고서' style questions. Returns CN-keyed records — "
+            "feed CN to get_kr_report_detail for full body + "
+            "citation refs."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="get_kr_report_detail",
+        description=(
+            "R&D report detail (full bibliographic + citation refs) "
+            "by ScienceON CN. Call after search_kr_reports."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "cn": types.Schema(type=types.Type.STRING),
+            },
+            required=["cn"],
         ),
     ),
 ])

@@ -964,6 +964,13 @@ _TOOL_EMOJI = {
     "search_papers": "📄",
     "search_patents": "⚖️",
     "search_company_patents": "🇰🇷",
+    "search_kr_papers": "🇰🇷📄",
+    "get_kr_paper_detail": "🇰🇷📄",
+    "search_kr_patents_kisti": "🇰🇷⚖️",
+    "get_kr_patent_detail": "🇰🇷⚖️",
+    "get_kr_patent_citations": "🇰🇷⚖️",
+    "search_kr_reports": "🇰🇷📑",
+    "get_kr_report_detail": "🇰🇷📑",
     "web_search": "🌐",
     "ingest_url": "📥",
 }
@@ -1106,12 +1113,13 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
 보류(5분): /pending(OCR 크기순·건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
 삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
-도구: /search_my_brain · /compare_papers · /search_papers · /search_patents · /company_patents · /patent_detail · /citing_patents · /web_search · /ingest_url
+도구: /search_my_brain · /compare_papers · /search_papers · /search_patents · /web_search · /ingest_url
+한국 (KR): /company_patents · /patent_detail · /citing_patents (KIPRIS) · /kr_papers · /kr_patents · /kr_reports (ScienceON)
 기타: /start /help
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【3. 도구】</b> 🧠 brain·compare·recent · 📄 papers 6소스+PDF · 🇰🇷 KIPRIS(company/detail/citing) · ⚖️ patents (EPO 대기) · 🌐 web · 📥 ingest_url · 한국어 자동번역
+<b>【3. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON KR 논문/특허/보고서 · ⚖️ patents (EPO 대기) · 🌐 web · 📥 ingest · 한국어번역
 
 <b>【3-1. 회사 분석】</b> "회사명+실적/매출/영업이익/가이던스" → 본문 + 신사업 키포인트(·합의 N건) + 📌 실적 데이터(맨끝): 연간/분기 표(A./F.·YoY·QoQ·"—") + xychart(bar=중앙값·line=max/min) + 분석가별 가이던스(브로커리지/이름/발행일) + 웹 추가(참고용·brain/web 분리). 숫자 audit(매출=OP·마진&gt;70% 등) 자동 경고.
 
@@ -1135,7 +1143,7 @@ Orphan: /orphans · /recover_orphans(크기순·건별 [📥]/[🗑])
 
 <b>【10. 운영】</b> VM n2-standard-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8 · concurrent_updates+HTTPX 32 · 영속(retry/failed/history/qna/cost/ocr_cache/chunk_cache/bubbles) · 메모리 5분(90%즉시 95%거부) · 60s call · 10분 ingest
 
-<b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 3072d · 요약/메타/번역 gemini-2.5-flash-lite(503→2.5-flash) · 답변 2.5-flash · /deep 2.5-pro · Vision 2.5-flash-lite DPI 100 · 1M ₩ Pro 1,750/Flash 420/Lite 140/Embed 200 · 답변 1h 캐시(200건) · 번역: 30k 이하 단일콜 ₩3-5, 30k+ 자동 배치(10k×병렬5, ₩20-40/100k자)
+<b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 3072d · 요약/메타/번역 gemini-2.5-flash-lite(503→2.5-flash) · 답변 2.5-flash · /deep 2.5-pro · Vision 2.5-flash-lite DPI 100 · 1M ₩ Pro 1,750/Flash 420/Lite 140/Embed 200 · 답변 1h 캐시(200건) · 번역 30k 단일/30k+ 배치 ₩3-40
 
 <b>【10-2. 비용 절감 (자동)】</b>
 ✅ 6단 dedup ₩0(source·URL canonical·file_hash·text_hash·body_hash·title 정규화) · 청크 1000·요약 12k/partial 8k·Vision DPI 100·OCR 자동캡 0p·image-only 3p
@@ -4235,6 +4243,171 @@ async def cmd_citing_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 log.exception("citing_patents chunked send failed")
 
 
+_KISTI_FIELD_LABELS = {
+    "TI": "제목", "TIE": "원어 제목",
+    "AU": "저자", "AUE": "원어 저자",
+    "AB": "초록", "ABE": "원어 초록",
+    "AF": "기관", "JN": "저널",
+    "DOI": "DOI", "CN": "CN",
+    "YR": "발행연도", "VL": "권", "IS": "호",
+    "PG": "페이지", "KW": "키워드",
+    # patent-specific
+    "APN": "출원번호", "APD": "출원일",
+    "RGN": "등록번호", "RGD": "등록일",
+    "AP": "출원인", "IN": "발명자", "IPC": "IPC",
+    # report-specific
+    "OR": "발행기관", "RN": "보고서번호", "DT": "발간일",
+}
+
+
+def _format_kisti_results(query: str, results: list[dict],
+                          kind: str) -> str:
+    """Format ScienceON metaCode-keyed result rows for Telegram.
+    `kind` selects the lead emoji + label set ("paper" / "patent" /
+    "report"). Falls back gracefully when a row is missing a field."""
+    import html as _html
+    emoji = {"paper": "📄", "patent": "⚖️", "report": "📑"}.get(kind, "📌")
+    label = {"paper": "ScienceON 논문",
+             "patent": "ScienceON 특허",
+             "report": "ScienceON 보고서"}.get(kind, "ScienceON")
+    if not results:
+        return (
+            f"🔍 '<b>{_html.escape(query)}</b>' KISTI ScienceON 결과 없음.\n"
+            f"키워드를 좁히거나 영문으로 시도하면 결과 ↑.\n"
+            f"(KISTI 인증 미설정 시에도 동일 메시지 — SCIENCEON_API_KEY "
+            f"/ CLIENT_ID / MAC_ADDRESS 세 개 모두 .env 에 필요.)"
+        )
+    out = [
+        f"{emoji} <b>{label} 검색 결과 — '{_html.escape(query)}'</b>",
+        f"<i>{len(results)}건 · KISTI ScienceON</i>",
+    ]
+    for i, r in enumerate(results, 1):
+        title = _html.escape(
+            (r.get("TI") or r.get("TIE") or "(제목 없음)")
+        )[:240]
+        # Build meta line from whatever fields exist for this record kind
+        parts: list[str] = []
+        for k in ("CN", "AU", "AUE", "AP", "IN", "JN", "OR", "YR",
+                  "APD", "RGD", "DT", "IPC", "DOI"):
+            v = (r.get(k) or "").strip()
+            if v:
+                lbl = _KISTI_FIELD_LABELS.get(k, k)
+                parts.append(f"{lbl} {_html.escape(v[:80])}")
+        meta_line = " · ".join(parts[:6])  # cap to keep readable
+
+        block = [f"\n{emoji} <b>{i}. {title}</b>"]
+        if meta_line:
+            block.append(f"   {meta_line}")
+        abstract = (r.get("AB") or r.get("ABE") or "").strip()
+        if abstract:
+            block.append(f"   {_html.escape(_truncate_at_sentence(abstract, 700))}")
+        cn = (r.get("CN") or "").strip()
+        if cn:
+            # ScienceON detail page deep-link (different paths per
+            # kind, web side handles routing).
+            sub = {"paper": "Article",
+                   "patent": "Patent",
+                   "report": "Report"}.get(kind, "Article")
+            block.append(
+                f"   → https://scienceon.kisti.re.kr/srch/"
+                f"selectPORSrch{sub}.do?cn={cn}"
+            )
+        out.append("\n".join(block))
+    return "\n".join(out)
+
+
+async def _kisti_search_command(update, ctx, query: str, kind: str,
+                                fn) -> None:
+    """Shared body for /kr_papers, /kr_patents, /kr_reports."""
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"🔍 '{query}' KISTI ScienceON 검색 중..."
+    )
+    try:
+        result = await fn(query, limit=10)
+    except Exception as e:
+        log.exception("kisti %s search failed for %r", kind, query)
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=f"⚠️ KISTI ScienceON 검색 실패: {_explain_error(e)}",
+            )
+        except Exception:
+            pass
+        return
+    rows = result.get("results") or []
+    body = _format_kisti_results(query, rows, kind)
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.warning("kisti status edit failed, sending fresh")
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("kisti fallback send failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("kisti chunked send failed")
+
+
+async def cmd_kr_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_papers <키워드> — KISTI ScienceON 논문 검색
+    (SCIE/SCOPUS/KSCI 99%+ 커버, 한국 학술 전문)."""
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kr_papers <검색어>")
+        return
+    from .agent import kisti_scienceon as _kisti
+    await _kisti_search_command(
+        update, ctx, q, "paper", _kisti.search_papers,
+    )
+
+
+async def cmd_kr_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_patents <키워드> — KISTI ScienceON 특허 검색
+    (KIPRIS applicant 검색의 키워드 부족분 보완)."""
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kr_patents <검색어>")
+        return
+    from .agent import kisti_scienceon as _kisti
+    await _kisti_search_command(
+        update, ctx, q, "patent", _kisti.search_patents,
+    )
+
+
+async def cmd_kr_reports(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_reports <키워드> — KISTI ScienceON R&D 보고서 검색."""
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kr_reports <검색어>")
+        return
+    from .agent import kisti_scienceon as _kisti
+    await _kisti_search_command(
+        update, ctx, q, "report", _kisti.search_reports,
+    )
+
+
 async def cmd_web_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -6914,6 +7087,9 @@ def main():
     app.add_handler(CommandHandler("company_patents", cmd_company_patents))
     app.add_handler(CommandHandler("patent_detail", cmd_patent_detail))
     app.add_handler(CommandHandler("citing_patents", cmd_citing_patents))
+    app.add_handler(CommandHandler("kr_papers", cmd_kr_papers))
+    app.add_handler(CommandHandler("kr_patents", cmd_kr_patents))
+    app.add_handler(CommandHandler("kr_reports", cmd_kr_reports))
     app.add_handler(CommandHandler("web_search", cmd_web_search))
     app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))
     app.add_handler(CommandHandler("recent_docs", cmd_recent_docs))
