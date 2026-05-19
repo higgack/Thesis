@@ -56,16 +56,36 @@ def _epo_token_lock() -> asyncio.Lock:
 
 
 def _empty(p: dict, source: str) -> dict:
-    """Normalize a backend row into the shared schema."""
+    """Normalize a backend row into the shared schema.
+
+    Core fields always present (title, patent_number, date, etc.);
+    EPO-specific richer fields (ipc, cpc, family_id, applicant_countries,
+    publication_date, application_date, priority_date, kind, kind_label,
+    assignees, country, inventors_total) pass through when the backend
+    provides them. KIPRIS rows just lack those fields → the formatter
+    silently skips empty entries."""
     return {
         "title": (p.get("title") or "").strip(),
         "patent_number": p.get("patent_number") or "",
+        "country": p.get("country") or "",
+        "kind": p.get("kind") or "",
+        "kind_label": p.get("kind_label") or "",
         "date": p.get("date") or "",
+        "publication_date": p.get("publication_date") or p.get("date") or "",
+        "application_date": p.get("application_date") or "",
+        "priority_date": p.get("priority_date") or "",
         "year": p.get("year"),
         "inventors": p.get("inventors") or [],
+        "inventors_total": p.get("inventors_total") or len(p.get("inventors") or []),
         "assignee": p.get("assignee") or "",
+        "assignees": p.get("assignees") or
+                    ([p["assignee"]] if p.get("assignee") else []),
+        "applicant_countries": p.get("applicant_countries") or [],
         "abstract": (p.get("abstract") or "").strip(),
         "claims_count": p.get("claims_count"),
+        "ipc": p.get("ipc") or [],
+        "cpc": p.get("cpc") or [],
+        "family_id": p.get("family_id") or "",
         "url": p.get("url") or "",
         "source": source,
     }
@@ -415,14 +435,18 @@ def _epo_to_unified(doc: dict) -> dict | None:
     either a single dict or a list of dicts depending on count, so
     we normalise to list at every step."""
     try:
-        biblio = (doc.get("exchange-document") or {}).get(
-            "bibliographic-data") or {}
-        # Publication reference — prefer docdb format (machine-readable).
+        ex_doc = doc.get("exchange-document") or {}
+        biblio = ex_doc.get("bibliographic-data") or {}
+        # Family ID is a top-level attribute on exchange-document.
+        family_id = ex_doc.get("@family-id") or ""
+        # ------------------------------------------------------------------
+        # Publication reference — docdb has country/number/kind/date.
+        # ------------------------------------------------------------------
         pub_ref = (biblio.get("publication-reference") or {}).get(
             "document-id") or []
         if isinstance(pub_ref, dict):
             pub_ref = [pub_ref]
-        country = doc_num = kind = date_raw = ""
+        country = doc_num = kind = pub_date_raw = ""
         for ref in pub_ref:
             if not isinstance(ref, dict):
                 continue
@@ -430,9 +454,47 @@ def _epo_to_unified(doc: dict) -> dict | None:
                 country = _epo_text(ref.get("country"))
                 doc_num = _epo_text(ref.get("doc-number"))
                 kind = _epo_text(ref.get("kind"))
-                date_raw = _epo_text(ref.get("date"))
+                pub_date_raw = _epo_text(ref.get("date"))
                 break
-        # Title — prefer English, then the first available.
+        # ------------------------------------------------------------------
+        # Application reference — filing date (often earlier than pub date).
+        # ------------------------------------------------------------------
+        app_ref = (biblio.get("application-reference") or {}).get(
+            "document-id") or []
+        if isinstance(app_ref, dict):
+            app_ref = [app_ref]
+        app_date_raw = ""
+        for ref in app_ref:
+            if not isinstance(ref, dict):
+                continue
+            if ref.get("@document-id-type") == "docdb":
+                app_date_raw = _epo_text(ref.get("date"))
+                break
+        # ------------------------------------------------------------------
+        # Priority claims — earliest priority date across all claims.
+        # ------------------------------------------------------------------
+        priorities = (biblio.get("priority-claims") or {}).get(
+            "priority-claim") or []
+        if isinstance(priorities, dict):
+            priorities = [priorities]
+        priority_dates: list[str] = []
+        for pc in priorities:
+            if not isinstance(pc, dict):
+                continue
+            pc_ids = pc.get("document-id") or []
+            if isinstance(pc_ids, dict):
+                pc_ids = [pc_ids]
+            for pid in pc_ids:
+                if not isinstance(pid, dict):
+                    continue
+                d = _epo_text(pid.get("date"))
+                if d and len(d) == 8:
+                    priority_dates.append(d)
+                    break
+        priority_date_raw = min(priority_dates) if priority_dates else ""
+        # ------------------------------------------------------------------
+        # Title — prefer English, then any.
+        # ------------------------------------------------------------------
         titles = biblio.get("invention-title") or []
         if isinstance(titles, dict):
             titles = [titles]
@@ -451,13 +513,17 @@ def _epo_to_unified(doc: dict) -> dict | None:
         title = title_en or title_any
         if not title:
             return None
-        # Applicants → assignee column. epodoc format is human-readable.
+        # ------------------------------------------------------------------
+        # Applicants → assignee column (epodoc human-readable format).
+        # Also keep applicant country codes for aggregation by-country.
+        # ------------------------------------------------------------------
         parties = biblio.get("parties") or {}
         applicants_raw = (parties.get("applicants") or {}).get(
             "applicant") or []
         if isinstance(applicants_raw, dict):
             applicants_raw = [applicants_raw]
         assignees: list[str] = []
+        applicant_countries: list[str] = []
         for a in applicants_raw:
             if not isinstance(a, dict):
                 continue
@@ -467,7 +533,13 @@ def _epo_to_unified(doc: dict) -> dict | None:
                 (a.get("applicant-name") or {}).get("name"))
             if name and name not in assignees:
                 assignees.append(name)
-        # Inventors (also epodoc preference).
+            cc = _epo_text(
+                (a.get("residence") or {}).get("country"))
+            if cc and cc not in applicant_countries:
+                applicant_countries.append(cc)
+        # ------------------------------------------------------------------
+        # Inventors (epodoc).
+        # ------------------------------------------------------------------
         inv_raw = (parties.get("inventors") or {}).get("inventor") or []
         if isinstance(inv_raw, dict):
             inv_raw = [inv_raw]
@@ -481,10 +553,60 @@ def _epo_to_unified(doc: dict) -> dict | None:
                 (i.get("inventor-name") or {}).get("name"))
             if name and name not in inventors:
                 inventors.append(name)
-        # Abstract — prefer English; sits on exchange-document, not
-        # bibliographic-data.
+        # ------------------------------------------------------------------
+        # IPC classifications — codes like "H01L21/02". The text field
+        # is space-padded: "H01L  21/02       20060101AFI20260315BHEP"
+        # so we slice off the prefix (first 14 chars carry the code).
+        # ------------------------------------------------------------------
+        ipc_raw = (biblio.get("classifications-ipcr") or {}).get(
+            "classification-ipcr") or []
+        if isinstance(ipc_raw, dict):
+            ipc_raw = [ipc_raw]
+        ipc_codes: list[str] = []
+        for c in ipc_raw:
+            if not isinstance(c, dict):
+                continue
+            text = _epo_text(c.get("text"))
+            if not text:
+                continue
+            # First 14 chars are the section + class + subclass + group/subgroup,
+            # space-collapsed.
+            code = " ".join(text[:14].split())
+            if code and code not in ipc_codes:
+                ipc_codes.append(code)
+        # CPC (more granular, US/EP harmonised). Optional — biblio may omit.
+        cpc_raw = (biblio.get("patent-classifications") or {}).get(
+            "patent-classification") or []
+        if isinstance(cpc_raw, dict):
+            cpc_raw = [cpc_raw]
+        cpc_codes: list[str] = []
+        for c in cpc_raw:
+            if not isinstance(c, dict):
+                continue
+            if _epo_text(c.get("classification-scheme")
+                        if isinstance(c.get("classification-scheme"), dict)
+                        else None).upper() != "CPC":
+                # Tag-attribute scheme — fall back to checking the
+                # 'scheme' element value directly.
+                scheme_el = c.get("classification-scheme")
+                if isinstance(scheme_el, dict):
+                    if (scheme_el.get("@scheme") or "").upper() != "CPC":
+                        continue
+            section = _epo_text(c.get("section"))
+            cls = _epo_text(c.get("class"))
+            subcls = _epo_text(c.get("subclass"))
+            mg = _epo_text(c.get("main-group"))
+            sg = _epo_text(c.get("subgroup"))
+            if section and cls and subcls:
+                code = f"{section}{cls}{subcls}{mg}/{sg}" if mg and sg else \
+                       f"{section}{cls}{subcls}"
+                if code not in cpc_codes:
+                    cpc_codes.append(code)
+        # ------------------------------------------------------------------
+        # Abstract — prefer English.
+        # ------------------------------------------------------------------
         abstract = ""
-        abs_raw = (doc.get("exchange-document") or {}).get("abstract") or []
+        abs_raw = ex_doc.get("abstract") or []
         if isinstance(abs_raw, dict):
             abs_raw = [abs_raw]
         for a in abs_raw:
@@ -500,26 +622,46 @@ def _epo_to_unified(doc: dict) -> dict | None:
                 break
             if not abstract:
                 abstract = joined
-        # YYYYMMDD → YYYY-MM-DD
-        date_fmt = ""
-        year = None
-        if len(date_raw) == 8 and date_raw.isdigit():
-            date_fmt = f"{date_raw[:4]}-{date_raw[4:6]}-{date_raw[6:8]}"
-            year = int(date_raw[:4])
-        # Google Patents resolves <country><number><kind> directly.
+
+        def _fmt(d: str) -> str:
+            return f"{d[:4]}-{d[4:6]}-{d[6:8]}" if len(d) == 8 and d.isdigit() else ""
+
+        pub_date = _fmt(pub_date_raw)
+        app_date = _fmt(app_date_raw)
+        priority_date = _fmt(priority_date_raw)
+        year = int(pub_date_raw[:4]) if len(pub_date_raw) >= 4 \
+            and pub_date_raw[:4].isdigit() else None
         patent_number = (f"{country}{doc_num}{kind}"
                          if country and doc_num else "")
         url = (f"https://patents.google.com/patent/{patent_number}"
                if patent_number else "")
+        # Kind code → human-readable status hint.
+        kind_label = {
+            "A": "공개", "A1": "출원공개", "A2": "출원공개(재발행)",
+            "A9": "정정공개", "B1": "등록", "B2": "등록(재발행)",
+            "C": "심사완료", "U": "실용신안",
+        }.get(kind, "")
         return _empty({
             "title": title,
             "patent_number": patent_number,
-            "date": date_fmt,
+            "country": country,
+            "kind": kind,
+            "kind_label": kind_label,
+            "date": pub_date,            # publication date (legacy field)
+            "publication_date": pub_date,
+            "application_date": app_date,
+            "priority_date": priority_date,
             "year": year,
             "inventors": inventors[:5],
+            "inventors_total": len(inventors),
             "assignee": ", ".join(assignees[:3]),
+            "assignees": assignees,
+            "applicant_countries": applicant_countries,
             "abstract": abstract.strip(),
             "claims_count": None,
+            "ipc": ipc_codes[:8],        # cap for readability
+            "cpc": cpc_codes[:8],
+            "family_id": family_id,
             "url": url,
         }, "EPO")
     except Exception:
@@ -632,3 +774,418 @@ async def search(query: str, limit: int = 15) -> list[dict]:
     except Exception as e:
         log.warning("patent search EPO failed (%s)", type(e).__name__)
         return []
+
+
+# ---------------------------------------------------------------------------
+# Advanced EPO search — builds a CQL query from structured filters so
+# the bot can offer applicant / IPC / country / year refinements via
+# /search_patents_advanced. CQL operators: AND / OR / NOT, fields:
+# txt (text), pa (applicant), in (inventor), ic (IPC), cl (country),
+# pd (publication date YYYY/YYYYMMDD).
+# ---------------------------------------------------------------------------
+
+
+def _build_cql(query: str, applicant: str = "", inventor: str = "",
+               ipc: str = "", country: str = "",
+               year_from: int | None = None,
+               year_to: int | None = None) -> str:
+    """Compose a CQL string from optional filters. The text part is
+    required; everything else is AND-joined when present."""
+    parts: list[str] = []
+    q = query.strip()
+    if q:
+        parts.append(f'txt="{q}"' if " " in q else f"txt={q}")
+    if applicant:
+        parts.append(f'pa="{applicant.strip()}"')
+    if inventor:
+        parts.append(f'in="{inventor.strip()}"')
+    if ipc:
+        parts.append(f"ic={ipc.strip()}")
+    if country:
+        parts.append(f"cl={country.strip().upper()}")
+    if year_from and year_to:
+        parts.append(f"pd within \"{year_from} {year_to}\"")
+    elif year_from:
+        parts.append(f"pd>={year_from}")
+    elif year_to:
+        parts.append(f"pd<={year_to}")
+    return " AND ".join(parts) if parts else ""
+
+
+async def search_advanced(query: str, limit: int = 15, applicant: str = "",
+                          inventor: str = "", ipc: str = "",
+                          country: str = "",
+                          year_from: int | None = None,
+                          year_to: int | None = None) -> list[dict]:
+    """EPO OPS search with structured filters."""
+    if not has_global_backend():
+        return []
+    cql = _build_cql(query, applicant=applicant, inventor=inventor,
+                     ipc=ipc, country=country,
+                     year_from=year_from, year_to=year_to)
+    if not cql:
+        return []
+    token = await _epo_token()
+    if not token:
+        return []
+    end = min(max(limit, 1), 25)
+    range_hdr = f"1-{end}"
+    try:
+        async with httpx.AsyncClient(timeout=30,
+                                     follow_redirects=True) as c:
+            r = await c.get(
+                _EPO_SEARCH_URL,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "X-OPS-Range": range_hdr,
+                },
+                params={"q": cql, "Range": range_hdr},
+            )
+        if r.status_code != 200:
+            log.warning("epo advanced %d: %r",
+                        r.status_code, r.text[:300])
+            return []
+        data = r.json()
+    except Exception as e:
+        log.warning("epo advanced failed: %s", e)
+        return []
+    try:
+        wpd = data.get("ops:world-patent-data") or {}
+        result = (wpd.get("ops:biblio-search") or {}).get(
+            "ops:search-result") or {}
+        docs = result.get("exchange-documents") or []
+        if isinstance(docs, dict):
+            docs = [docs]
+    except Exception:
+        return []
+    out: list[dict] = []
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+        row = _epo_to_unified(doc)
+        if row:
+            out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Bulk fetch for aggregate analytics. EPO allows Range=1-100 per
+# call; we paginate up to max_count to assemble a statistically
+# meaningful sample. 400 docs ≈ 200 KB ≈ 0.005% of the 4GB/month
+# free tier — even called daily this is negligible.
+# ---------------------------------------------------------------------------
+
+
+async def _epo_search_bulk(query: str, max_count: int = 400) -> list[dict]:
+    """Fetch up to max_count patents matching the query across multiple
+    Range requests (100 per call). Returns the deduplicated unified
+    rows; rows that fail to parse are silently skipped."""
+    if not has_global_backend():
+        return []
+    token = await _epo_token()
+    if not token:
+        return []
+    q = query.strip()
+    if not q:
+        return []
+    cql = f'txt="{q}"' if " " in q else f"txt={q}"
+    max_count = max(1, min(max_count, 2000))
+    out: list[dict] = []
+    seen: set[str] = set()
+    cursor = 1
+    page_size = 100
+    while cursor <= max_count:
+        end = min(cursor + page_size - 1, max_count)
+        range_hdr = f"{cursor}-{end}"
+        try:
+            async with httpx.AsyncClient(timeout=40,
+                                         follow_redirects=True) as c:
+                r = await c.get(
+                    _EPO_SEARCH_URL,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Accept": "application/json",
+                        "X-OPS-Range": range_hdr,
+                    },
+                    params={"q": cql, "Range": range_hdr},
+                )
+        except Exception as e:
+            log.warning("epo bulk page %s failed: %s", range_hdr, e)
+            break
+        if r.status_code == 404:
+            # EPO returns 404 when the requested range overshoots the
+            # total result count — totally fine for the last page.
+            break
+        if r.status_code == 401:
+            _EPO_TOKEN_CACHE["expires_at"] = 0
+            token = await _epo_token()
+            if not token:
+                break
+            continue
+        if r.status_code != 200:
+            log.warning("epo bulk %s: %d %r",
+                        range_hdr, r.status_code, r.text[:200])
+            break
+        try:
+            data = r.json()
+        except Exception:
+            log.warning("epo bulk %s JSON decode failed", range_hdr)
+            break
+        try:
+            wpd = data.get("ops:world-patent-data") or {}
+            result = (wpd.get("ops:biblio-search") or {}).get(
+                "ops:search-result") or {}
+            docs = result.get("exchange-documents") or []
+            if isinstance(docs, dict):
+                docs = [docs]
+        except Exception:
+            break
+        if not docs:
+            break
+        added = 0
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            row = _epo_to_unified(doc)
+            if not row:
+                continue
+            key = row.get("patent_number") or row.get("family_id") or ""
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            out.append(row)
+            added += 1
+        if added == 0 or end >= max_count:
+            break
+        cursor = end + 1
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Pure aggregation helpers — no I/O, work off an already-fetched
+# patent list. Each returns a small dict/list shape ready for the
+# bot's text formatter.
+# ---------------------------------------------------------------------------
+
+
+def _norm_assignee(name: str) -> str:
+    """Collapse minor name variants ('Samsung Electronics Co Ltd' /
+    'SAMSUNG ELECTRONICS CO., LTD.') so a single org doesn't get
+    split across the leaderboard. Light-touch only — strip suffixes
+    + case-fold, no fuzzy matching."""
+    if not name:
+        return ""
+    s = name.strip()
+    # Strip common corporate suffixes that fragment counts
+    suffixes = [
+        " CO LTD", " CO., LTD.", " CO.,LTD.", " CO.,LTD", " CO LTD.",
+        " CO.,LIMITED", " CO., LIMITED",
+        " LTD.", " LTD", " LIMITED", " LIMITED.",
+        " INC.", " INC", " INCORPORATED",
+        " GMBH", " GMBH.", " AG", " SA", " S.A.", " B.V.", " BV",
+        " LLC", " L.L.C.", " CORPORATION", " CORP.", " CORP",
+        " COMPANY", " ENTERPRISES",
+    ]
+    upper = s.upper()
+    for sfx in suffixes:
+        if upper.endswith(sfx):
+            s = s[:len(s) - len(sfx)].strip()
+            upper = s.upper()
+    # Display in UPPERCASE — corporate leaderboards read naturally
+    # in caps (TSMC / SAMSUNG ELECTRONICS / SK HYNIX), and using the
+    # uppercase form as both display and group key avoids the
+    # "Sk Hynix" / "Tsmc" artefacts that .title() produces on
+    # acronyms.
+    return upper.strip()
+
+
+def compute_patent_stats(patents: list[dict]) -> dict:
+    """Aggregate-by-everything overview: counts by applicant, country,
+    year, IPC. Returns a stats dict with top-N lists ready for render."""
+    from collections import Counter
+    from_country = Counter()
+    by_applicant = Counter()
+    by_year = Counter()
+    by_ipc = Counter()
+    by_kind = Counter()
+    for p in patents:
+        cc = p.get("country") or ""
+        if cc:
+            from_country[cc] += 1
+        for asg in (p.get("assignees") or []):
+            norm = _norm_assignee(asg)
+            if norm:
+                by_applicant[norm] += 1
+        yr = p.get("year")
+        if yr:
+            by_year[yr] += 1
+        for ipc in (p.get("ipc") or []):
+            # Group at subclass level (H01L21/02 → H01L21) for cleaner buckets
+            head = ipc.split("/")[0].strip()
+            if head:
+                by_ipc[head] += 1
+        kind = p.get("kind") or ""
+        if kind:
+            by_kind[kind] += 1
+    return {
+        "total": len(patents),
+        "by_applicant": by_applicant.most_common(15),
+        "by_country": from_country.most_common(10),
+        "by_year": sorted(by_year.items(), reverse=True),
+        "by_ipc": by_ipc.most_common(10),
+        "by_kind": by_kind.most_common(10),
+    }
+
+
+def compute_patent_trend(patents: list[dict],
+                         top_applicants: int = 5) -> dict:
+    """Year-over-year time series for the top-N applicants. Returns
+    {'years': [...], 'series': {applicant_name: [count_per_year]}} —
+    ready to feed into a mermaid xychart or text bar grid."""
+    from collections import Counter, defaultdict
+    counts = Counter()
+    for p in patents:
+        for asg in (p.get("assignees") or []):
+            norm = _norm_assignee(asg)
+            if norm:
+                counts[norm] += 1
+    top = [name for name, _ in counts.most_common(top_applicants)]
+    years_set: set[int] = set()
+    grid: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    for p in patents:
+        yr = p.get("year")
+        if not yr:
+            continue
+        years_set.add(yr)
+        for asg in (p.get("assignees") or []):
+            norm = _norm_assignee(asg)
+            if norm in top:
+                grid[norm][yr] += 1
+    years = sorted(years_set)
+    series = {name: [grid[name].get(y, 0) for y in years] for name in top}
+    return {"years": years, "series": series, "top_applicants": top}
+
+
+def compute_patent_newcomers(patents: list[dict],
+                             cutoff_months: int = 12) -> list[dict]:
+    """Applicants whose FIRST publication in this corpus is within
+    `cutoff_months`. Useful for spotting new entrants into the field.
+    Returns [{name, first_year, total_count}, ...]."""
+    from collections import defaultdict
+    from datetime import datetime
+    cutoff_year = datetime.utcnow().year - (cutoff_months // 12)
+    cutoff_month = datetime.utcnow().month
+    first_dates: dict[str, str] = {}  # YYYYMMDD-ish
+    totals: dict[str, int] = defaultdict(int)
+    for p in patents:
+        pub = (p.get("publication_date") or "").replace("-", "")
+        if not pub:
+            continue
+        for asg in (p.get("assignees") or []):
+            norm = _norm_assignee(asg)
+            if not norm:
+                continue
+            totals[norm] += 1
+            cur = first_dates.get(norm)
+            if cur is None or pub < cur:
+                first_dates[norm] = pub
+    newcomers: list[dict] = []
+    for name, first in first_dates.items():
+        if len(first) < 6:
+            continue
+        fy, fm = int(first[:4]), int(first[4:6])
+        # within cutoff months of "now"
+        months_ago = (datetime.utcnow().year - fy) * 12 + \
+                     (datetime.utcnow().month - fm)
+        if months_ago <= cutoff_months:
+            newcomers.append({
+                "name": name,
+                "first_date": f"{first[:4]}-{first[4:6]}-{first[6:8]}"
+                              if len(first) == 8 else first[:4],
+                "total": totals[name],
+            })
+    newcomers.sort(key=lambda x: x["total"], reverse=True)
+    return newcomers[:20]
+
+
+def compute_patent_coapplicants(patents: list[dict]) -> list[dict]:
+    """Pairs of applicants who appear together on the same patent.
+    Surfaces collaboration / joint-development relationships."""
+    from collections import Counter
+    from itertools import combinations
+    pair_counts: Counter = Counter()
+    for p in patents:
+        assignees = sorted({_norm_assignee(a)
+                            for a in (p.get("assignees") or []) if a})
+        if len(assignees) < 2:
+            continue
+        for a, b in combinations(assignees, 2):
+            if not (a and b):
+                continue
+            pair_counts[(a, b)] += 1
+    return [{"a": a, "b": b, "count": c}
+            for (a, b), c in pair_counts.most_common(20)]
+
+
+async def extract_patent_keywords(patents: list[dict],
+                                  max_phrases: int = 30) -> list[str]:
+    """Use Gemini Flash-Lite to mine technical noun phrases from the
+    abstracts of the supplied patents. Single batched call (~₩3-5),
+    returns deduplicated phrase list sorted by frequency-like signal."""
+    from .. import config
+    from ..llm.gemini import complete
+    import json as _json
+    import re as _re
+    if not patents:
+        return []
+    snippets = []
+    for i, p in enumerate(patents[:80], 1):
+        ab = (p.get("abstract") or "")[:600]
+        if ab:
+            snippets.append(f"[{i}] {ab}")
+    if not snippets:
+        return []
+    user = "\n".join(snippets)
+    system = (
+        "You are a technical-domain keyword extractor. Read the patent "
+        "abstracts below and return the most representative technical "
+        "noun phrases (concepts, methods, materials, structures). "
+        "Prefer multi-word phrases over single words. Preserve original "
+        "casing for acronyms (HBM, CMP, Cu-Cu, FCBGA). Output JSON only:\n"
+        '{"keywords": ["phrase1", "phrase2", ...]}'
+        f"\nReturn at most {max_phrases} phrases."
+    )
+    try:
+        resp = await complete(
+            model=config.SUMMARY_MODEL,
+            system=system,
+            user=user,
+            max_tokens=2048,
+            temperature=0.2,
+            purpose="patent_keywords",
+        )
+        m = _re.search(r"\{.*\}", resp, _re.DOTALL)
+        if not m:
+            return []
+        data = _json.loads(m.group(0))
+    except Exception:
+        log.exception("patent keyword extraction failed")
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for kw in (data.get("keywords") or []):
+        kw_clean = (kw or "").strip()
+        if not kw_clean:
+            continue
+        key = kw_clean.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(kw_clean)
+        if len(out) >= max_phrases:
+            break
+    return out

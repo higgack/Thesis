@@ -1118,7 +1118,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 Orphan: /orphans · /recover_orphans(건별 [📥]/[🗑])
 보류(5분): /pending(건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
 삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
-도구: /search_my_brain · /compare_papers · /search_papers · /search_patents · /web_search · /ingest_url
+도구: /search_my_brain · /compare_papers · /search_papers · /search_patents (+_advanced·_stats) · /web_search · /ingest_url
 한국 (KR): /company_patents · /patent_detail · /citing_patents (KIPRIS) · /kr_papers · /kr_patents · /kr_reports (ScienceON) · /kr_rnd_projects (NTIS) · /kr_research_data (DataON)
 기타: /start /help
 
@@ -3890,8 +3890,10 @@ def _format_patents_text(query: str, results: list[dict]) -> str:
     refusing to call search_patents even with explicit prompt
     coercion, then serving the "no source" refusal). Uses the same
     information density as the agent's (P-2) framework but without
-    an LLM call — title + meta line + abstract excerpt + URL per
-    patent, sized for Telegram readability."""
+    an LLM call — title + meta block + abstract excerpt + URL per
+    patent, sized for Telegram readability. Renders the richer EPO
+    fields (IPC, family, priority, kind) when present, gracefully
+    omits them for KIPRIS rows."""
     import html as _html
     if not results:
         return (f"🔍 '<b>{_html.escape(query)}</b>' 관련 특허 결과 없음.\n"
@@ -3903,43 +3905,477 @@ def _format_patents_text(query: str, results: list[dict]) -> str:
     for i, p in enumerate(results, 1):
         title_src = (p.get("title_ko") or p.get("title") or "(제목 없음)")
         title = _html.escape(title_src)[:300]
-        date = (p.get("date") or "")[:10]
         num = p.get("patent_number") or ""
+        kind_lbl = p.get("kind_label") or ""
+        pub_date = (p.get("publication_date") or p.get("date") or "")[:10]
+        app_date = (p.get("application_date") or "")[:10]
+        prio_date = (p.get("priority_date") or "")[:10]
+        family_id = p.get("family_id") or ""
         assignee_raw = (p.get("assignee") or "").strip()
-        assignee = _html.escape(assignee_raw[:60])
+        assignee = _html.escape(assignee_raw[:80])
+        app_countries = p.get("applicant_countries") or []
+        country_tag = f"[{','.join(app_countries[:3])}]" if app_countries else ""
         inv_list = p.get("inventors") or []
+        inv_total = p.get("inventors_total") or len(inv_list)
         inv = _html.escape(inv_list[0]) if inv_list else ""
-        if inv and len(inv_list) > 1:
-            inv += " et al."
-        claims = p.get("claims_count")
+        if inv and inv_total > 1:
+            inv += f" et al. (총 {inv_total}명)" if inv_total <= 99 else " et al."
+        ipc_codes = p.get("ipc") or []
+        ipc_line = (" · ".join(_html.escape(c) for c in ipc_codes[:4])
+                    if ipc_codes else "")
         abstract_src = (p.get("abstract_ko") or p.get("abstract") or "")
         abstract = _html.escape(
             _truncate_at_sentence(abstract_src.strip(), 900)
         )
         url = p.get("url") or ""
 
-        meta_parts: list[str] = []
-        if num:
-            meta_parts.append(num)
-        if assignee:
-            meta_parts.append(f"출원인 {assignee}")
-        if inv:
-            meta_parts.append(inv)
-        if claims:
-            meta_parts.append(f"Claims {claims}")
-        meta_line = " · ".join(meta_parts)
-
         block = [f"\n⚖️ <b>{i}. {title}</b>"]
-        if date:
-            block.append(f"  <i>출원 {date}</i>")
-        if meta_line:
-            block.append(f"   {meta_line}")
+        # Date line: 출원 / 공개 / 우선권 (보이는 것만)
+        date_parts: list[str] = []
+        if app_date:
+            date_parts.append(f"출원 {app_date}")
+        if pub_date and pub_date != app_date:
+            date_parts.append(f"공개 {pub_date}")
+        if prio_date and prio_date != app_date:
+            date_parts.append(f"우선권 {prio_date}")
+        if date_parts:
+            block.append(f"  📅 <i>{' · '.join(date_parts)}</i>")
+        # Number line: 출원번호 + kind label + family
+        num_parts: list[str] = []
+        if num:
+            num_disp = num
+            if kind_lbl:
+                num_disp += f" ({kind_lbl})"
+            num_parts.append(num_disp)
+        if family_id:
+            num_parts.append(f"Family {family_id}")
+        if num_parts:
+            block.append(f"  🔢 {' · '.join(num_parts)}")
+        # Applicant + countries
+        if assignee:
+            asg_line = f"🏢 출원인: {assignee}"
+            if country_tag:
+                asg_line += f" {country_tag}"
+            block.append(f"  {asg_line}")
+        # Inventors
+        if inv:
+            block.append(f"  👤 발명자: {inv}")
+        # IPC
+        if ipc_line:
+            block.append(f"  🏷️ 분류: {ipc_line}")
+        # Abstract
         if abstract:
-            block.append(f"   {abstract}")
+            block.append(f"  📝 {abstract}")
         if url:
             block.append(f"   → {url}")
         out.append("\n".join(block))
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# Stats view formatters — text bars + mermaid xychart for the trend
+# view. Tables are rendered as monospace-aligned text blocks inside
+# <pre> so Telegram preserves the column layout.
+# ---------------------------------------------------------------------------
+
+def _bar(count: int, max_count: int, width: int = 12) -> str:
+    """Unicode bar of `width` blocks, scaled to max_count."""
+    if max_count <= 0:
+        return ""
+    filled = max(1, round(width * count / max_count))
+    return "█" * filled
+
+
+def _format_patent_stats_overview(query: str, stats: dict) -> str:
+    """Render the default /patent_stats view — by-applicant /
+    by-country / by-year / by-IPC bar charts."""
+    import html as _html
+    total = stats.get("total", 0)
+    if total == 0:
+        return (f"📊 '<b>{_html.escape(query)}</b>' 특허 통계 — 분석할 자료 없음.\n"
+                f"검색어를 좁혀서 다시 시도해줘.")
+    out = [
+        f"📊 <b>'{_html.escape(query)}' 특허 통계</b>",
+        f"<i>최근 {total}건 분석 · EPO OPS</i>",
+    ]
+    # By year (most recent first)
+    by_year = stats.get("by_year") or []
+    if by_year:
+        out.append("\n📅 <b>출원 연도별</b>")
+        max_y = max((c for _, c in by_year), default=0)
+        for y, c in by_year[:10]:
+            pct = (c / total * 100) if total else 0
+            out.append(f"  {y}: {_bar(c, max_y)} {c}건 ({pct:.1f}%)")
+    # By country
+    by_country = stats.get("by_country") or []
+    if by_country:
+        out.append("\n🌍 <b>출원 국가/기관별</b>")
+        max_c = max((c for _, c in by_country), default=0)
+        cc_label = {
+            "US": "US (미국)", "EP": "EP (유럽특허청)",
+            "WO": "WO (PCT 국제출원)", "KR": "KR (한국)",
+            "JP": "JP (일본)", "CN": "CN (중국)",
+            "DE": "DE (독일)", "TW": "TW (대만)",
+            "GB": "GB (영국)", "FR": "FR (프랑스)",
+        }
+        for cc, c in by_country[:8]:
+            label = cc_label.get(cc, cc)
+            pct = (c / total * 100) if total else 0
+            out.append(f"  {label}: {_bar(c, max_c)} {c}건 ({pct:.1f}%)")
+    # By applicant TOP
+    by_applicant = stats.get("by_applicant") or []
+    if by_applicant:
+        out.append("\n🏢 <b>출원인 TOP 10</b>")
+        for rank, (name, c) in enumerate(by_applicant[:10], 1):
+            out.append(f"  {rank}. {_html.escape(name)[:50]} — {c}건")
+    # By IPC subclass
+    by_ipc = stats.get("by_ipc") or []
+    if by_ipc:
+        out.append("\n🏷️ <b>IPC 분류 TOP 8</b> (subclass level)")
+        for ipc, c in by_ipc[:8]:
+            label = _IPC_LABELS.get(ipc, "")
+            line = f"  {_html.escape(ipc)}"
+            if label:
+                line += f" ({label})"
+            line += f" — {c}건"
+            out.append(line)
+    out.append(
+        "\n🔗 <b>추가 분석:</b>\n"
+        f"  • /patent_stats {query} trend — 회사별 연도 추세\n"
+        f"  • /patent_stats {query} newcomers — 신규 진입자\n"
+        f"  • /patent_stats {query} network — 공동출원 네트워크\n"
+        f"  • /patent_stats {query} keywords — 키워드 cloud (Gemini)"
+    )
+    return "\n".join(out)
+
+
+# IPC subclass → 한국어 짧은 설명 (반도체/패키지/전자 도메인 위주, 다
+# 외워서 사람이 읽기 좋게 매핑. 없는 코드는 그냥 코드만 노출).
+_IPC_LABELS = {
+    "H01L21": "반도체 제조공정",
+    "H01L23": "반도체 패키지/하우징",
+    "H01L24": "반도체 본딩/배선",
+    "H01L25": "다중칩/3D 적층",
+    "H01L27": "집적회로 일반",
+    "H01L29": "반도체 소자 구조",
+    "H01L31": "광 반도체 소자",
+    "H01L33": "LED",
+    "H01L51": "유기반도체/OLED",
+    "G02F1": "광변조/디스플레이",
+    "G06F": "디지털 데이터 처리",
+    "G06N": "AI/머신러닝",
+    "H04L": "디지털 통신",
+    "H04N": "이미지 통신",
+    "B23K": "용접/접합",
+    "C09J": "접착제",
+    "C23C": "박막 증착",
+    "C30B": "단결정 성장",
+    "G01N": "측정/분석",
+    "G03F": "포토리소그래피",
+}
+
+
+def _format_patent_stats_trend(query: str, trend: dict) -> str:
+    """Mermaid xychart bar of yearly counts for top 5 applicants."""
+    import html as _html
+    years = trend.get("years") or []
+    series = trend.get("series") or {}
+    top = trend.get("top_applicants") or []
+    if not (years and series and top):
+        return (f"📈 '<b>{_html.escape(query)}</b>' 추세 분석 — 데이터 부족.")
+    out = [
+        f"📈 <b>'{_html.escape(query)}' 회사별 연도 추세</b>",
+        f"<i>TOP {len(top)} 출원인 × {min(years)}~{max(years)} 연도별 건수</i>",
+        "",
+        "```mermaid",
+        "xychart-beta",
+        f'  title "{query} — 회사별 연도별 출원량"',
+        f"  x-axis [{', '.join(str(y) for y in years)}]",
+        "  y-axis \"건수\"",
+    ]
+    for name in top:
+        counts = series.get(name, [])
+        out.append(f"  bar [{', '.join(str(n) for n in counts)}]")
+    out.append("```")
+    out.append("\n<b>범례:</b>")
+    for rank, name in enumerate(top, 1):
+        total = sum(series.get(name, []))
+        out.append(f"  bar{rank}. {_html.escape(name)[:40]} ({total}건 누계)")
+    return "\n".join(out)
+
+
+def _format_patent_stats_newcomers(query: str, newcomers: list[dict]) -> str:
+    """Recently-entered applicants (first publication within cutoff)."""
+    import html as _html
+    if not newcomers:
+        return (f"🆕 '<b>{_html.escape(query)}</b>' 신규 진입자 없음 "
+                f"(최근 12개월 기준).")
+    out = [
+        f"🆕 <b>'{_html.escape(query)}' 신규 진입자</b>",
+        f"<i>최근 12개월 내 첫 등장 출원인 {len(newcomers)}곳</i>",
+    ]
+    for r in newcomers:
+        out.append(
+            f"  • {_html.escape(r['name'])[:50]} — "
+            f"첫 등장 {r['first_date']} · 누적 {r['total']}건"
+        )
+    return "\n".join(out)
+
+
+def _format_patent_stats_network(query: str, pairs: list[dict]) -> str:
+    """Co-applicant pairs — joint patents."""
+    import html as _html
+    if not pairs:
+        return (f"🤝 '<b>{_html.escape(query)}</b>' 공동출원 관계 없음 "
+                f"(분석한 corpus에서).")
+    out = [
+        f"🤝 <b>'{_html.escape(query)}' 공동출원 네트워크</b>",
+        f"<i>2인 이상 함께 출원한 케이스 {len(pairs)}쌍</i>",
+    ]
+    for r in pairs[:15]:
+        out.append(
+            f"  • {_html.escape(r['a'])[:35]} ⇄ "
+            f"{_html.escape(r['b'])[:35]} — {r['count']}건"
+        )
+    return "\n".join(out)
+
+
+def _format_patent_stats_keywords(query: str, keywords: list[str]) -> str:
+    """Gemini-extracted technical noun phrases."""
+    import html as _html
+    if not keywords:
+        return (f"☁️ '<b>{_html.escape(query)}</b>' 키워드 추출 실패.")
+    out = [
+        f"☁️ <b>'{_html.escape(query)}' 기술 키워드 클라우드</b>",
+        f"<i>분석한 abstract 들에서 추출한 핵심 명사구 {len(keywords)}개</i>",
+        "",
+        " · ".join(_html.escape(kw) for kw in keywords[:30]),
+    ]
+    return "\n".join(out)
+
+
+async def cmd_patent_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/patent_stats <keyword> [overview|trend|newcomers|network|keywords]
+    — aggregate analytics over up to 400 EPO patents matching the
+    keyword. Default view is 'overview' (applicant/country/year/IPC
+    top-N bar charts). Other views give the time-series, newcomer,
+    co-applicant network, and keyword cloud cuts of the same corpus."""
+    if not _is_owner(update):
+        return
+    args = list(ctx.args)
+    if not args:
+        await update.message.reply_text(
+            "사용법: /patent_stats <키워드> [view]\n"
+            "view: overview (기본) · trend · newcomers · network · keywords\n"
+            "예: /patent_stats hybrid bonding trend"
+        )
+        return
+    # Last arg is the view selector if it matches one of our keywords
+    valid_views = {"overview", "trend", "newcomers", "network", "keywords"}
+    view = "overview"
+    if args[-1].lower() in valid_views:
+        view = args[-1].lower()
+        args = args[:-1]
+    q = " ".join(args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /patent_stats <키워드> [view]")
+        return
+    from .agent import patentsearch
+    if not patentsearch.has_global_backend():
+        await update.message.reply_text(
+            "⚠️ EPO_API_KEY/EPO_API_SECRET 누락 — 글로벌 특허 분석 불가."
+        )
+        return
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"📊 '{q}' 특허 통계 분석 중 (최대 400건, 30~60초 소요)..."
+    )
+    try:
+        patents = await patentsearch._epo_search_bulk(q, max_count=400)
+    except Exception as e:
+        log.exception("patent_stats bulk fetch failed for %r", q)
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"⚠️ 특허 통계 가져오기 실패: {_explain_error(e)}",
+        )
+        return
+    if not patents:
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"📊 '{q}' 관련 특허 없음. 키워드 조정 후 재시도.",
+        )
+        return
+    try:
+        if view == "trend":
+            data = patentsearch.compute_patent_trend(patents)
+            body = _format_patent_stats_trend(q, data)
+        elif view == "newcomers":
+            data = patentsearch.compute_patent_newcomers(patents)
+            body = _format_patent_stats_newcomers(q, data)
+        elif view == "network":
+            data = patentsearch.compute_patent_coapplicants(patents)
+            body = _format_patent_stats_network(q, data)
+        elif view == "keywords":
+            data = await patentsearch.extract_patent_keywords(patents)
+            body = _format_patent_stats_keywords(q, data)
+        else:
+            data = patentsearch.compute_patent_stats(patents)
+            body = _format_patent_stats_overview(q, data)
+    except Exception as e:
+        log.exception("patent_stats render failed (view=%s)", view)
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"⚠️ 통계 렌더 실패: {_explain_error(e)}",
+        )
+        return
+    # mermaid block needs to be extracted + rendered as image; the
+    # existing helper handles that for trend.
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("patent_stats fallback send failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("patent_stats chunked send failed")
+
+
+async def cmd_search_patents_advanced(
+        update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/search_patents_advanced <키워드> [filters]
+    — keyword + CQL-style filters. Filters use `key=value` syntax:
+      applicant=SAMSUNG  inventor=Smith  ipc=H01L21
+      country=KR  from=2023  to=2026
+    Example:
+      /search_patents_advanced hybrid bonding applicant=SAMSUNG from=2024
+    """
+    if not _is_owner(update):
+        return
+    args = list(ctx.args)
+    if not args:
+        await update.message.reply_text(
+            "사용법: /search_patents_advanced <키워드> [필터]\n"
+            "필터: applicant=회사 · inventor=발명자 · ipc=H01L21 · "
+            "country=KR · from=2023 · to=2026\n"
+            "예: /search_patents_advanced hybrid bonding applicant=SAMSUNG from=2024"
+        )
+        return
+    filters = {
+        "applicant": "", "inventor": "", "ipc": "",
+        "country": "", "from": "", "to": "",
+    }
+    keyword_parts: list[str] = []
+    for a in args:
+        if "=" in a:
+            k, v = a.split("=", 1)
+            k = k.lower().strip()
+            v = v.strip()
+            if k in filters and v:
+                filters[k] = v
+                continue
+        keyword_parts.append(a)
+    q = " ".join(keyword_parts).strip()
+    if not q:
+        await update.message.reply_text(
+            "키워드가 비어있음. /search_patents_advanced <키워드> ..."
+        )
+        return
+    year_from = None
+    year_to = None
+    try:
+        year_from = int(filters["from"]) if filters["from"] else None
+    except ValueError:
+        await update.message.reply_text("from= 은 연도(YYYY) 여야 함")
+        return
+    try:
+        year_to = int(filters["to"]) if filters["to"] else None
+    except ValueError:
+        await update.message.reply_text("to= 은 연도(YYYY) 여야 함")
+        return
+    from .agent import patentsearch
+    if not patentsearch.has_global_backend():
+        await update.message.reply_text(
+            "⚠️ EPO_API_KEY/EPO_API_SECRET 누락."
+        )
+        return
+    await _typing(update, ctx)
+    label = q
+    extra: list[str] = []
+    if filters["applicant"]:
+        extra.append(f"출원인={filters['applicant']}")
+    if filters["inventor"]:
+        extra.append(f"발명자={filters['inventor']}")
+    if filters["ipc"]:
+        extra.append(f"IPC={filters['ipc']}")
+    if filters["country"]:
+        extra.append(f"국가={filters['country']}")
+    if year_from:
+        extra.append(f"≥{year_from}")
+    if year_to:
+        extra.append(f"≤{year_to}")
+    if extra:
+        label += f" [{' · '.join(extra)}]"
+    status = await update.message.reply_text(
+        f"🔍 '{label}' 고급 특허 검색 중 (한국어 번역 포함)..."
+    )
+    try:
+        results = await patentsearch.search_advanced(
+            q, limit=15,
+            applicant=filters["applicant"],
+            inventor=filters["inventor"],
+            ipc=filters["ipc"],
+            country=filters["country"],
+            year_from=year_from, year_to=year_to,
+        )
+    except Exception as e:
+        log.exception("search_patents_advanced failed for %r", q)
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"⚠️ 검색 실패: {_explain_error(e)}",
+        )
+        return
+    results = await _translate_results_korean(results)
+    body = _format_patents_text(label, results)
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("search_patents_advanced fallback send failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("search_patents_advanced chunked send failed")
 
 
 async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -7284,6 +7720,9 @@ def main():
     app.add_handler(CommandHandler("compare_papers", cmd_compare_papers))
     app.add_handler(CommandHandler("search_papers", cmd_search_papers))
     app.add_handler(CommandHandler("search_patents", cmd_search_patents))
+    app.add_handler(CommandHandler(
+        "search_patents_advanced", cmd_search_patents_advanced))
+    app.add_handler(CommandHandler("patent_stats", cmd_patent_stats))
     app.add_handler(CommandHandler("company_patents", cmd_company_patents))
     app.add_handler(CommandHandler("patent_detail", cmd_patent_detail))
     app.add_handler(CommandHandler("citing_patents", cmd_citing_patents))
