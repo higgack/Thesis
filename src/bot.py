@@ -1156,7 +1156,115 @@ Orphan: /orphans · /recover_orphans(건별 [📥]/[🗑])
 
 <b>【10-3. Retry/무손실 재개】</b> 5회 선형(1h→2h→3h→4h→/failed)·silent retry · 인입 시작 in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개(stop_grace 120s, 부팅 stale 클리어 10s)·atomic JSON+.bak·/audit 메모리·디스크·orphan 검증
 
-<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env EMBED_BACKEND·OCR_BACKEND (옵션 CLAUDE.md 참조)"""
+<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
+📘 특허 상세 가이드: /patents_guide"""
+
+
+# Detailed multi-section guide for the patent suite. Kept separate
+# from _HELP_TEXT so the main help stays under Telegram's 4096-char
+# limit. Surfaced as its own /patents_guide command — the help text
+# above just points the user at it.
+_PATENTS_GUIDE_TEXT = """<b>📘 특허 명령어 상세 가이드</b>
+
+전체 5가지 명령어. KIPRIS Plus (한국) + EPO OPS (글로벌) 두 백엔드.
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>1) /search_patents &lt;키워드&gt;</b>
+글로벌 free-text 특허 검색 (EPO OPS, DOCDB — EP/WO/US/KR/JP/DE/CN).
+
+• 키워드 1개: <code>/search_patents HBM</code> → 정확히 HBM 매칭
+• 다단어: <code>/search_patents hybrid bonding</code> → "hybrid bonding" 구문 그대로
+• 한 메시지 = 한 명령 (여러 줄 동시 보내면 첫줄만 명령으로 인식)
+
+결과: 최대 15건, 최신순. 각 행에 한국어 번역 + 출원/공개/우선권 날짜,
+출원번호+kind label, family ID, 출원인+국가코드, 발명자 총 인원,
+IPC 분류 최대 4개, abstract 900자, Google Patents URL.
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>2) /search_patents_advanced &lt;키워드&gt; [필터]</b>
+필터로 검색 범위 좁히기. 필터는 <code>key=value</code> 형식, 공백으로 구분.
+
+<b>필터 옵션:</b>
+• <code>applicant=회사명</code> — 출원인 한정 (예: applicant=SAMSUNG)
+• <code>inventor=발명자명</code> — 발명자 한정 (예: inventor=Smith)
+• <code>ipc=H01L21</code> — IPC subclass 한정 (반도체 제조공정만)
+• <code>country=KR</code> — 출원국 한정 (KR/US/EP/WO/JP/CN/DE/TW...)
+• <code>from=2023</code> — 공개일 ≥ 2023
+• <code>to=2026</code> — 공개일 ≤ 2026
+
+<b>예시:</b>
+<code>/search_patents_advanced HBM applicant=SAMSUNG from=2024</code>
+<code>/search_patents_advanced photonic ipc=G02F1 country=US</code>
+<code>/search_patents_advanced AI accelerator applicant=NVIDIA from=2023 to=2026</code>
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>3) /patent_stats &lt;키워드&gt; [view]</b>
+EPO 에서 최대 400건 가져와 메모리에서 통계 집계. 30~60초 소요.
+
+<b>5가지 view:</b>
+
+🔹 <b>overview</b> (기본): 출원인 TOP 10 + 국가별 + 연도별 막대 + IPC TOP 8
+   <code>/patent_stats hybrid bonding</code>
+
+🔹 <b>trend</b>: TOP 5 회사 × 연도별 Mermaid xychart
+   <code>/patent_stats hybrid bonding trend</code>
+
+🔹 <b>newcomers</b>: 최근 12개월 첫 등장 출원인
+   <code>/patent_stats hybrid bonding newcomers</code>
+
+🔹 <b>network</b>: 공동출원 (회사 A ⇄ 회사 B) 페어
+   <code>/patent_stats hybrid bonding network</code>
+
+🔹 <b>keywords</b>: Gemini 가 abstract 들에서 추출한 기술 키워드 (~₩3-5)
+   <code>/patent_stats hybrid bonding keywords</code>
+
+회사명은 자동 정규화 — "SAMSUNG ELECTRONICS CO LTD" / "Samsung
+Electronics Co., Ltd." 둘 다 SAMSUNG ELECTRONICS 한 그룹으로 카운트.
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>4) /company_patents &lt;회사명&gt;</b>
+한국 회사 특허 (KIPRIS Plus 출원인명 검색). 키워드 X, 회사명 정확히.
+
+• <code>/company_patents 삼성전기</code>
+• <code>/company_patents SK하이닉스</code>
+• <code>/company_patents 한양대학교 산학협력단</code>
+
+결과: 등록번호 우선, 없으면 공개번호, 없으면 출원번호.
+한국 특허 전용 (외국 회사는 /search_patents 사용).
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>5) /patent_detail &lt;출원번호&gt; · /citing_patents &lt;출원번호&gt;</b>
+KIPRIS Plus 단건 상세 / 인용 네트워크. 출원번호 (숫자만) 입력.
+
+• <code>/patent_detail 1020220012345</code> — 그 특허의 abstract+IPC
+• <code>/citing_patents 1020220012345</code> — 이 특허를 인용한 특허 목록
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>비용 / 한도</b>
+• EPO OPS: 무료 4GB/월 (rolling 30-day). 개인용 사실상 무한.
+  - /search_patents 1회 ≈ 50KB · /patent_stats 1회 ≈ 200KB
+  - 매일 stats 10회 + 일반검색 50회 = 월 한도의 ~1%
+• KIPRIS Plus: 무료 (한국 특허청 직접)
+• 번역: 검색당 ~₩5-7 (Flash-Lite 1배치 콜)
+• keywords view 만 추가 Gemini 콜 (~₩3-5)
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>나중에 KISTI ScienceON 활성화 되면</b>
+/kr_patents 로 들어가 (이미 따로 빠져있음). /search_patents (EPO) 는
+글로벌 영문 위주, /kr_patents (ScienceON) 는 한글 메타데이터 풍부 —
+용도가 달라서 충돌 X.
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+모든 검색 결과는 자동으로 대시보드에 기록됨 (⚖️ patent 칩으로 필터).
+"""
 
 
 # Telegram caps a single message at 4096 chars. _HELP_TEXT is hand-
@@ -1257,6 +1365,21 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await _typing(update, ctx)
     for chunk in _split_for_telegram(_HELP_TEXT):
+        await update.message.reply_text(
+            chunk, parse_mode="HTML", disable_web_page_preview=True,
+        )
+
+
+async def cmd_patents_guide(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/patents_guide — 특허 명령어 5종 (search_patents,
+    search_patents_advanced, patent_stats, company_patents,
+    patent_detail/citing_patents) 의 사용법, 필터 옵션, view 종류,
+    비용/한도, KISTI ScienceON 활성화시 영향까지 전부 한 곳에서.
+    _HELP_TEXT 가 4000 cap 에 걸려있어서 별도 명령어로 빼둠."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    for chunk in _split_for_telegram(_PATENTS_GUIDE_TEXT):
         await update.message.reply_text(
             chunk, parse_mode="HTML", disable_web_page_preview=True,
         )
@@ -3882,6 +4005,50 @@ async def _translate_results_korean(results: list[dict]) -> list[dict]:
     return results
 
 
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text: str) -> str:
+    """Strip HTML tags for plain-text storage in qna.db. The dashboard
+    re-escapes whatever is stored, so HTML markup like <b>...</b>
+    would appear as literal '<b>...</b>' tag source in the browser if
+    we didn't strip it first."""
+    if not text:
+        return ""
+    return _HTML_TAG_RE.sub("", text)
+
+
+def _record_command_qna(update, question: str, body: str,
+                        tools: list[str],
+                        sources: list[str] | None = None,
+                        model: str | None = None) -> None:
+    """Persist a direct-command Q&A to the dashboard archive +
+    trigger a regen so the card shows up immediately. Errors are
+    swallowed — archiving must never block the user reply. Strips
+    HTML tags from the answer body so the dashboard's _esc() doesn't
+    render them as literal <b> source."""
+    try:
+        chat_id = (update.effective_chat.id if update.effective_chat
+                   else update.message.chat.id)
+        plain_answer = _strip_html(body)
+        qna.record(
+            chat_id=chat_id,
+            question=question,
+            answer=plain_answer,
+            sources=sources or [],
+            tools=tools,
+            model=model,
+        )
+    except Exception:
+        log.exception("command qna record failed (q=%r)", question[:60])
+        return
+    try:
+        from .dashboard import regenerate as dashboard_regen
+        dashboard_regen.regenerate()
+    except Exception:
+        log.exception("dashboard regenerate after command qna failed")
+
+
 def _format_patents_text(query: str, results: list[dict]) -> str:
     """Direct deterministic render for /search_patents command output.
 
@@ -4228,6 +4395,12 @@ async def cmd_patent_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"⚠️ 통계 렌더 실패: {_explain_error(e)}",
         )
         return
+    _record_command_qna(
+        update,
+        question=(update.message.text or f"/patent_stats {q} {view}").strip(),
+        body=body,
+        tools=["patent_stats"],
+    )
     # mermaid block needs to be extracted + rendered as image; the
     # existing helper handles that for trend.
     pieces = _split_for_telegram(body)
@@ -4352,6 +4525,15 @@ async def cmd_search_patents_advanced(
         return
     results = await _translate_results_korean(results)
     body = _format_patents_text(label, results)
+    _record_command_qna(
+        update,
+        question=(update.message.text or
+                  f"/search_patents_advanced {q}").strip(),
+        body=body,
+        tools=["search_patents_advanced", "search_patents"],
+        sources=[p.get("patent_number", "")
+                 for p in results if p.get("patent_number")],
+    )
     pieces = _split_for_telegram(body)
     if pieces:
         try:
@@ -4417,6 +4599,14 @@ async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     results = await _translate_results_korean(results)
     body = _format_patents_text(q, results)
+    _record_command_qna(
+        update,
+        question=(update.message.text or f"/search_patents {q}").strip(),
+        body=body,
+        tools=["search_patents"],
+        sources=[p.get("patent_number", "")
+                 for p in results if p.get("patent_number")],
+    )
     pieces = _split_for_telegram(body)
     # Edit the status row into the first piece (HTML mode needed for
     # the <b> tags in the formatter), fall back to a fresh send if
@@ -4493,6 +4683,14 @@ async def cmd_company_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     results = await _translate_results_korean(results)
     body = _format_patents_text(
         f"{applicant} (KIPRIS 출원인 검색)", results,
+    )
+    _record_command_qna(
+        update,
+        question=(update.message.text or f"/company_patents {applicant}").strip(),
+        body=body,
+        tools=["search_company_patents"],
+        sources=[p.get("patent_number", "")
+                 for p in results if p.get("patent_number")],
     )
     pieces = _split_for_telegram(body)
     if pieces:
@@ -4575,6 +4773,13 @@ async def cmd_patent_detail(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     results = await _translate_results_korean([row])
     body = _format_patents_text(f"출원번호 {digits} 상세", results)
+    _record_command_qna(
+        update,
+        question=(update.message.text or f"/patent_detail {digits}").strip(),
+        body=body,
+        tools=["get_patent_detail"],
+        sources=[results[0].get("patent_number", "")] if results else [],
+    )
     pieces = _split_for_telegram(body)
     if pieces:
         try:
@@ -4655,6 +4860,13 @@ async def cmd_citing_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Translation is cheap on these (no abstract) but title shells
     # are formulaic — skip the LLM call. Use raw rows.
     body = _format_patents_text(f"출원번호 {digits} 인용 특허", rows)
+    _record_command_qna(
+        update,
+        question=(update.message.text or f"/citing_patents {digits}").strip(),
+        body=body,
+        tools=["get_citing_patents"],
+        sources=[r.get("patent_number", "") for r in rows if r.get("patent_number")],
+    )
     pieces = _split_for_telegram(body)
     if pieces:
         try:
@@ -4776,6 +4988,18 @@ async def _kisti_search_command(update, ctx, query: str, kind: str,
         return
     rows = result.get("results") or []
     body = _format_kisti_results(query, rows, kind)
+    _kisti_tool_name = {
+        "paper": "search_kr_papers",
+        "patent": "search_kr_patents_kisti",
+        "report": "search_kr_reports",
+    }.get(kind, f"search_kr_{kind}")
+    _record_command_qna(
+        update,
+        question=(update.message.text or f"/kr_{kind}s {query}").strip(),
+        body=body,
+        tools=[_kisti_tool_name],
+        sources=[r.get("CN", "") for r in rows if r.get("CN")],
+    )
     pieces = _split_for_telegram(body)
     if pieces:
         try:
@@ -4920,6 +5144,14 @@ async def cmd_kr_rnd_projects(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
         return
     body = _format_ntis_projects(q, rows)
+    _record_command_qna(
+        update,
+        question=(update.message.text or f"/kr_rnd_projects {q}").strip(),
+        body=body,
+        tools=["search_kr_rnd_projects"],
+        sources=[r.get("ProjectNumber") or r.get("과제번호") or ""
+                 for r in rows if r.get("ProjectNumber") or r.get("과제번호")],
+    )
     pieces = _split_for_telegram(body)
     if pieces:
         try:
@@ -5018,6 +5250,13 @@ async def cmd_kr_research_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
         return
     body = _format_dataon_results(q, rows)
+    _record_command_qna(
+        update,
+        question=(update.message.text or f"/kr_research_data {q}").strip(),
+        body=body,
+        tools=["search_kr_research_data"],
+        sources=[r.get("svcId", "") for r in rows if r.get("svcId")],
+    )
     pieces = _split_for_telegram(body)
     if pieces:
         try:
@@ -7642,6 +7881,7 @@ def main():
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
+    app.add_handler(CommandHandler("patents_guide", cmd_patents_guide))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("usage", cmd_usage))
