@@ -1315,6 +1315,10 @@ _LOOKUP_GUIDE_TEXT = """<b>📘 전체 명령어 상세 가이드 (/guide_lookup
 <b>/show &lt;id|keyword&gt;</b>
 doc_id 4자 이상 또는 키워드로 매치되는 문서의 본문 dump.
 [🌐 한국어 번역] 버튼 자동 부착 — 영문 자료 즉시 번역.
+<b>/find 결과에서 들어왔을 때:</b> 헤더 + 푸터에 [⏩ find 다음
+#N+1~#N+5 / total] 버튼 자동 부착. 클릭하면 다음 5개 항목을
+새 메시지로 띄움 (find 전체를 위로 스크롤할 필요 X). /find 후
+1시간 이내, 이 chat 안에서만 유효.
 예: <code>/show abc1</code> · <code>/show 대덕전자 1Q26</code>
 
 <b>/recent [N]</b>
@@ -2358,6 +2362,88 @@ async def cmd_dedupe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# Per-chat /find result cache for /show navigation. Stores the last
+# /find's items + first message-id so /show can offer "다음 항목"
+# walking from the user's current position instead of forcing them
+# to scroll the (often massive) find result back to the top to find
+# their next click. TTL-evicted at access time.
+_FIND_CONTEXT: dict[int, dict] = {}
+_FIND_CONTEXT_TTL = 3600  # 1h — beyond that the user has probably
+                          # moved on and a fresh /find is cheaper.
+
+
+def _set_find_context(chat_id: int, query: str, items: list[dict],
+                      first_message_id: int | None) -> None:
+    """Save /find result for /show navigation."""
+    _FIND_CONTEXT[chat_id] = {
+        "query": query,
+        "items": items,
+        "first_message_id": first_message_id,
+        "ts": time.time(),
+    }
+
+
+def _get_find_context(chat_id: int) -> dict | None:
+    """Return cached /find context for this chat, or None if absent
+    or expired. Removes expired entries on lookup."""
+    ctx = _FIND_CONTEXT.get(chat_id)
+    if not ctx:
+        return None
+    if time.time() - ctx.get("ts", 0) > _FIND_CONTEXT_TTL:
+        _FIND_CONTEXT.pop(chat_id, None)
+        return None
+    return ctx
+
+
+def _find_item_index(items: list[dict], doc_id: str) -> int | None:
+    """Return the position of doc_id in the /find result list, or None."""
+    for i, m in enumerate(items):
+        if (m.get("id") or "") == doc_id:
+            return i
+    return None
+
+
+def _format_find_preview_chunk(query: str, items: list[dict],
+                               start_idx: int, count: int = 5) -> str:
+    """Compact preview of items[start_idx:start_idx+count] for the
+    find-nav callback. Title + 학습일 + /show_id only — full summary
+    omitted since this is a "pick the next one to read" navigator."""
+    import html as _html
+    end_idx = min(len(items), start_idx + count)
+    total = len(items)
+    out = [
+        f"🔍 <b>'{_html.escape(query)}'</b> — "
+        f"검색 결과 #{start_idx + 1}~#{end_idx} / {total}",
+    ]
+    for i in range(start_idx, end_idx):
+        m = items[i]
+        title = _html.escape(_clean_text(
+            m.get("title") or "(제목 없음)")[:80])
+        ingested = (m.get("ingested_at") or "")[:10]
+        doc_id = m.get("id") or ""
+        block = [f"\n\n📄 <b>#{i + 1}. {title}</b>"]
+        if ingested:
+            block.append(f"  <i>학습 {ingested}</i>")
+        if doc_id:
+            block.append(f"  🆔 /show_{_html.escape(doc_id)}")
+        out.append("".join(block))
+    return "".join(out)
+
+
+def _find_next_keyboard(items: list[dict], next_start: int,
+                        page_size: int = 5) -> "InlineKeyboardMarkup | None":
+    """Build the [⏩ 다음 N개] inline keyboard for find navigation.
+    Returns None when next_start ≥ len(items) (nothing more)."""
+    total = len(items)
+    if next_start >= total:
+        return None
+    end_idx = min(total, next_start + page_size)
+    label = f"⏩ find 다음 #{next_start + 1}~#{end_idx} / {total}"
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(label, callback_data=f"findnext:{next_start}"),
+    ]])
+
+
 async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Locate saved docs by title/source fragment. Compact per-item
     format + auto-split across multiple Telegram messages so every
@@ -2504,6 +2590,15 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
         except Exception:
             log.exception("find: top-link footer send failed")
+    # Cache the full result list so /show can offer "다음 항목" walk
+    # from the user's clicked position — addresses the pain of scrolling
+    # the whole /find back to the top after each /show.
+    try:
+        _set_find_context(
+            update.effective_chat.id, query, matches, first_message_id,
+        )
+    except Exception:
+        log.exception("find: context cache write failed (non-fatal)")
 
 
 _SHOW_ID_RE = re.compile(r"^/show_([a-f0-9]{6,32})\b")
@@ -2625,14 +2720,28 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # the user might want a Korean translation.
     raw_body = "\n".join(c.get("text") or "" for c in chunk_chunks)
     show_xlate_btn = _is_mostly_foreign(raw_body)
-    header_kb = None
+    # Header keyboard composes up to 2 rows:
+    #   Row 1: [🌐 한국어 번역] when doc is mostly foreign
+    #   Row 2: [⏩ find 다음 #N+1~#N+5] when this doc was reached via /find
+    #          — lets the user walk through the find result without
+    #          scrolling back to the top of the (possibly massive)
+    #          /find message every time.
+    kb_rows: list[list[InlineKeyboardButton]] = []
     if show_xlate_btn:
-        header_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton(
-                "🌐 한국어 번역",
-                callback_data=f"xlate:{doc_id}",
-            ),
-        ]])
+        kb_rows.append([InlineKeyboardButton(
+            "🌐 한국어 번역", callback_data=f"xlate:{doc_id}",
+        )])
+    find_ctx = _get_find_context(update.effective_chat.id)
+    find_idx: int | None = None
+    if find_ctx:
+        find_idx = _find_item_index(find_ctx["items"], doc_id)
+        if find_idx is not None:
+            next_kb = _find_next_keyboard(
+                find_ctx["items"], find_idx + 1,
+            )
+            if next_kb is not None:
+                kb_rows.extend(next_kb.inline_keyboard)
+    header_kb = InlineKeyboardMarkup(kb_rows) if kb_rows else None
 
     body_parts: list[str] = []
     for c in chunk_chunks:
@@ -2657,12 +2766,21 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Telegram renders the reply quote as tappable, scrolling the
     # chat back to that message. /show output can be 50+ messages
     # long; without this the user has no way back to the top.
+    # Also re-attaches the [⏩ find 다음] button to the bottom so the
+    # user doesn't have to scroll back up to the header keyboard
+    # after reading the whole body.
+    footer_kb = None
+    if find_ctx and find_idx is not None:
+        footer_kb = _find_next_keyboard(
+            find_ctx["items"], find_idx + 1,
+        )
     if body_pieces:
         try:
             await update.message.reply_text(
                 "⬆️ 처음으로",
                 reply_to_message_id=first_message_id,
                 disable_web_page_preview=True,
+                reply_markup=footer_kb,
             )
         except Exception:
             log.exception("show: top-link footer send failed")
@@ -3308,6 +3426,58 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif q.data.startswith("xlate:"):
         doc_id = q.data.split(":", 1)[1]
         await _handle_translate(ctx, chat_id, doc_id, q)
+        return
+    elif q.data.startswith("findnext:"):
+        # /find result navigation — send a compact preview of the
+        # next N items from the cached find result, with another
+        # [⏩ 다음] button if more remain. Replies-to the original
+        # /find first message so Telegram's quote-bar lets the user
+        # jump back to the search header if they want.
+        try:
+            start_idx = int(q.data.split(":", 1)[1])
+        except (IndexError, ValueError):
+            try:
+                await q.answer("⚠️ 잘못된 콜백 데이터")
+            except Exception:
+                pass
+            return
+        find_ctx = _get_find_context(chat_id)
+        if not find_ctx:
+            try:
+                await q.answer(
+                    "⏰ find 컨텍스트 만료 (1h). /find 다시 실행해줘.",
+                    show_alert=True,
+                )
+            except Exception:
+                pass
+            return
+        items = find_ctx["items"]
+        if start_idx >= len(items):
+            try:
+                await q.answer("끝까지 봤어 ✅")
+            except Exception:
+                pass
+            return
+        try:
+            await q.answer()
+        except Exception:
+            pass
+        page_size = 5
+        body = _format_find_preview_chunk(
+            find_ctx["query"], items, start_idx, page_size,
+        )
+        next_kb = _find_next_keyboard(
+            items, start_idx + page_size, page_size,
+        )
+        try:
+            await ctx.bot.send_message(
+                chat_id=chat_id, text=body, parse_mode="HTML",
+                disable_web_page_preview=True,
+                reply_markup=next_kb,
+                reply_to_message_id=find_ctx.get("first_message_id"),
+            )
+        except Exception:
+            log.exception("findnext: send preview failed")
         return
     elif q.data.startswith("urldec_block:"):
         key = q.data.split(":", 1)[1]
@@ -8908,6 +9078,7 @@ def main():
             r"|orphan_(learn|ignore)(:\d+|_all$)"
             r"|xlate:[A-Za-z0-9]+"
             r"|urldec_(retry|block):[A-Fa-f0-9]+"
+            r"|findnext:\d+"
             r")"
         ),
     ))
