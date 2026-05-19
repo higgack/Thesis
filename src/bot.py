@@ -1641,7 +1641,7 @@ EPO 에서 최대 400건 가져와 메모리에서 통계 집계. 30~60초 소�
 🔹 <b>overview</b> (기본): 출원인 TOP 10 + 국가별 + 연도별 막대 + IPC TOP 8
    <code>/patent_stats hybrid bonding</code>
 
-🔹 <b>trend</b>: TOP 5 회사 × 연도별 Mermaid xychart
+🔹 <b>trend</b>: TOP 5 회사 × 연도별 Mermaid xychart (PNG 이미지 렌더)
    <code>/patent_stats hybrid bonding trend</code>
 
 🔹 <b>newcomers</b>: 최근 12개월 첫 등장 출원인
@@ -1860,7 +1860,7 @@ OpenAlex 에서 최대 400편 가져와 통계 집계. 20~40초 소요.
    주제 분류 TOP 8 + 연도별 막대 + 🔓 OA 비율 + 인용 분포
    <code>/paper_stats hybrid bonding</code>
 
-🔹 <b>trend</b>: TOP 5 저자 × 연도별 Mermaid xychart
+🔹 <b>trend</b>: TOP 5 저자 × 연도별 Mermaid xychart (PNG 이미지 렌더)
    <code>/paper_stats hybrid bonding trend</code>
 
 🔹 <b>newcomers</b>: 최근 12개월 첫 등장 저자
