@@ -5157,11 +5157,23 @@ async def _translate_results_korean(results: list[dict]) -> list[dict]:
     """Batch-translate title + abstract of each result to Korean in a
     single Flash-Lite call. Mutates each row by adding `title_ko` and
     `abstract_ko` fields; falls back to English originals when the
-    LLM call fails. ~₩5-7 per search (15 papers × ~400-char abstracts
-    ≈ 8k input + 5k output tokens at Flash-Lite ₩140/1M / ₩420/1M).
-    Shared by /search_papers and /search_patents so the formatters
-    treat title_ko / abstract_ko as the canonical render fields when
-    present."""
+    LLM call fails. ~₩5-10 per search (15 papers × ~800-char input
+    abstracts ≈ 10k input + 25k output tokens at Flash-Lite
+    ₩140/1M / ₩420/1M).
+
+    Shared by /search_papers /search_papers_advanced /search_patents
+    /search_patents_advanced /company_patents /patent_detail —
+    formatters treat title_ko / abstract_ko as the canonical render
+    fields when present, so this function is the one switch that
+    turns Korean rendering on/off for all those commands.
+
+    Sizing notes:
+    - Input abstract cap: 800 chars (formatter shows max 900 Korean
+      chars, more input = waste).
+    - max_tokens: 32768. With 15 papers × Korean translation a single
+      call easily hits 20k+ output tokens; the previous 8192 cap
+      silently truncated → JSON parse fail → all rows fell back to
+      English. Symptom: every result line shows the original title."""
     if not results:
         return results
     import json as _json
@@ -5171,7 +5183,7 @@ async def _translate_results_korean(results: list[dict]) -> list[dict]:
     lines: list[str] = []
     for i, r in enumerate(results, 1):
         title = (r.get("title") or "").strip()
-        abstract = (r.get("abstract") or "").strip()[:1200]
+        abstract = (r.get("abstract") or "").strip()[:800]
         lines.append(f"[{i}]")
         if title:
             lines.append(f"TITLE: {title}")
@@ -5188,26 +5200,40 @@ async def _translate_results_korean(results: list[dict]) -> list[dict]:
         '{"items": [{"n": 1, "title_ko": "...", "abstract_ko": "..."}, ...]}\n'
         "Omit fields that were missing in the input. No preamble."
     )
+    resp = ""
     try:
         from .llm.gemini import complete
         resp = await complete(
             model=config.SUMMARY_MODEL,
             system=system_prompt,
             user=user_text,
-            max_tokens=8192,
+            max_tokens=32768,
             temperature=0.1,
             purpose="translate",
         )
         m = _re.search(r"\{.*\}", resp, _re.DOTALL)
         if not m:
+            log.warning(
+                "translate_results_korean: no JSON block in response "
+                "(len=%d, last200=%r)", len(resp), resp[-200:],
+            )
             return results
-        data = _json.loads(m.group(0))
+        try:
+            data = _json.loads(m.group(0))
+        except Exception as e:
+            log.warning(
+                "translate_results_korean: JSON parse failed "
+                "(resp len=%d, last 200 chars=%r): %s",
+                len(resp), resp[-200:], e,
+            )
+            return results
         by_n: dict[int, dict] = {}
         for item in (data.get("items") or []):
             try:
                 by_n[int(item.get("n"))] = item
             except (TypeError, ValueError):
                 continue
+        translated = 0
         for i, r in enumerate(results, 1):
             t = by_n.get(i)
             if not t:
@@ -5216,10 +5242,18 @@ async def _translate_results_korean(results: list[dict]) -> list[dict]:
             ak = (t.get("abstract_ko") or "").strip()
             if tk:
                 r["title_ko"] = tk
+                translated += 1
             if ak:
                 r["abstract_ko"] = ak
+        log.info(
+            "translate_results_korean: %d/%d rows translated (resp len=%d)",
+            translated, len(results), len(resp),
+        )
     except Exception:
-        log.exception("translate_results_korean failed; using originals")
+        log.exception(
+            "translate_results_korean failed; using originals "
+            "(resp len=%d)", len(resp),
+        )
     return results
 
 
