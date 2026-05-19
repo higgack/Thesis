@@ -119,14 +119,27 @@ def _route_backends(query: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def _empty(p: dict, source: str) -> dict:
-    """Normalize partial dicts into the shared schema."""
+    """Normalize partial dicts into the shared schema.
+
+    Core fields always present (title, year, venue, authors, etc.);
+    OpenAlex-specific richer fields (is_oa, oa_status, concepts,
+    institutions, referenced_count, paper_type, authors_total) pass
+    through when the backend provides them. Other backends just lack
+    those fields → the formatter silently skips empty entries."""
     return {
         "title": (p.get("title") or "").strip(),
         "year": p.get("year"),
         "venue": p.get("venue") or "",
         "authors": p.get("authors") or [],
+        "authors_total": p.get("authors_total") or len(p.get("authors") or []),
+        "institutions": p.get("institutions") or [],
         "abstract": (p.get("abstract") or "").strip(),
         "citations": p.get("citations"),
+        "referenced_count": p.get("referenced_count"),
+        "is_oa": p.get("is_oa") or False,
+        "oa_status": p.get("oa_status") or "",
+        "concepts": p.get("concepts") or [],
+        "paper_type": p.get("paper_type") or "",
         "url": p.get("url") or "",
         "pdf": p.get("pdf") or "",
         "doi": p.get("doi") or "",
@@ -234,51 +247,82 @@ async def _openalex(query: str, limit: int) -> list[dict]:
                                  headers={"User-Agent": ua}) as c:
         r = await c.get(_OPENALEX_API, params=params)
         r.raise_for_status()
-    out = []
-    for w in r.json().get("results", []):
-        title = (w.get("title") or w.get("display_name") or "").strip()
-        year = w.get("publication_year")
-        venue = ""
-        host = w.get("primary_location") or {}
-        src = host.get("source") or {}
-        if src:
-            venue = src.get("display_name") or ""
-        authors = []
-        for a in (w.get("authorships") or [])[:3]:
-            au = a.get("author") or {}
-            if au.get("display_name"):
-                authors.append(au["display_name"])
-        # OpenAlex stores DOI as full URL ("https://doi.org/10.x/y")
-        doi_raw = w.get("doi") or ""
-        doi = doi_raw.replace("https://doi.org/", "") if doi_raw else ""
-        pdf = host.get("pdf_url") or ""
-        # Try open-access version if primary lacks PDF
-        if not pdf:
-            oa = w.get("open_access") or {}
-            pdf = oa.get("oa_url") or ""
-        landing = host.get("landing_page_url") or doi_raw or ""
-        abstract = ""
-        inv = w.get("abstract_inverted_index")
-        if inv:
-            # OpenAlex returns abstract as inverted index {word: [positions]};
-            # reconstruct sequentially.
-            positions = []
-            for word, idxs in inv.items():
-                for i in idxs:
-                    positions.append((i, word))
-            positions.sort()
-            abstract = " ".join(w for _, w in positions)
-        out.append(_empty({
-            "title": title,
-            "year": year,
-            "venue": venue,
-            "authors": authors,
-            "abstract": abstract,
-            "url": landing,
-            "pdf": pdf,
-            "doi": doi,
-        }, "OpenAlex"))
-    return out
+    out = [_openalex_to_unified(w) for w in r.json().get("results", [])]
+    return [row for row in out if row]
+
+
+def _openalex_to_unified(w: dict) -> dict | None:
+    """Map one OpenAlex `work` JSON object into the unified paper
+    schema. Pulls the richer fields beyond title/authors: citation
+    count, OA status, concepts (subject classification), institutions
+    (affiliations of the 3 lead authors), reference count, paper type."""
+    title = (w.get("title") or w.get("display_name") or "").strip()
+    if not title:
+        return None
+    year = w.get("publication_year")
+    venue = ""
+    host = w.get("primary_location") or {}
+    src = host.get("source") or {}
+    if src:
+        venue = src.get("display_name") or ""
+    authorships = w.get("authorships") or []
+    authors: list[str] = []
+    institutions: list[str] = []
+    for a in authorships[:5]:  # first 5 for richer display
+        au = a.get("author") or {}
+        if au.get("display_name"):
+            authors.append(au["display_name"])
+        for inst in (a.get("institutions") or [])[:2]:
+            name = inst.get("display_name")
+            if name and name not in institutions:
+                institutions.append(name)
+    doi_raw = w.get("doi") or ""
+    doi = doi_raw.replace("https://doi.org/", "") if doi_raw else ""
+    pdf = host.get("pdf_url") or ""
+    oa = w.get("open_access") or {}
+    if not pdf:
+        pdf = oa.get("oa_url") or ""
+    is_oa = bool(oa.get("is_oa"))
+    oa_status = oa.get("oa_status") or ""
+    landing = host.get("landing_page_url") or doi_raw or ""
+    abstract = ""
+    inv = w.get("abstract_inverted_index")
+    if inv:
+        positions = []
+        for word, idxs in inv.items():
+            for i in idxs:
+                positions.append((i, word))
+        positions.sort()
+        abstract = " ".join(w_ for _, w_ in positions)
+    # Concepts (subject classifications) — OpenAlex returns scored
+    # concepts; keep the top 3 by score so they actually represent
+    # the paper.
+    concepts_raw = w.get("concepts") or []
+    concepts: list[str] = []
+    for c in sorted(concepts_raw, key=lambda x: x.get("score") or 0,
+                    reverse=True)[:3]:
+        name = (c.get("display_name") or "").strip()
+        if name:
+            concepts.append(name)
+    paper_type = (w.get("type") or "").strip()
+    return _empty({
+        "title": title,
+        "year": year,
+        "venue": venue,
+        "authors": authors,
+        "authors_total": len(authorships),
+        "institutions": institutions,
+        "abstract": abstract,
+        "citations": w.get("cited_by_count"),
+        "referenced_count": w.get("referenced_works_count"),
+        "is_oa": is_oa,
+        "oa_status": oa_status,
+        "concepts": concepts,
+        "paper_type": paper_type,
+        "url": landing,
+        "pdf": pdf,
+        "doi": doi,
+    }, "OpenAlex")
 
 
 async def _crossref(query: str, limit: int) -> list[dict]:
@@ -538,3 +582,420 @@ async def search(query: str, limit: int = 15) -> list[dict]:
     except Exception:
         log.exception("paper_search: arxiv last-ditch failed")
         return []
+
+
+# ---------------------------------------------------------------------------
+# OpenAlex-backed advanced search + stats. We route /search_papers_advanced
+# and /paper_stats through OpenAlex alone because (a) it has the broadest
+# coverage, (b) the structured `filter=` query language supports
+# author/venue/year/oa/citations refinements natively, (c) the JSON
+# response is consistent enough for clean aggregation. The other 5
+# backends keep their existing roles in the general /search_papers
+# fan-out — this only adds new capabilities, doesn't replace.
+# ---------------------------------------------------------------------------
+
+
+def _build_openalex_filters(author: str = "", venue: str = "",
+                            year_from: int | None = None,
+                            year_to: int | None = None,
+                            oa_only: bool = False,
+                            min_citations: int | None = None,
+                            concept: str = "",
+                            type_: str = "") -> str:
+    """Compose OpenAlex `filter=` parameter from optional refinements.
+    Returns the comma-separated filter string (empty when no filters).
+
+    OpenAlex filter docs:
+      authorships.author.display_name.search
+      primary_location.source.display_name.search
+      publication_year (range with -)
+      is_oa, cited_by_count (>N), concepts.display_name.search, type
+    """
+    parts: list[str] = []
+    if author:
+        parts.append(
+            f"authorships.author.display_name.search:{author.strip()}")
+    if venue:
+        parts.append(
+            f"primary_location.source.display_name.search:{venue.strip()}")
+    if year_from and year_to:
+        parts.append(f"publication_year:{year_from}-{year_to}")
+    elif year_from:
+        parts.append(f"publication_year:>{year_from - 1}")
+    elif year_to:
+        parts.append(f"publication_year:<{year_to + 1}")
+    if oa_only:
+        parts.append("is_oa:true")
+    if min_citations and min_citations > 0:
+        parts.append(f"cited_by_count:>{min_citations - 1}")
+    if concept:
+        parts.append(
+            f"concepts.display_name.search:{concept.strip()}")
+    if type_:
+        parts.append(f"type:{type_.strip()}")
+    return ",".join(parts)
+
+
+async def search_advanced(query: str, limit: int = 15,
+                          author: str = "", venue: str = "",
+                          year_from: int | None = None,
+                          year_to: int | None = None,
+                          oa_only: bool = False,
+                          min_citations: int | None = None,
+                          concept: str = "",
+                          type_: str = "") -> list[dict]:
+    """OpenAlex-backed paper search with structured filters."""
+    filters = _build_openalex_filters(
+        author=author, venue=venue,
+        year_from=year_from, year_to=year_to,
+        oa_only=oa_only, min_citations=min_citations,
+        concept=concept, type_=type_,
+    )
+    if not (query.strip() or filters):
+        return []
+    params: dict[str, str] = {"per-page": str(min(max(limit, 1), 50))}
+    if query.strip():
+        params["search"] = query.strip()
+    if filters:
+        params["filter"] = filters
+    # Sort: relevance for keyword queries, recency when filter-only.
+    if query.strip():
+        params["sort"] = "relevance_score:desc"
+    else:
+        params["sort"] = "publication_date:desc"
+    mailto = os.getenv("OPENALEX_MAILTO", "").strip()
+    ua = (f"SecondBrainBot/1.0 (mailto:{mailto})"
+          if mailto else "SecondBrainBot/1.0")
+    try:
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True,
+                                     headers={"User-Agent": ua}) as c:
+            r = await c.get(_OPENALEX_API, params=params)
+        if r.status_code != 200:
+            log.warning("openalex advanced %d: %r",
+                        r.status_code, r.text[:300])
+            return []
+        data = r.json()
+    except Exception as e:
+        log.warning("openalex advanced failed: %s", e)
+        return []
+    out: list[dict] = []
+    for w in data.get("results", []):
+        row = _openalex_to_unified(w)
+        if row:
+            out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
+async def _openalex_bulk(query: str, max_count: int = 400,
+                         author: str = "", venue: str = "",
+                         year_from: int | None = None,
+                         year_to: int | None = None,
+                         oa_only: bool = False,
+                         min_citations: int | None = None,
+                         concept: str = "",
+                         type_: str = "") -> list[dict]:
+    """Paginate OpenAlex up to max_count papers. Used by /paper_stats
+    so the aggregate analytics work off a statistically meaningful
+    sample. OpenAlex per-page max=200; we do 2 calls for 400 docs."""
+    filters = _build_openalex_filters(
+        author=author, venue=venue,
+        year_from=year_from, year_to=year_to,
+        oa_only=oa_only, min_citations=min_citations,
+        concept=concept, type_=type_,
+    )
+    if not (query.strip() or filters):
+        return []
+    max_count = max(1, min(max_count, 1000))
+    page_size = 200
+    mailto = os.getenv("OPENALEX_MAILTO", "").strip()
+    ua = (f"SecondBrainBot/1.0 (mailto:{mailto})"
+          if mailto else "SecondBrainBot/1.0")
+    out: list[dict] = []
+    seen: set[str] = set()
+    page = 1
+    while len(out) < max_count:
+        remaining = max_count - len(out)
+        per_page = min(page_size, remaining)
+        params: dict[str, str] = {
+            "per-page": str(per_page),
+            "page": str(page),
+        }
+        if query.strip():
+            params["search"] = query.strip()
+            params["sort"] = "relevance_score:desc"
+        else:
+            params["sort"] = "publication_date:desc"
+        if filters:
+            params["filter"] = filters
+        try:
+            async with httpx.AsyncClient(timeout=40,
+                                         follow_redirects=True,
+                                         headers={"User-Agent": ua}) as c:
+                r = await c.get(_OPENALEX_API, params=params)
+        except Exception as e:
+            log.warning("openalex bulk page %d failed: %s", page, e)
+            break
+        if r.status_code != 200:
+            log.warning("openalex bulk %d: %r",
+                        r.status_code, r.text[:200])
+            break
+        try:
+            data = r.json()
+        except Exception:
+            log.warning("openalex bulk JSON decode failed")
+            break
+        results = data.get("results") or []
+        if not results:
+            break
+        added = 0
+        for w in results:
+            row = _openalex_to_unified(w)
+            if not row:
+                continue
+            key = row.get("doi") or row.get("title", "").lower()[:80]
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(row)
+            added += 1
+            if len(out) >= max_count:
+                break
+        if added == 0:
+            break
+        page += 1
+        # OpenAlex returns 200 results per page; if we got less, that
+        # was the last page.
+        if len(results) < per_page:
+            break
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Pure aggregation helpers — no I/O. Mirror the patentsearch stats
+# layer but tuned for paper metadata (authors, venues, citations,
+# concepts).
+# ---------------------------------------------------------------------------
+
+
+def _norm_author(name: str) -> str:
+    """Collapse minor casing/spacing variants of an author name.
+    Strips JR/SR/II/III/IV suffixes then Title-Cases everything so
+    'LAU John H' / 'LAU JOHN H' / 'lau john h' all collapse to one
+    'Lau John H' entry. Author names rarely contain meaningful
+    acronyms (unlike corp names where TSMC/SK matters), so a flat
+    Title Case is the right normalisation here."""
+    if not name:
+        return ""
+    s = name.strip()
+    for sfx in (" JR.", " JR", " SR.", " SR", " III", " II", " IV"):
+        if s.upper().endswith(sfx):
+            s = s[:len(s) - len(sfx)].strip()
+            break
+    # Title-case every token. str.title() lowercases the rest of
+    # each token after the first letter, which is exactly the
+    # author-name display convention.
+    return s.title()
+
+
+def compute_paper_stats(papers: list[dict]) -> dict:
+    """Aggregate-by-everything overview: counts by author, venue,
+    year, concept, OA share, citation distribution."""
+    from collections import Counter
+    by_author = Counter()
+    by_venue = Counter()
+    by_year = Counter()
+    by_concept = Counter()
+    by_institution = Counter()
+    by_type = Counter()
+    oa_count = 0
+    citation_buckets = Counter()
+    for p in papers:
+        for au in (p.get("authors") or []):
+            n = _norm_author(au)
+            if n:
+                by_author[n] += 1
+        v = (p.get("venue") or "").strip()
+        if v:
+            by_venue[v[:80]] += 1
+        yr = p.get("year")
+        if yr:
+            by_year[yr] += 1
+        for c in (p.get("concepts") or []):
+            by_concept[c] += 1
+        for inst in (p.get("institutions") or []):
+            by_institution[inst[:60]] += 1
+        if p.get("is_oa"):
+            oa_count += 1
+        t = p.get("paper_type") or ""
+        if t:
+            by_type[t] += 1
+        cit = p.get("citations") or 0
+        if cit >= 1000:
+            citation_buckets["1000+"] += 1
+        elif cit >= 100:
+            citation_buckets["100-999"] += 1
+        elif cit >= 10:
+            citation_buckets["10-99"] += 1
+        elif cit >= 1:
+            citation_buckets["1-9"] += 1
+        else:
+            citation_buckets["0"] += 1
+    return {
+        "total": len(papers),
+        "by_author": by_author.most_common(15),
+        "by_venue": by_venue.most_common(10),
+        "by_year": sorted(by_year.items(), reverse=True),
+        "by_concept": by_concept.most_common(10),
+        "by_institution": by_institution.most_common(10),
+        "by_type": by_type.most_common(5),
+        "oa_count": oa_count,
+        "oa_share": (oa_count / len(papers) * 100) if papers else 0,
+        "citation_buckets": citation_buckets.most_common(),
+    }
+
+
+def compute_paper_trend(papers: list[dict],
+                        top_authors: int = 5) -> dict:
+    """Year-over-year time series for the TOP-N authors."""
+    from collections import Counter, defaultdict
+    counts = Counter()
+    for p in papers:
+        for au in (p.get("authors") or []):
+            n = _norm_author(au)
+            if n:
+                counts[n] += 1
+    top = [name for name, _ in counts.most_common(top_authors)]
+    years_set: set[int] = set()
+    grid: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    for p in papers:
+        yr = p.get("year")
+        if not yr:
+            continue
+        years_set.add(yr)
+        for au in (p.get("authors") or []):
+            n = _norm_author(au)
+            if n in top:
+                grid[n][yr] += 1
+    years = sorted(years_set)
+    series = {name: [grid[name].get(y, 0) for y in years] for name in top}
+    return {"years": years, "series": series, "top_authors": top}
+
+
+def compute_paper_newcomers(papers: list[dict],
+                            cutoff_months: int = 12) -> list[dict]:
+    """Authors whose FIRST publication in this corpus is within
+    cutoff_months. Useful for spotting rising researchers."""
+    from collections import defaultdict
+    from datetime import datetime
+    first_year: dict[str, int] = {}
+    totals: dict[str, int] = defaultdict(int)
+    for p in papers:
+        yr = p.get("year")
+        if not yr:
+            continue
+        for au in (p.get("authors") or []):
+            n = _norm_author(au)
+            if not n:
+                continue
+            totals[n] += 1
+            cur = first_year.get(n)
+            if cur is None or yr < cur:
+                first_year[n] = yr
+    now_year = datetime.utcnow().year
+    cutoff_year = now_year - (cutoff_months // 12)
+    newcomers: list[dict] = []
+    for name, fy in first_year.items():
+        if fy >= cutoff_year:
+            newcomers.append({
+                "name": name,
+                "first_year": fy,
+                "total": totals[name],
+            })
+    newcomers.sort(key=lambda x: x["total"], reverse=True)
+    return newcomers[:20]
+
+
+def compute_paper_coauthors(papers: list[dict]) -> list[dict]:
+    """Pairs of authors who appear together on the same paper.
+    Surfaces collaboration networks. Papers naturally have richer
+    pair data than patents since most papers have 3-10+ authors."""
+    from collections import Counter
+    from itertools import combinations
+    pair_counts: Counter = Counter()
+    for p in papers:
+        authors = sorted({_norm_author(a)
+                          for a in (p.get("authors") or []) if a})
+        # Skip single-author papers and ones with too many authors
+        # (paper-mill style 50+ author lists would explode the
+        # combinations).
+        if len(authors) < 2 or len(authors) > 10:
+            continue
+        for a, b in combinations(authors, 2):
+            if not (a and b):
+                continue
+            pair_counts[(a, b)] += 1
+    return [{"a": a, "b": b, "count": c}
+            for (a, b), c in pair_counts.most_common(20)]
+
+
+async def extract_paper_keywords(papers: list[dict],
+                                 max_phrases: int = 30) -> list[str]:
+    """Gemini Flash-Lite call to mine technical noun phrases from
+    paper abstracts. Mirrors the patent version — same prompt shape
+    so the agent learns one pattern."""
+    from .. import config
+    from ..llm.gemini import complete
+    import json as _json
+    import re as _re
+    if not papers:
+        return []
+    snippets = []
+    for i, p in enumerate(papers[:80], 1):
+        ab = (p.get("abstract") or "")[:600]
+        if ab:
+            snippets.append(f"[{i}] {ab}")
+    if not snippets:
+        return []
+    user = "\n".join(snippets)
+    system = (
+        "You are a technical-domain keyword extractor. Read the paper "
+        "abstracts below and return the most representative technical "
+        "noun phrases (concepts, methods, materials, model names, "
+        "architectures). Prefer multi-word phrases over single words. "
+        "Preserve original casing for acronyms (HBM, CMP, LLM, BERT, "
+        "GAN, transformer). Output JSON only:\n"
+        '{"keywords": ["phrase1", "phrase2", ...]}'
+        f"\nReturn at most {max_phrases} phrases."
+    )
+    try:
+        resp = await complete(
+            model=config.SUMMARY_MODEL,
+            system=system,
+            user=user,
+            max_tokens=2048,
+            temperature=0.2,
+            purpose="paper_keywords",
+        )
+        m = _re.search(r"\{.*\}", resp, _re.DOTALL)
+        if not m:
+            return []
+        data = _json.loads(m.group(0))
+    except Exception:
+        log.exception("paper keyword extraction failed")
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for kw in (data.get("keywords") or []):
+        kw_clean = (kw or "").strip()
+        if not kw_clean:
+            continue
+        key = kw_clean.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(kw_clean)
+        if len(out) >= max_phrases:
+            break
+    return out

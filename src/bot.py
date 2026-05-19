@@ -1118,13 +1118,13 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 Orphan: /orphans · /recover_orphans(건별 [📥]/[🗑])
 보류(5분): /pending(건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
 삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
-도구: /search_my_brain · /compare_papers · /search_papers · /search_patents (+_advanced·_stats) · /web_search · /ingest_url
+도구: /search_my_brain · /compare_papers · /search_papers (+adv·stats) · /search_patents (+adv·stats) · /web_search · /ingest_url
 한국 (KR): /company_patents · /patent_detail · /citing_patents (KIPRIS) · /kr_papers · /kr_patents · /kr_reports (ScienceON) · /kr_rnd_projects (NTIS) · /kr_research_data (DataON)
 기타: /start /help
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【3. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS·DataON · ⚖️ patents EPO OPS · 🌐 web · 📥 ingest · 한국어번역
+<b>【3. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS·DataON · ⚖️ patents EPO · 🌐 web · 📥 ingest · 한국어번역
 
 <b>【3-1. 회사 분석】</b> "회사명+실적/매출/영업이익/가이던스" → 본문 + 신사업 키포인트(·합의 N건) + 📌 실적 데이터(맨끝): 연간/분기 표(A./F.·YoY·QoQ·"—") + xychart(bar=중앙값·line=max/min) + 분석가별 가이던스(브로커리지/이름/발행일) + 웹 추가(참고용·brain/web 분리). 숫자 audit(매출=OP·마진&gt;70% 등) 자동 경고.
 
@@ -1157,7 +1157,7 @@ Orphan: /orphans · /recover_orphans(건별 [📥]/[🗑])
 <b>【10-3. Retry/무손실 재개】</b> 5회 선형(1h→2h→3h→4h→/failed)·silent retry · 인입 시작 in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개(stop_grace 120s, 부팅 stale 클리어 10s)·atomic JSON+.bak·/audit 메모리·디스크·orphan 검증
 
 <b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
-📘 특허 상세 가이드: /patents_guide"""
+📘 상세: /patents_guide · /papers_guide"""
 
 
 # Detailed multi-section guide for the patent suite. Kept separate
@@ -1365,6 +1365,122 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await _typing(update, ctx)
     for chunk in _split_for_telegram(_HELP_TEXT):
+        await update.message.reply_text(
+            chunk, parse_mode="HTML", disable_web_page_preview=True,
+        )
+
+
+_PAPERS_GUIDE_TEXT = """<b>📘 논문 명령어 상세 가이드</b>
+
+3가지 명령어. 6개 백엔드 (S2/arXiv/OpenAlex/CrossRef/IEEE/PubMed) 자동
+라우팅 + OpenAlex 단일 백엔드 기반 advanced/stats.
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>1) /search_papers &lt;키워드&gt;</b>
+다중 소스 free-text 검색. 쿼리 도메인 키워드 (semiconductor /
+packaging / hybrid bonding / LLM / cancer 등) 에 따라 최적 백엔드
+2-3개 자동 선택 + 병렬 호출 + dedupe.
+
+결과 (최대 15편) 에 한국어 번역 + 풍부한 메타데이터:
+• (년도) · 🔓 OA · 논문 type
+• 1st author et al. (총 N명) · 학술지 · 인용 N회 · 참고문헌 N개
+• 🏛️ 소속 기관 (최대 3곳)
+• 🏷️ 주제 분류 (OpenAlex concepts 최대 3개)
+• abstract 900자 + PDF/DOI/URL 링크
+
+OA / institution / concept / referenced_count 는 OpenAlex 행에만
+표시됨 (다른 5개 소스는 해당 정보 없음 → 자동 skip).
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>2) /search_papers_advanced &lt;키워드&gt; [필터]</b>
+OpenAlex 단일 백엔드 + 구조화 필터.
+
+<b>필터 옵션:</b>
+• <code>author=이름</code> — 저자 부분일치 (예: author=Lau, author=John Smith)
+• <code>venue=학술지</code> — 학술지/학회명 부분일치 (예: venue=Nature)
+• <code>concept=주제</code> — OpenAlex 주제 분류 (예: concept=semiconductor)
+• <code>from=2022</code> — 출간년도 ≥
+• <code>to=2026</code> — 출간년도 ≤
+• <code>oa=true</code> — 오픈액세스만
+• <code>min_citations=10</code> — 인용 N회 이상
+• <code>type=article</code> — 논문 type (article/book-chapter/preprint)
+
+<b>예시:</b>
+<code>/search_papers_advanced hybrid bonding author=Lau from=2022</code>
+<code>/search_papers_advanced LLM oa=true min_citations=100</code>
+<code>/search_papers_advanced cancer immunotherapy venue=Nature from=2023</code>
+<code>/search_papers_advanced AI accelerator author=Han concept=hardware</code>
+
+키워드는 비워두고 필터만으로도 검색 가능 (예: <code>author=John LeCun from=2020</code>
+→ LeCun 의 2020년 이후 모든 논문).
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>3) /paper_stats &lt;키워드&gt; [view]</b>
+OpenAlex 에서 최대 400편 가져와 통계 집계. 20~40초 소요.
+
+<b>5가지 view:</b>
+
+🔹 <b>overview</b> (기본): 저자 TOP 10 + 학술지 TOP 8 + 기관 TOP 8 +
+   주제 분류 TOP 8 + 연도별 막대 + 🔓 OA 비율 + 인용 분포
+   <code>/paper_stats hybrid bonding</code>
+
+🔹 <b>trend</b>: TOP 5 저자 × 연도별 Mermaid xychart
+   <code>/paper_stats hybrid bonding trend</code>
+
+🔹 <b>newcomers</b>: 최근 12개월 첫 등장 저자
+   <code>/paper_stats hybrid bonding newcomers</code>
+
+🔹 <b>network</b>: 공저자 페어 (논문은 공저 많아서 풍부함)
+   <code>/paper_stats hybrid bonding network</code>
+
+🔹 <b>keywords</b>: Gemini 가 abstract 들에서 추출한 기술 키워드 (~₩3-5)
+   <code>/paper_stats hybrid bonding keywords</code>
+
+저자명 자동 정규화: Jr/Sr/II/III suffix 제거 + smart Title Case
+(소문자/혼합대소문자 통일, 짧은 약어는 보존).
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>비용 / 한도</b>
+• OpenAlex: 무료, no key (polite UA 만 권장 — .env 의
+  OPENALEX_MAILTO 가 자동 부착됨). 일일 요청 한도 사실상 무제한.
+  - /search_papers 1회 = 1~3 백엔드 콜
+  - /paper_stats 1회 = OpenAlex 2 페이지 (400편)
+• 번역: 검색당 ~₩5-7 (Flash-Lite 1배치 콜)
+• keywords view 만 추가 Gemini 콜 (~₩3-5)
+• 다른 5개 백엔드 (S2/arXiv/CrossRef/IEEE/PubMed): 키 있을 때
+  자동 fan-out, 없으면 skip — /search_papers 만 사용
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>특허 vs 논문 명령어 비교</b>
+같은 패턴 두 도메인:
+• /search_patents  ↔ /search_papers          (free-text, 다중 소스)
+• /search_patents_advanced ↔ /search_papers_advanced (구조화 필터)
+• /patent_stats    ↔ /paper_stats            (400건 bulk + 5 view)
+
+차이:
+• 특허는 EPO OPS 단일 + KIPRIS, 논문은 6 백엔드 + OpenAlex
+• 논문 stats 는 OA share / citation distribution 추가
+• 논문 network 는 공저자 (보통 3-10인) 가 풍부
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+모든 검색 결과는 자동으로 대시보드에 기록됨 (📄 paper 칩으로 필터).
+"""
+
+
+async def cmd_papers_guide(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/papers_guide — 논문 명령어 3종 (search_papers, advanced, stats)
+    의 사용법, 8개 필터, 5가지 view, 비용, 특허 명령어와의 비교까지
+    한 곳에서. _HELP_TEXT 4000 cap 보호하려고 분리."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    for chunk in _split_for_telegram(_PAPERS_GUIDE_TEXT):
         await update.message.reply_text(
             chunk, parse_mode="HTML", disable_web_page_preview=True,
         )
@@ -3766,10 +3882,12 @@ def _format_papers_text(query: str, results: list[dict]) -> str:
     """Direct deterministic render for /search_papers command output.
 
     Mirrors _format_patents_text — bypasses the agent's tool-routing
-    dance so the request is guaranteed even when Gemini gets cute and
-    refuses to call search_papers. Per-paper block: 📄 N. title +
-    (year) + meta line (first author et al. · venue · 인용 N회) +
-    abstract excerpt + PDF/DOI/URL link. Zero LLM cost."""
+    dance. Per-paper block: 📄 N. title + (year) + 🔓 OA marker if
+    open-access + meta line (first author et al. · venue · 인용 N회)
+    + 🏛️ institutions + 🏷️ concepts + abstract excerpt + PDF/DOI/URL.
+    Richer fields (institutions, concepts, OA status, paper type)
+    surface only when OpenAlex was the row's source — other backends
+    leave them empty and we silently skip the empty lines."""
     import html as _html
     if not results:
         return (f"🔍 '<b>{_html.escape(query)}</b>' 관련 논문 결과 없음.\n"
@@ -3780,17 +3898,23 @@ def _format_papers_text(query: str, results: list[dict]) -> str:
         f"CrossRef / IEEE / PubMed)</i>",
     ]
     for i, p in enumerate(results, 1):
-        # Prefer the Korean translation when _translate_results_korean
-        # populated it; fall back to the original English otherwise.
         title_src = (p.get("title_ko") or p.get("title") or "(제목 없음)")
         title = _html.escape(title_src)[:300]
         year = p.get("year")
         venue = _html.escape((p.get("venue") or "")[:80])
         auths = p.get("authors") or []
+        auths_total = p.get("authors_total") or len(auths)
         first_auth = _html.escape(auths[0]) if auths else ""
-        if first_auth and len(auths) > 1:
-            first_auth += " et al."
+        if first_auth and auths_total > 1:
+            first_auth += (f" et al. (총 {auths_total}명)"
+                           if auths_total <= 99 else " et al.")
         citations = p.get("citations")
+        referenced = p.get("referenced_count")
+        is_oa = p.get("is_oa") or False
+        oa_status = p.get("oa_status") or ""
+        institutions = p.get("institutions") or []
+        concepts = p.get("concepts") or []
+        paper_type = p.get("paper_type") or ""
         source = p.get("source") or ""
         abstract_src = (p.get("abstract_ko") or p.get("abstract") or "")
         abstract = _html.escape(
@@ -3807,16 +3931,35 @@ def _format_papers_text(query: str, results: list[dict]) -> str:
             meta_parts.append(venue)
         if isinstance(citations, int) and citations >= 1:
             meta_parts.append(f"인용 {citations}회")
+        if isinstance(referenced, int) and referenced >= 1:
+            meta_parts.append(f"참고문헌 {referenced}개")
         if source and source not in ("S2",):
-            # Tag where it came from when not the default S2 hit.
             meta_parts.append(f"[{source}]")
         meta_line = " · ".join(meta_parts)
 
-        block = [f"\n📄 <b>{i}. {title}</b>"]
+        # Year + OA badge line
+        head_bits: list[str] = []
         if year:
-            block.append(f"  <i>({year})</i>")
+            head_bits.append(f"({year})")
+        if is_oa:
+            label = "🔓 OA"
+            if oa_status and oa_status not in ("closed",):
+                label = f"🔓 OA ({oa_status})"
+            head_bits.append(label)
+        if paper_type and paper_type not in ("article", ""):
+            head_bits.append(_html.escape(paper_type))
+
+        block = [f"\n📄 <b>{i}. {title}</b>"]
+        if head_bits:
+            block.append(f"  <i>{' · '.join(head_bits)}</i>")
         if meta_line:
             block.append(f"   {meta_line}")
+        if institutions:
+            inst_text = " / ".join(_html.escape(x) for x in institutions[:3])
+            block.append(f"   🏛️ {inst_text}")
+        if concepts:
+            cc_text = " · ".join(_html.escape(c) for c in concepts[:3])
+            block.append(f"   🏷️ {cc_text}")
         if abstract:
             block.append(f"   {abstract}")
         # PDF wins over landing URL wins over DOI link.
@@ -3828,6 +3971,377 @@ def _format_papers_text(query: str, results: list[dict]) -> str:
             block.append(f"   → https://doi.org/{doi}")
         out.append("\n".join(block))
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# Paper stats view formatters — same shapes as patent stats so the
+# experience is consistent between /patent_stats and /paper_stats.
+# ---------------------------------------------------------------------------
+
+
+def _format_paper_stats_overview(query: str, stats: dict) -> str:
+    """/paper_stats overview — by-author / by-venue / by-year / by-concept
+    bars + OA share + citation distribution."""
+    import html as _html
+    total = stats.get("total", 0)
+    if total == 0:
+        return (f"📊 '<b>{_html.escape(query)}</b>' 논문 통계 — 분석할 자료 없음.")
+    out = [
+        f"📊 <b>'{_html.escape(query)}' 논문 통계</b>",
+        f"<i>최근 {total}건 분석 · OpenAlex</i>",
+    ]
+    by_year = stats.get("by_year") or []
+    if by_year:
+        out.append("\n📅 <b>출간 연도별</b>")
+        max_y = max((c for _, c in by_year), default=0)
+        for y, c in by_year[:10]:
+            pct = (c / total * 100) if total else 0
+            out.append(f"  {y}: {_bar(c, max_y)} {c}건 ({pct:.1f}%)")
+    by_author = stats.get("by_author") or []
+    if by_author:
+        out.append("\n👤 <b>저자 TOP 10</b>")
+        for rank, (name, c) in enumerate(by_author[:10], 1):
+            out.append(f"  {rank}. {_html.escape(name)[:50]} — {c}편")
+    by_venue = stats.get("by_venue") or []
+    if by_venue:
+        out.append("\n📚 <b>학술지/학회 TOP 8</b>")
+        for v, c in by_venue[:8]:
+            out.append(f"  {_html.escape(v)[:60]} — {c}편")
+    by_institution = stats.get("by_institution") or []
+    if by_institution:
+        out.append("\n🏛️ <b>소속 기관 TOP 8</b>")
+        for inst, c in by_institution[:8]:
+            out.append(f"  {_html.escape(inst)[:60]} — {c}편")
+    by_concept = stats.get("by_concept") or []
+    if by_concept:
+        out.append("\n🏷️ <b>주제 분류 TOP 8</b>")
+        for cc, c in by_concept[:8]:
+            out.append(f"  {_html.escape(cc)[:60]} — {c}편")
+    oa_share = stats.get("oa_share", 0)
+    out.append(f"\n🔓 <b>오픈액세스:</b> {stats.get('oa_count', 0)}편 "
+               f"({oa_share:.1f}%)")
+    citation_buckets = stats.get("citation_buckets") or []
+    if citation_buckets:
+        out.append("\n💬 <b>인용 분포</b>")
+        bucket_order = ["1000+", "100-999", "10-99", "1-9", "0"]
+        bd = dict(citation_buckets)
+        for k in bucket_order:
+            if k in bd:
+                out.append(f"  {k}회: {bd[k]}편")
+    out.append(
+        f"\n🔗 <b>추가 분석:</b>\n"
+        f"  • /paper_stats {query} trend — 저자별 연도 추세\n"
+        f"  • /paper_stats {query} newcomers — 신규 저자\n"
+        f"  • /paper_stats {query} network — 공저자 네트워크\n"
+        f"  • /paper_stats {query} keywords — Gemini 키워드 추출"
+    )
+    return "\n".join(out)
+
+
+def _format_paper_stats_trend(query: str, trend: dict) -> str:
+    import html as _html
+    years = trend.get("years") or []
+    series = trend.get("series") or {}
+    top = trend.get("top_authors") or []
+    if not (years and series and top):
+        return (f"📈 '<b>{_html.escape(query)}</b>' 추세 분석 — 데이터 부족.")
+    out = [
+        f"📈 <b>'{_html.escape(query)}' 저자별 연도 추세</b>",
+        f"<i>TOP {len(top)} 저자 × {min(years)}~{max(years)} 연도별 건수</i>",
+        "",
+        "```mermaid",
+        "xychart-beta",
+        f'  title "{query} — 저자별 연도별 출간량"',
+        f"  x-axis [{', '.join(str(y) for y in years)}]",
+        "  y-axis \"건수\"",
+    ]
+    for name in top:
+        counts = series.get(name, [])
+        out.append(f"  bar [{', '.join(str(n) for n in counts)}]")
+    out.append("```")
+    out.append("\n<b>범례:</b>")
+    for rank, name in enumerate(top, 1):
+        total = sum(series.get(name, []))
+        out.append(f"  bar{rank}. {_html.escape(name)[:40]} ({total}편 누계)")
+    return "\n".join(out)
+
+
+def _format_paper_stats_newcomers(query: str, newcomers: list[dict]) -> str:
+    import html as _html
+    if not newcomers:
+        return (f"🆕 '<b>{_html.escape(query)}</b>' 신규 저자 없음.")
+    out = [
+        f"🆕 <b>'{_html.escape(query)}' 신규 저자</b>",
+        f"<i>분석 corpus 에서 최근 등장한 저자 {len(newcomers)}명</i>",
+    ]
+    for r in newcomers:
+        out.append(
+            f"  • {_html.escape(r['name'])[:50]} — "
+            f"첫 등장 {r['first_year']} · 누적 {r['total']}편"
+        )
+    return "\n".join(out)
+
+
+def _format_paper_stats_network(query: str, pairs: list[dict]) -> str:
+    import html as _html
+    if not pairs:
+        return (f"🤝 '<b>{_html.escape(query)}</b>' 공저자 관계 없음.")
+    out = [
+        f"🤝 <b>'{_html.escape(query)}' 공저자 네트워크</b>",
+        f"<i>2~10인 공저 케이스 {len(pairs)}쌍</i>",
+    ]
+    for r in pairs[:15]:
+        out.append(
+            f"  • {_html.escape(r['a'])[:35]} ⇄ "
+            f"{_html.escape(r['b'])[:35]} — {r['count']}편"
+        )
+    return "\n".join(out)
+
+
+def _format_paper_stats_keywords(query: str, keywords: list[str]) -> str:
+    import html as _html
+    if not keywords:
+        return (f"☁️ '<b>{_html.escape(query)}</b>' 키워드 추출 실패.")
+    out = [
+        f"☁️ <b>'{_html.escape(query)}' 기술 키워드 클라우드</b>",
+        f"<i>분석한 abstract 들에서 추출한 핵심 명사구 {len(keywords)}개</i>",
+        "",
+        " · ".join(_html.escape(kw) for kw in keywords[:30]),
+    ]
+    return "\n".join(out)
+
+
+async def cmd_paper_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/paper_stats <keyword> [view] — OpenAlex bulk fetch (최대 400편)
+    aggregate analytics. view: overview / trend / newcomers /
+    network / keywords."""
+    if not _is_owner(update):
+        return
+    args = list(ctx.args)
+    if not args:
+        await update.message.reply_text(
+            "사용법: /paper_stats <키워드> [view]\n"
+            "view: overview (기본) · trend · newcomers · network · keywords\n"
+            "예: /paper_stats hybrid bonding trend"
+        )
+        return
+    valid_views = {"overview", "trend", "newcomers", "network", "keywords"}
+    view = "overview"
+    if args[-1].lower() in valid_views:
+        view = args[-1].lower()
+        args = args[:-1]
+    q = " ".join(args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /paper_stats <키워드> [view]")
+        return
+    from .agent import papersearch
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"📊 '{q}' 논문 통계 분석 중 (최대 400편, 20~40초 소요)..."
+    )
+    try:
+        papers = await papersearch._openalex_bulk(q, max_count=400)
+    except Exception as e:
+        log.exception("paper_stats bulk fetch failed for %r", q)
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"⚠️ 논문 통계 가져오기 실패: {_explain_error(e)}",
+        )
+        return
+    if not papers:
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"📊 '{q}' 관련 논문 없음. 키워드 조정 후 재시도.",
+        )
+        return
+    try:
+        if view == "trend":
+            data = papersearch.compute_paper_trend(papers)
+            body = _format_paper_stats_trend(q, data)
+        elif view == "newcomers":
+            data = papersearch.compute_paper_newcomers(papers)
+            body = _format_paper_stats_newcomers(q, data)
+        elif view == "network":
+            data = papersearch.compute_paper_coauthors(papers)
+            body = _format_paper_stats_network(q, data)
+        elif view == "keywords":
+            data = await papersearch.extract_paper_keywords(papers)
+            body = _format_paper_stats_keywords(q, data)
+        else:
+            data = papersearch.compute_paper_stats(papers)
+            body = _format_paper_stats_overview(q, data)
+    except Exception as e:
+        log.exception("paper_stats render failed (view=%s)", view)
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"⚠️ 통계 렌더 실패: {_explain_error(e)}",
+        )
+        return
+    _record_command_qna(
+        update,
+        question=(update.message.text or f"/paper_stats {q} {view}").strip(),
+        body=body,
+        tools=["paper_stats"],
+    )
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("paper_stats fallback send failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("paper_stats chunked send failed")
+
+
+async def cmd_search_papers_advanced(
+        update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/search_papers_advanced <키워드> [filters]
+    filters: author=X · venue=Y · ipc=H01L (n/a for papers, use concept=) ·
+             concept=Z · from=YYYY · to=YYYY · oa=true · min_citations=N
+    Example:
+      /search_papers_advanced hybrid bonding author=Smith from=2023 oa=true
+    """
+    if not _is_owner(update):
+        return
+    args = list(ctx.args)
+    if not args:
+        await update.message.reply_text(
+            "사용법: /search_papers_advanced <키워드> [필터]\n"
+            "필터: author=저자 · venue=학술지 · concept=주제 · "
+            "from=YYYY · to=YYYY · oa=true · min_citations=10 · type=article\n"
+            "예: /search_papers_advanced hybrid bonding author=Lau from=2022 oa=true"
+        )
+        return
+    filters = {
+        "author": "", "venue": "", "concept": "",
+        "from": "", "to": "", "oa": "", "min_citations": "", "type": "",
+    }
+    keyword_parts: list[str] = []
+    for a in args:
+        if "=" in a:
+            k, v = a.split("=", 1)
+            k = k.lower().strip()
+            v = v.strip()
+            if k in filters and v:
+                filters[k] = v
+                continue
+        keyword_parts.append(a)
+    q = " ".join(keyword_parts).strip()
+    if not q and not any(filters.values()):
+        await update.message.reply_text(
+            "키워드 또는 최소 1개 필터 필요. /search_papers_advanced <키워드> ..."
+        )
+        return
+    year_from = None
+    year_to = None
+    try:
+        year_from = int(filters["from"]) if filters["from"] else None
+    except ValueError:
+        await update.message.reply_text("from= 은 연도(YYYY) 여야 함")
+        return
+    try:
+        year_to = int(filters["to"]) if filters["to"] else None
+    except ValueError:
+        await update.message.reply_text("to= 은 연도(YYYY) 여야 함")
+        return
+    min_citations = None
+    if filters["min_citations"]:
+        try:
+            min_citations = int(filters["min_citations"])
+        except ValueError:
+            await update.message.reply_text("min_citations= 은 정수여야 함")
+            return
+    oa_only = filters["oa"].lower() in ("true", "1", "yes", "y")
+    from .agent import papersearch
+    await _typing(update, ctx)
+    label = q if q else "(no keyword)"
+    extra: list[str] = []
+    if filters["author"]:
+        extra.append(f"저자={filters['author']}")
+    if filters["venue"]:
+        extra.append(f"학술지={filters['venue']}")
+    if filters["concept"]:
+        extra.append(f"주제={filters['concept']}")
+    if year_from:
+        extra.append(f"≥{year_from}")
+    if year_to:
+        extra.append(f"≤{year_to}")
+    if oa_only:
+        extra.append("OA only")
+    if min_citations:
+        extra.append(f"인용≥{min_citations}")
+    if filters["type"]:
+        extra.append(f"type={filters['type']}")
+    if extra:
+        label += f" [{' · '.join(extra)}]"
+    status = await update.message.reply_text(
+        f"🔍 '{label}' 고급 논문 검색 중 (한국어 번역 포함)..."
+    )
+    try:
+        results = await papersearch.search_advanced(
+            q, limit=15,
+            author=filters["author"], venue=filters["venue"],
+            year_from=year_from, year_to=year_to,
+            oa_only=oa_only, min_citations=min_citations,
+            concept=filters["concept"], type_=filters["type"],
+        )
+    except Exception as e:
+        log.exception("search_papers_advanced failed for %r", q)
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"⚠️ 검색 실패: {_explain_error(e)}",
+        )
+        return
+    results = await _translate_results_korean(results)
+    body = _format_papers_text(label, results)
+    _record_command_qna(
+        update,
+        question=(update.message.text or
+                  f"/search_papers_advanced {q}").strip(),
+        body=body,
+        tools=["search_papers_advanced", "search_papers"],
+        sources=[p.get("doi", "") for p in results if p.get("doi")],
+    )
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("search_papers_advanced fallback send failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("search_papers_advanced chunked send failed")
 
 
 async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -3871,6 +4385,13 @@ async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # formatter prefers those when present.
     results = await _translate_results_korean(results)
     body = _format_papers_text(q, results)
+    _record_command_qna(
+        update,
+        question=(update.message.text or f"/search_papers {q}").strip(),
+        body=body,
+        tools=["search_papers"],
+        sources=[p.get("doi", "") for p in results if p.get("doi")],
+    )
     pieces = _split_for_telegram(body)
     if pieces:
         try:
@@ -7882,6 +8403,10 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("patents_guide", cmd_patents_guide))
+    app.add_handler(CommandHandler("papers_guide", cmd_papers_guide))
+    app.add_handler(CommandHandler(
+        "search_papers_advanced", cmd_search_papers_advanced))
+    app.add_handler(CommandHandler("paper_stats", cmd_paper_stats))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("usage", cmd_usage))
