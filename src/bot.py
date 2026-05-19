@@ -1217,21 +1217,48 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【1. 명령어】</b>
-조회: /find &lt;kw&gt; [N=50](헤더 학습/발행/청크수) · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 dump + [🌐 한국어 번역]) · /recent [N] · /stats · /status · /usage · /cost
-대화: /reset · /deep &lt;질문&gt;(Pro 강제)
-장애: /failed(건별 [🔁]/[🗑]·drop=영구) · /failed_retry · /failed_clear · /queue · /queue_to_failed · /queue_cancel_all · /audit · /blocked_hosts · /reset_blocked_hosts
-Orphan: /orphans · /recover_orphans(건별 [📥]/[🗑])
-보류(5분): /pending(건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
-삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
-도구: /search_my_brain · /compare_papers · /search_papers · /search_patents · /web_search · /ingest_url
-한국 (KR): /company_patents · /patent_detail · /citing_patents (KIPRIS) · /kr_papers · /kr_patents · /kr_reports (ScienceON) · /kr_rnd_projects (NTIS) · /kr_research_data (DataON)
-기타: /start /help
+
+📋 <b>조회</b>
+  /find &lt;kw&gt; [N=50](헤더 학습/발행/청크수) · /find_all &lt;kw&gt;(최대 500)
+  /show &lt;id|kw&gt;(본문 + [🌐 한국어 번역]) · /recent [N]
+  /stats · /status · /usage · /cost
+
+💬 <b>대화</b>
+  /reset · /deep &lt;질문&gt;(Pro 강제)
+
+🚨 <b>장애 / 큐</b>
+  /failed(건별 [🔁]/[🗑]·drop=영구) · /failed_retry · /failed_clear
+  /queue · /queue_to_failed · /queue_cancel_all
+  /audit · /blocked_hosts · /reset_blocked_hosts
+
+🔍 <b>Orphan</b>: /orphans · /recover_orphans(건별 [📥]/[🗑])
+
+⏸️ <b>보류 (5분)</b>
+  /pending(건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /ocr_extend &lt;id|kw&gt;
+  /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all
+
+🗑️ <b>삭제</b>
+  /forget &lt;id&gt; · /forget_search · /forget_search_all
+  /forget_qna · /forget_qna_search
+  /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm
+  /forget_forwards · /forget_forwards_confirm
+
+🛠️ <b>도구</b>
+  /search_my_brain · /compare_papers · /web_search · /ingest_url
+  /search_papers (+adv·stats) · /search_patents (+adv·stats)
+
+🇰🇷 <b>한국</b>
+  KIPRIS: /company_patents · /patent_detail · /citing_patents
+  ScienceON: /kr_papers · /kr_patents · /kr_reports
+  NTIS: /kr_rnd_projects · DataON: /kr_research_data
+
+ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup · /patents_guide · /papers_guide
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
 <b>【3. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS·DataON · ⚖️ patents EPO · 🌐 web · 📥 ingest · 한국어번역
 
-<b>【3-1. 회사 분석】</b> "회사명+실적/매출/영업이익/가이던스" → 본문 + 신사업 키포인트(·합의 N건) + 📌 실적 데이터(맨끝): 연간/분기 표(A./F.·YoY·QoQ·"—") + xychart(bar=중앙값·line=max/min) + 분석가별 가이던스(브로커리지/이름/발행일) + 웹 추가(참고용·brain/web 분리). 숫자 audit(매출=OP·마진&gt;70% 등) 자동 경고.
+<b>【3-1. 회사 분석】</b> "회사명+실적/매출/영업이익" → 본문 + 신사업 키포인트(·합의 N건) + 📌 실적 데이터(맨끝): 연간/분기 표(A./F.·YoY·QoQ) + xychart + 분석가 가이던스 + 웹 추가(brain/web 분리). 숫자 audit 자동.
 
 <b>【4. 자연어 트리거】</b>
 🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL"
@@ -1255,14 +1282,11 @@ Orphan: /orphans · /recover_orphans(건별 [📥]/[🗑])
 
 <b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 · 요약/메타/번역 flash-lite(503→flash) · 답변 flash · /deep pro · Vision flash-lite · 1M ₩ Pro 1,750/Flash 420/Lite 140/Embed 200 · 답변 1h 캐시(200건) · 번역 30k+ 배치 ₩3-40
 
-<b>【10-2. 비용 절감 (자동)】</b>
-✅ 6단 dedup ₩0(source·URL canonical·file_hash·text_hash·body_hash·title 정규화) · 청크 1000·요약 12k/partial 8k·Vision DPI 100·OCR 자동캡 0p·image-only 3p
-✅ Progressive OCR(probe 3p &lt;300자→skip) · 청크 임베딩 캐시 · 메타 gating(이미지/음성/짧은 텍스트) · page hash dedup · 차단 도메인 · .txt/.md/.csv 제외 · failed URL 즉시 skip · /failed_clear 영구
+<b>【10-2. 비용 절감 (자동)】</b> 6단 dedup ₩0(source/URL/file/text/body/title) · 청크 1000·요약 12k·Vision DPI 100·OCR cap 0p·image-only 3p · Progressive OCR(probe&lt;300자→skip) · 청크/임베딩 캐시 · 메타 gating · 차단 도메인 · .txt/.md/.csv 제외 · failed URL skip · /failed_clear 영구
 
 <b>【10-3. Retry/무손실 재개】</b> 5회 선형(1h→2h→3h→4h→/failed)·silent retry · 인입 시작 in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개(stop_grace 120s, 부팅 stale 클리어 10s)·atomic JSON+.bak·/audit 메모리·디스크·orphan 검증
 
-<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
-📘 상세 가이드: /guide_lookup (전체) · /patents_guide · /papers_guide"""
+<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)"""
 
 
 # Detailed multi-section guide for the patent suite. Kept separate
