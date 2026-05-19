@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import html
 import logging
 import os
 import re
@@ -995,6 +996,110 @@ def _extract_mermaid(text: str) -> tuple[str, list[str]]:
     return cleaned, blocks
 
 
+async def _send_body_with_mermaid(update, ctx, body: str,
+                                  status_msg=None) -> None:
+    """Send a long text body that may contain ```mermaid``` blocks,
+    rendering each block to a PNG via _render_mermaid_png. Text parts
+    are split at the 4000-char cap. The first text chunk is edited
+    into status_msg if provided (saves a notification), the rest are
+    fresh reply_text calls. PNGs go via ctx.bot.send_photo.
+
+    Order is preserved — text-A → mermaid₁ → text-B → mermaid₂ → ...
+    so legend lines stay next to the chart they describe. Used by
+    /patent_stats and /paper_stats trend view; also generally usable
+    for any future command that wants inline diagrams."""
+    if not body:
+        return
+    # Split on the placeholder so we keep ordering.
+    blocks: list[str] = []
+
+    def _stash(m: "re.Match[str]") -> str:
+        idx = len(blocks)
+        blocks.append(m.group(1).strip())
+        return f"__MERMAID_BLOCK_{idx}__"
+
+    body_stashed = _MERMAID_BLOCK_RE.sub(_stash, body)
+    if not blocks:
+        # No diagrams — just chunk + send as before.
+        pieces = _split_for_telegram(body_stashed)
+        first_done = False
+        for piece in pieces:
+            if not first_done and status_msg is not None:
+                try:
+                    await ctx.bot.edit_message_text(
+                        chat_id=status_msg.chat.id,
+                        message_id=status_msg.message_id,
+                        text=piece, parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                    first_done = True
+                    continue
+                except Exception:
+                    pass
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+                first_done = True
+            except Exception:
+                log.exception("send_body_with_mermaid chunked send failed")
+        return
+    # Has diagrams — walk text/idx parts in order.
+    parts = re.split(r"__MERMAID_BLOCK_(\d+)__", body_stashed)
+    first_done = False
+    for i, part in enumerate(parts):
+        if i % 2 == 0:
+            text = part.strip()
+            if not text:
+                continue
+            for piece in _split_for_telegram(text):
+                if not first_done and status_msg is not None:
+                    try:
+                        await ctx.bot.edit_message_text(
+                            chat_id=status_msg.chat.id,
+                            message_id=status_msg.message_id,
+                            text=piece, parse_mode="HTML",
+                            disable_web_page_preview=True,
+                        )
+                        first_done = True
+                        continue
+                    except Exception:
+                        pass
+                try:
+                    await update.message.reply_text(
+                        piece, parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                    first_done = True
+                except Exception:
+                    log.exception("send_body_with_mermaid text part failed")
+        else:
+            try:
+                block_idx = int(part)
+            except ValueError:
+                continue
+            if not (0 <= block_idx < len(blocks)):
+                continue
+            code = blocks[block_idx]
+            try:
+                png = await _render_mermaid_png(code)
+                await ctx.bot.send_photo(
+                    chat_id=update.effective_chat.id, photo=png,
+                )
+            except Exception as e:
+                log.warning("inline mermaid render failed: %s", e)
+                # Fallback: emit the code as a code-block so the user
+                # at least sees something.
+                try:
+                    await update.message.reply_text(
+                        f"(다이어그램 렌더 실패) <pre>{html.escape(code)[:1500]}</pre>",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
+
 async def _render_mermaid_png(code: str) -> bytes:
     """Render a Mermaid diagram to PNG bytes, trying kroki POST first
     (most lenient parser, no URL length limit) and falling back to
@@ -1382,7 +1487,7 @@ arXiv · YouTube 자막 · Jina readability. 차단: LinkedIn/FB/IG/주요 paywa
 
 <b>특허/논문 advanced + stats 는 별도:</b>
 • <b>/patents_guide</b> — /search_patents_advanced · /patent_stats (5 view)
-• <b>/papers_guide</b> — /search_papers_advanced · /paper_stats (5 view)
+• <b>/papers_guide</b> — /search_papers_advanced · /paper_stats (6 view: overview/trend/newcomers/network/keywords/top)
 
 ═══════════════════════════════════════
 <b>🇰🇷 8. 한국 (KIPRIS / ScienceON / NTIS / DataON)</b>
@@ -1766,6 +1871,10 @@ OpenAlex 에서 최대 400편 가져와 통계 집계. 20~40초 소요.
 
 🔹 <b>keywords</b>: Gemini 가 abstract 들에서 추출한 기술 키워드 (~₩3-5)
    <code>/paper_stats hybrid bonding keywords</code>
+
+🔹 <b>top</b>: 인용수 (OpenAlex cited_by_count) TOP 15 영향력 논문 —
+   무료 (인용수가 bulk fetch 응답에 inline, N+1 호출 X)
+   <code>/paper_stats hybrid bonding top</code>
 
 저자명 자동 정규화: Jr/Sr/II/III suffix 제거 + smart Title Case
 (소문자/혼합대소문자 통일, 짧은 약어는 보존).
@@ -4440,21 +4549,71 @@ def _format_paper_stats_keywords(query: str, keywords: list[str]) -> str:
     return "\n".join(out)
 
 
+def _format_paper_stats_top(query: str, papers: list[dict],
+                            top_n: int = 15) -> str:
+    """/paper_stats <q> top — sort the bulk-fetched papers by
+    cited_by_count and surface the TOP-N. OpenAlex returns the
+    citation count inline so this is free (no N+1 calls)."""
+    import html as _html
+    ranked = sorted(papers,
+                    key=lambda p: int(p.get("citations") or 0),
+                    reverse=True)
+    ranked = [p for p in ranked if (p.get("citations") or 0) > 0]
+    if not ranked:
+        return (f"🏆 '<b>{_html.escape(query)}</b>' 인용 분석 — "
+                f"인용 정보 있는 논문 없음.")
+    out = [
+        f"🏆 <b>'{_html.escape(query)}' 영향력 TOP {min(top_n, len(ranked))}</b>",
+        f"<i>인용수 (OpenAlex cited_by_count) 기준 내림차순</i>",
+    ]
+    for i, p in enumerate(ranked[:top_n], 1):
+        title = _html.escape((p.get("title") or "(제목 없음)")[:200])
+        year = p.get("year") or ""
+        venue = _html.escape((p.get("venue") or "")[:60])
+        cits = int(p.get("citations") or 0)
+        auths = p.get("authors") or []
+        first_auth = _html.escape(auths[0]) if auths else ""
+        if first_auth and len(auths) > 1:
+            first_auth += f" et al. ({len(auths)}명)"
+        is_oa = "🔓 " if p.get("is_oa") else ""
+        doi = p.get("doi") or ""
+        block = [f"\n📄 <b>{i}. [인용 {cits:,}] {is_oa}{title}</b>"]
+        meta_bits: list[str] = []
+        if year:
+            meta_bits.append(str(year))
+        if first_auth:
+            meta_bits.append(first_auth)
+        if venue:
+            meta_bits.append(venue)
+        if meta_bits:
+            block.append(f"   {' · '.join(meta_bits)}")
+        if doi:
+            block.append(f"   → https://doi.org/{doi}")
+        elif p.get("url"):
+            block.append(f"   → {p['url']}")
+        out.append("\n".join(block))
+    return "\n".join(out)
+
+
 async def cmd_paper_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/paper_stats <keyword> [view] — OpenAlex bulk fetch (최대 400편)
     aggregate analytics. view: overview / trend / newcomers /
-    network / keywords."""
+    network / keywords / top.  `top` ranks the bulk-fetched papers by
+    cited_by_count (free — OpenAlex returns citations inline; no N+1
+    follow-up calls)."""
     if not _is_owner(update):
         return
     args = list(ctx.args)
     if not args:
         await update.message.reply_text(
             "사용법: /paper_stats <키워드> [view]\n"
-            "view: overview (기본) · trend · newcomers · network · keywords\n"
+            "view: overview (기본) · trend · newcomers · network · "
+            "keywords · top\n"
             "예: /paper_stats hybrid bonding trend"
         )
         return
-    valid_views = {"overview", "trend", "newcomers", "network", "keywords"}
+    valid_views = {"overview", "trend", "newcomers", "network",
+                   "keywords", "top"}
     view = "overview"
     if args[-1].lower() in valid_views:
         view = args[-1].lower()
@@ -4496,6 +4655,8 @@ async def cmd_paper_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         elif view == "keywords":
             data = await papersearch.extract_paper_keywords(papers)
             body = _format_paper_stats_keywords(q, data)
+        elif view == "top":
+            body = _format_paper_stats_top(q, papers)
         else:
             data = papersearch.compute_paper_stats(papers)
             body = _format_paper_stats_overview(q, data)
@@ -4512,30 +4673,10 @@ async def cmd_paper_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         body=body,
         tools=["paper_stats"],
     )
-    pieces = _split_for_telegram(body)
-    if pieces:
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("paper_stats fallback send failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("paper_stats chunked send failed")
+    # trend view emits ```mermaid``` blocks; _send_body_with_mermaid
+    # extracts them and renders to PNG (no diagrams in overview /
+    # newcomers / network / keywords / top — that path is a no-op).
+    await _send_body_with_mermaid(update, ctx, body, status_msg=status)
 
 
 async def cmd_search_papers_advanced(
@@ -5252,32 +5393,11 @@ async def cmd_patent_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         body=body,
         tools=["patent_stats"],
     )
-    # mermaid block needs to be extracted + rendered as image; the
-    # existing helper handles that for trend.
-    pieces = _split_for_telegram(body)
-    if pieces:
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("patent_stats fallback send failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("patent_stats chunked send failed")
+    # trend view emits ```mermaid``` blocks; _send_body_with_mermaid
+    # extracts them, renders to PNG via _render_mermaid_png, and
+    # interleaves with the text legend so each chart appears next
+    # to its description.
+    await _send_body_with_mermaid(update, ctx, body, status_msg=status)
 
 
 async def cmd_search_patents_advanced(
