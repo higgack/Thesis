@@ -1284,9 +1284,11 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【10-2. 비용 절감 (자동)】</b> 6단 dedup ₩0(source/URL/file/text/body/title) · 청크 1000·요약 12k·Vision DPI 100·OCR cap 0p·image-only 3p · Progressive OCR(probe&lt;300자→skip) · 청크/임베딩 캐시 · 메타 gating · 차단 도메인 · .txt/.md/.csv 제외 · failed URL skip · /failed_clear 영구
 
-<b>【10-3. Retry/무손실 재개】</b> 5회 선형(1h→2h→3h→4h→/failed)·silent retry · 인입 시작 in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개(stop_grace 120s, 부팅 stale 클리어 10s)·atomic JSON+.bak·/audit 메모리·디스크·orphan 검증
+<b>【10-3. Retry/무손실 재개】</b> 5회 선형(1h→2h→3h→4h→/failed)·silent retry · in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개·atomic JSON+.bak·/audit 검증
 
-<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)"""
+<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
+
+<b>【12. 백엔드】</b> ✅ EPO · ⏳ KIPRIS/KISTI/NTIS/DataON 활용신청 승인 대기 — 승인 전 /company_patents·/kr_* 는 "결과 없음" 반환"""
 
 
 # Detailed multi-section guide for the patent suite. Kept separate
@@ -1555,9 +1557,15 @@ DataON 공공 연구데이터셋 — svcId · 제목 · 작성자 · DOI · 라�
 ※ DataON 회원가입 승인 대기 중.
 
 승인 상태 (2026-05 기준):
-✅ KIPRIS Plus — 활성
-✅ EPO OPS — 활성
-⏳ KISTI ScienceON / NTIS / DataON — 활용신청 진행 중
+✅ EPO OPS — 활성 (글로벌 특허)
+⏳ KIPRIS Plus — 14건 활용신청 승인 대기 (영업일 1-3일)
+   메인 (#1 특허·실용 공개·등록공보) + 인용/피인용 (#24·25) +
+   행정처리/분류/패밀리/명칭변동 등 11개 향후 기능
+   승인 전: /company_patents · /patent_detail · /citing_patents
+   는 결과 없음 반환 (resultCode 30)
+⏳ KISTI ScienceON — helpdesk 답변 대기 (IP 검증 우회)
+⏳ KISTI NTIS — 3건 활용신청 승인 대기
+⏳ KISTI DataON — 회원가입 승인 대기
 
 ═══════════════════════════════════════
 <b>📘 9. 가이드 / 기타</b>
@@ -1661,7 +1669,7 @@ IPC 분류 최대 4개, abstract 900자, Google Patents URL.
 ━━━━━━━━━━━━━━━━━━━━━━
 
 <b>3) /patent_stats &lt;키워드&gt; [view]</b>
-EPO 에서 최대 400건 가져와 메모리에서 통계 집계. 30~60초 소요.
+EPO 에서 최대 2000건 가져와 메모리에서 통계 집계. 약 60~120초 소요.
 
 <b>5가지 view:</b>
 
@@ -1715,10 +1723,23 @@ KIPRIS Plus 단건 상세 / 인용 네트워크. 출원번호 (숫자만) 입력
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
-<b>나중에 KISTI ScienceON 활성화 되면</b>
-/kr_patents 로 들어가 (이미 따로 빠져있음). /search_patents (EPO) 는
-글로벌 영문 위주, /kr_patents (ScienceON) 는 한글 메타데이터 풍부 —
-용도가 달라서 충돌 X.
+<b>📊 백엔드 활성 상태 (2026-05 기준)</b>
+
+✅ <b>EPO OPS</b> — 활성 (글로벌 특허, /search_patents·_advanced·_stats 동작)
+⏳ <b>KIPRIS Plus</b> — 14건 활용신청 승인 대기 (영업일 1-3일)
+   메인: 특허·실용 공개·등록공보 (#1) — /company_patents · /patent_detail
+   인용 네트워크: 인용문헌 (#24) + 피인용문헌 (#25) — /citing_patents
+   향후 분석용 11건: 행정처리 이력 · 청구항 변동 · 분류코드 · 법적 상태 ·
+   등록사항 · KPA 영문초록 · 기계번역 국문초록 · 다인용 선행문헌 ·
+   특허 패밀리 · 출원인 명칭 변동 이력
+   <b>승인 전 동작:</b> /company_patents · /patent_detail · /citing_patents
+   호출 시 "결과 없음" 메시지 (KIPRIS API 는 resultCode 30 반환)
+⏳ <b>KISTI ScienceON</b> — helpdesk 답변 대기 (가입 IP 검증 우회 절차)
+   해당 명령어: /kr_papers · /kr_patents · /kr_reports
+   /kr_patents (ScienceON) 는 한글 메타데이터 풍부, /search_patents (EPO)
+   글로벌 영문 위주 — 활성화되면 용도 분리해 사용 가능
+⏳ <b>KISTI NTIS</b> — 3건 활용신청 승인 대기 (/kr_rnd_projects 등)
+⏳ <b>KISTI DataON</b> — 회원가입 승인 대기 (/kr_research_data)
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1879,7 +1900,7 @@ OpenAlex 단일 백엔드 + 구조화 필터.
 ━━━━━━━━━━━━━━━━━━━━━━
 
 <b>3) /paper_stats &lt;키워드&gt; [view]</b>
-OpenAlex 에서 최대 400편 가져와 통계 집계. 20~40초 소요.
+OpenAlex 에서 최대 1000편 가져와 통계 집계. 약 20~30초 소요.
 
 <b>5가지 view:</b>
 
@@ -4802,7 +4823,7 @@ def _format_paper_stats_top(query: str, papers: list[dict],
 
 
 async def cmd_paper_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/paper_stats <keyword> [view] — OpenAlex bulk fetch (최대 400편)
+    """/paper_stats <keyword> [view] — OpenAlex bulk fetch (최대 1000편)
     aggregate analytics. view: overview / trend / newcomers /
     network / keywords / top.  `top` ranks the bulk-fetched papers by
     cited_by_count (free — OpenAlex returns citations inline; no N+1
@@ -4831,10 +4852,10 @@ async def cmd_paper_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     from .agent import papersearch
     await _typing(update, ctx)
     status = await update.message.reply_text(
-        f"📊 '{q}' 논문 통계 분석 중 (최대 400편, 20~40초 소요)..."
+        f"📊 '{q}' 논문 통계 분석 중 (최대 1000편, 약 20~30초 소요)..."
     )
     try:
-        papers = await papersearch._openalex_bulk(q, max_count=400)
+        papers = await papersearch._openalex_bulk(q, max_count=1000)
     except Exception as e:
         log.exception("paper_stats bulk fetch failed for %r", q)
         await _edit_or_send(
@@ -5553,10 +5574,10 @@ async def cmd_patent_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     await _typing(update, ctx)
     status = await update.message.reply_text(
-        f"📊 '{q}' 특허 통계 분석 중 (최대 400건, 30~60초 소요)..."
+        f"📊 '{q}' 특허 통계 분석 중 (최대 2000건, 약 60~120초 소요)..."
     )
     try:
-        patents = await patentsearch._epo_search_bulk(q, max_count=400)
+        patents = await patentsearch._epo_search_bulk(q, max_count=2000)
     except Exception as e:
         log.exception("patent_stats bulk fetch failed for %r", q)
         await _edit_or_send(
