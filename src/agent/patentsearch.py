@@ -6,23 +6,25 @@ Active:
     활용신청 → 특허/실용신안 정보검색서비스. Korean patents only,
     applicant-name lookup (search_by_applicant) — different shape
     from a free-text search.
+  • EPO OPS (European Patent Office Open Patent Services) — free
+    4GB/month rolling tier, OAuth 2.0 client_credentials flow.
+    Registered at https://developers.epo.org/, requires
+    EPO_API_KEY + EPO_API_SECRET in .env. Covers EP / WO / US /
+    KR / JP / DE / CN etc. via DOCDB.
 
 Disabled / pending:
-  • The Lens — removed. 14-day trial only, institutional access
-    required ITK subscription approval which never came through.
-    Per user policy (5/17) we don't keep paid backends around.
-  • EPO OPS — user registered 5/16, account activation pending
-    (1-2 business days, then OAuth + XML parsing). Will be added
-    here once credentials land.
+  • The Lens — removed. 14-day trial only.
   • USPTO ODP — deferred (ID.me identity-verification overhead).
 
-The global free-text `search()` entry point therefore returns []
-right now; `/search_patents <keyword>` shows a message pointing to
-/company_patents instead. When EPO OPS activates we drop the EPO
-backend into `search()` here without touching the bot layer.
+The global free-text `search()` calls EPO when credentials are
+present, otherwise returns [] and the bot shows a "no backend"
+message pointing the user at /company_patents (KIPRIS).
 """
+import asyncio
+import base64
 import logging
 import os
+import time
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -33,6 +35,24 @@ _KIPRIS_API = "http://plus.kipris.or.kr/openapi/rest"
 _KIPRIS_APPLICANT_PATH = "/patUtiModInfoSearchSevice/applicantNameSearchInfo"
 _KIPRIS_APPNUM_PATH = "/patUtiModInfoSearchSevice/applicationNumberSearchInfo"
 _KIPRIS_CITING_PATH = "/CitingService/citingInfo"
+
+_EPO_BASE = "https://ops.epo.org/3.2"
+_EPO_TOKEN_URL = f"{_EPO_BASE}/auth/accesstoken"
+_EPO_SEARCH_URL = f"{_EPO_BASE}/rest-services/published-data/search/biblio"
+# In-process token cache. EPO tokens last ~20 min (expires_in=1200);
+# we refresh 60s before expiry so an in-flight request doesn't hit a
+# stale token. Single-process bot → asyncio.Lock is enough; no Redis.
+_EPO_TOKEN_CACHE: dict = {"token": None, "expires_at": 0.0}
+_EPO_TOKEN_LOCK: asyncio.Lock | None = None
+
+
+def _epo_token_lock() -> asyncio.Lock:
+    """Lazy-init lock so module import doesn't require a running
+    event loop (some test paths import patentsearch without one)."""
+    global _EPO_TOKEN_LOCK
+    if _EPO_TOKEN_LOCK is None:
+        _EPO_TOKEN_LOCK = asyncio.Lock()
+    return _EPO_TOKEN_LOCK
 
 
 def _empty(p: dict, source: str) -> dict:
@@ -318,32 +338,297 @@ async def get_citing_patents(application_number: str) -> list[dict]:
         return []
 
 
+async def _epo_token() -> str | None:
+    """Get a cached or fresh EPO access token via the OAuth 2.0
+    client_credentials flow. Returns None when keys are missing or
+    the token endpoint fails (bot falls back to []).
+
+    Caching: tokens last ~20 min; we refresh 60 s before expiry so a
+    concurrent request doesn't race a stale cache. The lock prevents
+    a thundering herd from minting N tokens at the same time."""
+    key = os.getenv("EPO_API_KEY", "").strip()
+    secret = os.getenv("EPO_API_SECRET", "").strip()
+    if not (key and secret):
+        return None
+    async with _epo_token_lock():
+        now = time.time()
+        cached = _EPO_TOKEN_CACHE.get("token")
+        if cached and _EPO_TOKEN_CACHE["expires_at"] > now + 60:
+            return cached
+        auth = base64.b64encode(f"{key}:{secret}".encode()).decode()
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.post(
+                    _EPO_TOKEN_URL,
+                    headers={
+                        "Authorization": f"Basic {auth}",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Accept": "application/json",
+                    },
+                    content="grant_type=client_credentials",
+                )
+        except Exception as e:
+            log.warning("epo token fetch failed: %s", e)
+            return None
+        if r.status_code != 200:
+            log.warning("epo token %d: %r",
+                        r.status_code, r.text[:200])
+            return None
+        try:
+            data = r.json()
+        except Exception:
+            log.warning("epo token JSON decode failed: %r", r.text[:200])
+            return None
+        token = data.get("access_token")
+        if not token:
+            return None
+        try:
+            ttl = int(data.get("expires_in", 1200))
+        except (TypeError, ValueError):
+            ttl = 1200
+        _EPO_TOKEN_CACHE["token"] = token
+        _EPO_TOKEN_CACHE["expires_at"] = now + ttl
+        return token
+
+
+def _epo_text(obj) -> str:
+    """EPO's JSON wraps scalar values like {'$': 'value'}. Unwrap
+    safely whether the input is the wrapper, a bare string, or None."""
+    if obj is None:
+        return ""
+    if isinstance(obj, str):
+        return obj.strip()
+    if isinstance(obj, dict):
+        v = obj.get("$")
+        if isinstance(v, str):
+            return v.strip()
+    return ""
+
+
+def _epo_to_unified(doc: dict) -> dict | None:
+    """Walk one exchange-document JSON node into the shared schema.
+    Returns None when the doc lacks a usable title (silently drop —
+    EPO occasionally returns withdrawn / merged docs with stub data).
+
+    EPO's JSON structure is deeply nested + uses ':' in keys
+    (ops:world-patent-data, ops:biblio-search). Most fields can be
+    either a single dict or a list of dicts depending on count, so
+    we normalise to list at every step."""
+    try:
+        biblio = (doc.get("exchange-document") or {}).get(
+            "bibliographic-data") or {}
+        # Publication reference — prefer docdb format (machine-readable).
+        pub_ref = (biblio.get("publication-reference") or {}).get(
+            "document-id") or []
+        if isinstance(pub_ref, dict):
+            pub_ref = [pub_ref]
+        country = doc_num = kind = date_raw = ""
+        for ref in pub_ref:
+            if not isinstance(ref, dict):
+                continue
+            if ref.get("@document-id-type") == "docdb":
+                country = _epo_text(ref.get("country"))
+                doc_num = _epo_text(ref.get("doc-number"))
+                kind = _epo_text(ref.get("kind"))
+                date_raw = _epo_text(ref.get("date"))
+                break
+        # Title — prefer English, then the first available.
+        titles = biblio.get("invention-title") or []
+        if isinstance(titles, dict):
+            titles = [titles]
+        title_en = ""
+        title_any = ""
+        for t in titles:
+            if not isinstance(t, dict):
+                continue
+            txt = _epo_text(t)
+            if not txt:
+                continue
+            if t.get("@lang") == "en":
+                title_en = txt
+            if not title_any:
+                title_any = txt
+        title = title_en or title_any
+        if not title:
+            return None
+        # Applicants → assignee column. epodoc format is human-readable.
+        parties = biblio.get("parties") or {}
+        applicants_raw = (parties.get("applicants") or {}).get(
+            "applicant") or []
+        if isinstance(applicants_raw, dict):
+            applicants_raw = [applicants_raw]
+        assignees: list[str] = []
+        for a in applicants_raw:
+            if not isinstance(a, dict):
+                continue
+            if a.get("@data-format") != "epodoc":
+                continue
+            name = _epo_text(
+                (a.get("applicant-name") or {}).get("name"))
+            if name and name not in assignees:
+                assignees.append(name)
+        # Inventors (also epodoc preference).
+        inv_raw = (parties.get("inventors") or {}).get("inventor") or []
+        if isinstance(inv_raw, dict):
+            inv_raw = [inv_raw]
+        inventors: list[str] = []
+        for i in inv_raw:
+            if not isinstance(i, dict):
+                continue
+            if i.get("@data-format") != "epodoc":
+                continue
+            name = _epo_text(
+                (i.get("inventor-name") or {}).get("name"))
+            if name and name not in inventors:
+                inventors.append(name)
+        # Abstract — prefer English; sits on exchange-document, not
+        # bibliographic-data.
+        abstract = ""
+        abs_raw = (doc.get("exchange-document") or {}).get("abstract") or []
+        if isinstance(abs_raw, dict):
+            abs_raw = [abs_raw]
+        for a in abs_raw:
+            if not isinstance(a, dict):
+                continue
+            ps = a.get("p") or []
+            if isinstance(ps, (dict, str)):
+                ps = [ps]
+            parts = [_epo_text(p) for p in ps if p]
+            joined = " ".join(p for p in parts if p)
+            if a.get("@lang") == "en":
+                abstract = joined
+                break
+            if not abstract:
+                abstract = joined
+        # YYYYMMDD → YYYY-MM-DD
+        date_fmt = ""
+        year = None
+        if len(date_raw) == 8 and date_raw.isdigit():
+            date_fmt = f"{date_raw[:4]}-{date_raw[4:6]}-{date_raw[6:8]}"
+            year = int(date_raw[:4])
+        # Google Patents resolves <country><number><kind> directly.
+        patent_number = (f"{country}{doc_num}{kind}"
+                         if country and doc_num else "")
+        url = (f"https://patents.google.com/patent/{patent_number}"
+               if patent_number else "")
+        return _empty({
+            "title": title,
+            "patent_number": patent_number,
+            "date": date_fmt,
+            "year": year,
+            "inventors": inventors[:5],
+            "assignee": ", ".join(assignees[:3]),
+            "abstract": abstract.strip(),
+            "claims_count": None,
+            "url": url,
+        }, "EPO")
+    except Exception:
+        log.exception("epo doc parse failed (skipping row)")
+        return None
+
+
+async def _epo_search(query: str, limit: int) -> list[dict]:
+    """EPO OPS free-text biblio search.
+
+    Uses CQL: txt=<term> spans title + abstract + claims.
+    Multi-word queries get wrapped in quotes so they're matched as a
+    phrase (otherwise CQL treats whitespace as implicit AND, which
+    over-narrows on common multi-word inputs like "hybrid bonding").
+    Range header caps per-call results (EPO max=100; we cap at 25 to
+    stay well inside the 4GB/month free tier even at heavy use)."""
+    token = await _epo_token()
+    if not token:
+        return []
+    q = query.strip()
+    if not q:
+        return []
+    cql = f'txt="{q}"' if " " in q else f"txt={q}"
+    end = min(max(limit, 1), 25)
+    range_hdr = f"1-{end}"
+
+    async def _call(tok: str) -> httpx.Response:
+        async with httpx.AsyncClient(timeout=30,
+                                     follow_redirects=True) as c:
+            return await c.get(
+                _EPO_SEARCH_URL,
+                headers={
+                    "Authorization": f"Bearer {tok}",
+                    "Accept": "application/json",
+                    "X-OPS-Range": range_hdr,
+                },
+                params={"q": cql, "Range": range_hdr},
+            )
+
+    try:
+        r = await _call(token)
+        # 401 = token expired between cache check and request — invalidate
+        # and retry once. EPO occasionally rotates tokens early.
+        if r.status_code == 401:
+            log.info("epo 401, refreshing token and retrying once")
+            _EPO_TOKEN_CACHE["expires_at"] = 0
+            token2 = await _epo_token()
+            if not token2:
+                return []
+            r = await _call(token2)
+        if r.status_code != 200:
+            log.warning("epo search %d: %r",
+                        r.status_code, r.text[:300])
+            return []
+        data = r.json()
+    except Exception as e:
+        log.warning("epo search failed: %s", e)
+        return []
+    # Navigate the ops:world-patent-data > ops:biblio-search >
+    # ops:search-result > exchange-documents path. Each level can be
+    # absent on empty results.
+    try:
+        wpd = data.get("ops:world-patent-data") or {}
+        result = (wpd.get("ops:biblio-search") or {}).get(
+            "ops:search-result") or {}
+        docs = result.get("exchange-documents") or []
+        if isinstance(docs, dict):
+            docs = [docs]
+    except Exception:
+        log.warning("epo response shape unexpected: %r", str(data)[:300])
+        return []
+    out: list[dict] = []
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+        row = _epo_to_unified(doc)
+        if row:
+            out.append(row)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def has_global_backend() -> bool:
-    """True when at least one global free-text patent backend is
-    configured. Used by the bot to show a helpful "no backend yet"
-    message on /search_patents instead of a silent empty result.
-    EPO OPS will flip this to True once OAuth credentials are in
-    .env (EPO_API_KEY + EPO_API_SECRET)."""
-    # Future: return bool(os.getenv("EPO_API_KEY")) or
-    #         bool(os.getenv("USPTO_ODP_API_KEY"))
-    return False
+    """True when EPO OPS credentials are present. Used by the bot to
+    show a "no backend" message on /search_patents instead of a
+    silent empty result when keys are missing."""
+    return bool(os.getenv("EPO_API_KEY", "").strip()
+                and os.getenv("EPO_API_SECRET", "").strip())
 
 
 async def search(query: str, limit: int = 15) -> list[dict]:
-    """Free-text patent search entry point.
+    """Free-text global patent search entry point.
 
-    Currently returns [] — Lens was removed (paid trial only), EPO
-    OPS pending account activation, USPTO ODP deferred (ID.me
-    overhead). When EPO comes online we plug its async function in
-    here behind a `try: await _epo(...) except: []` block matching
-    papersearch.search()'s pattern.
+    Currently routes to EPO OPS only. If keys are missing, returns
+    [] and the bot falls back to a "no global backend" message that
+    points the user at /company_patents (KIPRIS) for KR queries.
 
     Korean company patent lookup goes through search_by_applicant()
-    (KIPRIS), which is wired up regardless of global-backend status.
-    """
-    log.info(
-        "patent search: no global backend active "
-        "(Lens removed, EPO OPS pending). Returning [] for %r.",
-        query[:60],
-    )
-    return []
+    (KIPRIS), wired up regardless of global-backend status."""
+    if not has_global_backend():
+        log.info(
+            "patent search: no global backend active "
+            "(EPO_API_KEY/EPO_API_SECRET missing). Returning [] for %r.",
+            query[:60],
+        )
+        return []
+    try:
+        return await _epo_search(query, limit)
+    except Exception as e:
+        log.warning("patent search EPO failed (%s)", type(e).__name__)
+        return []

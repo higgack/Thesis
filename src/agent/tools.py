@@ -185,13 +185,13 @@ async def search_company_patents(applicant: str, limit: int = 15) -> dict:
 
 
 async def search_patents(query: str, limit: int = 15) -> dict:
-    """Phase 1: USPTO PatentsView only (US patents).
+    """Global free-text patent search via EPO OPS (DOCDB — EP/WO/US/
+    KR/JP/DE/CN coverage). Free 4GB/month tier.
 
     Returns the same skinny shape as search_papers so the agent can
     render both with the same '(P-2) 특허 결과 작성 형식' block.
     abstract is capped at 2500 chars to leave the model room to
-    write a 3-5 sentence summary per top patent (~₩1-2 input
-    overhead per call, negligible).
+    write a 3-5 sentence summary per top patent.
     """
     results = await patentsearch.search(query, limit=limit)
     slim = []
@@ -233,8 +233,9 @@ async def get_kr_paper_detail(cn: str) -> dict:
 
 async def search_kr_patents_kisti(query: str, limit: int = 10) -> dict:
     """KISTI's patent index (international + KR) — keyword search,
-    different from /search_patents (Lens, currently disabled) and
-    /company_patents (KIPRIS applicant-only)."""
+    different from /search_patents (EPO OPS, global DOCDB) and
+    /company_patents (KIPRIS applicant-only). ScienceON's coverage
+    overlaps but adds Korean-language metadata not in EPO."""
     rows = await kisti_scienceon.search_patents(query, limit=limit)
     return {"results": rows, "count": len(rows)}
 
@@ -540,14 +541,15 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
         name="search_patents",
         description=(
             "Free-text patent search across global jurisdictions "
-            "(US + EU + WIPO + JP + KR + ...). CURRENTLY DISABLED — "
-            "the previous backend (The Lens) was removed because the "
-            "free tier was only a 14-day trial. EPO OPS is registered "
-            "and pending account activation; this tool will start "
-            "returning real results once those credentials land. "
-            "Until then prefer search_company_patents for any "
-            "specific Korean entity, or just answer the user that "
-            "global patent search is temporarily offline."
+            "(EP / WO / US / KR / JP / DE / CN ...) via EPO OPS "
+            "(European Patent Office Open Patent Services). Returns "
+            "title + applicant + inventors + publication date + "
+            "abstract + Google Patents URL per row. CQL backend "
+            "(txt=<query> spans title + abstract + claims). Free "
+            "4GB/month tier. Use when the question targets "
+            "international patents or doesn't specify a Korean "
+            "applicant. For applicant-name lookup of a specific "
+            "Korean company prefer search_company_patents (KIPRIS)."
         ),
         parameters=types.Schema(
             type=types.Type.OBJECT,
@@ -724,13 +726,12 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
     types.FunctionDeclaration(
         name="search_kr_patents_kisti",
         description=(
-            "Patent search via KISTI ScienceON — different coverage "
-            "from /search_patents (Lens, currently disabled) and "
-            "/company_patents (KIPRIS applicant-only). ScienceON's "
-            "patent index spans international + KR records and "
-            "supports free-text keyword queries. Returns CN-keyed "
-            "records — feed CN to get_kr_patent_detail / "
-            "get_kr_patent_citations for IPC, status, citation links."
+            "Patent search via KISTI ScienceON — overlaps with "
+            "/search_patents (EPO OPS) but adds Korean-language "
+            "metadata. Different from /company_patents (KIPRIS "
+            "applicant-only). Returns CN-keyed records — feed CN to "
+            "get_kr_patent_detail / get_kr_patent_citations for IPC, "
+            "status, citation links."
         ),
         parameters=types.Schema(
             type=types.Type.OBJECT,

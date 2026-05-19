@@ -1124,7 +1124,7 @@ Orphan: /orphans · /recover_orphans(건별 [📥]/[🗑])
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【3. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS·DataON · ⚖️ patents (EPO 대기) · 🌐 web · 📥 ingest · 한국어번역
+<b>【3. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS·DataON · ⚖️ patents EPO OPS · 🌐 web · 📥 ingest · 한국어번역
 
 <b>【3-1. 회사 분석】</b> "회사명+실적/매출/영업이익/가이던스" → 본문 + 신사업 키포인트(·합의 N건) + 📌 실적 데이터(맨끝): 연간/분기 표(A./F.·YoY·QoQ·"—") + xychart(bar=중앙값·line=max/min) + 분석가별 가이던스(브로커리지/이름/발행일) + 웹 추가(참고용·brain/web 분리). 숫자 audit(매출=OP·마진&gt;70% 등) 자동 경고.
 
@@ -3898,7 +3898,7 @@ def _format_patents_text(query: str, results: list[dict]) -> str:
                 f"검색어를 영문 키워드로 좁히면 결과가 나올 가능성 ↑.")
     out = [
         f"⚖️ <b>특허 검색 결과 — '{_html.escape(query)}'</b>",
-        f"<i>{len(results)}건 · The Lens</i>",
+        f"<i>{len(results)}건 · EPO OPS</i>",
     ]
     for i, p in enumerate(results, 1):
         title_src = (p.get("title_ko") or p.get("title") or "(제목 없음)")
@@ -3945,12 +3945,10 @@ def _format_patents_text(query: str, results: list[dict]) -> str:
 async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Direct /search_patents — bypasses the agent.
 
-    Global free-text patent search. Currently no backend is wired
-    up (The Lens was removed for being paid-only; EPO OPS pending
-    activation). When patentsearch.has_global_backend() flips True
-    we run the full search → translate → format → send flow.
-    Korean company patent lookup stays available via
-    /company_patents which routes through KIPRIS regardless."""
+    Global free-text patent search via EPO OPS (DOCDB — EP/WO/US/
+    KR/JP/DE/CN). When EPO_API_KEY + EPO_API_SECRET are missing,
+    has_global_backend() returns False and we point the user at
+    /company_patents (KIPRIS, applicant-only) instead."""
     if not _is_owner(update):
         return
     q = " ".join(ctx.args).strip()
@@ -3961,8 +3959,8 @@ async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not patentsearch.has_global_backend():
         await update.message.reply_text(
             "⚠️ 글로벌 특허 검색 백엔드 미활성.\n"
-            "Lens 무료 tier 종료로 제거됨. EPO OPS 계정 활성화 대기 중 "
-            "(승인되면 자동 복구).\n\n"
+            ".env 에 EPO_API_KEY / EPO_API_SECRET 누락 — "
+            "developers.epo.org 의 My Apps 에서 키 받아서 박아줘.\n\n"
             "💡 한국 회사 특허는 지금 바로:\n"
             "    /company_patents 삼성전기\n"
             "    /company_patents SK하이닉스"
