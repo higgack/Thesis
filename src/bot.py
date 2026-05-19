@@ -1317,8 +1317,10 @@ doc_id 4자 이상 또는 키워드로 매치되는 문서의 본문 dump.
 [🌐 한국어 번역] 버튼 자동 부착 — 영문 자료 즉시 번역.
 <b>/find 결과에서 들어왔을 때:</b> 헤더 + 푸터에 [⏩ find 다음
 #N+1~#N+5 / total] 버튼 자동 부착. 클릭하면 다음 5개 항목을
-새 메시지로 띄움 (find 전체를 위로 스크롤할 필요 X). /find 후
-1시간 이내, 이 chat 안에서만 유효.
+새 메시지로 띄움 (find 전체를 위로 스크롤할 필요 X). 미리보기는
+/find 와 동일한 풍부한 per-item 렌더 — 제목·학습일·발행일·청크수
+·소스·태그·전체 summary 모두 포함, 다음 /show 결정 가능.
+/find 후 1시간 이내, 이 chat 안에서만 유효.
 예: <code>/show abc1</code> · <code>/show 대덕전자 1Q26</code>
 
 <b>/recent [N]</b>
@@ -2373,12 +2375,16 @@ _FIND_CONTEXT_TTL = 3600  # 1h — beyond that the user has probably
 
 
 def _set_find_context(chat_id: int, query: str, items: list[dict],
-                      first_message_id: int | None) -> None:
-    """Save /find result for /show navigation."""
+                      first_message_id: int | None,
+                      chunk_counts: dict | None = None) -> None:
+    """Save /find result for /show navigation. chunk_counts is the
+    bulk-fetched {doc_id: count} map from /find so the preview can
+    reuse it without re-querying ChromaDB per page."""
     _FIND_CONTEXT[chat_id] = {
         "query": query,
         "items": items,
         "first_message_id": first_message_id,
+        "chunk_counts": chunk_counts or {},
         "ts": time.time(),
     }
 
@@ -2403,11 +2409,83 @@ def _find_item_index(items: list[dict], doc_id: str) -> int | None:
     return None
 
 
+def _format_find_item(m: dict, index: int | None = None,
+                      chunk_counts: dict | None = None) -> str:
+    """Render one /find result as a per-item block.
+
+    Shared by /find (no index numbering, bulk render) and the
+    find-nav preview (numbered #N. for position context, same
+    chunk_counts cached at /find time). The two paths render
+    identically — same fields, same summary, same icons — so the
+    user can decide whether to /show without re-running /find."""
+    import html as _html
+    import json as _json
+    title = _html.escape(_clean_text(
+        m.get("title") or "(제목 없음)")[:80])
+    ingested = (m.get("ingested_at") or "")[:10]
+    source = m.get("source") or ""
+    summary_full = _html.escape(_clean_text(m.get("summary") or ""))
+    doc_id = m.get("id") or ""
+
+    loc = ""
+    if source.startswith(("http://", "https://")):
+        short_url = source.replace("https://", "").replace(
+            "http://", "")[:70]
+        loc = f"📎 {short_url}"
+    elif source.startswith("tg-"):
+        kind = source.split(":", 1)[0]
+        loc = f"💬 {kind}"
+
+    meta_bits: list[str] = []
+    published = ""
+    meta_raw = m.get("metadata")
+    if meta_raw:
+        try:
+            md = _json.loads(meta_raw)
+        except Exception:
+            md = {}
+        if md.get("company"):
+            meta_bits.append(_html.escape(md["company"]))
+        if md.get("report_date"):
+            published = _html.escape(md["report_date"])
+        if md.get("tags"):
+            meta_bits.append(_html.escape("·".join(md["tags"][:3])))
+    meta_line = " · ".join(meta_bits)
+
+    info_bits: list[str] = []
+    if ingested:
+        info_bits.append(f"학습 {ingested}")
+    if published:
+        info_bits.append(f"발행 {published}")
+    if chunk_counts is not None:
+        n_chunks = int(chunk_counts.get(doc_id, 0) or 0)
+        if n_chunks:
+            info_bits.append(f"{n_chunks}청크")
+
+    head = f"#{index}. {title}" if index is not None else title
+    out = f"\n\n📄 <b>{head}</b>"
+    if info_bits:
+        out += f"\n  <i>{' · '.join(info_bits)}</i>"
+    if doc_id:
+        out += f"\n  🆔 /show_{_html.escape(doc_id)}"
+    if loc:
+        out += f"\n  {loc}"
+    if meta_line:
+        out += f"\n  🏷 {meta_line}"
+    if summary_full:
+        out += f"\n\n{summary_full}"
+    return out
+
+
 def _format_find_preview_chunk(query: str, items: list[dict],
-                               start_idx: int, count: int = 5) -> str:
+                               start_idx: int,
+                               chunk_counts: dict | None = None,
+                               count: int = 5) -> str:
     """Compact preview of items[start_idx:start_idx+count] for the
-    find-nav callback. Title + 학습일 + /show_id only — full summary
-    omitted since this is a "pick the next one to read" navigator."""
+    find-nav callback. Uses the same per-item renderer as /find so
+    the user gets the full summary + meta + source, not just a stub
+    — they can decide which next item to /show without re-running
+    /find or scrolling back."""
     import html as _html
     end_idx = min(len(items), start_idx + count)
     total = len(items)
@@ -2416,17 +2494,9 @@ def _format_find_preview_chunk(query: str, items: list[dict],
         f"검색 결과 #{start_idx + 1}~#{end_idx} / {total}",
     ]
     for i in range(start_idx, end_idx):
-        m = items[i]
-        title = _html.escape(_clean_text(
-            m.get("title") or "(제목 없음)")[:80])
-        ingested = (m.get("ingested_at") or "")[:10]
-        doc_id = m.get("id") or ""
-        block = [f"\n\n📄 <b>#{i + 1}. {title}</b>"]
-        if ingested:
-            block.append(f"  <i>학습 {ingested}</i>")
-        if doc_id:
-            block.append(f"  🆔 /show_{_html.escape(doc_id)}")
-        out.append("".join(block))
+        out.append(_format_find_item(
+            items[i], index=i + 1, chunk_counts=chunk_counts,
+        ))
     return "".join(out)
 
 
@@ -2481,8 +2551,6 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     header = f"🔍 '{query}' — {len(matches)}개 매칭"
 
-    import json as _json
-    import html as _html
     # Bulk chunk-count fetch so each match can show its size without
     # firing 50+ individual ChromaDB queries. Fails open (empty map →
     # size omitted) so /find never breaks just because vector store
@@ -2493,82 +2561,13 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception:
         log.exception("find: chunk_counts bulk fetch failed")
         chunk_counts = {}
+    # _format_find_item handles all the title/dates/source/meta/summary
+    # rendering — same renderer is reused by the find-nav preview so
+    # the page-by-page walking output looks identical to /find.
     blocks: list[str] = [header]
     for m in matches:
-        title = _html.escape(_clean_text((m.get("title") or "(제목 없음)"))[:80])
-        ingested = (m.get("ingested_at") or "")[:10]
-        source = m.get("source") or ""
-        # Full summary — line breaks preserved so bullet structure
-        # stays readable. /find is free (SQLite only, ₩0) so we don't
-        # truncate; _split_for_telegram fans the result across as many
-        # messages as needed.
-        summary_full = _html.escape(_clean_text(m.get("summary") or ""))
-
-        loc = ""
-        if source.startswith(("http://", "https://")):
-            # Drop scheme + trailing query for readability.
-            short_url = source.replace("https://", "").replace("http://", "")[:70]
-            loc = f"📎 {short_url}"
-        elif source.startswith("tg-"):
-            # tg-doc:xxxx:filename / tg-photo:xx / tg-msg:N:hash —
-            # show the prefix only, drops the hash noise.
-            kind = source.split(":", 1)[0]
-            loc = f"💬 {kind}"
-
-        # report_date (본문 발행일 YYYY.MM) lifted into the header line
-        # next to ingested date — user couldn't tell publish vs learn
-        # date when both were buried in the same 🏷 tag line.
-        meta_bits: list[str] = []
-        published = ""
-        meta_raw = m.get("metadata")
-        if meta_raw:
-            try:
-                md = _json.loads(meta_raw)
-            except Exception:
-                md = {}
-            if md.get("company"):
-                meta_bits.append(_html.escape(md["company"]))
-            if md.get("report_date"):
-                published = _html.escape(md["report_date"])
-            if md.get("tags"):
-                meta_bits.append(_html.escape("·".join(md["tags"][:3])))
-        meta_line = " · ".join(meta_bits)
-
-        # One block per doc: title · dates · size · location · meta ·
-        # full summary. doc_id rendered as `/show_<id>` — Telegram
-        # auto-detects the /word pattern and makes it tap-to-send, so
-        # one tap routes the user straight into cmd_show for that doc.
-        # Pairs with a MessageHandler that catches `^/show_<hex>$` and
-        # unwraps it back into `/show <hex>`.
-        doc_id = m.get("id") or ""
-        # Header second line: 학습 YYYY-MM-DD · 발행 YYYY.MM · N청크.
-        # Each bit is optional — omitted when the data is missing so
-        # docs without a Gemini-inferred publish date or with zero
-        # chunks (shouldn't happen, defensive) don't show empty fields.
-        info_bits: list[str] = []
-        if ingested:
-            info_bits.append(f"학습 {ingested}")
-        if published:
-            info_bits.append(f"발행 {published}")
-        n_chunks = int(chunk_counts.get(doc_id, 0) or 0)
-        if n_chunks:
-            info_bits.append(f"{n_chunks}청크")
-        item = f"\n\n📄 <b>{title}</b>"
-        if info_bits:
-            item += f"\n  <i>{' · '.join(info_bits)}</i>"
-        if doc_id:
-            item += f"\n  🆔 /show_{_html.escape(doc_id)}"
-        if loc:
-            item += f"\n  {loc}"
-        if meta_line:
-            item += f"\n  🏷 {meta_line}"
-        if summary_full:
-            # Blank line before the summary so the bullet structure
-            # (• ...) reads as its own block rather than a runaway
-            # continuation of the meta line.
-            item += f"\n\n{summary_full}"
-        blocks.append(item)
-
+        blocks.append(_format_find_item(m, index=None,
+                                         chunk_counts=chunk_counts))
     out = "".join(blocks)
     # Reuse the help-splitter so any number of matches fits across
     # however many Telegram messages it takes. Paragraph (blank-line)
@@ -2596,6 +2595,7 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         _set_find_context(
             update.effective_chat.id, query, matches, first_message_id,
+            chunk_counts=chunk_counts,
         )
     except Exception:
         log.exception("find: context cache write failed (non-fatal)")
@@ -3464,20 +3464,35 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
         page_size = 5
         body = _format_find_preview_chunk(
-            find_ctx["query"], items, start_idx, page_size,
+            find_ctx["query"], items, start_idx,
+            chunk_counts=find_ctx.get("chunk_counts") or {},
+            count=page_size,
         )
         next_kb = _find_next_keyboard(
             items, start_idx + page_size, page_size,
         )
-        try:
-            await ctx.bot.send_message(
-                chat_id=chat_id, text=body, parse_mode="HTML",
-                disable_web_page_preview=True,
-                reply_markup=next_kb,
-                reply_to_message_id=find_ctx.get("first_message_id"),
-            )
-        except Exception:
-            log.exception("findnext: send preview failed")
+        # Preview now includes full summary per item (same renderer
+        # as /find), so 5 items can exceed Telegram's 4000-char cap.
+        # Split, send each piece; reply-to original /find on the
+        # first (so Telegram's quote-bar lets the user jump back),
+        # attach [⏩ 다음] keyboard only to the LAST piece (where
+        # the user lands after reading all items).
+        pieces = _split_for_telegram(body)
+        if not pieces:
+            return
+        first_msg_id = find_ctx.get("first_message_id")
+        for i, piece in enumerate(pieces):
+            is_last = (i == len(pieces) - 1)
+            try:
+                await ctx.bot.send_message(
+                    chat_id=chat_id, text=piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                    reply_markup=next_kb if is_last else None,
+                    reply_to_message_id=(first_msg_id if i == 0
+                                         else None),
+                )
+            except Exception:
+                log.exception("findnext: send preview piece %d failed", i)
         return
     elif q.data.startswith("urldec_block:"):
         key = q.data.split(":", 1)[1]
