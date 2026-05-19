@@ -1111,17 +1111,15 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
-<b>【1. 명령어 가이드】</b>
-📋 /guide_lookup — 조회 (find/show/recent/stats/status/usage/cost)
-💬 /guide_chat — 대화 (reset/deep)
-🛠️ /guide_tools — 도구 (brain/compare/web/ingest)
-🇰🇷 /guide_kr — 한국 (KIPRIS/ScienceON/NTIS/DataON)
-⚖️ /patents_guide — 특허 (search_patents·_advanced·_stats 외 KR 5종)
-📄 /papers_guide — 논문 (search_papers·_advanced·_stats)
-🚨 /guide_failed — 장애/큐 (failed/queue/audit/blocked_hosts)
-⏸️ /guide_pending — 보류 5분 (pending/pending_ocr/pending_pro)
-🔍 /guide_orphan — Orphan (orphans/recover_orphans)
-🗑️ /guide_delete — 삭제 (forget/dedupe/cleanup)
+<b>【1. 명령어】</b>
+조회: /find &lt;kw&gt; [N=50](헤더 학습/발행/청크수) · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 dump + [🌐 한국어 번역]) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
+대화: /reset · /deep &lt;질문&gt;(Pro 강제)
+장애: /failed(건별 [🔁]/[🗑]·drop=영구) · /failed_retry · /failed_clear · /queue · /queue_to_failed · /queue_cancel_all · /audit · /blocked_hosts · /reset_blocked_hosts
+Orphan: /orphans · /recover_orphans(건별 [📥]/[🗑])
+보류(5분): /pending(건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all · /ocr_extend &lt;id|kw&gt;
+삭제: /forget &lt;id&gt; · /forget_search · /forget_search_all · /forget_qna · /forget_qna_search · /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm · /forget_forwards · /forget_forwards_confirm
+도구: /search_my_brain · /compare_papers · /search_papers · /search_patents · /web_search · /ingest_url
+한국 (KR): /company_patents · /patent_detail · /citing_patents (KIPRIS) · /kr_papers · /kr_patents · /kr_reports (ScienceON) · /kr_rnd_projects (NTIS) · /kr_research_data (DataON)
 기타: /start /help
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
@@ -1158,13 +1156,341 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【10-3. Retry/무손실 재개】</b> 5회 선형(1h→2h→3h→4h→/failed)·silent retry · 인입 시작 in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개(stop_grace 120s, 부팅 stale 클리어 10s)·atomic JSON+.bak·/audit 메모리·디스크·orphan 검증
 
-<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)"""
+<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
+📘 상세 가이드: /guide_lookup (전체) · /patents_guide · /papers_guide"""
 
 
 # Detailed multi-section guide for the patent suite. Kept separate
 # from _HELP_TEXT so the main help stays under Telegram's 4096-char
 # limit. Surfaced as its own /patents_guide command — the help text
 # above just points the user at it.
+_LOOKUP_GUIDE_TEXT = """<b>📘 전체 명령어 상세 가이드 (/guide_lookup)</b>
+
+봇의 <b>모든 명령어</b> 한 자리. /help 본문은 한 줄짜리 요약,
+여기는 각 명령어의 사용법 · 인자 · 동작 · 비용 · 팁까지 다 적음.
+파일 길이는 제한 없음 — Telegram 4000자 cap 에 걸리면 자동 분할
+전송됨.
+
+═══════════════════════════════════════
+<b>📋 1. 조회</b>
+═══════════════════════════════════════
+
+<b>/find &lt;keyword&gt; [N=50]</b>
+타이틀 + 첫 청크 텍스트에 키워드 매치. 결과 최대 N개 (기본 50).
+각 행에 학습일 · 발행일 · 청크 수 · doc_id 6자.
+예: <code>/find HBM</code> · <code>/find 삼성전기 20</code>
+
+<b>/find_all &lt;keyword&gt;</b>
+/find 와 같지만 N=500 까지 확장. 광범위 검색용.
+
+<b>/show &lt;id|keyword&gt;</b>
+doc_id 4자 이상 또는 키워드로 매치되는 문서의 본문 dump.
+[🌐 한국어 번역] 버튼 자동 부착 — 영문 자료 즉시 번역.
+예: <code>/show abc1</code> · <code>/show 대덕전자 1Q26</code>
+
+<b>/recent [N]</b>
+최근 N개 (기본 10) 학습된 자료 카드뷰. 시간순.
+예: <code>/recent</code> · <code>/recent 30</code>
+
+<b>/recent_docs</b>
+/recent 의 별칭 — 같은 동작.
+
+<b>/stats</b>
+문서 총개수 + 청크 총개수.
+
+<b>/status</b>
+봇 실시간 상태 (in-flight · 큐 길이 · retry · pending · orphan).
+
+<b>/usage</b>
+누적 Q&amp;A 횟수 + 비용 추정.
+
+<b>/cost</b>
+일별/월별 비용 (.usage_log 기반) — 모델별 분해.
+
+═══════════════════════════════════════
+<b>💬 2. 대화</b>
+═══════════════════════════════════════
+
+<b>/reset</b>
+대화 메모리 초기화 (7턴 유지). 토픽 어긋났을 때 / 새 주제로 넘어갈 때.
+
+<b>/deep &lt;질문&gt;</b>
+Gemini 2.5 Pro 강제 사용. 기본 답변은 Flash, /deep 만 Pro (비용 ~4배,
+정확도/추론 강함).
+언제: 복잡한 다단계 추론 · 다수 자료 종합 비판 검토 · 수치 audit 필요.
+
+<b>자연어 트리거 (대화창 직접):</b>
+• 🧠 brain "삼성전기 MLCC 어때?" — 저장 자료 검색
+• 🧠 compare "리뷰/정리/통합" — 여러 자료 종합
+• 📄 papers "논문 찾아줘" — 외부 학술 6소스
+• ⚖️ patents "특허 알려줘" — EPO 글로벌
+• 🇰🇷 company_patents "삼성전기 특허" — KIPRIS
+• 🌐 web "웹/구글/인터넷" — Gemini Grounding
+• 📥 ingest "이 URL 저장" — 영구 보관
+
+═══════════════════════════════════════
+<b>🚨 3. 장애 / 큐 관리</b>
+═══════════════════════════════════════
+
+<b>/failed</b>
+실패 큐 카드뷰. 각 행 [🔁 재시도] / [🗑 영구 무시] 버튼.
+[🔁] 즉시 재시도 · [🗑] URL/filename 을 ignored 등록 (재인입 차단).
+크기순 정렬.
+
+<b>/failed_retry</b>
+실패 큐 전체 한번에 재시도.
+
+<b>/failed_clear</b>
+실패 큐 전체 영구 무시 — [🗑] 일괄. 복구 불가.
+
+<b>/queue</b>
+retry 대기 중 — 5회 선형 (1h→2h→3h→4h→/failed 이동). 다음 시도 시각 표시.
+
+<b>/queue_to_failed</b>
+retry 큐 모두 실패 큐로 강제 이동.
+
+<b>/queue_cancel_all</b>
+retry 큐 전체 취소 — 재시도 안 함, /failed 로도 안 감.
+
+<b>/audit</b>
+무결성 검증 — 메모리 ↔ 디스크 ↔ vector store ↔ obsidian orphan 비교.
+
+<b>/blocked_hosts</b>
+차단된 호스트 목록 (HTTP 4xx/timeout 누적 → 자동 차단).
+
+<b>/reset_blocked_hosts</b>
+차단 호스트 모두 해제.
+
+═══════════════════════════════════════
+<b>🔍 4. Orphan</b>
+═══════════════════════════════════════
+
+<b>/orphans</b>
+data/files/ 에 있지만 meta.db 미등록 파일 목록. 크기순 정렬.
+
+<b>/recover_orphans</b>
+각 항목에 [📥 학습] / [🗑 영구 무시] 버튼.
+• [📥] 다시 ingest pipeline 통과 → 정상 학습
+• [🗑] 파일 삭제 + filename ignored 등록 (재인입 차단)
+
+═══════════════════════════════════════
+<b>⏸️ 5. 보류 (OCR 5분 윈도)</b>
+═══════════════════════════════════════
+
+<b>/pending</b>
+보류 항목 카드뷰. 학습 직후 자동 3-버튼:
+• [📄 OCR 추가] · [📝 텍스트만] · [🚫 취소]
+크기순 정렬. 만료 임박 항목 위로.
+
+<b>/pending_ocr &lt;N&gt;</b>
+N번째 항목에 OCR 추가 결정.
+
+<b>/pending_pro &lt;N&gt;</b>
+N번째 항목을 Pro 모델 (Gemini 2.5 Pro) 처리. 비용 4배, 정확도 향상.
+
+<b>/pending_approve_all</b>
+모든 보류 일괄 기본값 (텍스트만) 승인 미리보기.
+
+<b>/pending_approve_all_confirm</b>
+일괄 승인 실행.
+
+<b>/pending_cancel_all</b>
+모든 보류 학습 취소.
+
+<b>/ocr_extend &lt;id|keyword&gt;</b>
+OCR 5분 만료 연장 (+5분). id 4자 또는 키워드 매치.
+
+OCR 정책 (자동):
+• OCR_AUTO_CAP=0 → sparse PDF 도 OCR skip (사용자 결정 필요)
+• image-only PDF first 3p 만 자동 OCR
+• 이미지 캡션 ≥ 80자 → OCR skip
+• Progressive OCR: probe 3p &lt; 300자 → 전체 OCR skip
+
+═══════════════════════════════════════
+<b>🗑️ 6. 삭제</b>
+═══════════════════════════════════════
+
+<b>/forget &lt;doc_id&gt;</b>
+특정 doc_id 자료 삭제. id 4자 이상.
+예: <code>/forget abc1ef2g</code>
+
+<b>/forget_search &lt;keyword&gt;</b>
+키워드 매치 자료 미리보기 (실제 삭제 X).
+
+<b>/forget_search_all &lt;keyword&gt;</b>
+미리보기 결과 전체 삭제 실행.
+
+<b>/forget_qna &lt;keyword&gt;</b>
+Q&amp;A 카드 미리보기.
+
+<b>/forget_qna_search &lt;keyword&gt;</b>
+Q&amp;A 검색 결과 전체 삭제.
+
+<b>/dedupe</b>
+중복 감지 미리보기 — 같은 file_hash / text_hash / title.
+
+<b>/dedupe_confirm</b>
+중복 삭제 실행.
+
+<b>/cleanup</b>
+정리 후보 미리보기 — 본문 비어있음 / 청크 0개 / 메타 누락.
+
+<b>/cleanup_confirm</b>
+정리 삭제 실행.
+
+<b>/forget_forwards</b>
+포워드 학습 자료 미리보기.
+
+<b>/forget_forwards_confirm</b>
+포워드 전체 삭제 실행.
+
+⚠️ 모든 삭제는 2단계 confirm — 첫 명령은 항상 미리보기.
+영구 무시 (/failed [🗑]) 와 다름: /forget 은 자료만 지움, ignored 등록 X.
+
+═══════════════════════════════════════
+<b>🛠️ 7. 도구 (외부 자료 검색)</b>
+═══════════════════════════════════════
+
+<b>/search_my_brain &lt;keyword&gt;</b>
+저장된 RAG 자료에서 hybrid 검색 (semantic + BM25). agent 가 변형
+쿼리 2개 자동 생성 → 병렬 호출 → dedupe.
+
+<b>/compare_papers &lt;주제&gt;</b>
+여러 자료의 summary 한번에 비교/종합 (최대 50건). 자동 필터:
+• semantic floor (cosine ≤ 0.55)
+• 최소 summary 100자
+• digest 패널티 0.7 + 30일 recency + 5건 quota
+
+<b>/search_papers &lt;키워드&gt;</b>
+6소스 라우팅 (S2 / arXiv / OpenAlex / CrossRef / IEEE / PubMed). 도메인
+키워드 (semiconductor / LLM / cancer) 에 따라 2-3 백엔드 병렬 + dedupe.
+결과에 한국어 번역 + OA 배지 + 🏛️ 소속 + 🏷️ concepts + 인용 N회.
+
+<b>/search_patents &lt;키워드&gt;</b>
+EPO OPS, DOCDB 글로벌 (EP/WO/US/KR/JP/DE/CN). 한국어 번역 +
+출원/공개/우선권 날짜 + family ID + IPC + Google Patents URL.
+
+<b>/web_search &lt;query&gt;</b>
+Gemini Grounding 라이브 구글 검색. 한국어 3-7 bullet + [도메인] 출처.
+자연어 트리거 매우 좁음 — "웹/구글/인터넷" 단어 포함시만.
+
+<b>/ingest_url &lt;URL&gt;</b>
+URL 영구 학습 — fetch → 청크 → 요약 → 임베딩 → Obsidian. 일반 웹 ·
+arXiv · YouTube 자막 · Jina readability. 차단: LinkedIn/FB/IG/주요 paywall.
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>특허/논문 advanced + stats 는 별도:</b>
+• <b>/patents_guide</b> — /search_patents_advanced · /patent_stats (5 view)
+• <b>/papers_guide</b> — /search_papers_advanced · /paper_stats (5 view)
+
+═══════════════════════════════════════
+<b>🇰🇷 8. 한국 (KIPRIS / ScienceON / NTIS / DataON)</b>
+═══════════════════════════════════════
+
+<b>/company_patents &lt;회사명&gt;</b>
+KIPRIS Plus 출원인명 검색. 키워드 X, 회사명 정확히.
+• <code>/company_patents 삼성전기</code>
+• <code>/company_patents SK하이닉스</code>
+• <code>/company_patents 한양대학교 산학협력단</code>
+한국 특허 전용. 등록번호 우선, 없으면 공개번호, 없으면 출원번호.
+
+<b>/patent_detail &lt;출원번호&gt;</b>
+KIPRIS 단건 상세 + abstract + IPC.
+예: <code>/patent_detail 1020220012345</code>
+
+<b>/citing_patents &lt;출원번호&gt;</b>
+KIPRIS 인용 네트워크 — 이 특허를 인용한 후속.
+
+<b>/kr_papers &lt;키워드&gt;</b>
+KISTI ScienceON 한국 논문 (SCIE/SCOPUS/KSCI 99%+ 커버, 한글 메타).
+※ ScienceON 활용신청 승인 대기 중 — 키 들어오면 즉시 동작.
+
+<b>/kr_patents &lt;키워드&gt;</b>
+KISTI ScienceON 특허 (국제+KR, 한글 abstract).
+※ 동일.
+
+<b>/kr_reports &lt;키워드&gt;</b>
+정부 R&amp;D 보고서 (TRKO/KOSEN 풀텍스트).
+※ 동일.
+
+<b>/kr_rnd_projects &lt;키워드&gt;</b>
+NTIS 국가R&amp;D 과제 — 과제번호 / 수행기관 / 책임자 / 연구비 / 기간.
+※ NTIS 3개 활용신청 승인 대기 중.
+
+<b>/kr_research_data &lt;키워드&gt;</b>
+DataON 공공 연구데이터셋 — svcId · 제목 · 작성자 · DOI · 라이선스.
+※ DataON 회원가입 승인 대기 중.
+
+승인 상태 (2026-05 기준):
+✅ KIPRIS Plus — 활성
+✅ EPO OPS — 활성
+⏳ KISTI ScienceON / NTIS / DataON — 활용신청 진행 중
+
+═══════════════════════════════════════
+<b>📘 9. 가이드 / 기타</b>
+═══════════════════════════════════════
+
+<b>/start · /help</b>
+요약 도움말 (한 화면).
+
+<b>/guide_lookup</b>
+이 화면 (전체 명령어 상세 가이드).
+
+<b>/patents_guide</b>
+특허 신기능 상세 — /search_patents · _advanced · _stats + KIPRIS 외 5종.
+
+<b>/papers_guide</b>
+논문 신기능 상세 — /search_papers · _advanced · _stats + OpenAlex 8개 필터.
+
+═══════════════════════════════════════
+<b>📊 대시보드 기록 정책</b>
+═══════════════════════════════════════
+
+자동 기록 (⚖️/📄/💾 칩으로 필터):
+✅ 자연어 질문 (agent 경로)
+✅ /search_patents · _advanced · _stats
+✅ /search_papers · _advanced · _stats
+✅ /company_patents · /patent_detail · /citing_patents
+✅ /kr_papers · /kr_patents · /kr_reports
+✅ /kr_rnd_projects · /kr_research_data
+
+기록 안 함 (운영/조회 명령어):
+❌ /find · /show · /recent · /stats · /status · /usage · /cost
+❌ /reset · /failed* · /queue* · /audit · /blocked_hosts
+❌ /orphans · /recover_orphans
+❌ /pending* · /ocr_extend
+❌ /forget* · /dedupe · /cleanup
+❌ /search_my_brain · /compare_papers · /web_search · /ingest_url
+❌ /help · /guide_lookup · /patents_guide · /papers_guide
+
+═══════════════════════════════════════
+<b>💰 비용 모델 요약</b>
+═══════════════════════════════════════
+
+• 임베딩: gemini-embedding-001 (₩200/1M tokens, 청크 캐시)
+• 요약/메타/번역: gemini-2.5-flash-lite (₩140/1M in, ₩420/1M out)
+  - 503 에러시 flash 로 자동 fallback
+• 답변: gemini-2.5-flash · /deep 만 gemini-2.5-pro (₩1,750/1M)
+• Vision: flash-lite, DPI 100, OCR_AUTO_CAP=0
+• 답변 1h 캐시 (200건 LRU) · 번역 30k+ 자동 배치
+• 자동 dedup 6단 (source/URL/file_hash/text_hash/body_hash/title 정규화) → ₩0
+"""
+
+
+async def cmd_guide_lookup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/guide_lookup — 봇의 모든 명령어 상세. _HELP_TEXT 가 4000자 cap
+    이라 운영 명령어들의 사용법까지 다 넣을 수 없어서 별도 명령어로
+    분리. _split_for_telegram 이 길이 초과시 자동 분할 송신."""
+    if not _is_owner(update):
+        return
+    await _typing(update, ctx)
+    for chunk in _split_for_telegram(_LOOKUP_GUIDE_TEXT):
+        await update.message.reply_text(
+            chunk, parse_mode="HTML", disable_web_page_preview=True,
+        )
+
+
 _PATENTS_GUIDE_TEXT = """<b>📘 특허 명령어 상세 가이드</b>
 
 전체 5가지 명령어. KIPRIS Plus (한국) + EPO OPS (글로벌) 두 백엔드.
@@ -1371,424 +1697,6 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
 
-_LOOKUP_GUIDE_TEXT = """<b>📋 조회 명령어 상세 가이드</b>
-
-저장된 자료/메타데이터/통계/비용을 들여다보는 명령어들. 본문 검색은
-agent 의 /search_my_brain 사용 (자연어 가능). 여기는 어휘/타이틀
-기반 직접 조회 + 운영 지표.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🔍 /find &lt;keyword&gt; [N=50]</b>
-타이틀 + 첫 청크 텍스트에 키워드 매치. 결과 최대 N개 (기본 50).
-각 행에 학습일 · 발행일 · 청크 수 · doc_id 6자.
-예: <code>/find HBM</code> · <code>/find 삼성전기 20</code>
-
-<b>🔍 /find_all &lt;keyword&gt;</b>
-/find 와 같지만 N=500 까지 확장. 광범위 검색용.
-
-<b>📄 /show &lt;id|keyword&gt;</b>
-doc_id 4자 이상 또는 키워드로 매치되는 문서의 본문 dump.
-[🌐 한국어 번역] 버튼 자동 부착 — 영문 자료 즉시 번역.
-예: <code>/show abc1</code> · <code>/show 대덕전자 1Q26</code>
-
-<b>📅 /recent [N]</b>
-최근 N개 (기본 10) 학습된 자료 카드뷰. 시간순.
-예: <code>/recent</code> · <code>/recent 30</code>
-
-<b>📑 /recent_docs</b>
-/recent 의 별칭 — 같은 동작.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>📊 운영 지표</b>
-
-<b>/stats</b> — 문서 총개수 + 청크 총개수
-<b>/status</b> — 봇 실시간 상태 (in-flight, 큐 길이, retry, pending, orphan)
-<b>/usage</b> — 누적 Q&amp;A 횟수 + 비용 추정
-<b>/cost</b> — 일별/월별 비용 (.usage_log 기반)
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>💡 팁</b>
-• /find 가 너무 좁으면 → /find_all 로 확장
-• /show 결과가 영문이면 즉시 [🌐 한국어 번역] 버튼 누르기 (₩1)
-• /stats 가 갑자기 줄면 → /audit 으로 디스크/메모리 정합성 확인
-• 비용 급등시 /usage → 어느 모델/도구가 원인인지 확인
-"""
-
-
-_CHAT_GUIDE_TEXT = """<b>📘 대화 명령어 상세 가이드</b>
-
-봇은 기본적으로 자연어 대화 가능 — 직접 답변 또는 자연어 트리거로
-agent 도구 호출. 메모리는 7턴 유지.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🧹 /reset</b>
-대화 메모리 초기화. 토픽 어긋났을 때 / 새 주제로 넘어갈 때 사용.
-주의: 메모리 7턴이라 길어진 대화에서 토픽이 흐려지면 /reset 권장.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🚀 /deep &lt;질문&gt;</b>
-Gemini 2.5 Pro 강제 사용. 기본 답변 모델은 Flash (속도/비용),
-/deep 으로 호출시 Pro (논리/추론 강함). 비용 ~4배 증가.
-
-언제 /deep 쓰기:
-• 복잡한 다단계 추론 (예: M&amp;A 시나리오 분석)
-• 다수 자료 종합 비판적 검토
-• 미세한 수치 audit 이 필요할 때
-• Flash 가 같은 질문을 여러 번 헷갈렸을 때
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>📜 자연어 트리거 (대화창에서 직접)</b>
-
-• 🧠 brain "삼성전기 MLCC 어때?" — 저장된 자료에서 답변
-• 🧠 compare "리뷰/정리/통합" — 여러 자료 종합 (compare_papers)
-• 📄 papers "논문 찾아줘" — 외부 학술 6소스
-• ⚖️ patents "특허 알려줘" — EPO 글로벌
-• 🇰🇷 company_patents "삼성전기 특허" — KIPRIS
-• 🌐 web "웹/구글/인터넷 검색" — Gemini Grounding
-• 📥 ingest "이 URL 저장" — 영구 보관
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>💡 팁</b>
-• 회사 분석 ("삼성전기 실적 분석") 은 자동으로 brain + 표 + xychart
-  + 분석가별 가이던스 + 웹 데이터 합쳐서 응답
-• "자료 시점: YYYY.MM" 자동 부착 — 옛 자료 기반 답변시 명시
-• 같은 질문 1시간 내 재호출은 캐시 (₩0) — /reset 후 재시도시 새 호출
-"""
-
-
-_TOOLS_GUIDE_TEXT = """<b>📘 도구 명령어 상세 가이드</b>
-
-특허/논문 제외 4가지 핵심 도구. 직접 명령어로 호출하거나 자연어
-트리거로 agent 가 자동 호출.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🧠 /search_my_brain &lt;keyword&gt;</b>
-저장된 RAG 자료에서 hybrid 검색 (semantic + BM25). agent 가 변형
-쿼리 2개 자동 생성 (facet expansion) → 병렬 호출 → dedupe.
-
-자연어로도 가능: "삼성전기 MLCC 어때?" → 자동으로 brain 호출.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🧠 /compare_papers &lt;주제&gt;</b>
-여러 자료의 summary 를 한번에 가져와 비교/종합. 최대 50건 (limit
-변경 가능). 다음 필터 자동:
-• semantic floor (cosine ≤ 0.55) — 무관한 자료 drop
-• 최소 summary 길이 100자 — 짧은 stub drop
-• digest 패널티 0.7 + 30일 recency 윈도 + 5건 quota — 일간 요약은
-  적당히 제한
-
-자연어: "하이브리드 본딩 논문 전체 정리해줘", "X와 Y 비교".
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🌐 /web_search &lt;query&gt;</b>
-Gemini Grounding 으로 라이브 구글 검색. 답변은 한국어, 3-7 bullet
-+ 각 줄 끝에 [도메인.com] 출처.
-
-자연어 트리거는 매우 좁음 — 메시지에 "웹/구글/인터넷" 단어가
-포함될 때만. "최근/요즘/오늘" 같은 일반 시간 키워드는 trigger X
-(brain/compare 가 먼저). 의도적인 외부 검색만 호출.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>📥 /ingest_url &lt;URL&gt;</b>
-URL 영구 학습 — fetch → 청크 → 요약 → 임베딩 → Obsidian 동기화.
-지원: 일반 웹 · arXiv · YouTube (자막) · Jina readability · 거의
-모든 article 사이트. 차단: LinkedIn/FB/IG, Reuters/Bloomberg/WSJ
-등 paywall 사이트.
-
-자연어: "이 URL 저장해줘 https://..." 또는 그냥 URL 만 전송해도 OK.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>특허/논문 도구는 별도 가이드</b>
-• /patents_guide — search_patents·_advanced·_stats + company/detail/citing
-• /papers_guide — search_papers·_advanced·_stats
-"""
-
-
-_KR_GUIDE_TEXT = """<b>📘 한국 명령어 상세 가이드</b>
-
-KIPRIS (한국 특허청) + KISTI ScienceON/NTIS/DataON. 4개 백엔드,
-8개 명령어. 모든 결과는 한국어 + 출처 URL 자동 부착.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>⚖️ KIPRIS Plus (한국 특허청)</b>
-
-<b>/company_patents &lt;회사명&gt;</b>
-한국 회사 보유 특허. 키워드 X, 출원인명 정확히.
-• <code>/company_patents 삼성전기</code>
-• <code>/company_patents SK하이닉스</code>
-• <code>/company_patents 한양대학교 산학협력단</code>
-
-<b>/patent_detail &lt;출원번호&gt;</b>
-KR 특허 단건 상세 + IPC + abstract.
-예: <code>/patent_detail 1020220012345</code>
-
-<b>/citing_patents &lt;출원번호&gt;</b>
-이 KR 특허를 인용한 후속 특허 네트워크.
-예: <code>/citing_patents 1020220012345</code>
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>📄 KISTI ScienceON (한국과학기술정보연구원)</b>
-
-<b>/kr_papers &lt;키워드&gt;</b>
-SCIE/SCOPUS/KSCI 99%+ 커버. 한글 메타데이터 포함.
-
-<b>/kr_patents &lt;키워드&gt;</b>
-KISTI 특허 인덱스 (국제+KR). EPO 와 overlap 하지만 한글 abstract
-풍부 — 한국어 자료가 필요한 경우.
-
-<b>/kr_reports &lt;키워드&gt;</b>
-정부 R&amp;D 사업 보고서 (TRKO/KOSEN 풀텍스트).
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🔬 NTIS (국가과학기술지식정보서비스)</b>
-
-<b>/kr_rnd_projects &lt;키워드&gt;</b>
-국가 R&amp;D 과제 검색 — 과제번호 · 수행기관 · 책임자 · 연구비 ·
-연구기간.
-예: <code>/kr_rnd_projects 양자컴퓨팅</code>
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>💾 DataON (KISTI 데이터플랫폼)</b>
-
-<b>/kr_research_data &lt;키워드&gt;</b>
-공공 연구 데이터셋 — svcId · 제목 · 작성자 · DOI · 라이선스.
-예: <code>/kr_research_data 기후변화</code>
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>승인 상태 (2026-05 기준)</b>
-✅ KIPRIS Plus — 활성
-⏳ KISTI ScienceON — 활용신청 진행 (IP 검증 미해결, helpdesk 메일)
-⏳ KISTI NTIS — 3개 활용신청 승인 대기 (평일 1-2일)
-⏳ KISTI DataON — 회원가입 승인 대기
-
-해당 API 키 .env 누락시 봇은 "키 미설정" 메시지 + 빈 결과 반환
-(에러 X). 키 들어오면 즉시 동작.
-"""
-
-
-_FAILED_GUIDE_TEXT = """<b>📘 장애/큐 관리 명령어 상세 가이드</b>
-
-ingest 실패 / retry 큐 / 차단 호스트 / 무결성 audit. 봇 자체는
-실패도 무손실 재개 (5회 선형 retry → /failed 큐), 사용자는 큐 직접
-조작 가능.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🚨 /failed</b>
-실패 큐 카드뷰. 각 행에 [🔁 재시도] / [🗑 영구 무시] 버튼.
-• [🔁] 누르면 즉시 재시도 → 성공시 학습, 실패시 그대로
-• [🗑] 누르면 영구 무시 (URL/filename → ignored 목록, 향후 재인입
-  시도해도 즉시 skip)
-크기순 정렬 — 큰 파일부터 보임.
-
-<b>/failed_retry</b>
-실패 큐의 모든 항목 한번에 재시도. 큐 큰 경우 시간 걸림.
-
-<b>/failed_clear</b>
-실패 큐 전체 영구 무시 — [🗑] 일괄. 복구 불가, 신중히.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>⏳ /queue</b>
-현재 retry 대기 중인 항목 — 5회 선형 (1h→2h→3h→4h→/failed 로 이동).
-각 행에 다음 시도 시각 표시.
-
-<b>/queue_to_failed</b>
-retry 큐의 항목을 모두 실패 큐로 강제 이동. retry 가 너무 오래
-걸릴 때 즉시 [🗑] 조작 가능.
-
-<b>/queue_cancel_all</b>
-retry 큐 전체 취소 — 재시도 안 함, /failed 로도 안 감. 큐 깨끗이.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🔬 /audit</b>
-무결성 검증:
-• 메모리 in_flight ↔ 디스크 in_flight_ts 일치 확인
-• meta.db ↔ chroma vector store ↔ obsidian 파일 ↔ data/files orphan
-  비교
-• 결과: 정상 / 불일치 발견 (자동 복구 시도)
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🚫 /blocked_hosts</b>
-차단 등록된 호스트 목록 (HTTP 4xx/timeout 누적시 자동 차단).
-
-<b>/reset_blocked_hosts</b>
-차단 호스트 모두 해제. 외부 사이트 일시 다운 풀린 후 재시도용.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>💡 운영 팁</b>
-• 실패 큐 폭증 → /failed → 패턴 본 후 [🗑] 일괄 또는 /failed_clear
-• retry 큐 정체 → /queue_to_failed → /failed_clear (영구 무시)
-• /audit 정기 (주 1회) — orphan/불일치 사전 감지
-"""
-
-
-_PENDING_GUIDE_TEXT = """<b>📘 보류 명령어 상세 가이드</b>
-
-PDF/이미지 학습시 OCR 추가/Pro 모델 사용 여부를 사용자가 결정해야
-하는 케이스. 5분 만료. 미결정시 기본값으로 자동 처리.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>⏸️ /pending</b>
-보류 중인 항목 카드뷰 (OCR 결정 5분 윈도).
-
-3-버튼 prompt 가 학습 직후 자동 발사:
-• [📄 OCR 추가] — Vision OCR 으로 추가 학습 (이미지 텍스트)
-• [📝 텍스트만] — 기본 추출 (PyMuPDF) 만 사용, OCR skip
-• [🚫 취소] — 이 자료 학습 자체 취소
-
-크기순 정렬. 만료 임박 항목 위로.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>📄 /pending_ocr &lt;N&gt;</b>
-N번째 보류 항목에 OCR 추가 학습 결정. /pending 결과에 표시된 번호
-사용.
-
-<b>🚀 /pending_pro &lt;N&gt;</b>
-N번째 항목을 Pro 모델 (Gemini 2.5 Pro) 로 처리. 비용 4배, 정확도
-향상. 핵심 자료에만.
-
-<b>✅ /pending_approve_all</b>
-모든 보류 항목을 기본값 (텍스트만) 으로 일괄 승인. 미리보기 결과만.
-
-<b>✅ /pending_approve_all_confirm</b>
-실제 일괄 승인 실행.
-
-<b>❌ /pending_cancel_all</b>
-모든 보류 항목 학습 취소.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🕓 /ocr_extend &lt;id|keyword&gt;</b>
-OCR 5분 만료 연장 (다음 5분). id 4자 또는 키워드 매치.
-예: <code>/ocr_extend abc1</code> · <code>/ocr_extend 대덕전자</code>
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>💡 OCR 정책 (자동)</b>
-• OCR_AUTO_CAP=0 → sparse PDF 도 OCR skip (사용자 결정 필요)
-• image-only PDF first 3p 만 자동 OCR (image-only 판정시)
-• 이미지 캡션 ≥ 80자 → OCR skip (캡션이 본문 대체)
-• Progressive OCR: 처음 3p probe &lt; 300자 → 전체 OCR skip
-• 위 모든 조건이 OCR skip 결정해도 [OCR 추가] 버튼은 살아있음
-"""
-
-
-_ORPHAN_GUIDE_TEXT = """<b>📘 Orphan 명령어 상세 가이드</b>
-
-Orphan = data/files/ 디렉터리에 있지만 meta.db 에 등록 안 된 파일.
-이전 학습 도중 OOM/SIGKILL 등으로 메타데이터 기록 직전 죽었을 때
-생김. 무손실 재개로 대부분 자동 복구되지만 일부 잔존 가능.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🔍 /orphans</b>
-orphan 파일 카드뷰. 각 행에 크기 · mtime · 파일명. 크기순 정렬.
-
-<b>🔧 /recover_orphans</b>
-orphan 각 항목에 [📥 학습] / [🗑 영구 무시] 버튼 부착.
-• [📥] — 다시 ingest pipeline 통과시켜 정상 학습
-• [🗑] — 파일 삭제 + filename ignored 목록 등록 (재인입 차단)
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>💡 운영 팁</b>
-• /audit 가 orphan 발견하면 알림 → /recover_orphans 로 일괄 처리
-• [🗑] 영구 무시는 다음 orphan scan 에서도 안 보이고 forward
-  listener / URL ingest 에서도 동일 파일명 차단
-"""
-
-
-_DELETE_GUIDE_TEXT = """<b>📘 삭제 명령어 상세 가이드</b>
-
-자료 / Q&amp;A / 중복 / 포워드 삭제. 모두 confirm 단계 있음 (실수
-방지). /forget_search 등은 미리보기 → /forget_search_all 로 확정.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🗑️ 단건 삭제</b>
-
-<b>/forget &lt;doc_id&gt;</b>
-특정 doc_id 자료 삭제. id 4자 이상 또는 정확한 매치.
-예: <code>/forget abc1ef2g</code>
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🔍 검색 기반 삭제</b>
-
-<b>/forget_search &lt;keyword&gt;</b>
-키워드 매치되는 자료 미리보기 (실제 삭제 X).
-<b>/forget_search_all &lt;keyword&gt;</b>
-미리보기 결과 전체 삭제 실행.
-
-<b>/forget_qna &lt;keyword&gt;</b>
-Q&amp;A 카드 미리보기.
-<b>/forget_qna_search &lt;keyword&gt;</b>
-Q&amp;A 검색 결과 전체 삭제.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🔁 중복 정리</b>
-
-<b>/dedupe</b>
-중복 감지 미리보기 — 같은 file_hash / text_hash / title 매치.
-실제 삭제 X.
-
-<b>/dedupe_confirm</b>
-/dedupe 결과 실제 삭제 실행.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>🧹 일괄 정리</b>
-
-<b>/cleanup</b>
-정리 후보 미리보기 — 본문 비어있음 / 청크 0개 / 메타 누락 등
-broken 자료 후보.
-
-<b>/cleanup_confirm</b>
-/cleanup 결과 실제 삭제.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>📨 포워드 메시지 정리</b>
-
-<b>/forget_forwards</b>
-채널 forward 학습 자료 미리보기.
-
-<b>/forget_forwards_confirm</b>
-전체 삭제 실행. 포워드 학습 정책 바꿀 때.
-
-━━━━━━━━━━━━━━━━━━━━━━
-
-<b>💡 안전</b>
-• 모든 삭제는 confirm 2단계 — 첫 명령은 항상 미리보기
-• 영구 무시 (/failed [🗑]) 와 다름 — /forget 은 자료만 지우고 향후
-  같은 URL 재인입 가능
-• 영구 무시는 ignored_urls/filenames.json 에 등록 — 재인입 차단까지
-"""
-
 
 _PAPERS_GUIDE_TEXT = """<b>📘 논문 명령어 상세 가이드</b>
 
@@ -1892,58 +1800,6 @@ OpenAlex 에서 최대 400편 가져와 통계 집계. 20~40초 소요.
 모든 검색 결과는 자동으로 대시보드에 기록됨 (📄 paper 칩으로 필터).
 """
 
-
-async def _send_guide(update, ctx, text: str) -> None:
-    """Shared sender for all /<name>_guide commands. Splits at
-    Telegram's 4000-char soft cap, parses HTML, disables link previews
-    so the URL hints in guide texts don't expand into oversized cards."""
-    if not _is_owner(update):
-        return
-    await _typing(update, ctx)
-    for chunk in _split_for_telegram(text):
-        await update.message.reply_text(
-            chunk, parse_mode="HTML", disable_web_page_preview=True,
-        )
-
-
-async def cmd_guide_lookup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/guide_lookup — 조회 명령어 상세."""
-    await _send_guide(update, ctx, _LOOKUP_GUIDE_TEXT)
-
-
-async def cmd_guide_chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/guide_chat — 대화 명령어 상세."""
-    await _send_guide(update, ctx, _CHAT_GUIDE_TEXT)
-
-
-async def cmd_guide_tools(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/guide_tools — 도구 명령어 상세 (특허/논문 제외 4종)."""
-    await _send_guide(update, ctx, _TOOLS_GUIDE_TEXT)
-
-
-async def cmd_guide_kr(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/guide_kr — 한국 명령어 상세 (KIPRIS/ScienceON/NTIS/DataON)."""
-    await _send_guide(update, ctx, _KR_GUIDE_TEXT)
-
-
-async def cmd_guide_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/guide_failed — 장애/큐 관리 명령어 상세."""
-    await _send_guide(update, ctx, _FAILED_GUIDE_TEXT)
-
-
-async def cmd_guide_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/guide_pending — 보류 명령어 상세."""
-    await _send_guide(update, ctx, _PENDING_GUIDE_TEXT)
-
-
-async def cmd_guide_orphan(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/guide_orphan — Orphan 명령어 상세."""
-    await _send_guide(update, ctx, _ORPHAN_GUIDE_TEXT)
-
-
-async def cmd_guide_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/guide_delete — 삭제 명령어 상세."""
-    await _send_guide(update, ctx, _DELETE_GUIDE_TEXT)
 
 
 async def cmd_papers_guide(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -5041,6 +4897,7 @@ def _record_command_qna(update, question: str, body: str,
         dashboard_regen.regenerate()
     except Exception:
         log.exception("dashboard regenerate after command qna failed")
+
 
 
 def _format_patents_text(query: str, results: list[dict]) -> str:
@@ -8875,16 +8732,9 @@ def main():
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
+    app.add_handler(CommandHandler("guide_lookup", cmd_guide_lookup))
     app.add_handler(CommandHandler("patents_guide", cmd_patents_guide))
     app.add_handler(CommandHandler("papers_guide", cmd_papers_guide))
-    app.add_handler(CommandHandler("guide_lookup", cmd_guide_lookup))
-    app.add_handler(CommandHandler("guide_chat", cmd_guide_chat))
-    app.add_handler(CommandHandler("guide_tools", cmd_guide_tools))
-    app.add_handler(CommandHandler("guide_kr", cmd_guide_kr))
-    app.add_handler(CommandHandler("guide_failed", cmd_guide_failed))
-    app.add_handler(CommandHandler("guide_pending", cmd_guide_pending))
-    app.add_handler(CommandHandler("guide_orphan", cmd_guide_orphan))
-    app.add_handler(CommandHandler("guide_delete", cmd_guide_delete))
     app.add_handler(CommandHandler(
         "search_papers_advanced", cmd_search_papers_advanced))
     app.add_handler(CommandHandler("paper_stats", cmd_paper_stats))
