@@ -1217,7 +1217,7 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【1. 명령어】</b>
-조회: /find &lt;kw&gt; [N=50](헤더 학습/발행/청크수) · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 dump + [🌐 한국어 번역]) · /recent [N] · /recent_docs · /stats · /status · /usage · /cost
+조회: /find &lt;kw&gt; [N=50](헤더 학습/발행/청크수) · /find_all &lt;kw&gt;(최대 500) · /show &lt;id|kw&gt;(본문 dump + [🌐 한국어 번역]) · /recent [N] · /stats · /status · /usage · /cost
 대화: /reset · /deep &lt;질문&gt;(Pro 강제)
 장애: /failed(건별 [🔁]/[🗑]·drop=영구) · /failed_retry · /failed_clear · /queue · /queue_to_failed · /queue_cancel_all · /audit · /blocked_hosts · /reset_blocked_hosts
 Orphan: /orphans · /recover_orphans(건별 [📥]/[🗑])
@@ -1296,9 +1296,6 @@ doc_id 4자 이상 또는 키워드로 매치되는 문서의 본문 dump.
 <b>/recent [N]</b>
 최근 N개 (기본 10) 학습된 자료 카드뷰. 시간순.
 예: <code>/recent</code> · <code>/recent 30</code>
-
-<b>/recent_docs</b>
-/recent 의 별칭 — 같은 동작.
 
 <b>/stats</b>
 문서 총개수 + 청크 총개수.
@@ -6275,13 +6272,6 @@ async def cmd_ingest_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _run_agent(update, ctx, f"이 URL 학습해줘: {url}", deep=False)
 
 
-async def cmd_recent_docs(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_owner(update):
-        return
-    n = " ".join(ctx.args).strip() or "10"
-    await _run_agent(update, ctx,
-                     f"최근 학습한 문서 {n}개 알려줘", deep=False)
-
 
 async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Wipe rolling chat memory for this chat. Useful when topic shifts
@@ -8949,7 +8939,6 @@ def main():
     app.add_handler(CommandHandler("kr_research_data", cmd_kr_research_data))
     app.add_handler(CommandHandler("web_search", cmd_web_search))
     app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))
-    app.add_handler(CommandHandler("recent_docs", cmd_recent_docs))
     app.add_handler(CommandHandler("reset", cmd_reset))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
