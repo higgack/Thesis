@@ -7161,22 +7161,21 @@ async def _ntis_simple_search_command(
         )
         return
     if not rows:
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"🔍 '{_html_escape_safe(query)}' NTIS {label} 결과 없음.\n"
-            f"활용신청 승인 전이거나 매칭 0건 — 승인 메일 받은 뒤 "
-            f"재시도 / 더 일반적인 키워드로 시도."
+        body = (
+            f"🔍 '<b>{_html_escape_safe(query)}</b>' NTIS {label} "
+            f"결과 없음.\n활용신청 승인 전이거나 매칭 0건 — 승인 메일 "
+            f"받은 뒤 재시도 / 더 일반적인 키워드로 시도."
         )
-        return
-    body = _format_ntis_projects(query, rows)
-    # Header label swap so the user sees the right section name.
-    body = body.replace(
-        "🔬 <b>NTIS 국가R&amp;D 과제",
-        f"{emoji} <b>NTIS {label}",
-    ).replace(
-        "🔬 <b>NTIS 국가R&D 과제",
-        f"{emoji} <b>NTIS {label}",
-    )
+    else:
+        body = _format_ntis_projects(query, rows)
+        # Header label swap so the user sees the right section name.
+        body = body.replace(
+            "🔬 <b>NTIS 국가R&amp;D 과제",
+            f"{emoji} <b>NTIS {label}",
+        ).replace(
+            "🔬 <b>NTIS 국가R&D 과제",
+            f"{emoji} <b>NTIS {label}",
+        )
     _record_command_qna(
         update, question=(update.message.text or
                           f"/{tool_name} {query}").strip(),
