@@ -1457,21 +1457,94 @@ async def _kipris_reg_search(word: str, limit: int) -> list[dict]:
     return _sort_kipris_rows(out)
 
 
+def _kipris_extract_items(root: "ET.Element", log_tag: str) -> list[dict]:
+    """Extract data rows from KIPRIS REST response envelope.
+
+    KIPRIS REST responses use this generic shape (confirmed live for
+    patentLegalStatusInfo 2026-05):
+
+        <response>
+          <header>
+            <successYN>Y</successYN>
+            <resultCode>00</resultCode>
+            <resultMsg>NORMAL SERVICE</resultMsg>
+          </header>
+          <body>
+            <items>
+              <item>...fields...</item>
+              <item>...</item>
+            </items>
+          </body>
+        </response>
+
+    Walk the tree to find data rows under any of these patterns:
+    1. Direct <body>/<items>/<item> (envelope shape)
+    2. <body>/<*Info>/<*> (some endpoints wrap data differently)
+    3. .//item or .//<specificTag> at any depth (legacy parsers)
+
+    Logs the structure when no items found so the next call surfaces
+    the actual shape for fix-up. Returns dict per item where keys are
+    direct child tag names.
+    """
+    items: list = []
+    body = root.find("body")
+    if body is not None:
+        # Try <body><items><item>… first (most common)
+        items_el = body.find("items")
+        if items_el is not None:
+            items = list(items_el.findall("item"))
+        # Otherwise grab any direct child of body that has its own
+        # children — that's likely the data wrapper.
+        if not items:
+            for child in list(body):
+                grand = list(child)
+                if grand:
+                    # if first grand-child has more children, it's the
+                    # row; else assume child itself is one row.
+                    if list(grand[0]):
+                        items = list(child)
+                    else:
+                        items = [child]
+                    break
+    # Last-resort: any <item> anywhere.
+    if not items:
+        items = list(root.findall(".//item"))
+
+    if not items:
+        # Surface the header (resultCode / resultMsg) for diagnosis —
+        # most no-data cases come with resultCode 00 + empty items, OR
+        # an error code in the header. Either way the log makes the
+        # cause obvious.
+        header = root.find("header")
+        hdr = (
+            {c.tag: (c.text or "").strip() for c in header}
+            if header is not None else {}
+        )
+        log.info(
+            "kipris %s: 0 items (header=%s, root tag=%s, "
+            "children=%s)",
+            log_tag, hdr, root.tag,
+            [c.tag for c in list(root)[:5]],
+        )
+        return []
+
+    out: list[dict] = []
+    for it in items:
+        row = {child.tag: (child.text or "").strip() for child in it}
+        if row:
+            out.append(row)
+    return out
+
+
 async def _kipris_admin_status(application_number: str) -> dict | None:
-    """행정상태 (#4) — 출원→공개→심사→등록/거절 진행 상태 단건 조회."""
+    """행정상태 (#4) — 출원→공개→심사→등록/거절 진행 상태."""
     root = await _kipris_get_xml(_KIPRIS_ADMST_PATH, {
         "applicationNumber": application_number,
     }, "admStatus")
     if root is None:
         return None
-    # Schema unknown — return the first child as-is for diagnostics.
-    item = root.find(".//item") or root.find(".//applicationAdmStInfo")
-    if item is None:
-        log.info("kipris admStatus: no item; root tag=%s "
-                 "children=%s", root.tag,
-                 [c.tag for c in list(root)[:5]])
-        return None
-    return {child.tag: (child.text or "").strip() for child in item}
+    rows = _kipris_extract_items(root, "admStatus")
+    return rows[0] if rows else None
 
 
 async def _kipris_class_lookup(code: str) -> dict | None:
@@ -1481,11 +1554,8 @@ async def _kipris_class_lookup(code: str) -> dict | None:
     }, "kpcLookup")
     if root is None:
         return None
-    item = root.find(".//item") or root.find(".//kpcInfo")
-    if item is None:
-        log.info("kipris kpcLookup: no item; root tag=%s", root.tag)
-        return None
-    return {child.tag: (child.text or "").strip() for child in item}
+    rows = _kipris_extract_items(root, "kpcLookup")
+    return rows[0] if rows else None
 
 
 async def _kipris_family_search(application_number: str) -> list[dict]:
@@ -1495,12 +1565,7 @@ async def _kipris_family_search(application_number: str) -> list[dict]:
     }, "family")
     if root is None:
         return []
-    out: list[dict] = []
-    for item in root.findall(".//familyInfo") or root.findall(".//item"):
-        row = {child.tag: (child.text or "").strip() for child in item}
-        if row:
-            out.append(row)
-    return out
+    return _kipris_extract_items(root, "family")
 
 
 async def _kipris_rights_change(application_number: str) -> list[dict]:
@@ -1510,12 +1575,7 @@ async def _kipris_rights_change(application_number: str) -> list[dict]:
     }, "rights")
     if root is None:
         return []
-    out: list[dict] = []
-    for item in root.findall(".//rightInfo") or root.findall(".//item"):
-        row = {child.tag: (child.text or "").strip() for child in item}
-        if row:
-            out.append(row)
-    return out
+    return _kipris_extract_items(root, "rights")
 
 
 async def _kipris_claim_lookup(application_number: str) -> list[dict]:
@@ -1525,12 +1585,7 @@ async def _kipris_claim_lookup(application_number: str) -> list[dict]:
     }, "claims")
     if root is None:
         return []
-    out: list[dict] = []
-    for item in root.findall(".//claimInfo") or root.findall(".//item"):
-        row = {child.tag: (child.text or "").strip() for child in item}
-        if row:
-            out.append(row)
-    return out
+    return _kipris_extract_items(root, "claims")
 
 
 async def _kipris_priority_lookup(application_number: str) -> list[dict]:
@@ -1540,13 +1595,7 @@ async def _kipris_priority_lookup(application_number: str) -> list[dict]:
     }, "priority")
     if root is None:
         return []
-    out: list[dict] = []
-    for item in (root.findall(".//priorityInfo")
-                 or root.findall(".//item")):
-        row = {child.tag: (child.text or "").strip() for child in item}
-        if row:
-            out.append(row)
-    return out
+    return _kipris_extract_items(root, "priority")
 
 
 async def _kipris_techfield_search(field_code: str,
