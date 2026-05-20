@@ -7040,6 +7040,15 @@ def _format_ntis_related(query: str, rows: list[dict],
         f"🔗 <b>NTIS {label} — pjtId {_html.escape(query)}</b>",
         f"<i>{len(rows)}건 · NTIS</i>",
     ]
+    # Diagnostic: NTIS related_content responses have an undocumented
+    # row shape that varies by collection_type. Dump the first row's
+    # keys so the next call shows which fields the formatter should
+    # actually read.
+    try:
+        log.info("ntis related %s first-row keys: %s",
+                 coll_type, sorted(rows[0].keys()))
+    except Exception:
+        pass
     for i, r in enumerate(rows, 1):
         title = (r.get("title") or r.get("Title") or
                  r.get("ProjectTitle") or r.get("논문명") or
