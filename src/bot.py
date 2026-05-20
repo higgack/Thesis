@@ -6181,6 +6181,381 @@ async def cmd_citing_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 log.exception("citing_patents chunked send failed")
 
 
+# ---------------------------------------------------------------------------
+# KIPRIS Plus — 11 new commands pre-built 2026-05 alongside the user's
+# 활용신청. Each calls a different KIPRIS endpoint; the shared helper
+# below handles status / formatting / dashboard recording.
+# ---------------------------------------------------------------------------
+
+
+async def _kipris_search_command(
+    update, ctx, query: str, label: str, emoji: str,
+    fn, tool_name: str, enrich: bool = False,
+) -> None:
+    """Shared body for the 11 new KIPRIS list-style search commands
+    that return list[dict] of patent-shape rows. Mirrors the existing
+    /company_patents pipeline: typing → KIPRIS call → optional
+    detail enrichment → Korean title translation → format → record →
+    send chunked."""
+    if not _is_owner(update):
+        return
+    if not query:
+        return
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"{emoji} '{query}' {label} 검색 중... (KIPRIS · 한국어 번역 포함)"
+    )
+    try:
+        results = await fn(query, limit=50)
+    except Exception as e:
+        log.exception("kipris %s direct call failed for %r", label, query)
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"⚠️ KIPRIS {label} 검색 실패: {_explain_error(e)}",
+        )
+        return
+    if enrich and results:
+        try:
+            from .agent import patentsearch as _ps
+            results = await _ps._enrich_kipris_rows_with_details(results)
+        except Exception:
+            log.exception("kipris %s enrichment failed", label)
+    if not results:
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"🔍 '{_html_escape_safe(query)}' KIPRIS {label} 결과 없음.\n"
+            f"활용신청 승인 전이거나 매칭 0건 — 승인 메일 받은 뒤 "
+            f"재시도 / 더 일반적인 키워드로 시도."
+        )
+        # Record the empty hit so the dashboard reflects activity.
+        _record_command_qna(
+            update,
+            question=(update.message.text or
+                      f"/{tool_name} {query}").strip(),
+            body=f"🔍 '{query}' KIPRIS {label} 결과 없음.",
+            tools=[tool_name],
+        )
+        return
+    results = await _translate_results_korean(results)
+    body = _format_patents_text(f"{query} (KIPRIS {label})", results)
+    _record_command_qna(
+        update,
+        question=(update.message.text or
+                  f"/{tool_name} {query}").strip(),
+        body=body, tools=[tool_name],
+        sources=[p.get("patent_number", "")
+                 for p in results if p.get("patent_number")],
+    )
+    pieces = _split_for_telegram(body)
+    if not pieces:
+        return
+    try:
+        await ctx.bot.edit_message_text(
+            chat_id=status.chat.id, message_id=status.message_id,
+            text=pieces[0], parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        try:
+            await update.message.reply_text(
+                pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.exception("kipris %s fallback failed", label)
+    for piece in pieces[1:]:
+        try:
+            await update.message.reply_text(
+                piece, parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.exception("kipris %s chunked send failed", label)
+
+
+async def _kipris_lookup_command(
+    update, ctx, query: str, label: str, emoji: str,
+    fn, tool_name: str, is_list: bool = False,
+) -> None:
+    """Shared body for the lookup-style KIPRIS commands that return
+    raw dict / list[dict] of free-form fields (status / class /
+    family / rights / claims / priority / trend). Renders as a
+    plain key:value dump until per-service schemas are confirmed
+    post-approval."""
+    if not _is_owner(update):
+        return
+    if not query:
+        return
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"{emoji} '{query}' {label} 조회 중..."
+    )
+    try:
+        result = await fn(query)
+    except Exception as e:
+        log.exception("kipris %s lookup failed for %r", label, query)
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"⚠️ KIPRIS {label} 조회 실패: {_explain_error(e)}",
+        )
+        return
+    import html as _html
+    if not result:
+        body = (f"🔍 '{_html.escape(query)}' KIPRIS {label} 결과 없음.\n"
+                f"활용신청 승인 전이거나 데이터 없음 — 승인 메일 받은 "
+                f"뒤 재시도.")
+    else:
+        out = [f"{emoji} <b>KIPRIS {label} — '{_html.escape(query)}'</b>"]
+        rows = result if is_list else [result]
+        out.append(f"<i>{len(rows)}건 · KIPRIS Plus</i>")
+        for i, r in enumerate(rows, 1):
+            block = [f"\n{emoji} <b>{i}.</b>"]
+            for k, v in r.items():
+                if v:
+                    block.append(
+                        f"  <b>{_html.escape(str(k))}</b>: "
+                        f"{_html.escape(str(v)[:200])}"
+                    )
+            out.append("\n".join(block))
+        body = "\n".join(out)
+    _record_command_qna(
+        update,
+        question=(update.message.text or
+                  f"/{tool_name} {query}").strip(),
+        body=body, tools=[tool_name],
+    )
+    pieces = _split_for_telegram(body)
+    if not pieces:
+        return
+    try:
+        await ctx.bot.edit_message_text(
+            chat_id=status.chat.id, message_id=status.message_id,
+            text=pieces[0], parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        await update.message.reply_text(
+            pieces[0], parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    for piece in pieces[1:]:
+        try:
+            await update.message.reply_text(
+                piece, parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.exception("kipris %s chunked send failed", label)
+
+
+# --- Search-style commands (return patent list, use _format_patents_text) ---
+
+
+async def cmd_kipris_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kipris_search <키워드> — KIPRIS Plus 통합 free-text 검색 (#3).
+    제목·초록·청구항을 가로질러 매칭. 100건 / 최신순 / 상위 30건
+    abstract 보강 — /company_patents 동등 품질."""
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kipris_search <키워드>")
+        return
+    from .agent import patentsearch
+    await _kipris_search_command(
+        update, ctx, q, "통합검색", "⚖️",
+        patentsearch.kipris_search, "kipris_search", enrich=False,
+    )
+
+
+async def cmd_kipris_pub(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kipris_pub <키워드> — KIPRIS Plus 공개공보 only (#1)."""
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kipris_pub <키워드>")
+        return
+    from .agent import patentsearch
+    await _kipris_search_command(
+        update, ctx, q, "공개공보", "📖",
+        patentsearch.kipris_pub_search, "kipris_pub",
+    )
+
+
+async def cmd_kipris_reg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kipris_reg <키워드> — KIPRIS Plus 등록공보 only (#2)."""
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kipris_reg <키워드>")
+        return
+    from .agent import patentsearch
+    await _kipris_search_command(
+        update, ctx, q, "등록공보", "✅",
+        patentsearch.kipris_reg_search, "kipris_reg",
+    )
+
+
+async def cmd_kipris_inventor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kipris_inventor <발명자명> — KIPRIS Plus 발명자 검색 (#13).
+    회사 떠난 핵심 인력 추적 등."""
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.message.reply_text(
+            "사용법: /kipris_inventor <발명자명>\n"
+            "예: /kipris_inventor 홍길동"
+        )
+        return
+    from .agent import patentsearch
+    await _kipris_search_command(
+        update, ctx, q, "발명자 검색", "👤",
+        patentsearch.kipris_inventor_search, "kipris_inventor",
+    )
+
+
+async def cmd_kipris_techfield(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kipris_techfield <기술분야 코드> — KIPRIS Plus 기술분야별 (#12)."""
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.message.reply_text(
+            "사용법: /kipris_techfield <기술분야 코드>\n"
+            "예: /kipris_techfield H01L"
+        )
+        return
+    from .agent import patentsearch
+    await _kipris_search_command(
+        update, ctx, q, "기술분야별", "🔬",
+        patentsearch.kipris_techfield_search, "kipris_techfield",
+    )
+
+
+# --- Lookup-style commands (return dict / list of free-form fields) ---
+
+
+async def cmd_kipris_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kipris_status <KR 출원번호> — 행정상태 (#4)."""
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.message.reply_text(
+            "사용법: /kipris_status <KR 출원번호 13자리>"
+        )
+        return
+    digits = "".join(ch for ch in q if ch.isdigit())
+    if not digits:
+        await update.message.reply_text("출원번호는 숫자만 인식.")
+        return
+    from .agent import patentsearch
+    await _kipris_lookup_command(
+        update, ctx, digits, "행정상태", "📋",
+        patentsearch.kipris_admin_status, "kipris_status",
+    )
+
+
+async def cmd_kipris_class(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kipris_class <KPC 분류코드> — 한국분류코드 정의 (#5)."""
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.message.reply_text(
+            "사용법: /kipris_class <KPC 코드>\n예: /kipris_class H01L21/02"
+        )
+        return
+    from .agent import patentsearch
+    await _kipris_lookup_command(
+        update, ctx, q, "한국분류코드", "🏷️",
+        patentsearch.kipris_class_lookup, "kipris_class",
+    )
+
+
+async def cmd_kipris_family(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kipris_family <KR 출원번호> — 패밀리 특허 (#6)."""
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.message.reply_text(
+            "사용법: /kipris_family <KR 출원번호 13자리>"
+        )
+        return
+    digits = "".join(ch for ch in q if ch.isdigit())
+    if not digits:
+        await update.message.reply_text("출원번호는 숫자만 인식.")
+        return
+    from .agent import patentsearch
+    await _kipris_lookup_command(
+        update, ctx, digits, "패밀리 특허", "🌐",
+        patentsearch.kipris_family_search, "kipris_family",
+        is_list=True,
+    )
+
+
+async def cmd_kipris_rights(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kipris_rights <KR 출원번호> — 권리이전/명칭변경 이력 (#8)."""
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.message.reply_text(
+            "사용법: /kipris_rights <KR 출원번호 13자리>"
+        )
+        return
+    digits = "".join(ch for ch in q if ch.isdigit())
+    if not digits:
+        await update.message.reply_text("출원번호는 숫자만 인식.")
+        return
+    from .agent import patentsearch
+    await _kipris_lookup_command(
+        update, ctx, digits, "권리이전/명칭변경", "🔄",
+        patentsearch.kipris_rights_change, "kipris_rights",
+        is_list=True,
+    )
+
+
+async def cmd_kipris_claims(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kipris_claims <KR 출원번호> — 청구항 (#9)."""
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.message.reply_text(
+            "사용법: /kipris_claims <KR 출원번호 13자리>"
+        )
+        return
+    digits = "".join(ch for ch in q if ch.isdigit())
+    if not digits:
+        await update.message.reply_text("출원번호는 숫자만 인식.")
+        return
+    from .agent import patentsearch
+    await _kipris_lookup_command(
+        update, ctx, digits, "청구항", "📜",
+        patentsearch.kipris_claim_lookup, "kipris_claims",
+        is_list=True,
+    )
+
+
+async def cmd_kipris_priority(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kipris_priority <KR 출원번호> — 우선권 (#10)."""
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.message.reply_text(
+            "사용법: /kipris_priority <KR 출원번호 13자리>"
+        )
+        return
+    digits = "".join(ch for ch in q if ch.isdigit())
+    if not digits:
+        await update.message.reply_text("출원번호는 숫자만 인식.")
+        return
+    from .agent import patentsearch
+    await _kipris_lookup_command(
+        update, ctx, digits, "우선권", "⭐",
+        patentsearch.kipris_priority_lookup, "kipris_priority",
+        is_list=True,
+    )
+
+
+async def cmd_kipris_trend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kipris_trend <키워드> — KPRD 출원/등록 트렌드 (#14)."""
+    q = " ".join(ctx.args or []).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kipris_trend <키워드>")
+        return
+    from .agent import patentsearch
+    await _kipris_lookup_command(
+        update, ctx, q, "출원/등록 트렌드", "📊",
+        patentsearch.kipris_trend_search, "kipris_trend",
+        is_list=True,
+    )
+
+
 _KISTI_FIELD_LABELS = {
     # Long-name keys returned by ScienceON /openapicall.do (confirmed
     # live 2026-05). The earlier short-codes (TI/AU/AB/JN/AP/IN ...)
@@ -9993,6 +10368,19 @@ def main():
     app.add_handler(CommandHandler("company_patents", cmd_company_patents))
     app.add_handler(CommandHandler("patent_detail", cmd_patent_detail))
     app.add_handler(CommandHandler("citing_patents", cmd_citing_patents))
+    # 11 new KIPRIS Plus commands (pre-built 2026-05, await approval)
+    app.add_handler(CommandHandler("kipris_search", cmd_kipris_search))
+    app.add_handler(CommandHandler("kipris_pub", cmd_kipris_pub))
+    app.add_handler(CommandHandler("kipris_reg", cmd_kipris_reg))
+    app.add_handler(CommandHandler("kipris_inventor", cmd_kipris_inventor))
+    app.add_handler(CommandHandler("kipris_techfield", cmd_kipris_techfield))
+    app.add_handler(CommandHandler("kipris_status", cmd_kipris_status))
+    app.add_handler(CommandHandler("kipris_class", cmd_kipris_class))
+    app.add_handler(CommandHandler("kipris_family", cmd_kipris_family))
+    app.add_handler(CommandHandler("kipris_rights", cmd_kipris_rights))
+    app.add_handler(CommandHandler("kipris_claims", cmd_kipris_claims))
+    app.add_handler(CommandHandler("kipris_priority", cmd_kipris_priority))
+    app.add_handler(CommandHandler("kipris_trend", cmd_kipris_trend))
     app.add_handler(CommandHandler("kr_papers", cmd_kr_papers))
     app.add_handler(CommandHandler("kr_patents", cmd_kr_patents))
     app.add_handler(CommandHandler("kr_reports", cmd_kr_reports))
