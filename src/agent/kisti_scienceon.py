@@ -406,9 +406,10 @@ async def get_report_detail(cn: str) -> dict[str, Any] | None:
 
 # Per-target searchField mapping. Most ScienceON contents accept
 # {"BI": query} (whole-record full-text search), but SNEWS (과기뉴스)
-# and SCENT (과학향기) reject BI with "searchField 값 오류" 400 and
-# require {"TI": query} (title-only) instead. Order matters: the
-# fallback list is tried in sequence until a 200 with rows arrives.
+# and SCENT (과학향기) reject BI with "searchField 값 오류" 400. They
+# also reject TI. The right code is undocumented in the dev portal
+# we used, so the tuple tries a widened candidate set until one of
+# them returns rows or we've exhausted the list. Order matters.
 _TARGET_SEARCH_FIELDS: dict[str, tuple[str, ...]] = {
     "ARTI":       ("BI",),
     "PATENT":     ("BI",),
@@ -417,8 +418,11 @@ _TARGET_SEARCH_FIELDS: dict[str, tuple[str, ...]] = {
     "ORGAN":      ("BI",),
     "TREND":      ("BI",),
     "ATT":        ("BI",),
-    "SNEWS":      ("TI", "BI"),   # 'BI' rejected → try 'TI' first
-    "SCENT":      ("TI", "BI"),
+    # SNEWS / SCENT — TI & BI both rejected. Try a wider set; if all
+    # still fail, the right code needs to come from the KISTI
+    # ScienceON developer portal's per-content API spec.
+    "SNEWS":      ("WORD", "KW", "AB", "CT", "TI", "BI"),
+    "SCENT":      ("WORD", "KW", "AB", "CT", "TI", "BI"),
 }
 
 

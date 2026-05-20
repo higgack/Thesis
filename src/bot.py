@@ -6214,6 +6214,10 @@ _KISTI_FIELD_LABELS = {
     # DefinitionSourceURL extend the meta line.
     "Definition": "정의", "RelatedKeywords": "연관 키워드",
     "PdfURL": "PDF", "DefinitionSourceURL": "출처",
+    # ATT target (해외 과학기술 동향): Title/Abstract/Author/Keyword/
+    # CN/Pubyear/ContentURL already map via the ARTI shape. Subject
+    # / SubjectCode / RegDate are ATT-specific extras.
+    "Subject": "주제", "SubjectCode": "주제코드", "RegDate": "등록일",
     # Legacy / fallback short codes — kept in case any of the 6 newly
     # added targets (RESEARCHER/ORGAN/TREND/SNEWS/SCENT/ATT) return
     # them. Harmless if absent.
@@ -6317,6 +6321,8 @@ def _format_kisti_results(query: str, results: list[dict],
                   # TREND target meta: related keywords + PDF link
                   # (Definition itself goes to the abstract line)
                   "RelatedKeywords", "PdfURL",
+                  # ATT target meta: subject + registration date
+                  "Subject", "RegDate",
                   "CN", "DOI",
                   # legacy short codes — fire on any target still
                   # using the older metaCode shape
