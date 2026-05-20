@@ -1514,17 +1514,24 @@ def _kipris_extract_items(root: "ET.Element", log_tag: str) -> list[dict]:
         # Surface the header (resultCode / resultMsg) for diagnosis —
         # most no-data cases come with resultCode 00 + empty items, OR
         # an error code in the header. Either way the log makes the
-        # cause obvious.
+        # cause obvious. Also dump body's immediate children so we
+        # can see when KIPRIS uses a non-<items> wrapper.
         header = root.find("header")
         hdr = (
             {c.tag: (c.text or "").strip() for c in header}
             if header is not None else {}
         )
+        body_dump = {}
+        body = root.find("body")
+        if body is not None:
+            for child in list(body)[:5]:
+                body_dump[child.tag] = [g.tag for g in list(child)[:8]]
         log.info(
-            "kipris %s: 0 items (header=%s, root tag=%s, "
-            "children=%s)",
+            "kipris %s: 0 items (header=%s, root=%s, "
+            "children=%s, body=%s)",
             log_tag, hdr, root.tag,
             [c.tag for c in list(root)[:5]],
+            body_dump or "<empty>",
         )
         return []
 

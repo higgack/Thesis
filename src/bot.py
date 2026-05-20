@@ -6436,7 +6436,8 @@ async def cmd_kipris_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "사용법: /kipris_status <KR 출원번호 13자리>"
         )
         return
-    digits = "".join(ch for ch in q if ch.isdigit())
+    first_token = (q.split() or [""])[0]
+    digits = "".join(ch for ch in first_token if ch.isdigit())
     if not digits:
         await update.message.reply_text("출원번호는 숫자만 인식.")
         return
@@ -6470,7 +6471,8 @@ async def cmd_kipris_family(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "사용법: /kipris_family <KR 출원번호 13자리>"
         )
         return
-    digits = "".join(ch for ch in q if ch.isdigit())
+    first_token = (q.split() or [""])[0]
+    digits = "".join(ch for ch in first_token if ch.isdigit())
     if not digits:
         await update.message.reply_text("출원번호는 숫자만 인식.")
         return
@@ -6490,7 +6492,8 @@ async def cmd_kipris_rights(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "사용법: /kipris_rights <KR 출원번호 13자리>"
         )
         return
-    digits = "".join(ch for ch in q if ch.isdigit())
+    first_token = (q.split() or [""])[0]
+    digits = "".join(ch for ch in first_token if ch.isdigit())
     if not digits:
         await update.message.reply_text("출원번호는 숫자만 인식.")
         return
@@ -6510,7 +6513,8 @@ async def cmd_kipris_claims(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "사용법: /kipris_claims <KR 출원번호 13자리>"
         )
         return
-    digits = "".join(ch for ch in q if ch.isdigit())
+    first_token = (q.split() or [""])[0]
+    digits = "".join(ch for ch in first_token if ch.isdigit())
     if not digits:
         await update.message.reply_text("출원번호는 숫자만 인식.")
         return
@@ -6530,7 +6534,8 @@ async def cmd_kipris_priority(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "사용법: /kipris_priority <KR 출원번호 13자리>"
         )
         return
-    digits = "".join(ch for ch in q if ch.isdigit())
+    first_token = (q.split() or [""])[0]
+    digits = "".join(ch for ch in first_token if ch.isdigit())
     if not digits:
         await update.message.reply_text("출원번호는 숫자만 인식.")
         return
