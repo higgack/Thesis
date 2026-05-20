@@ -319,3 +319,176 @@ async def related_content(
     except Exception as e:
         log.warning("ntis related_content failed: %s", e)
         return []
+
+
+# ---------------------------------------------------------------------------
+# Additional NTIS "전체용" services applied for 2026-05-20. Endpoints
+# below are best-guess from NTIS naming conventions (public_<thing>);
+# the bot/agent layer treats a 4xx / empty response as graceful zero-
+# rows, and the diagnostic log records the actual URL the first call
+# uses so the right path can be confirmed once approval comes in.
+#
+# Services & expected endpoints:
+#   4번 국가R&D 성과검색      → public_paper / public_patent / public_equipment
+#   6번 수행기관 R&D현황      → public_organization (또는 publicOrgRnd)
+#   7번 국가R&D 연구보고서    → public_report
+#   9번 이슈로보는 R&D        → public_issue (또는 issueRnd)
+#
+# All four reuse the same _parse_ntis_projects_response parser since
+# NTIS uses the unified <RESULT><RESULTSET><HIT> schema across the
+# 2026-05 portal. Per-service field cleanup happens in the bot
+# formatter once we see the actual first-row keys.
+# ---------------------------------------------------------------------------
+
+
+_NTIS_OUTCOME_COLLECTIONS = {
+    "paper":     ("public_paper",     "paper"),
+    "patent":    ("public_patent",    "patent"),
+    "equipment": ("public_equipment", "equipment"),
+}
+
+
+async def search_outcomes(
+    query: str, kind: str = "paper", limit: int = 10,
+) -> list[dict[str, Any]]:
+    """국가R&D 성과검색 (4번, 전체용). kind: 'paper' / 'patent' /
+    'equipment' — 국가R&D 사업에서 산출된 논문 / 특허 / 연구시설장비
+    메타. ScienceON ARTI/PATENT 와는 다른 인덱스 (정부R&D 한정).
+    활용신청 승인 후 실제 endpoint 명세에 맞춰 path/collection 조정
+    필요할 수 있음."""
+    key = _key()
+    if not key:
+        return []
+    endpoint, coll = _NTIS_OUTCOME_COLLECTIONS.get(
+        kind, _NTIS_OUTCOME_COLLECTIONS["paper"]
+    )
+    params = {
+        "apprvKey": key,
+        "userId": "",
+        "collection": coll,
+        "SRWR": query,
+        "searchFd": "",
+        "addQuery": "",
+        "searchRnkn": "",
+        "startPosition": 1,
+        "displayCnt": min(max(1, limit), 100),
+    }
+    url = f"{_NTIS_BASE}/rndopen/openApi/{endpoint}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.get(url, params=params)
+            log.info("ntis outcomes %s → %d (url=%s)",
+                     kind, r.status_code, url)
+            if r.status_code != 200:
+                log.warning("ntis outcomes %d: %r",
+                            r.status_code, r.text[:200])
+                return []
+            return _parse_ntis_projects_response(r.text)
+    except Exception as e:
+        log.warning("ntis search_outcomes(%s) failed: %s", kind, e)
+        return []
+
+
+async def search_research_reports(
+    query: str, limit: int = 10,
+) -> list[dict[str, Any]]:
+    """국가R&D 연구보고서 검색 (7번, 전체용). 정부R&D 과제에서
+    산출된 연구보고서 메타. ScienceON REPORT 와 보완 관계 — NTIS
+    쪽이 예산 / 주관기관 / 과제번호 같은 행정 메타에 더 정확."""
+    key = _key()
+    if not key:
+        return []
+    params = {
+        "apprvKey": key,
+        "userId": "",
+        "collection": "report",
+        "SRWR": query,
+        "searchFd": "",
+        "addQuery": "",
+        "searchRnkn": "",
+        "startPosition": 1,
+        "displayCnt": min(max(1, limit), 100),
+    }
+    url = f"{_NTIS_BASE}/rndopen/openApi/public_report"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.get(url, params=params)
+            log.info("ntis reports → %d (url=%s)", r.status_code, url)
+            if r.status_code != 200:
+                log.warning("ntis reports %d: %r",
+                            r.status_code, r.text[:200])
+                return []
+            return _parse_ntis_projects_response(r.text)
+    except Exception as e:
+        log.warning("ntis search_research_reports failed: %s", e)
+        return []
+
+
+async def search_agency_rnd(
+    query: str, limit: int = 10,
+) -> list[dict[str, Any]]:
+    """국가R&D 수행기관 R&D현황 (6번, 전체용). 기관명으로 그 기관의
+    국가R&D 수행 과제/예산/논문 통계를 조회. 기업 분석, IR 자료
+    작성, KAIST 같은 출연(연) 비교에 유용."""
+    key = _key()
+    if not key:
+        return []
+    params = {
+        "apprvKey": key,
+        "userId": "",
+        "collection": "organization",
+        "SRWR": query,
+        "searchFd": "",
+        "addQuery": "",
+        "searchRnkn": "",
+        "startPosition": 1,
+        "displayCnt": min(max(1, limit), 100),
+    }
+    url = f"{_NTIS_BASE}/rndopen/openApi/public_organization"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.get(url, params=params)
+            log.info("ntis agency → %d (url=%s)", r.status_code, url)
+            if r.status_code != 200:
+                log.warning("ntis agency %d: %r",
+                            r.status_code, r.text[:200])
+                return []
+            return _parse_ntis_projects_response(r.text)
+    except Exception as e:
+        log.warning("ntis search_agency_rnd failed: %s", e)
+        return []
+
+
+async def search_rnd_issues(
+    query: str, limit: int = 10,
+) -> list[dict[str, Any]]:
+    """이슈로보는R&D (9번, 전체용). 최신 과학기술 이슈 + 관련
+    국가R&D 현황 / 키워드 / 트렌드. ScienceON TREND 와 비슷한
+    역할이지만 정부R&D 한정 코퍼스."""
+    key = _key()
+    if not key:
+        return []
+    params = {
+        "apprvKey": key,
+        "userId": "",
+        "collection": "issue",
+        "SRWR": query,
+        "searchFd": "",
+        "addQuery": "",
+        "searchRnkn": "",
+        "startPosition": 1,
+        "displayCnt": min(max(1, limit), 100),
+    }
+    url = f"{_NTIS_BASE}/rndopen/openApi/public_issue"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.get(url, params=params)
+            log.info("ntis issues → %d (url=%s)", r.status_code, url)
+            if r.status_code != 200:
+                log.warning("ntis issues %d: %r",
+                            r.status_code, r.text[:200])
+                return []
+            return _parse_ntis_projects_response(r.text)
+    except Exception as e:
+        log.warning("ntis search_rnd_issues failed: %s", e)
+        return []

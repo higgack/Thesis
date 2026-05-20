@@ -313,6 +313,30 @@ async def get_kr_related_content(
     return {"results": rows, "count": len(rows)}
 
 
+# Four NTIS 전체용 services pre-built 2026-05-20 alongside the user's
+# 활용신청. Calls degrade to empty rows until approval comes in.
+async def search_kr_rnd_outcomes(
+    query: str, kind: str = "paper", limit: int = 10,
+) -> dict:
+    rows = await kisti_ntis.search_outcomes(query, kind=kind, limit=limit)
+    return {"results": rows, "count": len(rows), "kind": kind}
+
+
+async def search_kr_govt_reports(query: str, limit: int = 10) -> dict:
+    rows = await kisti_ntis.search_research_reports(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
+async def search_kr_agency_rnd(query: str, limit: int = 10) -> dict:
+    rows = await kisti_ntis.search_agency_rnd(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
+async def search_kr_rnd_issues(query: str, limit: int = 10) -> dict:
+    rows = await kisti_ntis.search_rnd_issues(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
 # ---------------------------------------------------------------------------
 # KISTI DataON tools — public research dataset registry. Two
 # separate API keys (search vs metadata detail).
@@ -509,6 +533,10 @@ TOOL_DISPATCH = {
     "search_kr_rnd_projects": search_kr_rnd_projects,
     "recommend_kr_classifications": recommend_kr_classifications,
     "get_kr_related_content": get_kr_related_content,
+    "search_kr_rnd_outcomes": search_kr_rnd_outcomes,
+    "search_kr_govt_reports": search_kr_govt_reports,
+    "search_kr_agency_rnd": search_kr_agency_rnd,
+    "search_kr_rnd_issues": search_kr_rnd_issues,
     "search_kr_research_data": search_kr_research_data,
     "get_kr_research_data_detail": get_kr_research_data_detail,
     "ingest_url": ingest_url,
@@ -999,6 +1027,95 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                 ),
             },
             required=["pjt_id"],
+        ),
+    ),
+    # NTIS 전체용 extras (4 services pre-built 2026-05-20 alongside
+    # 활용신청; degrade to zero rows until approval). 추가될 endpoint:
+    # public_paper/patent/equipment, public_report, public_organization,
+    # public_issue.
+    types.FunctionDeclaration(
+        name="search_kr_rnd_outcomes",
+        description=(
+            "NTIS 국가R&D 성과검색 — 정부R&D 과제에서 산출된 논문 / "
+            "특허 / 연구시설장비 메타. ScienceON ARTI/PATENT 와 다른 "
+            "인덱스 (정부R&D 한정). kind='paper' (default) / 'patent' "
+            "/ 'equipment'. 활용신청 승인 대기 — 승인 전에는 빈 결과."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "kind": types.Schema(
+                    type=types.Type.STRING,
+                    description="'paper' / 'patent' / 'equipment'.",
+                ),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_kr_govt_reports",
+        description=(
+            "NTIS 국가R&D 연구보고서 검색 — 정부R&D 과제에서 산출된 "
+            "연구보고서 메타. ScienceON REPORT 와 보완 (NTIS 가 예산 "
+            "/ 주관기관 / 과제번호 같은 행정 메타에 더 정확). 활용신청 "
+            "승인 대기."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_kr_agency_rnd",
+        description=(
+            "NTIS 수행기관 R&D현황 — 기관명으로 그 기관의 정부R&D "
+            "수행 과제 / 예산 / 논문 통계 조회. 회사 분석 / IR 자료 / "
+            "출연(연) 비교에 유용. 활용신청 승인 대기."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(
+                    type=types.Type.STRING,
+                    description="기관명 (예: KAIST / 삼성전자).",
+                ),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_kr_rnd_issues",
+        description=(
+            "NTIS 이슈로보는R&D — 최신 과학기술 이슈 + 관련 정부R&D "
+            "현황 / 키워드 / 트렌드. ScienceON TREND 와 비슷하지만 "
+            "정부R&D 한정 코퍼스. 활용신청 승인 대기."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
         ),
     ),
     # KISTI DataON tools — public research dataset registry.

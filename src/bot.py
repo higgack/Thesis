@@ -979,6 +979,10 @@ _TOOL_EMOJI = {
     "search_kr_rnd_projects": "🇰🇷🔬",
     "recommend_kr_classifications": "🇰🇷🏷️",
     "get_kr_related_content": "🇰🇷🔗",
+    "search_kr_rnd_outcomes": "🇰🇷🎯",
+    "search_kr_govt_reports": "🇰🇷📑",
+    "search_kr_agency_rnd": "🇰🇷🏛️",
+    "search_kr_rnd_issues": "🇰🇷📈",
     "search_kr_research_data": "🇰🇷💾",
     "get_kr_research_data_detail": "🇰🇷💾",
     "web_search": "🌐",
@@ -1255,6 +1259,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
   ScienceON: /kr_papers · /kr_patents · /kr_reports · /kr_trends · /kr_researcher · /kr_organ · /kr_science_trend
   NTIS: /kr_rnd_projects · /kr_classifications · /kr_related
+        /kr_outcomes · /kr_govt_reports · /kr_agency_rnd · /kr_rnd_issues
   DataON: /kr_research_data
 
 ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup · /patents_guide · /papers_guide
@@ -1287,7 +1292,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 · 요약/메타/번역 flash-lite(503→flash) · 답변 flash · /deep pro · Vision flash-lite · 1M ₩ Pro 1,750/Flash 420/Lite 140/Embed 200 · 답변 1h 캐시(200건) · 번역 30k+ 배치 ₩3-40
 
-<b>【10-2. 비용 절감 (자동)】</b> 6단 dedup ₩0(source/URL/file/text/body/title) · 청크 1000·요약 12k·Vision DPI 100·OCR cap 0p·image-only 3p · Progressive OCR(probe&lt;300자→skip) · 청크/임베딩 캐시 · 메타 gating · 차단 도메인 · .txt/.md/.csv 제외 · failed URL skip · /failed_clear 영구
+<b>【10-2. 비용 절감】</b> 6단 dedup · 청크 1000 · Vision DPI 100 · OCR cap 0p · Progressive OCR · 청크/임베딩 캐시 · 메타 gating · 차단 도메인 · .txt/.md/.csv 제외 · failed URL skip
 
 <b>【10-3. Retry/무손실 재개】</b> 5회 선형(1h→2h→3h→4h→/failed)·silent retry · in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개·atomic JSON+.bak·/audit 검증
 
@@ -1586,6 +1591,18 @@ NTIS 분류코드 추천 (rcmncls). 키워드 또는 초록 입력하면 과학�
 NTIS 연관 콘텐츠 (ConnectionContent). 과제번호로 관련 논문/특허/
 보고서/연관과제 검색. type 기본 researchreport.
 
+<b>/kr_outcomes [paper|patent|equipment] &lt;검색어&gt;</b>
+NTIS 성과검색 — 정부R&amp;D 논문/특허/시설장비. ⏳ 승인 대기.
+
+<b>/kr_govt_reports &lt;검색어&gt;</b>
+NTIS 정부R&amp;D 연구보고서 — 행정 메타 정밀. ⏳ 승인 대기.
+
+<b>/kr_agency_rnd &lt;기관명&gt;</b>
+NTIS 수행기관 R&amp;D현황 — 기관별 과제·예산·논문 통계. ⏳ 승인 대기.
+
+<b>/kr_rnd_issues &lt;토픽&gt;</b>
+NTIS 이슈로보는R&amp;D — 정부R&amp;D 한정 트렌드. ⏳ 승인 대기.
+
 <b>💾 DataON (공공 연구데이터)</b>
 
 <b>/kr_research_data &lt;키워드&gt;</b>
@@ -1601,7 +1618,9 @@ DataON 공공 연구데이터셋 — svcId · 제목 · 작성자 · DOI · 라�
    는 결과 없음 반환 (resultCode 30)
 ✅ KISTI ScienceON — 활성 (7개 콘텐츠 사용 가능: ARTI/PATENT/REPORT/
    ATT/RESEARCHER/ORGAN/TREND. SCENT/SNEWS 는 searchField 코드 미공개로 보류)
-✅ KISTI NTIS — 활성 (3건 승인, 동일 키, public_project · rcmncls · ConnectionContent)
+✅ KISTI NTIS — 3건 활성 (public_project · ConnectionContent) +
+   ⏳ 5건 신청중 (rcmncls 기관용 · public_paper · public_patent ·
+   public_equipment · public_report · public_organization · public_issue)
 ⏳ KISTI DataON — 회원가입 승인 대기
 
 ═══════════════════════════════════════
@@ -7118,6 +7137,184 @@ async def cmd_kr_related(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 log.exception("ntis related chunked send failed")
 
 
+def _html_escape_safe(s: str) -> str:
+    import html as _h
+    return _h.escape(s)
+
+
+async def _ntis_simple_search_command(
+    update, ctx, query: str, label: str, emoji: str,
+    fn, tool_name: str,
+) -> None:
+    """Shared body for the four 2026-05 NTIS '전체용' commands
+    (outcomes / reports / agency / issues). Each takes one search
+    function from kisti_ntis and renders results via the existing
+    _format_ntis_projects formatter — NTIS uses the same <HIT>
+    schema across these services so a single formatter covers them
+    until per-service field cleanup is needed. Pre-built 2026-05-20
+    alongside the user's NTIS 활용신청; calls degrade to empty rows
+    until approval comes in."""
+    if not _is_owner(update):
+        return
+    if not query:
+        return
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"{emoji} NTIS {label} 검색 중 — '{query}'..."
+    )
+    try:
+        rows = await fn(query, limit=30)
+    except Exception as e:
+        log.exception("ntis %s search failed", label)
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"⚠️ NTIS {label} 검색 실패: {_explain_error(e)}",
+        )
+        return
+    if not rows:
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"🔍 '{_html_escape_safe(query)}' NTIS {label} 결과 없음.\n"
+            f"활용신청 승인 전이거나 매칭 0건 — 승인 메일 받은 뒤 "
+            f"재시도 / 더 일반적인 키워드로 시도."
+        )
+        return
+    body = _format_ntis_projects(query, rows)
+    # Header label swap so the user sees the right section name.
+    body = body.replace(
+        "🔬 <b>NTIS 국가R&amp;D 과제",
+        f"{emoji} <b>NTIS {label}",
+    ).replace(
+        "🔬 <b>NTIS 국가R&D 과제",
+        f"{emoji} <b>NTIS {label}",
+    )
+    _record_command_qna(
+        update, question=(update.message.text or
+                          f"/{tool_name} {query}").strip(),
+        body=body, tools=[tool_name],
+    )
+    pieces = _split_for_telegram(body)
+    if not pieces:
+        return
+    try:
+        await ctx.bot.edit_message_text(
+            chat_id=status.chat.id, message_id=status.message_id,
+            text=pieces[0], parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        try:
+            await update.message.reply_text(
+                pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.exception("ntis %s fallback failed", label)
+    for piece in pieces[1:]:
+        try:
+            await update.message.reply_text(
+                piece, parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            log.exception("ntis %s chunked send failed", label)
+
+
+async def cmd_kr_outcomes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_outcomes [paper|patent|equipment] <query> — NTIS 국가R&D
+    성과검색 (4번, 전체용). 정부R&D 과제에서 산출된 논문 / 특허 /
+    연구시설장비 메타. 기본 kind=paper. 활용신청 승인 후 동작."""
+    if not _is_owner(update):
+        return
+    args = list(ctx.args or [])
+    if not args:
+        await update.message.reply_text(
+            "사용법: /kr_outcomes [paper|patent|equipment] <검색어>\n"
+            "예: /kr_outcomes paper 양자컴퓨터\n"
+            "    /kr_outcomes patent 반도체"
+        )
+        return
+    kind = "paper"
+    if args[0].lower() in ("paper", "patent", "equipment"):
+        kind = args[0].lower()
+        query = " ".join(args[1:]).strip()
+    else:
+        query = " ".join(args).strip()
+    if not query:
+        await update.message.reply_text(
+            "사용법: /kr_outcomes [paper|patent|equipment] <검색어>"
+        )
+        return
+    from .agent import kisti_ntis as _ntis
+
+    async def _fn(q: str, limit: int = 30):
+        return await _ntis.search_outcomes(q, kind=kind, limit=limit)
+    label = {"paper": "성과 논문", "patent": "성과 특허",
+             "equipment": "성과 시설장비"}.get(kind, "성과")
+    emoji = {"paper": "📄", "patent": "⚖️",
+             "equipment": "🔬"}.get(kind, "🎯")
+    await _ntis_simple_search_command(
+        update, ctx, query, label, emoji, _fn, "search_kr_rnd_outcomes",
+    )
+
+
+async def cmd_kr_govt_reports(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_govt_reports <query> — NTIS 국가R&D 연구보고서 검색
+    (7번, 전체용). ScienceON REPORT 와 보완 (NTIS 가 예산/과제번호/
+    주관기관 등 행정 메타 더 정확). 활용신청 승인 후 동작."""
+    if not _is_owner(update):
+        return
+    query = " ".join(ctx.args or []).strip()
+    if not query:
+        await update.message.reply_text("사용법: /kr_govt_reports <검색어>")
+        return
+    from .agent import kisti_ntis as _ntis
+    await _ntis_simple_search_command(
+        update, ctx, query, "정부R&D 연구보고서", "📑",
+        _ntis.search_research_reports, "search_kr_govt_reports",
+    )
+
+
+async def cmd_kr_agency_rnd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_agency_rnd <기관명> — NTIS 수행기관 R&D현황 (6번, 전체용).
+    기관별 정부R&D 과제 수 / 예산 / 논문 통계. 회사 IR / 출연(연)
+    비교 등에 유용. 활용신청 승인 후 동작."""
+    if not _is_owner(update):
+        return
+    query = " ".join(ctx.args or []).strip()
+    if not query:
+        await update.message.reply_text(
+            "사용법: /kr_agency_rnd <기관명>\n"
+            "예: /kr_agency_rnd KAIST"
+        )
+        return
+    from .agent import kisti_ntis as _ntis
+    await _ntis_simple_search_command(
+        update, ctx, query, "수행기관 R&D현황", "🏛️",
+        _ntis.search_agency_rnd, "search_kr_agency_rnd",
+    )
+
+
+async def cmd_kr_rnd_issues(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_rnd_issues <토픽> — NTIS 이슈로보는 R&D (9번, 전체용).
+    최신 과학기술 이슈 + 관련 국가R&D 현황 / 키워드 / 트렌드.
+    ScienceON TREND 와 비슷하지만 정부R&D 한정. 활용신청 승인 후 동작."""
+    if not _is_owner(update):
+        return
+    query = " ".join(ctx.args or []).strip()
+    if not query:
+        await update.message.reply_text(
+            "사용법: /kr_rnd_issues <토픽>\n"
+            "예: /kr_rnd_issues 양자컴퓨터"
+        )
+        return
+    from .agent import kisti_ntis as _ntis
+    await _ntis_simple_search_command(
+        update, ctx, query, "R&D 이슈/트렌드", "📈",
+        _ntis.search_rnd_issues, "search_kr_rnd_issues",
+    )
+
+
 def _format_dataon_results(query: str, rows: list[dict]) -> str:
     """DataON dataset rows. Field shapes vary by endpoint version
     — try the documented English keys then fall back to Korean."""
@@ -9917,6 +10114,10 @@ def main():
     app.add_handler(CommandHandler("kr_classifications",
                                     cmd_kr_classifications))
     app.add_handler(CommandHandler("kr_related", cmd_kr_related))
+    app.add_handler(CommandHandler("kr_outcomes", cmd_kr_outcomes))
+    app.add_handler(CommandHandler("kr_govt_reports", cmd_kr_govt_reports))
+    app.add_handler(CommandHandler("kr_agency_rnd", cmd_kr_agency_rnd))
+    app.add_handler(CommandHandler("kr_rnd_issues", cmd_kr_rnd_issues))
     app.add_handler(CommandHandler("kr_research_data", cmd_kr_research_data))
     app.add_handler(CommandHandler("web_search", cmd_web_search))
     app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))
