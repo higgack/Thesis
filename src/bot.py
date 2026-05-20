@@ -6187,6 +6187,10 @@ _KISTI_FIELD_LABELS = {
     "AP": "출원인", "IN": "발명자", "IPC": "IPC",
     # report-specific
     "OR": "발행기관", "RN": "보고서번호", "DT": "발간일",
+    # researcher / organ specific (RESEARCHER, ORGAN targets)
+    "AUI": "이름", "AFI": "소속", "AFE": "소속(EN)",
+    "ORN": "기관명", "ORE": "기관명(EN)",
+    "MJ": "전공", "POS": "직위", "NM": "이름", "ENM": "이름(EN)",
 }
 
 
@@ -6227,14 +6231,35 @@ def _format_kisti_results(query: str, results: list[dict],
         f"{emoji} <b>{label} 검색 결과 — '{_html.escape(query)}'</b>",
         f"<i>{len(results)}건 · KISTI ScienceON</i>",
     ]
+    # Diagnostic: log the first row's keys once per call so any new
+    # ScienceON target whose metaCode shape we haven't mapped yet shows
+    # up in deploy logs (RESEARCHER/ORGAN/TREND/SNEWS use different
+    # field codes than ARTI/PATENT/REPORT).
+    if results:
+        try:
+            log.info("kisti %s first-row keys: %s",
+                     kind, sorted(results[0].keys()))
+        except Exception:
+            pass
+    # Title fallback chain — covers ARTI/PATENT/REPORT (TI/TIE) +
+    # RESEARCHER (AUI/AUE name) + ORGAN (AFI/AFE) + TREND/SNEWS/SCENT
+    # which mostly carry TI but some variants use SBJ/SUB/HD/HDN.
+    _title_keys = ("TI", "TIE", "AUI", "AUE", "AU",
+                   "AFI", "AFE", "AF", "ORN", "ORE",
+                   "SBJ", "SUB", "HD", "HDN", "NM", "ENM")
     for i, r in enumerate(results, 1):
-        title = _html.escape(
-            (r.get("TI") or r.get("TIE") or "(제목 없음)")
-        )[:240]
+        title_raw = ""
+        for tk in _title_keys:
+            v = (r.get(tk) or "").strip()
+            if v:
+                title_raw = v
+                break
+        title = _html.escape(title_raw or "(제목 없음)")[:240]
         # Build meta line from whatever fields exist for this record kind
         parts: list[str] = []
-        for k in ("CN", "AU", "AUE", "AP", "IN", "JN", "OR", "YR",
-                  "APD", "RGD", "DT", "IPC", "DOI"):
+        for k in ("CN", "AU", "AUE", "AUI", "AP", "IN", "JN",
+                  "AF", "AFI", "AFE", "OR", "ORN", "MJ", "POS",
+                  "YR", "APD", "RGD", "DT", "IPC", "DOI"):
             v = (r.get(k) or "").strip()
             if v:
                 lbl = _KISTI_FIELD_LABELS.get(k, k)

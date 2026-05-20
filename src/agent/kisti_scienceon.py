@@ -169,13 +169,24 @@ def _record_to_dict(rec: ET.Element) -> dict[str, str]:
     """Each ScienceON record is <record><item metaCode='TI'>...</item>
     × N</record>. Flatten the metaCode-keyed items into a dict so
     callers can pull fields like Title (TI) / Author (AU) /
-    Abstract (AB) / DOI / etc."""
+    Abstract (AB) / DOI / etc.
+
+    Uses itertext() (not item.text) because ScienceON injects
+    <span class="search_word"> highlight tags around matched query
+    terms in TI/AU/AB fields. ElementTree treats those as child
+    elements, so item.text would only return characters up to the
+    first child (often empty if the field starts with a match).
+    CN/DOI etc. carry no highlights so the old code worked for them
+    but title/author/abstract came out blank — that mismatch is what
+    surfaced this bug.
+    """
     out: dict[str, str] = {}
     for item in rec.findall("item"):
         code = (item.get("metaCode") or "").strip()
-        text = (item.text or "").strip()
-        if code:
-            out[code] = text
+        if not code:
+            continue
+        text = "".join(item.itertext()).strip()
+        out[code] = text
     return out
 
 
