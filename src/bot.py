@@ -6199,6 +6199,16 @@ _KISTI_FIELD_LABELS = {
     # ORGAN target (confirmed live 2026-05): OrganKor / OrganEng +
     # the same productivity counts (Article/Patent/Report).
     "OrganKor": "기관명", "OrganEng": "기관명(EN)",
+    # PATENT target (confirmed live 2026-05): Applicants /
+    # ApplDate / GrantDate / PublDate / NoticeDate / PatentStatus
+    # plus their numeric counterparts. KISTI's PATENT index has no
+    # Inventor field — only Applicants — so 발명자 stays unmapped.
+    "Applicants": "출원인",
+    "ApplDate": "출원일", "ApplNum": "출원번호",
+    "GrantDate": "등록일", "GrantNum": "등록번호",
+    "PublDate": "공개일", "PublNum": "공개번호",
+    "NoticeDate": "공고일", "NoticeNumber": "공고번호",
+    "PatentStatus": "상태", "Nation": "국가",
     # Legacy / fallback short codes — kept in case any of the 6 newly
     # added targets (RESEARCHER/ORGAN/TREND/SNEWS/SCENT/ATT) return
     # them. Harmless if absent.
@@ -6293,6 +6303,12 @@ def _format_kisti_results(query: str, results: list[dict],
                   # RESEARCHER target meta: institution + productivity
                   "AuthorInstKor", "AuthorInstEng",
                   "ArticleCnt", "PatentCnt", "ReportCnt", "Email",
+                  # PATENT target meta: applicant + dates + status
+                  # (most informative cap-6 picks come from here)
+                  "Applicants", "ApplDate", "GrantDate", "PublDate",
+                  "PatentStatus", "Nation", "IPC",
+                  "ApplNum", "GrantNum", "PublNum", "NoticeDate",
+                  "NoticeNumber",
                   "CN", "DOI",
                   # legacy short codes — fire on any target still
                   # using the older metaCode shape
