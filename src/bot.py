@@ -972,6 +972,12 @@ _TOOL_EMOJI = {
     "get_kr_patent_citations": "🇰🇷⚖️",
     "search_kr_reports": "🇰🇷📑",
     "get_kr_report_detail": "🇰🇷📑",
+    "search_kr_trends": "🇰🇷🌐",
+    "search_kr_science_columns": "🇰🇷🧪",
+    "search_kr_researchers": "🇰🇷👤",
+    "search_kr_organs": "🇰🇷🏛️",
+    "search_kr_science_trends": "🇰🇷📈",
+    "search_kr_science_news": "🇰🇷📰",
     "search_kr_rnd_projects": "🇰🇷🔬",
     "recommend_kr_classifications": "🇰🇷🏷️",
     "get_kr_related_content": "🇰🇷🔗",
@@ -1249,8 +1255,9 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
-  ScienceON: /kr_papers · /kr_patents · /kr_reports
-  NTIS: /kr_rnd_projects · DataON: /kr_research_data
+  ScienceON: /kr_papers · /kr_patents · /kr_reports · /kr_trends · /kr_researcher · /kr_organ · /kr_science_trend · /kr_science_news · /kr_science_mag
+  NTIS: /kr_rnd_projects · /kr_classifications · /kr_related
+  DataON: /kr_research_data
 
 ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup · /patents_guide · /papers_guide
 
@@ -1258,14 +1265,14 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【3. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS·DataON · ⚖️ patents EPO · 🌐 web · 📥 ingest · 한국어번역
 
-<b>【3-1. 회사 분석】</b> "회사명+실적/매출/영업이익" → 본문 + 신사업 키포인트(·합의 N건) + 📌 실적 데이터(맨끝): 연간/분기 표(A./F.·YoY·QoQ) + xychart + 분석가 가이던스 + 웹 추가(brain/web 분리). 숫자 audit 자동.
+<b>【3-1. 회사 분석】</b> "회사명+실적/매출" → 본문 + 신사업(·합의 N건) + 📌 실적 표(A./F.·YoY·QoQ) + xychart + 분석가 가이던스 + brain/web 분리. 숫자 audit 자동.
 
 <b>【4. 자연어 트리거】</b>
 🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL"
 
 <b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 전송
-• PDF: 텍스트 자동 추출(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b>(OCR_AUTO_CAP=0), 학습 직후 3-버튼 prompt [📄 OCR 추가 / 📝 텍스트만 / 🚫 취소], 만료 없음. image-only PDF first 3p만 자동 OCR · 이미지 캡션≥80자면 OCR skip · 짧으면 OCR · [OCR] 강제 · 음성: Gemini STT · YouTube: 자막→Jina · <b>.txt/.md/.csv 첨부=학습 제외</b>
-차단: LinkedIn/FB/IG, Reuters/Bloomberg/WSJ/FT/NYT/WaPo
+• PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · 캡션≥80자 OCR skip · [OCR] 강제 · 음성=Gemini STT · YouTube=자막→Jina · <b>.txt/.md/.csv 학습 제외</b>
+차단: LinkedIn/FB/IG · Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
 <b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
 [Noah 디지스트] 📋 TG 원문 fetch / 📰 Substack URL relay / 그 외 drop
@@ -1288,7 +1295,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
 
-<b>【12. 백엔드】</b> ✅ EPO·NTIS · ⏳ KIPRIS/ScienceON/DataON 활용신청 승인 대기 — 승인 전 결과 없음"""
+<b>【12. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS/DataON 활용신청 승인 대기 — 승인 전 결과 없음"""
 
 
 # Detailed multi-section guide for the patent suite. Kept separate
@@ -1536,17 +1543,41 @@ KIPRIS 단건 상세 + abstract + IPC.
 <b>/citing_patents &lt;출원번호&gt;</b>
 KIPRIS 인용 네트워크 — 이 특허를 인용한 후속.
 
+<b>📄 ScienceON 핵심 (ARTI/PATENT/REPORT)</b>
+
 <b>/kr_papers &lt;키워드&gt;</b>
 KISTI ScienceON 한국 논문 (SCIE/SCOPUS/KSCI 99%+ 커버, 한글 메타).
-※ ScienceON 활용신청 승인 대기 중 — 키 들어오면 즉시 동작.
 
 <b>/kr_patents &lt;키워드&gt;</b>
 KISTI ScienceON 특허 (국제+KR, 한글 abstract).
-※ 동일.
 
 <b>/kr_reports &lt;키워드&gt;</b>
 정부 R&amp;D 보고서 (TRKO/KOSEN 풀텍스트).
-※ 동일.
+
+<b>🌐 ScienceON 확장 (6개 콘텐츠 추가)</b>
+
+<b>/kr_trends &lt;키워드&gt;</b>
+해외과학기술동향 (ATT). 큐레이션된 외국 기술 발전 리뷰 (연구급).
+
+<b>/kr_researcher &lt;이름|분야&gt;</b>
+국내 식별 연구자 인덱스 (RESEARCHER). 연구자 프로필 + 그의 논문/
+보고서/특허 목록. 특정 사람 추적용 ("김XX 연구자 논문").
+
+<b>/kr_organ &lt;기관명&gt;</b>
+국내 식별 연구기관 인덱스 (ORGAN). 기관 프로필 + publications.
+KIPRIS 출원인 검색과 조합하면 회사 프로필 더 풍부.
+
+<b>/kr_science_trend &lt;키워드&gt;</b>
+ScienceON Trend (TREND). 큐레이션 토픽 트렌드 리포트 (논문/특허
+통계 + 전문가 해설). ATT 와 달리 한국+국제 메타분석.
+
+<b>/kr_science_news &lt;키워드&gt;</b>
+주차별 과학기술뉴스 (SNEWS). 최근 (이주/이달) 발전사항용.
+
+<b>/kr_science_mag &lt;키워드&gt;</b>
+과학향기 (SCENT). 대중과학 매거진 칼럼 — 가벼운 배경/explainer.
+
+<b>🔬 NTIS (국가R&amp;D)</b>
 
 <b>/kr_rnd_projects &lt;키워드&gt;</b>
 NTIS 국가R&amp;D 과제. 각 행에:
@@ -1554,6 +1585,16 @@ NTIS 국가R&amp;D 과제. 각 행에:
 • 🏷️ 키워드 (한국어)
 • 🎯 목표 (Goal) · 📝 초록 (Abstract) · 💡 기대효과 (Effect)
 ✅ NTIS 활성 — 3개 서비스 (과제검색·분류추천·연관콘텐츠) 동일 키 공유.
+
+<b>/kr_classifications &lt;연구 초록&gt;</b>
+NTIS 분류코드 추천 (rcmncls). 초록 20자+ 입력하면 과학기술표준분류
+코드 후보 추천. 다른 type (보건의료/산업기술) 은 자연어로 호출.
+
+<b>/kr_related &lt;pjt_id&gt; [paper|patent|researchreport|project]</b>
+NTIS 연관 콘텐츠 (ConnectionContent). 과제번호로 관련 논문/특허/
+보고서/연관과제 검색. type 기본 researchreport.
+
+<b>💾 DataON (공공 연구데이터)</b>
 
 <b>/kr_research_data &lt;키워드&gt;</b>
 DataON 공공 연구데이터셋 — svcId · 제목 · 작성자 · DOI · 라이선스.
@@ -1566,7 +1607,8 @@ DataON 공공 연구데이터셋 — svcId · 제목 · 작성자 · DOI · 라�
    행정처리/분류/패밀리/명칭변동 등 11개 향후 기능
    승인 전: /company_patents · /patent_detail · /citing_patents
    는 결과 없음 반환 (resultCode 30)
-⏳ KISTI ScienceON — helpdesk 답변 대기 (IP 검증 우회)
+✅ KISTI ScienceON — 활성 (9개 콘텐츠 모두 승인: ARTI/PATENT/REPORT/
+   ATT/SCENT/RESEARCHER/ORGAN/TREND/SNEWS)
 ✅ KISTI NTIS — 활성 (3건 승인, 동일 키, public_project · rcmncls · ConnectionContent)
 ⏳ KISTI DataON — 회원가입 승인 대기
 
@@ -1737,10 +1779,12 @@ KIPRIS Plus 단건 상세 / 인용 네트워크. 출원번호 (숫자만) 입력
    특허 패밀리 · 출원인 명칭 변동 이력
    <b>승인 전 동작:</b> /company_patents · /patent_detail · /citing_patents
    호출 시 "결과 없음" 메시지 (KIPRIS API 는 resultCode 30 반환)
-⏳ <b>KISTI ScienceON</b> — helpdesk 답변 대기 (가입 IP 검증 우회 절차)
-   해당 명령어: /kr_papers · /kr_patents · /kr_reports
-   /kr_patents (ScienceON) 는 한글 메타데이터 풍부, /search_patents (EPO)
-   글로벌 영문 위주 — 활성화되면 용도 분리해 사용 가능
+✅ <b>KISTI ScienceON</b> — 활성 (9개 콘텐츠 모두 승인)
+   주요 명령어 9종: /kr_papers · /kr_patents · /kr_reports ·
+   /kr_trends · /kr_researcher · /kr_organ ·
+   /kr_science_trend · /kr_science_news · /kr_science_mag
+   /kr_patents (ScienceON) = 한글 메타 풍부, /search_patents (EPO)
+   = 글로벌 영문 위주 — 용도 분리해 사용
 ✅ <b>KISTI NTIS</b> — 활성 (3건 승인, /kr_rnd_projects 동작 + 자연어 분류추천/연관콘텐츠 가능)
 ⏳ <b>KISTI DataON</b> — 회원가입 승인 대기 (/kr_research_data)
 
@@ -6146,16 +6190,32 @@ _KISTI_FIELD_LABELS = {
 }
 
 
+# Per-target render metadata. kind → (emoji, header label, deep-link
+# subpath on ScienceON web). All 9 ScienceON contents covered.
+_KISTI_KIND_META: dict[str, tuple[str, str, str]] = {
+    "paper":         ("📄",  "ScienceON 논문",       "Article"),
+    "patent":        ("⚖️",  "ScienceON 특허",       "Patent"),
+    "report":        ("📑",  "ScienceON 보고서",      "Report"),
+    "trend":         ("🌐",  "ScienceON 해외동향",    "Trend"),
+    "science_mag":   ("🧪",  "ScienceON 과학향기",    "Scent"),
+    "researcher":    ("👤",  "ScienceON 연구자",      "Researcher"),
+    "organ":         ("🏛️",  "ScienceON 연구기관",    "Organ"),
+    "science_trend": ("📈",  "ScienceON Trend",       "Trend"),
+    "science_news":  ("📰",  "ScienceON 과기뉴스",    "News"),
+}
+
+
 def _format_kisti_results(query: str, results: list[dict],
                           kind: str) -> str:
     """Format ScienceON metaCode-keyed result rows for Telegram.
-    `kind` selects the lead emoji + label set ("paper" / "patent" /
-    "report"). Falls back gracefully when a row is missing a field."""
+    `kind` selects the lead emoji + label set + detail-page subpath
+    from _KISTI_KIND_META. All 9 ScienceON targets share the same
+    metaCode field layout so a single renderer works across them —
+    rows that don't have a given field silently skip it."""
     import html as _html
-    emoji = {"paper": "📄", "patent": "⚖️", "report": "📑"}.get(kind, "📌")
-    label = {"paper": "ScienceON 논문",
-             "patent": "ScienceON 특허",
-             "report": "ScienceON 보고서"}.get(kind, "ScienceON")
+    emoji, label, sub = _KISTI_KIND_META.get(
+        kind, ("📌", "ScienceON", "Article"),
+    )
     if not results:
         return (
             f"🔍 '<b>{_html.escape(query)}</b>' KISTI ScienceON 결과 없음.\n"
@@ -6189,11 +6249,6 @@ def _format_kisti_results(query: str, results: list[dict],
             block.append(f"   {_html.escape(_truncate_at_sentence(abstract, 700))}")
         cn = (r.get("CN") or "").strip()
         if cn:
-            # ScienceON detail page deep-link (different paths per
-            # kind, web side handles routing).
-            sub = {"paper": "Article",
-                   "patent": "Patent",
-                   "report": "Report"}.get(kind, "Article")
             block.append(
                 f"   → https://scienceon.kisti.re.kr/srch/"
                 f"selectPORSrch{sub}.do?cn={cn}"
@@ -6224,13 +6279,19 @@ async def _kisti_search_command(update, ctx, query: str, kind: str,
     rows = result.get("results") or []
     body = _format_kisti_results(query, rows, kind)
     _kisti_tool_name = {
-        "paper": "search_kr_papers",
-        "patent": "search_kr_patents_kisti",
-        "report": "search_kr_reports",
+        "paper":         "search_kr_papers",
+        "patent":        "search_kr_patents_kisti",
+        "report":        "search_kr_reports",
+        "trend":         "search_kr_trends",
+        "science_mag":   "search_kr_science_columns",
+        "researcher":    "search_kr_researchers",
+        "organ":         "search_kr_organs",
+        "science_trend": "search_kr_science_trends",
+        "science_news":  "search_kr_science_news",
     }.get(kind, f"search_kr_{kind}")
     _record_command_qna(
         update,
-        question=(update.message.text or f"/kr_{kind}s {query}").strip(),
+        question=(update.message.text or f"/kr_{kind} {query}").strip(),
         body=body,
         tools=[_kisti_tool_name],
         sources=[r.get("CN", "") for r in rows if r.get("CN")],
@@ -6303,6 +6364,97 @@ async def cmd_kr_reports(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     from .agent import kisti_scienceon as _kisti
     await _kisti_search_command(
         update, ctx, q, "report", _kisti.search_reports,
+    )
+
+
+async def cmd_kr_trends(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_trends <키워드> — KISTI ScienceON 해외과학기술동향 (ATT)."""
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kr_trends <검색어>")
+        return
+    from .agent import kisti_scienceon as _kisti
+    await _kisti_search_command(
+        update, ctx, q, "trend", _kisti.search_trends,
+    )
+
+
+async def cmd_kr_science_mag(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_science_mag <키워드> — KISTI ScienceON 과학향기 칼럼 (SCENT).
+    대중 과학 매거진. 연구급 자료보다 가벼움, 배경 지식 용도."""
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kr_science_mag <검색어>")
+        return
+    from .agent import kisti_scienceon as _kisti
+    await _kisti_search_command(
+        update, ctx, q, "science_mag", _kisti.search_science_columns,
+    )
+
+
+async def cmd_kr_researcher(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_researcher <이름|연구분야> — KISTI ScienceON 식별 연구자
+    인덱스 (RESEARCHER). 국내 연구자 프로필 + 그 연구자의 논문/보고서/
+    특허 목록 링크."""
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kr_researcher <이름 또는 키워드>")
+        return
+    from .agent import kisti_scienceon as _kisti
+    await _kisti_search_command(
+        update, ctx, q, "researcher", _kisti.search_researchers,
+    )
+
+
+async def cmd_kr_organ(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_organ <기관명> — KISTI ScienceON 식별 연구기관 인덱스 (ORGAN).
+    기관 프로필 + 그 기관의 publications. 회사 분석 시 KIPRIS 출원인
+    검색과 조합하면 더 풍부."""
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kr_organ <기관명>")
+        return
+    from .agent import kisti_scienceon as _kisti
+    await _kisti_search_command(
+        update, ctx, q, "organ", _kisti.search_organs,
+    )
+
+
+async def cmd_kr_science_trend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_science_trend <키워드> — KISTI ScienceON Trend (TREND).
+    큐레이션 토픽 트렌드 리포트 (논문/특허 통계 + 전문가 해설)."""
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kr_science_trend <검색어>")
+        return
+    from .agent import kisti_scienceon as _kisti
+    await _kisti_search_command(
+        update, ctx, q, "science_trend", _kisti.search_science_trends,
+    )
+
+
+async def cmd_kr_science_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_science_news <키워드> — KISTI ScienceON 금주의 과학기술뉴스
+    (SNEWS). 주차별 큐레이션 국내외 과기 뉴스."""
+    if not _is_owner(update):
+        return
+    q = " ".join(ctx.args).strip()
+    if not q:
+        await update.message.reply_text("사용법: /kr_science_news <검색어>")
+        return
+    from .agent import kisti_scienceon as _kisti
+    await _kisti_search_command(
+        update, ctx, q, "science_news", _kisti.search_science_news,
     )
 
 
@@ -6432,6 +6584,209 @@ async def cmd_kr_rnd_projects(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception:
                 log.exception("ntis projects chunked send failed")
+
+
+def _format_ntis_classifications(query: str, rows: list[dict]) -> str:
+    """NTIS rcmncls 응답 — abstract → 분류코드 추천. row shape 가
+    아직 운영 환경 확인 안 됐어서 모든 child 태그 그대로 보여주는
+    defensive formatter (필요시 재정비)."""
+    import html as _html
+    if not rows:
+        return (
+            f"🔍 '<b>{_html.escape(query[:80])}</b>...' NTIS 분류코드 추천 결과 없음.\n"
+            f"abstract 가 너무 짧거나 NTIS 가 매핑 못 한 경우 — 더 긴 본문 시도."
+        )
+    out = [
+        "🏷️ <b>NTIS 분류코드 추천 결과</b>",
+        f"<i>{len(rows)}건 · NTIS</i>",
+    ]
+    for i, r in enumerate(rows, 1):
+        block = [f"\n🏷️ <b>{i}.</b>"]
+        for k, v in r.items():
+            if not v:
+                continue
+            block.append(f"  {_html.escape(str(k))}: {_html.escape(str(v)[:200])}")
+        out.append("\n".join(block))
+    return "\n".join(out)
+
+
+async def cmd_kr_classifications(update: Update,
+                                  ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_classifications <abstract> — NTIS 분류코드 추천 (rcmncls).
+    연구 초록을 받아 과학기술 표준분류 / 보건의료 / 산업기술 코드를
+    NTIS 가 추천. 기본은 standard (과기표준). 다른 type 은 자연어로:
+    '이 초록 산업기술 분류 추천해줘 ...'"""
+    if not _is_owner(update):
+        return
+    abstract = " ".join(ctx.args).strip()
+    if not abstract or len(abstract) < 20:
+        await update.message.reply_text(
+            "사용법: /kr_classifications <연구 초록 20자 이상>\n"
+            "예: /kr_classifications 양자 컴퓨팅 기반 암호화 알고리즘 연구..."
+        )
+        return
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"🏷️ NTIS 분류코드 추천 중 ({len(abstract)}자 초록)..."
+    )
+    try:
+        from .agent import kisti_ntis as _ntis
+        rows = await _ntis.recommend_classifications(
+            abstract, classification_type="standard",
+        )
+    except Exception as e:
+        log.exception("ntis classifications failed")
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"⚠️ NTIS 분류코드 추천 실패: {_explain_error(e)}",
+        )
+        return
+    body = _format_ntis_classifications(abstract[:80], rows)
+    _record_command_qna(
+        update,
+        question=(update.message.text or "/kr_classifications").strip()[:200],
+        body=body,
+        tools=["recommend_kr_classifications"],
+    )
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("ntis cls fallback failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("ntis cls chunked send failed")
+
+
+def _format_ntis_related(query: str, rows: list[dict],
+                          coll_type: str) -> str:
+    """NTIS ConnectionContent 응답 — pjtId 기반 연관 컨텐츠 (논문/
+    특허/보고서/관련과제). row shape 가 collection_type 마다 다를
+    수 있어서 defensive: 핵심 필드 (title, agency, year, ...) 후보를
+    여러 키 변형으로 시도."""
+    import html as _html
+    label = {
+        "paper": "관련 논문", "patent": "관련 특허",
+        "researchreport": "관련 보고서", "project": "관련 과제",
+    }.get(coll_type, "연관 콘텐츠")
+    if not rows:
+        return (
+            f"🔗 <b>NTIS {label}</b> — '{_html.escape(query)}'\n"
+            f"<i>매칭 0건</i>"
+        )
+    out = [
+        f"🔗 <b>NTIS {label} — pjtId {_html.escape(query)}</b>",
+        f"<i>{len(rows)}건 · NTIS</i>",
+    ]
+    for i, r in enumerate(rows, 1):
+        title = (r.get("title") or r.get("Title") or
+                 r.get("ProjectTitle") or r.get("논문명") or
+                 r.get("특허명") or r.get("보고서명") or "(제목 없음)")
+        block = [f"\n🔗 <b>{i}. {_html.escape(str(title)[:200])}</b>"]
+        # Common metadata fields
+        for k, lbl in [
+            ("ProjectNumber", "과제번호"), ("PaperID", "논문ID"),
+            ("PatentNumber", "특허번호"), ("ReportNumber", "보고서번호"),
+            ("Agency", "기관"), ("agency", "기관"),
+            ("Author", "저자"), ("author", "저자"),
+            ("Year", "연도"), ("year", "연도"),
+            ("Date", "일자"),
+        ]:
+            v = r.get(k)
+            if v:
+                block.append(f"  {lbl} {_html.escape(str(v)[:80])}")
+        out.append("\n".join(block))
+    return "\n".join(out)
+
+
+async def cmd_kr_related(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_related <pjt_id> [paper|patent|researchreport|project]
+    — NTIS 연관 콘텐츠 (ConnectionContent). 과제번호로 관련 논문/
+    특허/보고서/연관과제 추천. 기본 type=researchreport.
+
+    예:
+      /kr_related 1234567890
+      /kr_related 1234567890 paper
+      /kr_related 1234567890 patent
+    """
+    if not _is_owner(update):
+        return
+    args = list(ctx.args or [])
+    if not args:
+        await update.message.reply_text(
+            "사용법: /kr_related <pjt_id> [paper|patent|researchreport|project]\n"
+            "예: /kr_related 1234567890 paper"
+        )
+        return
+    pjt_id = args[0].strip()
+    coll = "researchreport"
+    if len(args) >= 2 and args[1].lower() in (
+            "paper", "patent", "researchreport", "project"):
+        coll = args[1].lower()
+    await _typing(update, ctx)
+    status = await update.message.reply_text(
+        f"🔗 NTIS 연관 콘텐츠 ({coll}) 조회 중 — pjtId {pjt_id}..."
+    )
+    try:
+        from .agent import kisti_ntis as _ntis
+        rows = await _ntis.related_content(
+            pjt_id, collection_type=coll,
+        )
+    except Exception as e:
+        log.exception("ntis related failed")
+        await _edit_or_send(
+            ctx, status.chat.id, status.message_id,
+            f"⚠️ NTIS 연관 콘텐츠 실패: {_explain_error(e)}",
+        )
+        return
+    body = _format_ntis_related(pjt_id, rows, coll)
+    _record_command_qna(
+        update,
+        question=(update.message.text or
+                  f"/kr_related {pjt_id} {coll}").strip(),
+        body=body,
+        tools=["get_kr_related_content"],
+    )
+    pieces = _split_for_telegram(body)
+    if pieces:
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        except Exception:
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("ntis related fallback failed")
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("ntis related chunked send failed")
 
 
 def _format_dataon_results(query: str, rows: list[dict]) -> str:
@@ -9224,7 +9579,17 @@ def main():
     app.add_handler(CommandHandler("kr_papers", cmd_kr_papers))
     app.add_handler(CommandHandler("kr_patents", cmd_kr_patents))
     app.add_handler(CommandHandler("kr_reports", cmd_kr_reports))
+    app.add_handler(CommandHandler("kr_trends", cmd_kr_trends))
+    app.add_handler(CommandHandler("kr_science_mag", cmd_kr_science_mag))
+    app.add_handler(CommandHandler("kr_researcher", cmd_kr_researcher))
+    app.add_handler(CommandHandler("kr_organ", cmd_kr_organ))
+    app.add_handler(CommandHandler("kr_science_trend",
+                                    cmd_kr_science_trend))
+    app.add_handler(CommandHandler("kr_science_news", cmd_kr_science_news))
     app.add_handler(CommandHandler("kr_rnd_projects", cmd_kr_rnd_projects))
+    app.add_handler(CommandHandler("kr_classifications",
+                                    cmd_kr_classifications))
+    app.add_handler(CommandHandler("kr_related", cmd_kr_related))
     app.add_handler(CommandHandler("kr_research_data", cmd_kr_research_data))
     app.add_handler(CommandHandler("web_search", cmd_web_search))
     app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))

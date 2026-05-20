@@ -260,6 +260,40 @@ async def get_kr_report_detail(cn: str) -> dict:
     return {"result": row, "found": row is not None}
 
 
+# Additional ScienceON contents (5/6 new wrappers — same pattern as
+# above). All 9 ScienceON targets share metaCode result shape so the
+# agent learns one render pattern for all.
+
+async def search_kr_trends(query: str, limit: int = 10) -> dict:
+    rows = await kisti_scienceon.search_trends(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
+async def search_kr_science_columns(query: str, limit: int = 10) -> dict:
+    rows = await kisti_scienceon.search_science_columns(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
+async def search_kr_researchers(query: str, limit: int = 10) -> dict:
+    rows = await kisti_scienceon.search_researchers(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
+async def search_kr_organs(query: str, limit: int = 10) -> dict:
+    rows = await kisti_scienceon.search_organs(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
+async def search_kr_science_trends(query: str, limit: int = 10) -> dict:
+    rows = await kisti_scienceon.search_science_trends(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
+async def search_kr_science_news(query: str, limit: int = 10) -> dict:
+    rows = await kisti_scienceon.search_science_news(query, limit=limit)
+    return {"results": rows, "count": len(rows)}
+
+
 # ---------------------------------------------------------------------------
 # KISTI NTIS tools — national R&D project + classification +
 # related-content. NTIS_API_KEY single env var covers all three
@@ -478,6 +512,12 @@ TOOL_DISPATCH = {
     "get_kr_patent_citations": get_kr_patent_citations,
     "search_kr_reports": search_kr_reports,
     "get_kr_report_detail": get_kr_report_detail,
+    "search_kr_trends": search_kr_trends,
+    "search_kr_science_columns": search_kr_science_columns,
+    "search_kr_researchers": search_kr_researchers,
+    "search_kr_organs": search_kr_organs,
+    "search_kr_science_trends": search_kr_science_trends,
+    "search_kr_science_news": search_kr_science_news,
     "search_kr_rnd_projects": search_kr_rnd_projects,
     "recommend_kr_classifications": recommend_kr_classifications,
     "get_kr_related_content": get_kr_related_content,
@@ -807,6 +847,131 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                 "cn": types.Schema(type=types.Type.STRING),
             },
             required=["cn"],
+        ),
+    ),
+    # Additional ScienceON contents (ATT/SCENT/RESEARCHER/ORGAN/
+    # TREND/SNEWS). All keyword-search; CN-keyed for detail lookup
+    # via the existing browse pattern. Use whichever best matches
+    # the user's intent — "해외 동향" → trends, "연구자 누구" →
+    # researcher, "기관 활동" → organ, etc.
+    types.FunctionDeclaration(
+        name="search_kr_trends",
+        description=(
+            "Korean overseas S&T trends via KISTI ScienceON (ATT). "
+            "Curated review articles about foreign tech developments. "
+            "Different from NTIS 정책동향 — ATT is research-grade trend "
+            "synthesis, not policy briefings."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_kr_science_columns",
+        description=(
+            "KISTI 과학향기 columns (SCENT) — popular-science magazine "
+            "articles + commentary. Lighter than ARTI/REPORT, useful "
+            "for background context / explainers."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_kr_researchers",
+        description=(
+            "KISTI ScienceON identified researcher index (RESEARCHER). "
+            "Search Korean researcher profiles by name or field. "
+            "Returns researcher identity + their publications/patents/"
+            "reports list. Use when the question targets a SPECIFIC "
+            "person ('김XX 연구자 논문', '양자컴퓨팅 연구자 누구')."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_kr_organs",
+        description=(
+            "KISTI ScienceON identified institution index (ORGAN). "
+            "Search Korean research institutions / universities / "
+            "companies + their publications. Combine with "
+            "search_company_patents (KIPRIS) for richer company profile."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_kr_science_trends",
+        description=(
+            "KISTI ScienceON Trend (TREND) — curated topic-trend "
+            "reports with paper/patent statistics + expert commentary. "
+            "Different from search_kr_trends (overseas ATT) — TREND "
+            "is meta-analysis of Korean + international literature."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_kr_science_news",
+        description=(
+            "KISTI ScienceON weekly S&T news (SNEWS) — curated Korean "
+            "+ overseas tech news by week/month. Use for very recent "
+            "(this-week / this-month) developments; for older content "
+            "prefer search_kr_papers / search_kr_trends."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(type=types.Type.STRING),
+                "limit": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max results (1-100). Default 10.",
+                ),
+            },
+            required=["query"],
         ),
     ),
     # KISTI NTIS tools — government R&D projects + classification

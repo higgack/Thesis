@@ -289,3 +289,126 @@ async def get_report_detail(cn: str) -> dict[str, Any] | None:
             "cn": cn,
         })
         return rows[0] if rows else None
+
+
+# ---------------------------------------------------------------------------
+# Additional ScienceON contents — same /openapicall.do action=search/
+# browse pattern, just a different `target` API ticket per content type.
+# All 6 require their own 활용신청 approval on the ScienceON portal
+# (user activated all 9 contents at registration time, so these all
+# work with the existing SCIENCEON_API_KEY + CLIENT_ID + MAC).
+#
+# Naming follows the upstream API ticket convention:
+#   ATT        해외과학기술동향 (overseas tech trends)
+#   SCENT      과학향기 (science magazine column)
+#   RESEARCHER 식별된 연구자 인덱스 (research authority)
+#   ORGAN      식별된 연구기관 인덱스
+#   TREND      ScienceON Trend (curated topic trend)
+#   SNEWS      금주의 과학기술뉴스
+# ---------------------------------------------------------------------------
+
+
+async def _scienceon_search(target: str, query: str,
+                            limit: int) -> list[dict[str, Any]]:
+    """Internal generic search across any ScienceON target. All 9
+    content tickets use the same {"BI": query} searchQuery shape, so
+    a single helper covers them all — per-content wrappers below just
+    pass the right target string."""
+    if not _have_credentials():
+        return []
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        token = await _get_token(http)
+        if not token:
+            return []
+        client_id = os.getenv("SCIENCEON_CLIENT_ID", "").strip()
+        search_query = json.dumps({"BI": query}, ensure_ascii=False)
+        return await _call(http, "search", target, token, client_id, {
+            "searchQuery": search_query,
+            "curPage": "1",
+            "rowCount": str(min(max(1, limit), 100)),
+        })
+
+
+async def _scienceon_browse(target: str,
+                            cn: str) -> dict[str, Any] | None:
+    """Generic browse-by-CN for any target."""
+    if not _have_credentials() or not cn:
+        return None
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        token = await _get_token(http)
+        if not token:
+            return None
+        client_id = os.getenv("SCIENCEON_CLIENT_ID", "").strip()
+        rows = await _call(http, "browse", target, token, client_id, {
+            "cn": cn,
+        })
+        return rows[0] if rows else None
+
+
+async def search_trends(query: str, limit: int = 10) -> list[dict[str, Any]]:
+    """ATT — 해외과학기술동향 검색. Overseas S&T trend articles
+    indexed by KISTI (NTIS 과학기술 정책동향 different from this)."""
+    return await _scienceon_search("ATT", query, limit)
+
+
+async def get_trend_detail(cn: str) -> dict[str, Any] | None:
+    return await _scienceon_browse("ATT", cn)
+
+
+async def search_science_columns(query: str,
+                                 limit: int = 10) -> list[dict[str, Any]]:
+    """SCENT — 과학향기 칼럼 검색. Science popularization magazine
+    articles (column / common-sense pieces). Less research-grade than
+    ARTI/REPORT, useful for context / background reading."""
+    return await _scienceon_search("SCENT", query, limit)
+
+
+async def get_science_column_detail(cn: str) -> dict[str, Any] | None:
+    return await _scienceon_browse("SCENT", cn)
+
+
+async def search_researchers(query: str,
+                             limit: int = 10) -> list[dict[str, Any]]:
+    """RESEARCHER — 국내 식별 연구자 인덱스 검색. Returns researcher
+    profile rows (보통 이름·소속·연구분야 + 그 연구자의 논문/보고서/
+    특허 목록 링크). Different from /search_papers's author field —
+    this is an explicit researcher-identity index."""
+    return await _scienceon_search("RESEARCHER", query, limit)
+
+
+async def get_researcher_detail(cn: str) -> dict[str, Any] | None:
+    return await _scienceon_browse("RESEARCHER", cn)
+
+
+async def search_organs(query: str,
+                        limit: int = 10) -> list[dict[str, Any]]:
+    """ORGAN — 국내 식별 연구기관 인덱스 검색. Returns institution
+    profile rows + that institution's publications. 회사 분석 시
+    KIPRIS 출원인 검색과 조합하면 더 풍부."""
+    return await _scienceon_search("ORGAN", query, limit)
+
+
+async def get_organ_detail(cn: str) -> dict[str, Any] | None:
+    return await _scienceon_browse("ORGAN", cn)
+
+
+async def search_science_trends(query: str,
+                                limit: int = 10) -> list[dict[str, Any]]:
+    """TREND — ScienceON Trend 검색. KISTI 큐레이션 토픽별 트렌드
+    리포트 (논문/특허 통계 + 전문가 해설)."""
+    return await _scienceon_search("TREND", query, limit)
+
+
+async def get_science_trend_detail(cn: str) -> dict[str, Any] | None:
+    return await _scienceon_browse("TREND", cn)
+
+
+async def search_science_news(query: str,
+                              limit: int = 10) -> list[dict[str, Any]]:
+    """SNEWS — 금주의 과학기술뉴스 검색. 주차별/월별 큐레이션 국내외
+    과기 뉴스 (Naver/언론사 원본 링크 포함)."""
+    return await _scienceon_search("SNEWS", query, limit)
+
+
+async def get_science_news_detail(cn: str) -> dict[str, Any] | None:
+    return await _scienceon_browse("SNEWS", cn)
