@@ -6174,11 +6174,28 @@ async def cmd_citing_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 _KISTI_FIELD_LABELS = {
+    # Long-name keys returned by ScienceON /openapicall.do (confirmed
+    # live 2026-05). The earlier short-codes (TI/AU/AB/JN/AP/IN ...)
+    # were a guess from vendored kisti-mcp and don't match the actual
+    # response — leave them in the table as harmless fallbacks for
+    # any target that might use them, but the new keys below are the
+    # ones that actually fire for ARTI/PATENT/REPORT.
+    "Title": "제목", "Title2": "원어 제목",
+    "Author": "저자", "Author2": "원어 저자",
+    "Abstract": "초록", "Abstract2": "원어 초록",
+    "Affiliation": "기관", "Affiliation2": "원어 기관",
+    "JournalName": "저널", "Publisher": "출판사",
+    "Pubyear": "발행연도", "Pubdate": "발행일",
+    "PageInfo": "페이지", "Keyword": "키워드", "Keyword2": "원어 키워드",
+    "VolNo1": "권", "VolNo2": "호", "ISSN": "ISSN", "ISBN": "ISBN",
+    "DOI": "DOI", "CN": "CN", "Lang": "언어", "Degree": "학위",
+    # Legacy / fallback short codes — kept in case any of the 6 newly
+    # added targets (RESEARCHER/ORGAN/TREND/SNEWS/SCENT/ATT) return
+    # them. Harmless if absent.
     "TI": "제목", "TIE": "원어 제목",
     "AU": "저자", "AUE": "원어 저자",
     "AB": "초록", "ABE": "원어 초록",
     "AF": "기관", "JN": "저널",
-    "DOI": "DOI", "CN": "CN",
     "YR": "발행연도", "VL": "권", "IS": "호",
     "PG": "페이지", "KW": "키워드",
     # patent-specific
@@ -6241,12 +6258,24 @@ def _format_kisti_results(query: str, results: list[dict],
                      kind, sorted(results[0].keys()))
         except Exception:
             pass
-    # Title fallback chain — covers ARTI/PATENT/REPORT (TI/TIE) +
-    # RESEARCHER (AUI/AUE name) + ORGAN (AFI/AFE) + TREND/SNEWS/SCENT
-    # which mostly carry TI but some variants use SBJ/SUB/HD/HDN.
-    _title_keys = ("TI", "TIE", "AUI", "AUE", "AU",
-                   "AFI", "AFE", "AF", "ORN", "ORE",
-                   "SBJ", "SUB", "HD", "HDN", "NM", "ENM")
+    # Title fallback chain — new ScienceON keys first, then short
+    # legacy codes for any target whose response format we haven't
+    # confirmed yet. RESEARCHER/ORGAN may use Author/Affiliation as
+    # their "title" since they have no Title field.
+    _title_keys = ("Title", "Title2",
+                   "TI", "TIE",
+                   "Author", "AUI", "AUE", "AU",
+                   "Affiliation", "AFI", "AFE", "AF",
+                   "ORN", "ORE", "SBJ", "SUB", "HD", "HDN", "NM", "ENM")
+    _meta_keys = ("Author", "Author2", "Affiliation", "JournalName",
+                  "Pubyear", "Publisher", "PageInfo", "VolNo1", "VolNo2",
+                  "ISSN", "ISBN", "Keyword", "Lang", "Degree",
+                  "CN", "DOI",
+                  # legacy short codes — fire on any target still
+                  # using the older metaCode shape
+                  "AU", "AUE", "AUI", "AP", "IN", "JN",
+                  "AF", "AFI", "AFE", "OR", "ORN", "MJ", "POS",
+                  "YR", "APD", "RGD", "DT", "IPC")
     for i, r in enumerate(results, 1):
         title_raw = ""
         for tk in _title_keys:
@@ -6255,11 +6284,8 @@ def _format_kisti_results(query: str, results: list[dict],
                 title_raw = v
                 break
         title = _html.escape(title_raw or "(제목 없음)")[:240]
-        # Build meta line from whatever fields exist for this record kind
         parts: list[str] = []
-        for k in ("CN", "AU", "AUE", "AUI", "AP", "IN", "JN",
-                  "AF", "AFI", "AFE", "OR", "ORN", "MJ", "POS",
-                  "YR", "APD", "RGD", "DT", "IPC", "DOI"):
+        for k in _meta_keys:
             v = (r.get(k) or "").strip()
             if v:
                 lbl = _KISTI_FIELD_LABELS.get(k, k)
@@ -6269,15 +6295,23 @@ def _format_kisti_results(query: str, results: list[dict],
         block = [f"\n{emoji} <b>{i}. {title}</b>"]
         if meta_line:
             block.append(f"   {meta_line}")
-        abstract = (r.get("AB") or r.get("ABE") or "").strip()
+        abstract = (r.get("Abstract") or r.get("Abstract2")
+                    or r.get("AB") or r.get("ABE") or "").strip()
         if abstract:
             block.append(f"   {_html.escape(_truncate_at_sentence(abstract, 700))}")
-        cn = (r.get("CN") or "").strip()
-        if cn:
-            block.append(
-                f"   → https://scienceon.kisti.re.kr/srch/"
-                f"selectPORSrch{sub}.do?cn={cn}"
-            )
+        # Prefer the ContentURL the API itself hands back (more
+        # accurate than reconstructing from CN + subpath). Fall back
+        # to the constructed link, then MobileURL.
+        deep = (r.get("ContentURL") or "").strip()
+        if not deep:
+            cn = (r.get("CN") or "").strip()
+            if cn:
+                deep = (f"https://scienceon.kisti.re.kr/srch/"
+                        f"selectPORSrch{sub}.do?cn={cn}")
+        if not deep:
+            deep = (r.get("MobileURL") or "").strip()
+        if deep:
+            block.append(f"   → {deep}")
         out.append("\n".join(block))
     return "\n".join(out)
 
