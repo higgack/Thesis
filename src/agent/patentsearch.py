@@ -89,6 +89,10 @@ def _empty(p: dict, source: str) -> dict:
         "family_id": p.get("family_id") or "",
         "url": p.get("url") or "",
         "source": source,
+        # Optional sort key used by callers that order multi-row
+        # responses (e.g. /company_patents). YYYYMMDD or "" — set by
+        # _kipris_to_unified, ignored by EPO rows.
+        "_sort_date": p.get("_sort_date") or "",
     }
 
 
@@ -139,11 +143,29 @@ def _kipris_to_unified(item) -> dict:
             f"method=biblioFrame&applno={app_num}"
         ) if app_num else ""
 
+    # Status / kind label derived from which numbers KIPRIS returned:
+    #   RegistrationNumber present → 등록 (granted)
+    #   OpeningNumber present (no reg) → 공개 (published)
+    #   Neither (only ApplicationNumber) → 출원 (filed only)
+    if reg_num:
+        kind_label = "등록"
+    elif open_num:
+        kind_label = "공개"
+    else:
+        kind_label = "출원"
+
+    # ISO-style sort key: prefer the freshest meaningful event so the
+    # caller can rank rows newest-first. Falls back to application
+    # date when neither registration nor publication exists.
+    sort_date_raw = reg_date_raw or open_date_raw or app_date_raw
+
     return _empty({
         "title": title,
         "patent_number": patent_number,
         "date": date,
         "year": year,
+        "kind_label": kind_label,
+        "_sort_date": sort_date_raw,  # YYYYMMDD, used by caller for ordering
         # KIPRIS applicantNameSearchInfo doesn't return inventor or
         # abstract in the list response — only application number,
         # title, applicant, dates, status. We could fetch detail per
@@ -210,7 +232,31 @@ async def _kipris_by_applicant(applicant: str, limit: int) -> list[dict]:
             out.append(_kipris_to_unified(item))
         except Exception:
             log.exception("kipris row parse failed (skipping)")
-    return out
+    return _sort_kipris_rows(out)
+
+
+def _sort_kipris_rows(rows: list[dict]) -> list[dict]:
+    """Newest-first ordering for any KIPRIS row list.
+
+    Primary key: _sort_date (YYYYMMDD from registration / publication /
+    application date, whichever is freshest). Secondary tiebreaker:
+    kind 등록 > 공개 > 출원 so granted patents float above merely-
+    published ones on the same date. Rows without _sort_date sink to
+    the bottom rather than getting an arbitrary slot.
+
+    Applied by /company_patents and /citing_patents so the user sees
+    the most recent / most significant patents first instead of
+    KIPRIS's internal (mostly insertion-order) sequence.
+    """
+    _kind_weight = {"등록": 0, "공개": 1, "출원": 2}
+    def _key(r: dict) -> tuple:
+        raw = (r.get("_sort_date") or "").strip()
+        date_int = int(raw) if raw.isdigit() else 0
+        return (
+            -date_int,  # newest first
+            _kind_weight.get(r.get("kind_label") or "", 9),
+        )
+    return sorted(rows, key=_key)
 
 
 async def _enrich_kipris_rows_with_details(
@@ -396,7 +442,13 @@ async def _kipris_citing(application_number: str) -> list[dict]:
         if not citing_app:
             continue
         # Build a thin unified row — title/abstract not in citing
-        # response (would need a second detail fetch per row).
+        # response (would need a second detail fetch per row). Derive
+        # the year from the application number (`10YYYYNNNNNNN`) so
+        # the citing list can sort newest-first like other KIPRIS
+        # views.
+        year_digits = citing_app[2:6] if len(citing_app) >= 6 else ""
+        sort_proxy = (f"{year_digits}1231"
+                      if year_digits.isdigit() else "")
         url = (
             f"https://kpat.kipris.or.kr/kpat/biblioa.do?"
             f"method=biblioFrame&applno={citing_app}"
@@ -404,15 +456,18 @@ async def _kipris_citing(application_number: str) -> list[dict]:
         out.append(_empty({
             "title": f"[인용 특허] {status_name or '상태 미상'}",
             "patent_number": f"KR-출원{citing_app}",
-            "date": "",
-            "year": None,
+            "date": (f"{year_digits[:4]}-01-01"
+                     if year_digits.isdigit() else ""),
+            "year": int(year_digits) if year_digits.isdigit() else None,
+            "kind_label": status_name or "",
+            "_sort_date": sort_proxy,
             "inventors": [],
             "assignee": cite_type or "",
             "abstract": "",
             "claims_count": None,
             "url": url,
         }, "KIPRIS"))
-    return out
+    return _sort_kipris_rows(out)
 
 
 async def get_citing_patents(application_number: str) -> list[dict]:
