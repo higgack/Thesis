@@ -1579,14 +1579,21 @@ async def _kipris_priority_lookup(application_number: str) -> list[dict]:
 
 async def _kipris_inventor_search(inventor: str,
                                   limit: int) -> list[dict]:
-    """발명자 (#13) — 발명자 이름으로 특허 검색."""
+    """발명자 (#13) — 발명자 이름으로 특허 검색.
+
+    KIPRIS Plus spec uses param name `inventors` (plural, with 's')
+    — not `inventor`. Sending `inventor=` returns resultCode 10
+    INVALID_REQUEST_PARAMETER_ERROR.
+    """
     root = await _kipris_get_xml(_KIPRIS_INVENTOR_PATH, {
-        "inventor": inventor,
+        "inventors": inventor,
         "docsStart": "1",
         "docsCount": str(min(max(1, limit), 100)),
         "patent": "true",
         "utility": "false",
         "lastvalue": "",
+        "descSort": "true",
+        "sortSpec": "AD",
     }, "inventor")
     if root is None:
         return []
