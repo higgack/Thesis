@@ -983,8 +983,6 @@ _TOOL_EMOJI = {
     "search_kr_govt_reports": "🇰🇷📑",
     "search_kr_agency_rnd": "🇰🇷🏛️",
     "search_kr_rnd_issues": "🇰🇷📈",
-    "search_kr_research_data": "🇰🇷💾",
-    "get_kr_research_data_detail": "🇰🇷💾",
     "web_search": "🌐",
     "ingest_url": "📥",
 }
@@ -1260,13 +1258,12 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   ScienceON: /kr_papers · /kr_patents · /kr_reports · /kr_trends · /kr_researcher · /kr_organ · /kr_science_trend
   NTIS: /kr_rnd_projects · /kr_classifications · /kr_related
         /kr_outcomes · /kr_govt_reports · /kr_agency_rnd · /kr_rnd_issues
-  DataON: /kr_research_data
 
 ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup · /patents_guide · /papers_guide
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【3. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS·DataON · ⚖️ patents EPO · 🌐 web · 📥 ingest · 한국어번역
+<b>【3. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS · ⚖️ patents EPO · 🌐 web · 📥 ingest · 한국어번역
 
 <b>【3-1. 회사 분석】</b> "회사명+실적/매출" → 본문 + 신사업(·합의 N건) + 📌 실적 표(A./F.·YoY·QoQ) + xychart + 분석가 가이던스 + brain/web 분리. 숫자 audit 자동.
 
@@ -1298,7 +1295,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
 
-<b>【12. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS/DataON 활용신청 승인 대기 — 승인 전 결과 없음"""
+<b>【12. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS 14건 활용신청 + NTIS 5건 추가신청 승인 대기"""
 
 
 # Detailed multi-section guide for the patent suite. Kept separate
@@ -1529,7 +1526,7 @@ arXiv · YouTube 자막 · Jina readability. 차단: LinkedIn/FB/IG/주요 paywa
 • <b>/papers_guide</b> — /search_papers_advanced · /paper_stats (6 view: overview/trend/newcomers/network/keywords/top)
 
 ═══════════════════════════════════════
-<b>🇰🇷 8. 한국 (KIPRIS / ScienceON / NTIS / DataON)</b>
+<b>🇰🇷 8. 한국 (KIPRIS / ScienceON / NTIS)</b>
 ═══════════════════════════════════════
 
 <b>/company_patents &lt;회사명&gt;</b>
@@ -1603,12 +1600,6 @@ NTIS 수행기관 R&amp;D현황 — 기관별 과제·예산·논문 통계. ⏳
 <b>/kr_rnd_issues &lt;토픽&gt;</b>
 NTIS 이슈로보는R&amp;D — 정부R&amp;D 한정 트렌드. ⏳ 승인 대기.
 
-<b>💾 DataON (공공 연구데이터)</b>
-
-<b>/kr_research_data &lt;키워드&gt;</b>
-DataON 공공 연구데이터셋 — svcId · 제목 · 작성자 · DOI · 라이선스.
-※ DataON 회원가입 승인 대기 중.
-
 승인 상태 (2026-05 기준):
 ✅ EPO OPS — 활성 (글로벌 특허)
 ⏳ KIPRIS Plus — 14건 활용신청 승인 대기 (영업일 1-3일)
@@ -1621,7 +1612,6 @@ DataON 공공 연구데이터셋 — svcId · 제목 · 작성자 · DOI · 라�
 ✅ KISTI NTIS — 3건 활성 (public_project · ConnectionContent) +
    ⏳ 5건 신청중 (rcmncls 기관용 · public_paper · public_patent ·
    public_equipment · public_report · public_organization · public_issue)
-⏳ KISTI DataON — 회원가입 승인 대기
 
 ═══════════════════════════════════════
 <b>📘 9. 가이드 / 기타</b>
@@ -1649,7 +1639,7 @@ DataON 공공 연구데이터셋 — svcId · 제목 · 작성자 · DOI · 라�
 ✅ /search_papers · _advanced · _stats
 ✅ /company_patents · /patent_detail · /citing_patents
 ✅ /kr_papers · /kr_patents · /kr_reports
-✅ /kr_rnd_projects · /kr_research_data
+✅ /kr_rnd_projects · /kr_outcomes · /kr_govt_reports · /kr_agency_rnd · /kr_rnd_issues
 
 기록 안 함 (운영/조회 명령어):
 ❌ /find · /show · /recent · /stats · /status · /usage · /cost
@@ -1797,7 +1787,6 @@ KIPRIS Plus 단건 상세 / 인용 네트워크. 출원번호 (숫자만) 입력
    /kr_patents (ScienceON) = 한글 메타 풍부, /search_patents (EPO)
    = 글로벌 영문 위주 — 용도 분리해 사용
 ✅ <b>KISTI NTIS</b> — 활성 (3건 승인, /kr_rnd_projects 동작 + 자연어 분류추천/연관콘텐츠 가능)
-⏳ <b>KISTI DataON</b> — 회원가입 승인 대기 (/kr_research_data)
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -7315,111 +7304,6 @@ async def cmd_kr_rnd_issues(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-def _format_dataon_results(query: str, rows: list[dict]) -> str:
-    """DataON dataset rows. Field shapes vary by endpoint version
-    — try the documented English keys then fall back to Korean."""
-    import html as _html
-    if not rows:
-        return (
-            f"🔍 '<b>{_html.escape(query)}</b>' DataON 연구데이터 결과 없음.\n"
-            f"(DATAON_RESEARCHDATA_API_KEY 미설정 시에도 동일 메시지.)"
-        )
-    out = [
-        f"💾 <b>DataON 연구데이터 검색 결과 — '{_html.escape(query)}'</b>",
-        f"<i>{len(rows)}건 · DataON</i>",
-    ]
-    for i, r in enumerate(rows, 1):
-        title = _html.escape(
-            (r.get("title") or r.get("Title") or r.get("제목")
-             or "(제목 없음)")
-        )[:240]
-        svc_id = (r.get("svcId") or r.get("id") or "").strip()
-        creator = (r.get("creator") or r.get("작성자") or "").strip()
-        doi = (r.get("doi") or r.get("DOI") or "").strip()
-        pub = (r.get("publishedDate") or r.get("발행일")
-               or r.get("date") or "").strip()
-        license_ = (r.get("license") or r.get("라이선스") or "").strip()
-        parts: list[str] = []
-        if svc_id:
-            parts.append(f"svcId {_html.escape(svc_id)}")
-        if creator:
-            parts.append(f"작성자 {_html.escape(creator[:60])}")
-        if pub:
-            parts.append(f"발행 {_html.escape(pub[:20])}")
-        if doi:
-            parts.append(f"DOI {_html.escape(doi[:60])}")
-        if license_:
-            parts.append(f"License {_html.escape(license_[:30])}")
-        block = [f"\n💾 <b>{i}. {title}</b>"]
-        if parts:
-            block.append(f"   {' · '.join(parts[:5])}")
-        if svc_id:
-            block.append(
-                f"   → https://dataon.kisti.re.kr/search/view.do?svcId={svc_id}"
-            )
-        out.append("\n".join(block))
-    return "\n".join(out)
-
-
-async def cmd_kr_research_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/kr_research_data <키워드> — KISTI DataON 연구데이터 검색."""
-    if not _is_owner(update):
-        return
-    q = " ".join(ctx.args).strip()
-    if not q:
-        await update.message.reply_text("사용법: /kr_research_data <검색어>")
-        return
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"🔍 '{q}' DataON 연구데이터 검색 중..."
-    )
-    try:
-        from .agent import kisti_dataon as _dataon
-        rows = await _dataon.search_research_data(q, limit=10)
-    except Exception as e:
-        log.exception("dataon search failed for %r", q)
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=f"⚠️ DataON 검색 실패: {_explain_error(e)}",
-            )
-        except Exception:
-            pass
-        return
-    body = _format_dataon_results(q, rows)
-    _record_command_qna(
-        update,
-        question=(update.message.text or f"/kr_research_data {q}").strip(),
-        body=body,
-        tools=["search_kr_research_data"],
-        sources=[r.get("svcId", "") for r in rows if r.get("svcId")],
-    )
-    pieces = _split_for_telegram(body)
-    if pieces:
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("dataon fallback send failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("dataon chunked send failed")
-
-
 async def cmd_web_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
@@ -10118,7 +10002,6 @@ def main():
     app.add_handler(CommandHandler("kr_govt_reports", cmd_kr_govt_reports))
     app.add_handler(CommandHandler("kr_agency_rnd", cmd_kr_agency_rnd))
     app.add_handler(CommandHandler("kr_rnd_issues", cmd_kr_rnd_issues))
-    app.add_handler(CommandHandler("kr_research_data", cmd_kr_research_data))
     app.add_handler(CommandHandler("web_search", cmd_web_search))
     app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))
     app.add_handler(CommandHandler("reset", cmd_reset))

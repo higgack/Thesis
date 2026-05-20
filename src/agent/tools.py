@@ -14,7 +14,7 @@ from .. import config
 from ..store import meta, vector, cost
 from ..ingest import pipeline
 from . import (retrieve, papersearch, patentsearch,
-               kisti_scienceon, kisti_ntis, kisti_dataon)
+               kisti_scienceon, kisti_ntis)
 
 log = logging.getLogger(__name__)
 
@@ -337,21 +337,6 @@ async def search_kr_rnd_issues(query: str, limit: int = 10) -> dict:
     return {"results": rows, "count": len(rows)}
 
 
-# ---------------------------------------------------------------------------
-# KISTI DataON tools — public research dataset registry. Two
-# separate API keys (search vs metadata detail).
-# ---------------------------------------------------------------------------
-
-async def search_kr_research_data(query: str, limit: int = 10) -> dict:
-    rows = await kisti_dataon.search_research_data(query, limit=limit)
-    return {"results": rows, "count": len(rows)}
-
-
-async def get_kr_research_data_detail(svc_id: str) -> dict:
-    row = await kisti_dataon.get_research_data_detail(svc_id)
-    return {"result": row, "found": row is not None}
-
-
 async def ingest_url(url: str) -> dict:
     r = await pipeline.ingest_url(url)
     return {
@@ -537,8 +522,6 @@ TOOL_DISPATCH = {
     "search_kr_govt_reports": search_kr_govt_reports,
     "search_kr_agency_rnd": search_kr_agency_rnd,
     "search_kr_rnd_issues": search_kr_rnd_issues,
-    "search_kr_research_data": search_kr_research_data,
-    "get_kr_research_data_detail": get_kr_research_data_detail,
     "ingest_url": ingest_url,
     "recent_docs": recent_docs,
     "compare_papers": compare_papers,
@@ -1116,47 +1099,6 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                 ),
             },
             required=["query"],
-        ),
-    ),
-    # KISTI DataON tools — public research dataset registry.
-    # Separate search vs metadata-detail API keys.
-    types.FunctionDeclaration(
-        name="search_kr_research_data",
-        description=(
-            "Korean public research dataset search via DataON. "
-            "Returns dataset rows with svcId (used by "
-            "get_kr_research_data_detail) + 제목 + 작성자 + DOI "
-            "+ 발행일 + license. Use for '연구데이터 / 데이터셋 / "
-            "공공 데이터' style questions."
-        ),
-        parameters=types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                "query": types.Schema(type=types.Type.STRING),
-                "limit": types.Schema(
-                    type=types.Type.INTEGER,
-                    description="Max results (1-100). Default 10.",
-                ),
-            },
-            required=["query"],
-        ),
-    ),
-    types.FunctionDeclaration(
-        name="get_kr_research_data_detail",
-        description=(
-            "Dataset metadata detail by svcId. Returns license, "
-            "format, rights, DOI, contributors. Uses the separate "
-            "DataON metadata API key (user must activate both keys)."
-        ),
-        parameters=types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                "svc_id": types.Schema(
-                    type=types.Type.STRING,
-                    description="DataON svcId from search results.",
-                ),
-            },
-            required=["svc_id"],
         ),
     ),
 ])
