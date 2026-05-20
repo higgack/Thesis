@@ -404,12 +404,31 @@ async def get_report_detail(cn: str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
+# Per-target searchField mapping. Most ScienceON contents accept
+# {"BI": query} (whole-record full-text search), but SNEWS (과기뉴스)
+# and SCENT (과학향기) reject BI with "searchField 값 오류" 400 and
+# require {"TI": query} (title-only) instead. Order matters: the
+# fallback list is tried in sequence until a 200 with rows arrives.
+_TARGET_SEARCH_FIELDS: dict[str, tuple[str, ...]] = {
+    "ARTI":       ("BI",),
+    "PATENT":     ("BI",),
+    "REPORT":     ("BI",),
+    "RESEARCHER": ("BI",),
+    "ORGAN":      ("BI",),
+    "TREND":      ("BI",),
+    "ATT":        ("BI",),
+    "SNEWS":      ("TI", "BI"),   # 'BI' rejected → try 'TI' first
+    "SCENT":      ("TI", "BI"),
+}
+
+
 async def _scienceon_search(target: str, query: str,
                             limit: int) -> list[dict[str, Any]]:
-    """Internal generic search across any ScienceON target. All 9
-    content tickets use the same {"BI": query} searchQuery shape, so
-    a single helper covers them all — per-content wrappers below just
-    pass the right target string."""
+    """Internal generic search across any ScienceON target. Most
+    contents accept {"BI": query} but two (SNEWS/SCENT) need {"TI":
+    query} — _TARGET_SEARCH_FIELDS hardcodes the right field per
+    target. The helper tries the listed fields in order and stops at
+    the first 200-with-data response."""
     if not _have_credentials():
         return []
     async with httpx.AsyncClient(timeout=30.0) as http:
@@ -417,12 +436,17 @@ async def _scienceon_search(target: str, query: str,
         if not token:
             return []
         client_id = os.getenv("SCIENCEON_CLIENT_ID", "").strip()
-        search_query = json.dumps({"BI": query}, ensure_ascii=False)
-        return await _call(http, "search", target, token, client_id, {
-            "searchQuery": search_query,
-            "curPage": "1",
-            "rowCount": str(min(max(1, limit), 100)),
-        })
+        fields = _TARGET_SEARCH_FIELDS.get(target, ("BI",))
+        for field in fields:
+            search_query = json.dumps({field: query}, ensure_ascii=False)
+            rows = await _call(http, "search", target, token, client_id, {
+                "searchQuery": search_query,
+                "curPage": "1",
+                "rowCount": str(min(max(1, limit), 100)),
+            })
+            if rows:
+                return rows
+        return []
 
 
 async def _scienceon_browse(target: str,

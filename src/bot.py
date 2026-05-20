@@ -6209,6 +6209,11 @@ _KISTI_FIELD_LABELS = {
     "PublDate": "공개일", "PublNum": "공개번호",
     "NoticeDate": "공고일", "NoticeNumber": "공고번호",
     "PatentStatus": "상태", "Nation": "국가",
+    # TREND target (ScienceON 큐레이션 트렌드 보고서): Definition
+    # carries the descriptive body, RelatedKeywords + PdfURL +
+    # DefinitionSourceURL extend the meta line.
+    "Definition": "정의", "RelatedKeywords": "연관 키워드",
+    "PdfURL": "PDF", "DefinitionSourceURL": "출처",
     # Legacy / fallback short codes — kept in case any of the 6 newly
     # added targets (RESEARCHER/ORGAN/TREND/SNEWS/SCENT/ATT) return
     # them. Harmless if absent.
@@ -6309,6 +6314,9 @@ def _format_kisti_results(query: str, results: list[dict],
                   "PatentStatus", "Nation", "IPC",
                   "ApplNum", "GrantNum", "PublNum", "NoticeDate",
                   "NoticeNumber",
+                  # TREND target meta: related keywords + PDF link
+                  # (Definition itself goes to the abstract line)
+                  "RelatedKeywords", "PdfURL",
                   "CN", "DOI",
                   # legacy short codes — fire on any target still
                   # using the older metaCode shape
@@ -6355,7 +6363,10 @@ def _format_kisti_results(query: str, results: list[dict],
         if meta_line:
             block.append(f"   {meta_line}")
         abstract = (r.get("Abstract") or r.get("Abstract2")
-                    or r.get("AB") or r.get("ABE") or "").strip()
+                    or r.get("AB") or r.get("ABE")
+                    # TREND target: Definition holds the descriptive
+                    # body of the curated trend report
+                    or r.get("Definition") or "").strip()
         if abstract:
             block.append(f"   {_html.escape(_truncate_at_sentence(abstract, 700))}")
         # Prefer the ContentURL the API itself hands back (more
