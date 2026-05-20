@@ -274,7 +274,17 @@ async def recommend_classifications(
                 log.warning("ntis classify %d: %r",
                             r.status_code, r.text[:200])
                 return []
-            return _parse_xml_records(r.text)
+            rows = _parse_xml_records(r.text)
+            # Diagnostic: log first 400 chars of raw XML response when
+            # parser returns zero rows, so we can confirm whether NTIS
+            # genuinely matched nothing or our parser missed the tag.
+            if not rows:
+                log.info(
+                    "ntis classify zero rows for %r (raw resp len=%d, "
+                    "first 400 chars: %r)",
+                    abstract[:80], len(r.text), r.text[:400],
+                )
+            return rows
     except Exception as e:
         log.warning("ntis recommend_classifications failed: %s", e)
         return []
