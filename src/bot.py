@@ -1255,6 +1255,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
+          /kipris_{search,pub,reg,inventor,status,family,claims,priority}
   ScienceON: /kr_papers · /kr_patents · /kr_reports · /kr_trends · /kr_researcher · /kr_organ · /kr_science_trend
   NTIS: /kr_rnd_projects · /kr_classifications · /kr_related
         /kr_outcomes · /kr_govt_reports · /kr_agency_rnd · /kr_rnd_issues
@@ -1543,6 +1544,35 @@ KIPRIS 단건 상세 + abstract + IPC.
 <b>/citing_patents &lt;출원번호&gt;</b>
 KIPRIS 인용 네트워크 — 이 특허를 인용한 후속.
 
+<b>🔎 KIPRIS Plus 확장 (8개 신규)</b>
+
+<b>/kipris_search &lt;키워드&gt;</b>
+KIPRIS 통합 free-text 검색 (freeSearchInfo). 제목·초록·청구항·청구
+범위 전체 매칭. 50건 + 출원일 내림차순 + abstract 포함.
+
+<b>/kipris_pub &lt;키워드&gt;</b>
+KIPRIS 공개공보만 검색 (lastvalue=A 필터). 등록 전 단계만.
+
+<b>/kipris_reg &lt;키워드&gt;</b>
+KIPRIS 등록공보만 검색 (lastvalue=R 필터). 권리 확정된 특허만.
+
+<b>/kipris_inventor &lt;발명자명&gt;</b>
+발명자 이름으로 특허 검색. 핵심 엔지니어 추적 / 이직자 IP 분석용.
+예: <code>/kipris_inventor 김기남</code>
+
+<b>/kipris_status &lt;KR 출원번호&gt;</b>
+행정상태 정보 — 출원→공개→심사→등록/거절 진행 이력 lookup.
+
+<b>/kipris_family &lt;KR 출원번호&gt;</b>
+DOCDB 패밀리 — 같은 발명의 해외 출원 (US/JP/EP/WO 등). EPO 의
+DOCDB family_id 와 보완.
+
+<b>/kipris_claims &lt;KR 출원번호&gt;</b>
+청구항 텍스트 — 독립항 + 종속항 전체. 권리 범위 검토용.
+
+<b>/kipris_priority &lt;KR 출원번호&gt;</b>
+우선권 주장 정보 — 해외 선출원 추적.
+
 <b>📄 ScienceON 핵심 (ARTI/PATENT/REPORT)</b>
 
 <b>/kr_papers &lt;키워드&gt;</b>
@@ -1679,7 +1709,7 @@ async def cmd_guide_lookup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 _PATENTS_GUIDE_TEXT = """<b>📘 특허 명령어 상세 가이드</b>
 
-전체 5가지 명령어. KIPRIS Plus (한국) + EPO OPS (글로벌) 두 백엔드.
+전체 13가지 명령어. KIPRIS Plus (한국, 11개) + EPO OPS (글로벌, 2개) 두 백엔드.
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1759,6 +1789,27 @@ KIPRIS Plus 단건 상세 / 인용 네트워크. 출원번호 (숫자만) 입력
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
+<b>6) /kipris_* — KIPRIS Plus 확장 (8개)</b>
+같은 KIPRIS Plus 인증키로 추가 endpoint 활용. 모두 50건 + 최신순 + 한국어
+번역 (검색형) / 풍부한 메타 (lookup형).
+
+<b>검색형 (키워드 또는 발명자명 입력)</b>
+• <code>/kipris_search HBM3</code> — 통합 free-text (제목·초록·청구항·청구범위)
+• <code>/kipris_pub HBM3</code> — 공개공보만 (등록 전)
+• <code>/kipris_reg HBM3</code> — 등록공보만 (권리 확정)
+• <code>/kipris_inventor 김기남</code> — 발명자 이름으로 검색
+
+<b>Lookup형 (출원번호 입력)</b>
+• <code>/kipris_status 1020220012345</code> — 행정상태 (출원→공개→심사→등록)
+• <code>/kipris_family 1020220012345</code> — DOCDB 패밀리 (해외 출원)
+• <code>/kipris_claims 1020220012345</code> — 청구항 텍스트 (독립항+종속항)
+• <code>/kipris_priority 1020220012345</code> — 우선권 주장 정보
+
+검색형은 sortSpec=AD desc 로 출원일 최신순. Abstract / IPC / 등록상태가
+list response 에 이미 포함돼 한 번의 호출로 충분.
+
+━━━━━━━━━━━━━━━━━━━━━━
+
 <b>비용 / 한도</b>
 • EPO OPS: 무료 4GB/월 (rolling 30-day). 개인용 사실상 무한.
   - /search_patents 1회 ≈ 50KB · /patent_stats 1회 ≈ 200KB
@@ -1772,14 +1823,11 @@ KIPRIS Plus 단건 상세 / 인용 네트워크. 출원번호 (숫자만) 입력
 <b>📊 백엔드 활성 상태 (2026-05 기준)</b>
 
 ✅ <b>EPO OPS</b> — 활성 (글로벌 특허, /search_patents·_advanced·_stats 동작)
-⏳ <b>KIPRIS Plus</b> — 14건 활용신청 승인 대기 (영업일 1-3일)
-   메인: 특허·실용 공개·등록공보 (#1) — /company_patents · /patent_detail
-   인용 네트워크: 인용문헌 (#24) + 피인용문헌 (#25) — /citing_patents
-   향후 분석용 11건: 행정처리 이력 · 청구항 변동 · 분류코드 · 법적 상태 ·
-   등록사항 · KPA 영문초록 · 기계번역 국문초록 · 다인용 선행문헌 ·
-   특허 패밀리 · 출원인 명칭 변동 이력
-   <b>승인 전 동작:</b> /company_patents · /patent_detail · /citing_patents
-   호출 시 "결과 없음" 메시지 (KIPRIS API 는 resultCode 30 반환)
+✅ <b>KIPRIS Plus</b> — 활성 (11개 명령어 검증 완료 2026-05)
+   기본 3종 (applicantNameSearchInfo / applicationNumberSearchInfo /
+   CitingService): /company_patents · /patent_detail · /citing_patents
+   확장 8종 (patUtiModInfoSearchSevice 의 freeSearchInfo + 서지정보):
+   /kipris_{search,pub,reg,inventor,status,family,claims,priority}
 ✅ <b>KISTI ScienceON</b> — 활성 (9개 콘텐츠 모두 승인)
    주요 명령어 9종: /kr_papers · /kr_patents · /kr_reports ·
    /kr_trends · /kr_researcher · /kr_organ ·
