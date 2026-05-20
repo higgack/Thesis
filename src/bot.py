@@ -6196,6 +6196,9 @@ _KISTI_FIELD_LABELS = {
     "AuthorInstKor": "소속", "AuthorInstEng": "소속(EN)",
     "ArticleCnt": "논문", "PatentCnt": "특허", "ReportCnt": "보고서",
     "Email": "Email", "Rno": "Rno",
+    # ORGAN target (confirmed live 2026-05): OrganKor / OrganEng +
+    # the same productivity counts (Article/Patent/Report).
+    "OrganKor": "기관명", "OrganEng": "기관명(EN)",
     # Legacy / fallback short codes — kept in case any of the 6 newly
     # added targets (RESEARCHER/ORGAN/TREND/SNEWS/SCENT/ATT) return
     # them. Harmless if absent.
@@ -6278,9 +6281,9 @@ def _format_kisti_results(query: str, results: list[dict],
                    "TI", "TIE",
                    # RESEARCHER target: name fields fill the headline
                    "AuthorNameKor", "AuthorNameEng",
+                   # ORGAN target: organisation name fills the headline
+                   "OrganKor", "OrganEng",
                    "Author", "AUI", "AUE", "AU",
-                   # ORGAN target heuristic candidates (not yet
-                   # confirmed; left for once diagnostic log fires)
                    "Affiliation", "AFI", "AFE", "AF",
                    "AuthorInstKor", "AuthorInstEng",
                    "ORN", "ORE", "SBJ", "SUB", "HD", "HDN", "NM", "ENM")
@@ -6316,6 +6319,10 @@ def _format_kisti_results(query: str, results: list[dict],
                 original_title = _html.escape(orig)[:240]
         elif r.get("AuthorNameKor") and r.get("AuthorNameEng"):
             eng = r.get("AuthorNameEng", "").strip()
+            if eng and eng != title_raw:
+                original_title = _html.escape(eng)[:240]
+        elif r.get("OrganKor") and r.get("OrganEng"):
+            eng = r.get("OrganEng", "").strip()
             if eng and eng != title_raw:
                 original_title = _html.escape(eng)[:240]
         parts: list[str] = []
