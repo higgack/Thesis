@@ -165,28 +165,51 @@ def _parse_xml(text: str) -> ET.Element | None:
     return root
 
 
-def _record_to_dict(rec: ET.Element) -> dict[str, str]:
-    """Each ScienceON record is <record><item metaCode='TI'>...</item>
-    × N</record>. Flatten the metaCode-keyed items into a dict so
-    callers can pull fields like Title (TI) / Author (AU) /
-    Abstract (AB) / DOI / etc.
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
 
-    Uses itertext() (not item.text) because ScienceON injects
-    <span class="search_word"> highlight tags around matched query
-    terms in TI/AU/AB fields. ElementTree treats those as child
-    elements, so item.text would only return characters up to the
-    first child (often empty if the field starts with a match).
-    CN/DOI etc. carry no highlights so the old code worked for them
-    but title/author/abstract came out blank — that mismatch is what
-    surfaced this bug.
+
+_WHITESPACE_RUN_RE = re.compile(r"[\s\xa0]+")
+
+
+def _clean_field(text: str) -> str:
+    """Decode HTML entities and strip leftover tags / control chars
+    from a ScienceON metaCode value. ScienceON abstracts/titles often
+    arrive with inline HTML — <P>...</P>, <jats:p>, <SUB>, <span>;
+    numeric entities like &#x2122; (™), &#x2010; (-), &#x00B5; (µ),
+    &#x002B; (+); and the double-encoded &amp;#xD; (carriage return).
+    Single unescape leaves the inner &#xD; literal, so unescape twice.
+    Then strip tags, then collapse any run of whitespace (including
+    \\r left by &#xD; and \\xa0 from &nbsp;) into one space."""
+    if not text:
+        return ""
+    import html as _html
+    s = _html.unescape(_html.unescape(text))
+    s = _HTML_TAG_RE.sub("", s)
+    s = _WHITESPACE_RUN_RE.sub(" ", s)
+    return s.strip()
+
+
+def _record_to_dict(rec: ET.Element) -> dict[str, str]:
+    """Each ScienceON record is <record><item metaCode='Title'>...
+    </item> × N</record>. Flatten the metaCode-keyed items into a
+    dict so callers can pull fields like Title / Author / Abstract /
+    JournalName / DOI / etc.
+
+    Two cleanups happen here so every consumer (bot formatter, agent
+    tools, future MCP) gets sanitized data:
+      1. itertext() (not .text) captures descendant text past inline
+         tags like <span class="search_word">.
+      2. _clean_field() decodes HTML entities (twice for
+         double-encoded ones like &amp;#xD;) and strips leftover
+         tags like <P>, <jats:p>, <SUB>, <sup>.
     """
     out: dict[str, str] = {}
     for item in rec.findall("item"):
         code = (item.get("metaCode") or "").strip()
         if not code:
             continue
-        text = "".join(item.itertext()).strip()
-        out[code] = text
+        text = "".join(item.itertext())
+        out[code] = _clean_field(text)
     return out
 
 

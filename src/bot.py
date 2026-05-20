@@ -6262,7 +6262,12 @@ def _format_kisti_results(query: str, results: list[dict],
     # legacy codes for any target whose response format we haven't
     # confirmed yet. RESEARCHER/ORGAN may use Author/Affiliation as
     # their "title" since they have no Title field.
-    _title_keys = ("Title", "Title2",
+    # Title_ko (added by _translate_kisti_titles for non-Korean rows)
+    # always wins so the display headline is readable on mobile.
+    # Original Title still appears below as a small line for term
+    # cross-reference.
+    _title_keys = ("Title_ko",
+                   "Title", "Title2",
                    "TI", "TIE",
                    "Author", "AUI", "AUE", "AU",
                    "Affiliation", "AFI", "AFE", "AF",
@@ -6284,6 +6289,14 @@ def _format_kisti_results(query: str, results: list[dict],
                 title_raw = v
                 break
         title = _html.escape(title_raw or "(제목 없음)")[:240]
+        # When Title_ko exists, the headline is in Korean — surface
+        # the original title on a small follow-up line so academic
+        # terminology stays accessible.
+        original_title = ""
+        if r.get("Title_ko"):
+            orig = (r.get("Title") or r.get("Title2") or "").strip()
+            if orig and orig != title_raw:
+                original_title = _html.escape(orig)[:240]
         parts: list[str] = []
         for k in _meta_keys:
             v = (r.get(k) or "").strip()
@@ -6293,6 +6306,8 @@ def _format_kisti_results(query: str, results: list[dict],
         meta_line = " · ".join(parts[:6])  # cap to keep readable
 
         block = [f"\n{emoji} <b>{i}. {title}</b>"]
+        if original_title:
+            block.append(f"   <i>{original_title}</i>")
         if meta_line:
             block.append(f"   {meta_line}")
         abstract = (r.get("Abstract") or r.get("Abstract2")
@@ -6314,6 +6329,119 @@ def _format_kisti_results(query: str, results: list[dict],
             block.append(f"   → {deep}")
         out.append("\n".join(block))
     return "\n".join(out)
+
+
+_HANGUL_RE = re.compile(r"[가-힣]")
+
+
+def _looks_korean(text: str) -> bool:
+    """Heuristic for when the ScienceON Lang field is missing or
+    ambiguous: count Hangul vs. non-whitespace chars. ≥30% Hangul
+    is treated as Korean (titles often mix Korean + English acronyms
+    like 'HBM3의 신뢰성 분석' — still Korean, we don't translate)."""
+    if not text:
+        return False
+    body = "".join(text.split())
+    if not body:
+        return False
+    hangul = len(_HANGUL_RE.findall(body))
+    return (hangul / len(body)) >= 0.30
+
+
+_KOREAN_LANG_VALUES = {
+    "한국어", "ko", "kor", "korean", "한국", "kr",
+}
+
+
+def _kisti_row_needs_translation(row: dict) -> bool:
+    """Decide whether a ScienceON row's title should be translated.
+    User-confirmed policy:
+      1. Lang field present & Korean → skip
+      2. Lang field present & non-Korean (English / 영어 / 기타 / 등)
+         → translate
+      3. Lang missing → Hangul-ratio heuristic on the candidate title
+    """
+    lang = (row.get("Lang") or "").strip().lower()
+    if lang and lang in _KOREAN_LANG_VALUES:
+        return False
+    title_candidates = (
+        row.get("Title") or row.get("Title2") or row.get("TI")
+        or row.get("TIE") or ""
+    ).strip()
+    if not title_candidates:
+        return False
+    if lang:  # any non-Korean Lang → translate
+        return True
+    # Lang empty: trust the title's character composition
+    return not _looks_korean(title_candidates)
+
+
+async def _translate_kisti_titles(rows: list[dict]) -> None:
+    """Batch-translate Title/Title2 of non-Korean ScienceON rows to
+    Korean in one Flash-Lite call. Mutates rows by adding
+    `Title_ko` (used as the display title by the formatter when
+    present). Silent fallback to originals on any failure.
+
+    Per user policy (2026-05): translate the TITLE only — abstracts
+    stay in original language. One model call across all eligible
+    rows from a search; ~₩2-3 per /kr_papers query at typical sizes
+    (30 titles × ~100 chars ≈ 3KB total)."""
+    if not rows:
+        return
+    targets: list[tuple[int, str]] = []
+    for i, r in enumerate(rows):
+        if not _kisti_row_needs_translation(r):
+            continue
+        title = (r.get("Title") or r.get("Title2")
+                 or r.get("TI") or r.get("TIE") or "").strip()
+        if title:
+            targets.append((i, title))
+    if not targets:
+        return
+    lines = [f"[{i}] {t}" for i, t in targets]
+    user_text = "\n".join(lines)
+    system_prompt = (
+        "You translate scientific paper / patent / report titles "
+        "from English (or any other non-Korean language) to natural "
+        "Korean. Preserve technical acronyms, model names, chemical "
+        "formulas, and proper nouns in their original form (e.g. "
+        "HBM3, CMOS, TSV, BaTiO3, IEEE). Output JSON only:\n"
+        '{"items": [{"n": <index>, "ko": "<번역된 제목>"}, ...]}\n'
+        "Use the bracket number as `n`. No preamble, no markdown."
+    )
+    try:
+        from .llm.gemini import complete
+        import json as _json
+        resp = await complete(
+            model=config.SUMMARY_MODEL,
+            system=system_prompt,
+            user=user_text,
+            max_tokens=8192,
+            temperature=0.1,
+            purpose="kisti_translate_titles",
+        )
+        m = re.search(r"\{.*\}", resp, re.DOTALL)
+        if not m:
+            log.warning("kisti translate: no JSON in resp (len=%d)",
+                        len(resp))
+            return
+        data = _json.loads(m.group(0))
+        by_n: dict[int, str] = {}
+        for item in (data.get("items") or []):
+            try:
+                ko = (item.get("ko") or "").strip()
+                if ko:
+                    by_n[int(item.get("n"))] = ko
+            except (TypeError, ValueError):
+                continue
+        for i, _ in targets:
+            ko = by_n.get(i)
+            if ko:
+                rows[i]["Title_ko"] = ko
+        log.info("kisti translate: %d/%d titles → KR",
+                 len(by_n), len(targets))
+    except Exception:
+        log.exception("kisti translate failed; using originals")
 
 
 async def _kisti_search_command(update, ctx, query: str, kind: str,
@@ -6345,6 +6473,10 @@ async def _kisti_search_command(update, ctx, query: str, kind: str,
         rows = result.get("results") or []
     else:
         rows = []
+    # Translate non-Korean titles to Korean before formatting so
+    # English/foreign-language results render readable headlines on
+    # mobile. Single Flash-Lite call across all eligible rows.
+    await _translate_kisti_titles(rows)
     body = _format_kisti_results(query, rows, kind)
     _kisti_tool_name = {
         "paper":         "search_kr_papers",
