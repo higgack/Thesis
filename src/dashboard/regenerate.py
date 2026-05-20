@@ -44,7 +44,6 @@ _BASE_CSS = """
   --warning-text: #78350f;
   --tool-brain: #ec4899; --tool-paper: #a855f7;
   --tool-patent: #3b82f6; --tool-report: #14b8a6;
-  --tool-data: #f43f5e;
   --tool-web: #10b981; --tool-ingest: #f59e0b;
   --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
 }
@@ -56,7 +55,6 @@ _BASE_CSS = """
   --warning-text: #fcd34d;
   --tool-brain: #f472b6; --tool-paper: #c084fc;
   --tool-patent: #60a5fa; --tool-report: #2dd4bf;
-  --tool-data: #fb7185;
   --tool-web: #34d399; --tool-ingest: #fbbf24;
   --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.4);
 }
@@ -174,7 +172,6 @@ header .sub { color: var(--muted); font-size: 13px; }
 .chip.paper.active  { background: var(--tool-paper); border-color: var(--tool-paper); }
 .chip.patent.active { background: var(--tool-patent); border-color: var(--tool-patent); }
 .chip.report.active { background: var(--tool-report); border-color: var(--tool-report); }
-.chip.data.active   { background: var(--tool-data); border-color: var(--tool-data); }
 .chip.web.active    { background: var(--tool-web); border-color: var(--tool-web); }
 .chip.ingest.active { background: var(--tool-ingest); border-color: var(--tool-ingest); }
 
@@ -236,7 +233,6 @@ header .sub { color: var(--muted); font-size: 13px; }
 .tool-paper  { background: rgba(168,85,247,0.12); color: var(--tool-paper); }
 .tool-patent { background: rgba(59,130,246,0.12); color: var(--tool-patent); }
 .tool-report { background: rgba(20,184,166,0.12); color: var(--tool-report); }
-.tool-data   { background: rgba(244,63,94,0.12);  color: var(--tool-data); }
 .tool-web    { background: rgba(16,185,129,0.12); color: var(--tool-web); }
 .tool-ingest { background: rgba(245,158,11,0.12); color: var(--tool-ingest); }
 .tool-other  { background: rgba(107,114,128,0.10); color: var(--muted); }
@@ -451,15 +447,13 @@ def _tool_bucket(name: str) -> str:
         # search_kr_patents_kisti, get_kr_patent_detail,
         # get_kr_patent_citations.
         return "patent"
-    if "research_data" in n:
-        # DataON datasets — check BEFORE the paper bucket since
-        # 'research_data' doesn't contain 'paper'/'patent' but the
-        # word order matters for future name variants.
-        return "data"
     if ("report" in n or "rnd_projects" in n
-            or "related_content" in n or "classification" in n):
+            or "related_content" in n or "classification" in n
+            or "govt_reports" in n or "agency_rnd" in n
+            or "rnd_outcomes" in n or "rnd_issues" in n):
         # KR R&D bucket: ScienceON reports + NTIS projects /
-        # classification recommend / related content.
+        # classification recommend / related content / outcomes /
+        # govt reports / agency stats / issues.
         return "report"
     if "paper" in n:
         return "paper"
@@ -472,8 +466,7 @@ def _tool_bucket(name: str) -> str:
 
 _TOOL_EMOJI_MAP = {
     "brain": "🧠", "paper": "📄", "patent": "⚖️",
-    "report": "📑", "data": "💾",
-    "web": "🌐", "ingest": "📥",
+    "report": "📑", "web": "🌐", "ingest": "📥",
 }
 
 
@@ -807,7 +800,6 @@ def _render_index(rows: list[dict], stats: dict) -> str:
         "<span class='chip paper' data-tool='paper'>📄 papers</span>",
         "<span class='chip patent' data-tool='patent'>⚖️ patents</span>",
         "<span class='chip report' data-tool='report'>📑 R&amp;D</span>",
-        "<span class='chip data' data-tool='data'>💾 data</span>",
         "<span class='chip web' data-tool='web'>🌐 web</span>",
         "<span class='chip ingest' data-tool='ingest'>📥 ingest</span>",
         "</div>",
