@@ -28,11 +28,13 @@ All public methods return [] / None on missing keys or backend
 failure so callers can render graceful empty messages instead of
 crashing the bot.
 """
+import asyncio
 import base64
 import json
 import logging
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Any
@@ -43,6 +45,22 @@ import httpx
 log = logging.getLogger(__name__)
 
 _SCIENCEON_BASE = "https://apigateway.kisti.re.kr"
+
+# In-process token cache. ScienceON tokens are ~30 min lived; we
+# cache for 25 min (5-min buffer for in-flight requests). Lazy
+# asyncio.Lock init since module import may run before any event
+# loop exists (test paths, etc.). Single-process bot → in-memory
+# cache is enough; no Redis.
+_SCIENCEON_TOKEN_CACHE: dict = {"token": None, "expires_at": 0.0}
+_SCIENCEON_TOKEN_TTL_SECONDS = 25 * 60  # 25 min
+_SCIENCEON_TOKEN_LOCK: "asyncio.Lock | None" = None
+
+
+def _scienceon_token_lock() -> "asyncio.Lock":
+    global _SCIENCEON_TOKEN_LOCK
+    if _SCIENCEON_TOKEN_LOCK is None:
+        _SCIENCEON_TOKEN_LOCK = asyncio.Lock()
+    return _SCIENCEON_TOKEN_LOCK
 _AES_IV = "jvHJ1EFA0IXBrxxz"  # fixed IV defined by ScienceON spec
 
 
@@ -69,45 +87,63 @@ def _have_credentials() -> bool:
 
 
 async def _get_token(http: httpx.AsyncClient) -> str | None:
-    """Request a fresh access_token. ScienceON tokens are short-
-    lived (~30 min) so we don't cache — every search re-tokens.
-    Returns None on any error (callers fall back to empty results)."""
+    """Get a cached or fresh ScienceON access_token via the
+    encrypted-payload tokenrequest.do flow.
+
+    Caching: tokens last ~30 min per ScienceON spec; we cache for
+    25 min (5-min safety buffer for in-flight requests). asyncio
+    lock prevents a thundering herd of token requests when multiple
+    concurrent searches arrive at once.
+
+    Returns None on missing creds / encrypt failure / HTTP error
+    (callers fall back to empty results so the bot doesn't crash)."""
     api_key = os.getenv("SCIENCEON_API_KEY", "").strip()
     client_id = os.getenv("SCIENCEON_CLIENT_ID", "").strip()
     mac = os.getenv("SCIENCEON_MAC_ADDRESS", "").strip()
     if not (api_key and client_id and mac):
         return None
-    # ScienceON datetime payload: digits only from current timestamp
-    # ("2026-05-18 12:34:56" → "20260518123456"), encrypted into the
-    # `accounts` URL param.
-    time_str = "".join(re.findall(r"\d", datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S")))
-    plain = json.dumps(
-        {"datetime": time_str, "mac_address": mac},
-        separators=(",", ":"),
-    )
-    try:
-        encrypted = _aes_encrypt(plain, api_key)
-    except Exception as e:
-        log.warning("scienceon AES encrypt failed: %s", e)
-        return None
-    url = (f"{_SCIENCEON_BASE}/tokenrequest.do?"
-           f"client_id={client_id}&accounts={encrypted}")
-    try:
-        r = await http.get(url)
-        if r.status_code != 200:
-            log.warning("scienceon token %d: %r",
-                        r.status_code, r.text[:200])
-            return None
+    async with _scienceon_token_lock():
+        now = time.time()
+        cached = _SCIENCEON_TOKEN_CACHE.get("token")
+        if cached and _SCIENCEON_TOKEN_CACHE["expires_at"] > now + 60:
+            return cached
+        # ScienceON datetime payload: digits only from current timestamp
+        # ("2026-05-18 12:34:56" → "20260518123456"), encrypted into the
+        # `accounts` URL param.
+        time_str = "".join(re.findall(r"\d", datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S")))
+        plain = json.dumps(
+            {"datetime": time_str, "mac_address": mac},
+            separators=(",", ":"),
+        )
         try:
-            return r.json().get("access_token")
-        except json.JSONDecodeError:
-            log.warning("scienceon token JSON decode failed: %r",
-                        r.text[:200])
+            encrypted = _aes_encrypt(plain, api_key)
+        except Exception as e:
+            log.warning("scienceon AES encrypt failed: %s", e)
             return None
-    except Exception as e:
-        log.warning("scienceon token fetch failed: %s", e)
-        return None
+        url = (f"{_SCIENCEON_BASE}/tokenrequest.do?"
+               f"client_id={client_id}&accounts={encrypted}")
+        try:
+            r = await http.get(url)
+            if r.status_code != 200:
+                log.warning("scienceon token %d: %r",
+                            r.status_code, r.text[:200])
+                return None
+            try:
+                data = r.json()
+            except json.JSONDecodeError:
+                log.warning("scienceon token JSON decode failed: %r",
+                            r.text[:200])
+                return None
+        except Exception as e:
+            log.warning("scienceon token fetch failed: %s", e)
+            return None
+        token = data.get("access_token")
+        if not token:
+            return None
+        _SCIENCEON_TOKEN_CACHE["token"] = token
+        _SCIENCEON_TOKEN_CACHE["expires_at"] = now + _SCIENCEON_TOKEN_TTL_SECONDS
+        return token
 
 
 def _parse_xml(text: str) -> ET.Element | None:

@@ -6265,7 +6265,7 @@ async def _kisti_search_command(update, ctx, query: str, kind: str,
         f"🔍 '{query}' KISTI ScienceON 검색 중..."
     )
     try:
-        result = await fn(query, limit=10)
+        result = await fn(query, limit=30)
     except Exception as e:
         log.exception("kisti %s search failed for %r", kind, query)
         try:
@@ -6458,22 +6458,98 @@ async def cmd_kr_science_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def _dedup_ntis_projects(rows: list[dict]) -> list[dict]:
+    """Group multi-year NTIS project rows by (ProjectTitle,
+    ResearchLeader, ResearchAgency) and collapse to the latest year.
+
+    NTIS returns each annual phase of a multi-year project as a
+    separate row. For "양자컴퓨팅" a single project (e.g. 광자 기반
+    범용 양자컴퓨팅 프로세서 개발) can occupy 3-5 of the top 10
+    results, drowning out variety. This dedup keeps the LATEST
+    year's row + attaches a phases summary (years list +
+    other-pjt-ids) so info isn't lost — the formatter renders it
+    as a "📅 다년 과제 — N개 연차 통합 (2026, 2025, 2024)" line.
+
+    Preserves original relevance order (uses first-occurrence
+    position as the sort key for surviving rows)."""
+    from collections import defaultdict
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    first_seen: dict[tuple, int] = {}
+    for i, r in enumerate(rows):
+        title = (r.get("ProjectTitle") or "").strip()
+        if not title:
+            # No title → keep as-is, don't group
+            key = ("_no_dedup_", id(r), 0)
+        else:
+            key = (
+                title,
+                (r.get("ResearchLeader") or "").strip(),
+                (r.get("ResearchAgency") or "").strip(),
+            )
+        groups[key].append(r)
+        if key not in first_seen:
+            first_seen[key] = i
+    out: list[dict] = []
+    for key, group in groups.items():
+        # Sort group by year DESC, keep latest as the surviving row
+        def _year_int(r: dict) -> int:
+            y = r.get("ResearchYear") or "0"
+            try:
+                return int(str(y)[:4])
+            except (ValueError, TypeError):
+                return 0
+        group_sorted = sorted(group, key=_year_int, reverse=True)
+        latest = dict(group_sorted[0])  # copy so input not mutated
+        if len(group_sorted) > 1:
+            years_seen: list[str] = []
+            other_ids: list[str] = []
+            for r in group_sorted:
+                y = r.get("ResearchYear")
+                if y and str(y) not in years_seen:
+                    years_seen.append(str(y))
+            for r in group_sorted[1:]:
+                pid = r.get("ProjectNumber")
+                if pid:
+                    other_ids.append(pid)
+            latest["_phases_count"] = len(group_sorted)
+            latest["_phases_years"] = years_seen
+            latest["_phases_other_ids"] = other_ids
+        out.append(latest)
+    # Restore relevance order based on each group's first occurrence
+    out.sort(key=lambda r: first_seen.get((
+        (r.get("ProjectTitle") or "").strip(),
+        (r.get("ResearchLeader") or "").strip(),
+        (r.get("ResearchAgency") or "").strip(),
+    ), 9999) if r.get("ProjectTitle") else 9999)
+    return out
+
+
 def _format_ntis_projects(query: str, rows: list[dict]) -> str:
-    """NTIS public_project rows. The new schema (2026-05+) exposes
-    ProjectNumber / ProjectTitle / ResearchLeader (Manager) /
-    ResearchAgency (OrderAgency) / Researchers (count) / Abstract /
-    Goal / Effect / Keyword. The legacy schema's Korean tag names
-    (과제명·과제번호·수행기관·연구책임자·연구기간·연구비) are kept as
-    fallback lookups so older endpoints / cached rows still render."""
+    """NTIS public_project rows. Dedups multi-year projects (same
+    title + leader + agency) into a single row with 다년 과제 badge.
+    The new schema (2026-05+) exposes ProjectNumber / ProjectTitle /
+    ResearchLeader (Manager) / ResearchAgency (OrderAgency) /
+    Researchers (count) / Abstract / Goal / Effect / Keyword. The
+    legacy schema's Korean tag names (과제명·과제번호·수행기관·
+    연구책임자·연구기간·연구비) are kept as fallback lookups so older
+    endpoints / cached rows still render."""
     import html as _html
     if not rows:
         return (
             f"🔍 '<b>{_html.escape(query)}</b>' NTIS 국가R&D 결과 없음.\n"
             f"(NTIS_API_KEY 미설정 시에도 동일 메시지 — ntis.go.kr 활용신청 필요.)"
         )
+    raw_count = len(rows)
+    rows = _dedup_ntis_projects(rows)
+    dedup_count = len(rows)
+    collapsed = raw_count - dedup_count
+    head_meta = f"<i>{dedup_count}건"
+    if collapsed > 0:
+        head_meta += f" (원본 {raw_count}건에서 다년 과제 {collapsed}개 통합)"
+    head_meta += " · NTIS</i>"
     out = [
         f"🔬 <b>NTIS 국가R&D 과제 검색 결과 — '{_html.escape(query)}'</b>",
-        f"<i>{len(rows)}건 · NTIS</i>",
+        head_meta,
     ]
     for i, r in enumerate(rows, 1):
         title = _html.escape(
@@ -6511,9 +6587,18 @@ def _format_ntis_projects(query: str, rows: list[dict]) -> str:
             parts.append(f"기간 {_html.escape(period[:40])}")
         if budget:
             parts.append(f"연구비 {_html.escape(budget[:30])}")
+        # Multi-year project badge from _dedup_ntis_projects metadata.
+        phases_count = r.get("_phases_count") or 0
+        phases_years = r.get("_phases_years") or []
         block = [f"\n🔬 <b>{i}. {title}</b>"]
         if parts:
             block.append(f"  {' · '.join(parts[:6])}")
+        if phases_count > 1 and phases_years:
+            years_str = ", ".join(str(y) for y in phases_years[:6])
+            block.append(
+                f"  📅 다년 과제 — {phases_count}개 연차 통합 "
+                f"({years_str})"
+            )
         if keyword:
             block.append(f"  🏷️ {_html.escape(keyword[:120])}")
         if goal:
@@ -6540,7 +6625,7 @@ async def cmd_kr_rnd_projects(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     try:
         from .agent import kisti_ntis as _ntis
-        rows = await _ntis.search_projects(q, limit=10)
+        rows = await _ntis.search_projects(q, limit=30)
     except Exception as e:
         log.exception("ntis projects failed for %r", q)
         try:
