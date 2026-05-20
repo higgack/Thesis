@@ -6189,6 +6189,13 @@ _KISTI_FIELD_LABELS = {
     "PageInfo": "페이지", "Keyword": "키워드", "Keyword2": "원어 키워드",
     "VolNo1": "권", "VolNo2": "호", "ISSN": "ISSN", "ISBN": "ISBN",
     "DOI": "DOI", "CN": "CN", "Lang": "언어", "Degree": "학위",
+    # RESEARCHER target (confirmed live 2026-05): AuthorNameKor /
+    # AuthorNameEng / AuthorInstKor / AuthorInstEng + Article/
+    # Patent/Report counts as productivity signal.
+    "AuthorNameKor": "이름", "AuthorNameEng": "이름(EN)",
+    "AuthorInstKor": "소속", "AuthorInstEng": "소속(EN)",
+    "ArticleCnt": "논문", "PatentCnt": "특허", "ReportCnt": "보고서",
+    "Email": "Email", "Rno": "Rno",
     # Legacy / fallback short codes — kept in case any of the 6 newly
     # added targets (RESEARCHER/ORGAN/TREND/SNEWS/SCENT/ATT) return
     # them. Harmless if absent.
@@ -6269,12 +6276,20 @@ def _format_kisti_results(query: str, results: list[dict],
     _title_keys = ("Title_ko",
                    "Title", "Title2",
                    "TI", "TIE",
+                   # RESEARCHER target: name fields fill the headline
+                   "AuthorNameKor", "AuthorNameEng",
                    "Author", "AUI", "AUE", "AU",
+                   # ORGAN target heuristic candidates (not yet
+                   # confirmed; left for once diagnostic log fires)
                    "Affiliation", "AFI", "AFE", "AF",
+                   "AuthorInstKor", "AuthorInstEng",
                    "ORN", "ORE", "SBJ", "SUB", "HD", "HDN", "NM", "ENM")
     _meta_keys = ("Author", "Author2", "Affiliation", "JournalName",
                   "Pubyear", "Publisher", "PageInfo", "VolNo1", "VolNo2",
                   "ISSN", "ISBN", "Keyword", "Lang", "Degree",
+                  # RESEARCHER target meta: institution + productivity
+                  "AuthorInstKor", "AuthorInstEng",
+                  "ArticleCnt", "PatentCnt", "ReportCnt", "Email",
                   "CN", "DOI",
                   # legacy short codes — fire on any target still
                   # using the older metaCode shape
@@ -6289,14 +6304,20 @@ def _format_kisti_results(query: str, results: list[dict],
                 title_raw = v
                 break
         title = _html.escape(title_raw or "(제목 없음)")[:240]
-        # When Title_ko exists, the headline is in Korean — surface
-        # the original title on a small follow-up line so academic
-        # terminology stays accessible.
+        # Secondary line under the headline:
+        #  - Paper/patent: original (non-Korean) title if we showed
+        #    a translated Title_ko above.
+        #  - Researcher: English name (AuthorNameEng) when we chose
+        #    Korean name as headline.
         original_title = ""
         if r.get("Title_ko"):
             orig = (r.get("Title") or r.get("Title2") or "").strip()
             if orig and orig != title_raw:
                 original_title = _html.escape(orig)[:240]
+        elif r.get("AuthorNameKor") and r.get("AuthorNameEng"):
+            eng = r.get("AuthorNameEng", "").strip()
+            if eng and eng != title_raw:
+                original_title = _html.escape(eng)[:240]
         parts: list[str] = []
         for k in _meta_keys:
             v = (r.get(k) or "").strip()
