@@ -973,11 +973,9 @@ _TOOL_EMOJI = {
     "search_kr_reports": "🇰🇷📑",
     "get_kr_report_detail": "🇰🇷📑",
     "search_kr_trends": "🇰🇷🌐",
-    "search_kr_science_columns": "🇰🇷🧪",
     "search_kr_researchers": "🇰🇷👤",
     "search_kr_organs": "🇰🇷🏛️",
     "search_kr_science_trends": "🇰🇷📈",
-    "search_kr_science_news": "🇰🇷📰",
     "search_kr_rnd_projects": "🇰🇷🔬",
     "recommend_kr_classifications": "🇰🇷🏷️",
     "get_kr_related_content": "🇰🇷🔗",
@@ -1255,7 +1253,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
-  ScienceON: /kr_papers · /kr_patents · /kr_reports · /kr_trends · /kr_researcher · /kr_organ · /kr_science_trend · /kr_science_news · /kr_science_mag
+  ScienceON: /kr_papers · /kr_patents · /kr_reports · /kr_trends · /kr_researcher · /kr_organ · /kr_science_trend
   NTIS: /kr_rnd_projects · /kr_classifications · /kr_related
   DataON: /kr_research_data
 
@@ -1571,12 +1569,6 @@ KIPRIS 출원인 검색과 조합하면 회사 프로필 더 풍부.
 ScienceON Trend (TREND). 큐레이션 토픽 트렌드 리포트 (논문/특허
 통계 + 전문가 해설). ATT 와 달리 한국+국제 메타분석.
 
-<b>/kr_science_news &lt;키워드&gt;</b>
-주차별 과학기술뉴스 (SNEWS). 최근 (이주/이달) 발전사항용.
-
-<b>/kr_science_mag &lt;키워드&gt;</b>
-과학향기 (SCENT). 대중과학 매거진 칼럼 — 가벼운 배경/explainer.
-
 <b>🔬 NTIS (국가R&amp;D)</b>
 
 <b>/kr_rnd_projects &lt;키워드&gt;</b>
@@ -1607,8 +1599,8 @@ DataON 공공 연구데이터셋 — svcId · 제목 · 작성자 · DOI · 라�
    행정처리/분류/패밀리/명칭변동 등 11개 향후 기능
    승인 전: /company_patents · /patent_detail · /citing_patents
    는 결과 없음 반환 (resultCode 30)
-✅ KISTI ScienceON — 활성 (9개 콘텐츠 모두 승인: ARTI/PATENT/REPORT/
-   ATT/SCENT/RESEARCHER/ORGAN/TREND/SNEWS)
+✅ KISTI ScienceON — 활성 (7개 콘텐츠 사용 가능: ARTI/PATENT/REPORT/
+   ATT/RESEARCHER/ORGAN/TREND. SCENT/SNEWS 는 searchField 코드 미공개로 보류)
 ✅ KISTI NTIS — 활성 (3건 승인, 동일 키, public_project · rcmncls · ConnectionContent)
 ⏳ KISTI DataON — 회원가입 승인 대기
 
@@ -1782,7 +1774,7 @@ KIPRIS Plus 단건 상세 / 인용 네트워크. 출원번호 (숫자만) 입력
 ✅ <b>KISTI ScienceON</b> — 활성 (9개 콘텐츠 모두 승인)
    주요 명령어 9종: /kr_papers · /kr_patents · /kr_reports ·
    /kr_trends · /kr_researcher · /kr_organ ·
-   /kr_science_trend · /kr_science_news · /kr_science_mag
+   /kr_science_trend
    /kr_patents (ScienceON) = 한글 메타 풍부, /search_patents (EPO)
    = 글로벌 영문 위주 — 용도 분리해 사용
 ✅ <b>KISTI NTIS</b> — 활성 (3건 승인, /kr_rnd_projects 동작 + 자연어 분류추천/연관콘텐츠 가능)
@@ -6247,11 +6239,15 @@ _KISTI_KIND_META: dict[str, tuple[str, str, str]] = {
     "patent":        ("⚖️",  "ScienceON 특허",       "Patent"),
     "report":        ("📑",  "ScienceON 보고서",      "Report"),
     "trend":         ("🌐",  "ScienceON 해외동향",    "Trend"),
-    "science_mag":   ("🧪",  "ScienceON 과학향기",    "Scent"),
     "researcher":    ("👤",  "ScienceON 연구자",      "Researcher"),
     "organ":         ("🏛️",  "ScienceON 연구기관",    "Organ"),
     "science_trend": ("📈",  "ScienceON Trend",       "Trend"),
-    "science_news":  ("📰",  "ScienceON 과기뉴스",    "News"),
+    # SCENT (과학향기) and SNEWS (과기뉴스) removed 2026-05: the
+    # ScienceON API rejects every searchField value we could try
+    # ('searchField 값 오류' on BI/TI/WORD/KW/AB/CT). The dev
+    # portal's per-content API spec is undiscoverable from outside,
+    # so the two commands were withdrawn rather than left as dead
+    # entries. Re-enable when KISTI surfaces the right code.
 }
 
 
@@ -6544,11 +6540,9 @@ async def _kisti_search_command(update, ctx, query: str, kind: str,
         "patent":        "search_kr_patents_kisti",
         "report":        "search_kr_reports",
         "trend":         "search_kr_trends",
-        "science_mag":   "search_kr_science_columns",
         "researcher":    "search_kr_researchers",
         "organ":         "search_kr_organs",
         "science_trend": "search_kr_science_trends",
-        "science_news":  "search_kr_science_news",
     }.get(kind, f"search_kr_{kind}")
     _record_command_qna(
         update,
@@ -6642,21 +6636,6 @@ async def cmd_kr_trends(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cmd_kr_science_mag(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/kr_science_mag <키워드> — KISTI ScienceON 과학향기 칼럼 (SCENT).
-    대중 과학 매거진. 연구급 자료보다 가벼움, 배경 지식 용도."""
-    if not _is_owner(update):
-        return
-    q = " ".join(ctx.args).strip()
-    if not q:
-        await update.message.reply_text("사용법: /kr_science_mag <검색어>")
-        return
-    from .agent import kisti_scienceon as _kisti
-    await _kisti_search_command(
-        update, ctx, q, "science_mag", _kisti.search_science_columns,
-    )
-
-
 async def cmd_kr_researcher(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/kr_researcher <이름|연구분야> — KISTI ScienceON 식별 연구자
     인덱스 (RESEARCHER). 국내 연구자 프로필 + 그 연구자의 논문/보고서/
@@ -6701,21 +6680,6 @@ async def cmd_kr_science_trend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     from .agent import kisti_scienceon as _kisti
     await _kisti_search_command(
         update, ctx, q, "science_trend", _kisti.search_science_trends,
-    )
-
-
-async def cmd_kr_science_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/kr_science_news <키워드> — KISTI ScienceON 금주의 과학기술뉴스
-    (SNEWS). 주차별 큐레이션 국내외 과기 뉴스."""
-    if not _is_owner(update):
-        return
-    q = " ".join(ctx.args).strip()
-    if not q:
-        await update.message.reply_text("사용법: /kr_science_news <검색어>")
-        return
-    from .agent import kisti_scienceon as _kisti
-    await _kisti_search_command(
-        update, ctx, q, "science_news", _kisti.search_science_news,
     )
 
 
@@ -7052,7 +7016,12 @@ def _format_ntis_related(query: str, rows: list[dict],
     for i, r in enumerate(rows, 1):
         title = (r.get("title") or r.get("Title") or
                  r.get("ProjectTitle") or r.get("논문명") or
-                 r.get("특허명") or r.get("보고서명") or "(제목 없음)")
+                 r.get("특허명") or r.get("보고서명") or
+                 # NTIS ConnectionContent (researchreport) uses
+                 # all-caps keys like KOR_RPT_TITLE_NM.
+                 r.get("KOR_RPT_TITLE_NM") or r.get("KOR_TITLE_NM") or
+                 r.get("ENG_RPT_TITLE_NM") or r.get("ENG_TITLE_NM") or
+                 "(제목 없음)")
         block = [f"\n🔗 <b>{i}. {_html.escape(str(title)[:200])}</b>"]
         # Common metadata fields
         for k, lbl in [
@@ -7062,6 +7031,9 @@ def _format_ntis_related(query: str, rows: list[dict],
             ("Author", "저자"), ("author", "저자"),
             ("Year", "연도"), ("year", "연도"),
             ("Date", "일자"),
+            # NTIS ConnectionContent keys (researchreport collection)
+            ("RST_ID", "결과ID"), ("creat_dt", "생성일"),
+            ("rank", "순위"), ("similarity_score", "유사도"),
         ]:
             v = r.get(k)
             if v:
@@ -9935,12 +9907,10 @@ def main():
     app.add_handler(CommandHandler("kr_patents", cmd_kr_patents))
     app.add_handler(CommandHandler("kr_reports", cmd_kr_reports))
     app.add_handler(CommandHandler("kr_trends", cmd_kr_trends))
-    app.add_handler(CommandHandler("kr_science_mag", cmd_kr_science_mag))
     app.add_handler(CommandHandler("kr_researcher", cmd_kr_researcher))
     app.add_handler(CommandHandler("kr_organ", cmd_kr_organ))
     app.add_handler(CommandHandler("kr_science_trend",
                                     cmd_kr_science_trend))
-    app.add_handler(CommandHandler("kr_science_news", cmd_kr_science_news))
     app.add_handler(CommandHandler("kr_rnd_projects", cmd_kr_rnd_projects))
     app.add_handler(CommandHandler("kr_classifications",
                                     cmd_kr_classifications))

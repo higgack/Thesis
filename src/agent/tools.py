@@ -269,11 +269,6 @@ async def search_kr_trends(query: str, limit: int = 10) -> dict:
     return {"results": rows, "count": len(rows)}
 
 
-async def search_kr_science_columns(query: str, limit: int = 10) -> dict:
-    rows = await kisti_scienceon.search_science_columns(query, limit=limit)
-    return {"results": rows, "count": len(rows)}
-
-
 async def search_kr_researchers(query: str, limit: int = 10) -> dict:
     rows = await kisti_scienceon.search_researchers(query, limit=limit)
     return {"results": rows, "count": len(rows)}
@@ -286,11 +281,6 @@ async def search_kr_organs(query: str, limit: int = 10) -> dict:
 
 async def search_kr_science_trends(query: str, limit: int = 10) -> dict:
     rows = await kisti_scienceon.search_science_trends(query, limit=limit)
-    return {"results": rows, "count": len(rows)}
-
-
-async def search_kr_science_news(query: str, limit: int = 10) -> dict:
-    rows = await kisti_scienceon.search_science_news(query, limit=limit)
     return {"results": rows, "count": len(rows)}
 
 
@@ -513,11 +503,9 @@ TOOL_DISPATCH = {
     "search_kr_reports": search_kr_reports,
     "get_kr_report_detail": get_kr_report_detail,
     "search_kr_trends": search_kr_trends,
-    "search_kr_science_columns": search_kr_science_columns,
     "search_kr_researchers": search_kr_researchers,
     "search_kr_organs": search_kr_organs,
     "search_kr_science_trends": search_kr_science_trends,
-    "search_kr_science_news": search_kr_science_news,
     "search_kr_rnd_projects": search_kr_rnd_projects,
     "recommend_kr_classifications": recommend_kr_classifications,
     "get_kr_related_content": get_kr_related_content,
@@ -849,8 +837,9 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
             required=["cn"],
         ),
     ),
-    # Additional ScienceON contents (ATT/SCENT/RESEARCHER/ORGAN/
-    # TREND/SNEWS). All keyword-search; CN-keyed for detail lookup
+    # Additional ScienceON contents (ATT/RESEARCHER/ORGAN/TREND).
+    # All keyword-search; CN-keyed for detail lookup. SCENT/SNEWS
+    # removed 2026-05 — undocumented searchField code.
     # via the existing browse pattern. Use whichever best matches
     # the user's intent — "해외 동향" → trends, "연구자 누구" →
     # researcher, "기관 활동" → organ, etc.
@@ -861,25 +850,6 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
             "Curated review articles about foreign tech developments. "
             "Different from NTIS 정책동향 — ATT is research-grade trend "
             "synthesis, not policy briefings."
-        ),
-        parameters=types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                "query": types.Schema(type=types.Type.STRING),
-                "limit": types.Schema(
-                    type=types.Type.INTEGER,
-                    description="Max results (1-100). Default 10.",
-                ),
-            },
-            required=["query"],
-        ),
-    ),
-    types.FunctionDeclaration(
-        name="search_kr_science_columns",
-        description=(
-            "KISTI 과학향기 columns (SCENT) — popular-science magazine "
-            "articles + commentary. Lighter than ARTI/REPORT, useful "
-            "for background context / explainers."
         ),
         parameters=types.Schema(
             type=types.Type.OBJECT,
@@ -941,26 +911,6 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
             "reports with paper/patent statistics + expert commentary. "
             "Different from search_kr_trends (overseas ATT) — TREND "
             "is meta-analysis of Korean + international literature."
-        ),
-        parameters=types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                "query": types.Schema(type=types.Type.STRING),
-                "limit": types.Schema(
-                    type=types.Type.INTEGER,
-                    description="Max results (1-100). Default 10.",
-                ),
-            },
-            required=["query"],
-        ),
-    ),
-    types.FunctionDeclaration(
-        name="search_kr_science_news",
-        description=(
-            "KISTI ScienceON weekly S&T news (SNEWS) — curated Korean "
-            "+ overseas tech news by week/month. Use for very recent "
-            "(this-week / this-month) developments; for older content "
-            "prefer search_kr_papers / search_kr_trends."
         ),
         parameters=types.Schema(
             type=types.Type.OBJECT,

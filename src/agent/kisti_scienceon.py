@@ -396,43 +396,25 @@ async def get_report_detail(cn: str) -> dict[str, Any] | None:
 #
 # Naming follows the upstream API ticket convention:
 #   ATT        해외과학기술동향 (overseas tech trends)
-#   SCENT      과학향기 (science magazine column)
 #   RESEARCHER 식별된 연구자 인덱스 (research authority)
 #   ORGAN      식별된 연구기관 인덱스
 #   TREND      ScienceON Trend (curated topic trend)
-#   SNEWS      금주의 과학기술뉴스
+# (SCENT 과학향기 / SNEWS 과기뉴스 were activated too but every
+# searchField we tried got 'searchField 값 오류' 400 — the dev
+# portal's per-content API spec was undiscoverable, so both were
+# pulled from the bot 2026-05. Re-enable when KISTI publishes the
+# right code.)
 # ---------------------------------------------------------------------------
-
-
-# Per-target searchField mapping. Most ScienceON contents accept
-# {"BI": query} (whole-record full-text search), but SNEWS (과기뉴스)
-# and SCENT (과학향기) reject BI with "searchField 값 오류" 400. They
-# also reject TI. The right code is undocumented in the dev portal
-# we used, so the tuple tries a widened candidate set until one of
-# them returns rows or we've exhausted the list. Order matters.
-_TARGET_SEARCH_FIELDS: dict[str, tuple[str, ...]] = {
-    "ARTI":       ("BI",),
-    "PATENT":     ("BI",),
-    "REPORT":     ("BI",),
-    "RESEARCHER": ("BI",),
-    "ORGAN":      ("BI",),
-    "TREND":      ("BI",),
-    "ATT":        ("BI",),
-    # SNEWS / SCENT — TI & BI both rejected. Try a wider set; if all
-    # still fail, the right code needs to come from the KISTI
-    # ScienceON developer portal's per-content API spec.
-    "SNEWS":      ("WORD", "KW", "AB", "CT", "TI", "BI"),
-    "SCENT":      ("WORD", "KW", "AB", "CT", "TI", "BI"),
-}
 
 
 async def _scienceon_search(target: str, query: str,
                             limit: int) -> list[dict[str, Any]]:
-    """Internal generic search across any ScienceON target. Most
-    contents accept {"BI": query} but two (SNEWS/SCENT) need {"TI":
-    query} — _TARGET_SEARCH_FIELDS hardcodes the right field per
-    target. The helper tries the listed fields in order and stops at
-    the first 200-with-data response."""
+    """Internal generic search across any ScienceON target. All
+    currently-supported contents (ARTI/PATENT/REPORT/RESEARCHER/
+    ORGAN/TREND/ATT) accept {"BI": query} (whole-record full-text
+    search). SCENT/SNEWS rejected every searchField we tried — they
+    were withdrawn from the bot until KISTI surfaces the right
+    code."""
     if not _have_credentials():
         return []
     async with httpx.AsyncClient(timeout=30.0) as http:
@@ -440,17 +422,12 @@ async def _scienceon_search(target: str, query: str,
         if not token:
             return []
         client_id = os.getenv("SCIENCEON_CLIENT_ID", "").strip()
-        fields = _TARGET_SEARCH_FIELDS.get(target, ("BI",))
-        for field in fields:
-            search_query = json.dumps({field: query}, ensure_ascii=False)
-            rows = await _call(http, "search", target, token, client_id, {
-                "searchQuery": search_query,
-                "curPage": "1",
-                "rowCount": str(min(max(1, limit), 100)),
-            })
-            if rows:
-                return rows
-        return []
+        search_query = json.dumps({"BI": query}, ensure_ascii=False)
+        return await _call(http, "search", target, token, client_id, {
+            "searchQuery": search_query,
+            "curPage": "1",
+            "rowCount": str(min(max(1, limit), 100)),
+        })
 
 
 async def _scienceon_browse(target: str,
@@ -477,18 +454,6 @@ async def search_trends(query: str, limit: int = 10) -> list[dict[str, Any]]:
 
 async def get_trend_detail(cn: str) -> dict[str, Any] | None:
     return await _scienceon_browse("ATT", cn)
-
-
-async def search_science_columns(query: str,
-                                 limit: int = 10) -> list[dict[str, Any]]:
-    """SCENT — 과학향기 칼럼 검색. Science popularization magazine
-    articles (column / common-sense pieces). Less research-grade than
-    ARTI/REPORT, useful for context / background reading."""
-    return await _scienceon_search("SCENT", query, limit)
-
-
-async def get_science_column_detail(cn: str) -> dict[str, Any] | None:
-    return await _scienceon_browse("SCENT", cn)
 
 
 async def search_researchers(query: str,
@@ -527,12 +492,3 @@ async def get_science_trend_detail(cn: str) -> dict[str, Any] | None:
     return await _scienceon_browse("TREND", cn)
 
 
-async def search_science_news(query: str,
-                              limit: int = 10) -> list[dict[str, Any]]:
-    """SNEWS — 금주의 과학기술뉴스 검색. 주차별/월별 큐레이션 국내외
-    과기 뉴스 (Naver/언론사 원본 링크 포함)."""
-    return await _scienceon_search("SNEWS", query, limit)
-
-
-async def get_science_news_detail(cn: str) -> dict[str, Any] | None:
-    return await _scienceon_browse("SNEWS", cn)
