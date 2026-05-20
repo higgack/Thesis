@@ -1288,7 +1288,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
 
-<b>【12. 백엔드】</b> ✅ EPO · ⏳ KIPRIS/KISTI/NTIS/DataON 활용신청 승인 대기 — 승인 전 /company_patents·/kr_* 는 "결과 없음" 반환"""
+<b>【12. 백엔드】</b> ✅ EPO·NTIS · ⏳ KIPRIS/ScienceON/DataON 활용신청 승인 대기 — 승인 전 결과 없음"""
 
 
 # Detailed multi-section guide for the patent suite. Kept separate
@@ -1549,8 +1549,11 @@ KISTI ScienceON 특허 (국제+KR, 한글 abstract).
 ※ 동일.
 
 <b>/kr_rnd_projects &lt;키워드&gt;</b>
-NTIS 국가R&amp;D 과제 — 과제번호 / 수행기관 / 책임자 / 연구비 / 기간.
-※ NTIS 3개 활용신청 승인 대기 중.
+NTIS 국가R&amp;D 과제. 각 행에:
+• 과제번호 · 관리기관 · 책임자 · 연구원 수 (남/여) · 연도
+• 🏷️ 키워드 (한국어)
+• 🎯 목표 (Goal) · 📝 초록 (Abstract) · 💡 기대효과 (Effect)
+✅ NTIS 활성 — 3개 서비스 (과제검색·분류추천·연관콘텐츠) 동일 키 공유.
 
 <b>/kr_research_data &lt;키워드&gt;</b>
 DataON 공공 연구데이터셋 — svcId · 제목 · 작성자 · DOI · 라이선스.
@@ -1564,7 +1567,7 @@ DataON 공공 연구데이터셋 — svcId · 제목 · 작성자 · DOI · 라�
    승인 전: /company_patents · /patent_detail · /citing_patents
    는 결과 없음 반환 (resultCode 30)
 ⏳ KISTI ScienceON — helpdesk 답변 대기 (IP 검증 우회)
-⏳ KISTI NTIS — 3건 활용신청 승인 대기
+✅ KISTI NTIS — 활성 (3건 승인, 동일 키, public_project · rcmncls · ConnectionContent)
 ⏳ KISTI DataON — 회원가입 승인 대기
 
 ═══════════════════════════════════════
@@ -1738,7 +1741,7 @@ KIPRIS Plus 단건 상세 / 인용 네트워크. 출원번호 (숫자만) 입력
    해당 명령어: /kr_papers · /kr_patents · /kr_reports
    /kr_patents (ScienceON) 는 한글 메타데이터 풍부, /search_patents (EPO)
    글로벌 영문 위주 — 활성화되면 용도 분리해 사용 가능
-⏳ <b>KISTI NTIS</b> — 3건 활용신청 승인 대기 (/kr_rnd_projects 등)
+✅ <b>KISTI NTIS</b> — 활성 (3건 승인, /kr_rnd_projects 동작 + 자연어 분류추천/연관콘텐츠 가능)
 ⏳ <b>KISTI DataON</b> — 회원가입 승인 대기 (/kr_research_data)
 
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -6304,9 +6307,12 @@ async def cmd_kr_reports(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 def _format_ntis_projects(query: str, rows: list[dict]) -> str:
-    """NTIS public_project rows use Korean tag names (과제번호, 과제명,
-    수행기관, 연구책임자, 연구기간, 연구비). Field names vary across
-    upstream XML — try common variants."""
+    """NTIS public_project rows. The new schema (2026-05+) exposes
+    ProjectNumber / ProjectTitle / ResearchLeader (Manager) /
+    ResearchAgency (OrderAgency) / Researchers (count) / Abstract /
+    Goal / Effect / Keyword. The legacy schema's Korean tag names
+    (과제명·과제번호·수행기관·연구책임자·연구기간·연구비) are kept as
+    fallback lookups so older endpoints / cached rows still render."""
     import html as _html
     if not rows:
         return (
@@ -6328,24 +6334,42 @@ def _format_ntis_projects(query: str, rows: list[dict]) -> str:
                   or r.get("agency") or "").strip()
         leader = (r.get("ResearchLeader") or r.get("연구책임자")
                   or r.get("leader") or "").strip()
+        researchers = (r.get("Researchers") or "").strip()
         period = (r.get("ResearchPeriod") or r.get("연구기간")
                   or r.get("period") or "").strip()
         budget = (r.get("ResearchExpenses") or r.get("연구비")
                   or r.get("budget") or "").strip()
+        year = (r.get("ResearchYear") or "").strip()
+        abstract = (r.get("Abstract") or "").strip()
+        goal = (r.get("Goal") or "").strip()
+        effect = (r.get("Effect") or "").strip()
+        keyword = (r.get("Keyword") or "").strip()
         parts: list[str] = []
         if pjt_id:
             parts.append(f"과제번호 {_html.escape(pjt_id)}")
         if agency:
-            parts.append(f"수행기관 {_html.escape(agency[:60])}")
+            parts.append(f"관리기관 {_html.escape(agency[:60])}")
         if leader:
             parts.append(f"책임자 {_html.escape(leader[:40])}")
+        if researchers:
+            parts.append(f"연구원 {_html.escape(researchers[:30])}")
+        if year:
+            parts.append(f"연도 {_html.escape(year)}")
         if period:
             parts.append(f"기간 {_html.escape(period[:40])}")
         if budget:
             parts.append(f"연구비 {_html.escape(budget[:30])}")
         block = [f"\n🔬 <b>{i}. {title}</b>"]
         if parts:
-            block.append(f"   {' · '.join(parts[:5])}")
+            block.append(f"  {' · '.join(parts[:6])}")
+        if keyword:
+            block.append(f"  🏷️ {_html.escape(keyword[:120])}")
+        if goal:
+            block.append(f"  🎯 {_html.escape(_truncate_at_sentence(goal, 400))}")
+        if abstract:
+            block.append(f"  📝 {_html.escape(_truncate_at_sentence(abstract, 600))}")
+        if effect:
+            block.append(f"  💡 {_html.escape(_truncate_at_sentence(effect, 400))}")
         out.append("\n".join(block))
     return "\n".join(out)
 
