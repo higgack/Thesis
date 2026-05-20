@@ -36,24 +36,17 @@ _KIPRIS_API = "http://plus.kipris.or.kr/openapi/rest"
 _KIPRIS_APPLICANT_PATH = "/patUtiModInfoSearchSevice/applicantNameSearchInfo"
 _KIPRIS_APPNUM_PATH = "/patUtiModInfoSearchSevice/applicationNumberSearchInfo"
 _KIPRIS_CITING_PATH = "/CitingService/citingInfo"
-# 11 additional KIPRIS Plus services applied for 2026-05. Endpoint
-# paths confirmed (when ✅) or best-guess (⏳) from KIPRIS Plus API
-# spec. The bot logs the full URL on first call so we can adjust
-# unverified paths once a spec is shared.
-# ✅ verified from KIPRIS Plus JSON spec (자유검색 operation):
+# Additional KIPRIS Plus services applied for 2026-05. All paths
+# below verified against /freeSearchInfo + the patentIpcInfo spec
+# (same patUtiModInfoSearchSevice service, different operation).
 _KIPRIS_WORD_PATH = "/patUtiModInfoSearchSevice/freeSearchInfo"          # 통합 free-text ✅
 _KIPRIS_PUB_PATH = "/patUtiModInfoSearchSevice/freeSearchInfo"           # 공개공보 (lastvalue=A) ✅
 _KIPRIS_REG_PATH = "/patUtiModInfoSearchSevice/freeSearchInfo"           # 등록공보 (lastvalue=R) ✅
-# ⏳ best-guess paths; await spec:
-_KIPRIS_ADMST_PATH = "/patUtiModInfoSearchSevice/patentLegalStatusInfo"  # 행정상태 (서지정보)
-_KIPRIS_KPC_PATH = "/KPCSearchService/searchIPCInfo"                     # 분류코드
-_KIPRIS_FAMILY_PATH = "/patUtiModInfoSearchSevice/patentFamilyInfo"      # 패밀리 (서지정보)
-_KIPRIS_RIGHTS_PATH = "/rightsAlterChangeSearchService/rightsInfo"       # 권리변경
-_KIPRIS_CLAIM_PATH = "/patUtiModInfoSearchSevice/patentClaimInfo"        # 청구항 (서지정보)
+_KIPRIS_ADMST_PATH = "/patUtiModInfoSearchSevice/patentLegalStatusInfo"  # 행정상태 (서지정보) ✅
+_KIPRIS_FAMILY_PATH = "/patUtiModInfoSearchSevice/patentFamilyInfo"      # 패밀리 (서지정보) ✅
+_KIPRIS_CLAIM_PATH = "/patUtiModInfoSearchSevice/patentClaimInfo"        # 청구항 (서지정보) ✅
 _KIPRIS_PRIORITY_PATH = "/patUtiModInfoSearchSevice/patentPriorityInfo"  # 우선권 (서지정보)
-_KIPRIS_TECHFIELD_PATH = "/TechFieldSearchService/techFieldInfo"         # 기술분야별
 _KIPRIS_INVENTOR_PATH = "/patUtiModInfoSearchSevice/inventorSearchInfo"  # 발명자 (항목별검색)
-_KIPRIS_TREND_PATH = "/KPRDSearchService/kprdSearchInfo"                 # 출원/등록 트렌드
 
 _EPO_BASE = "https://ops.epo.org/3.2"
 _EPO_TOKEN_URL = f"{_EPO_BASE}/auth/accesstoken"
@@ -1554,17 +1547,6 @@ async def _kipris_admin_status(application_number: str) -> dict | None:
     return rows[0] if rows else None
 
 
-async def _kipris_class_lookup(code: str) -> dict | None:
-    """KPC 분류코드 (#5) — 한국분류코드 정의 lookup."""
-    root = await _kipris_get_xml(_KIPRIS_KPC_PATH, {
-        "kpcCode": code,
-    }, "kpcLookup")
-    if root is None:
-        return None
-    rows = _kipris_extract_items(root, "kpcLookup")
-    return rows[0] if rows else None
-
-
 async def _kipris_family_search(application_number: str) -> list[dict]:
     """패밀리 특허 (#6) — 동일 발명의 해외 패밀리 (EPO DOCDB 보완)."""
     root = await _kipris_get_xml(_KIPRIS_FAMILY_PATH, {
@@ -1573,16 +1555,6 @@ async def _kipris_family_search(application_number: str) -> list[dict]:
     if root is None:
         return []
     return _kipris_extract_items(root, "family")
-
-
-async def _kipris_rights_change(application_number: str) -> list[dict]:
-    """권리이전/명칭변경 이력 (#8) — M&A 트래킹용."""
-    root = await _kipris_get_xml(_KIPRIS_RIGHTS_PATH, {
-        "applicationNumber": application_number,
-    }, "rights")
-    if root is None:
-        return []
-    return _kipris_extract_items(root, "rights")
 
 
 async def _kipris_claim_lookup(application_number: str) -> list[dict]:
@@ -1605,25 +1577,6 @@ async def _kipris_priority_lookup(application_number: str) -> list[dict]:
     return _kipris_extract_items(root, "priority")
 
 
-async def _kipris_techfield_search(field_code: str,
-                                   limit: int) -> list[dict]:
-    """기술분야별 (#12) — 분야 코드로 출원 동향."""
-    root = await _kipris_get_xml(_KIPRIS_TECHFIELD_PATH, {
-        "techFieldCode": field_code,
-        "docsStart": "1",
-        "docsCount": str(min(max(1, limit), 100)),
-    }, "techField")
-    if root is None:
-        return []
-    out = []
-    for item in root.findall(".//PatentUtilityInfo"):
-        try:
-            out.append(_kipris_to_unified(item))
-        except Exception:
-            log.exception("kipris techField row parse failed")
-    return _sort_kipris_rows(out)
-
-
 async def _kipris_inventor_search(inventor: str,
                                   limit: int) -> list[dict]:
     """발명자 (#13) — 발명자 이름으로 특허 검색."""
@@ -1644,24 +1597,6 @@ async def _kipris_inventor_search(inventor: str,
         except Exception:
             log.exception("kipris inventor row parse failed")
     return _sort_kipris_rows(out)
-
-
-async def _kipris_trend_search(word: str, limit: int) -> list[dict]:
-    """KPRD 트렌드 (#14) — 키워드 시계열 출원 추이."""
-    root = await _kipris_get_xml(_KIPRIS_TREND_PATH, {
-        "word": word,
-        "docsStart": "1",
-        "docsCount": str(min(max(1, limit), 100)),
-    }, "trend")
-    if root is None:
-        return []
-    out: list[dict] = []
-    for item in (root.findall(".//kprdInfo")
-                 or root.findall(".//item")):
-        row = {child.tag: (child.text or "").strip() for child in item}
-        if row:
-            out.append(row)
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1712,27 +1647,11 @@ async def kipris_admin_status(application_number: str) -> dict | None:
         return None
 
 
-async def kipris_class_lookup(code: str) -> dict | None:
-    try:
-        return await _kipris_class_lookup(code)
-    except Exception:
-        log.exception("kipris_class_lookup failed")
-        return None
-
-
 async def kipris_family_search(application_number: str) -> list[dict]:
     try:
         return await _kipris_family_search(application_number)
     except Exception:
         log.exception("kipris_family_search failed")
-        return []
-
-
-async def kipris_rights_change(application_number: str) -> list[dict]:
-    try:
-        return await _kipris_rights_change(application_number)
-    except Exception:
-        log.exception("kipris_rights_change failed")
         return []
 
 
@@ -1752,27 +1671,10 @@ async def kipris_priority_lookup(application_number: str) -> list[dict]:
         return []
 
 
-async def kipris_techfield_search(field_code: str,
-                                  limit: int = 50) -> list[dict]:
-    try:
-        return await _kipris_techfield_search(field_code, limit)
-    except Exception:
-        log.exception("kipris_techfield_search failed")
-        return []
-
-
 async def kipris_inventor_search(inventor: str,
                                  limit: int = 50) -> list[dict]:
     try:
         return await _kipris_inventor_search(inventor, limit)
     except Exception:
         log.exception("kipris_inventor_search failed")
-        return []
-
-
-async def kipris_trend_search(word: str, limit: int = 50) -> list[dict]:
-    try:
-        return await _kipris_trend_search(word, limit)
-    except Exception:
-        log.exception("kipris_trend_search failed")
         return []

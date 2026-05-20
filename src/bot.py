@@ -6409,22 +6409,6 @@ async def cmd_kipris_inventor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cmd_kipris_techfield(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/kipris_techfield <기술분야 코드> — KIPRIS Plus 기술분야별 (#12)."""
-    q = " ".join(ctx.args or []).strip()
-    if not q:
-        await update.message.reply_text(
-            "사용법: /kipris_techfield <기술분야 코드>\n"
-            "예: /kipris_techfield H01L"
-        )
-        return
-    from .agent import patentsearch
-    await _kipris_search_command(
-        update, ctx, q, "기술분야별", "🔬",
-        patentsearch.kipris_techfield_search, "kipris_techfield",
-    )
-
-
 # --- Lookup-style commands (return dict / list of free-form fields) ---
 
 
@@ -6448,21 +6432,6 @@ async def cmd_kipris_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def cmd_kipris_class(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/kipris_class <KPC 분류코드> — 한국분류코드 정의 (#5)."""
-    q = " ".join(ctx.args or []).strip()
-    if not q:
-        await update.message.reply_text(
-            "사용법: /kipris_class <KPC 코드>\n예: /kipris_class H01L21/02"
-        )
-        return
-    from .agent import patentsearch
-    await _kipris_lookup_command(
-        update, ctx, q, "한국분류코드", "🏷️",
-        patentsearch.kipris_class_lookup, "kipris_class",
-    )
-
-
 async def cmd_kipris_family(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/kipris_family <KR 출원번호> — 패밀리 특허 (#6)."""
     q = " ".join(ctx.args or []).strip()
@@ -6480,27 +6449,6 @@ async def cmd_kipris_family(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _kipris_lookup_command(
         update, ctx, digits, "패밀리 특허", "🌐",
         patentsearch.kipris_family_search, "kipris_family",
-        is_list=True,
-    )
-
-
-async def cmd_kipris_rights(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/kipris_rights <KR 출원번호> — 권리이전/명칭변경 이력 (#8)."""
-    q = " ".join(ctx.args or []).strip()
-    if not q:
-        await update.message.reply_text(
-            "사용법: /kipris_rights <KR 출원번호 13자리>"
-        )
-        return
-    first_token = (q.split() or [""])[0]
-    digits = "".join(ch for ch in first_token if ch.isdigit())
-    if not digits:
-        await update.message.reply_text("출원번호는 숫자만 인식.")
-        return
-    from .agent import patentsearch
-    await _kipris_lookup_command(
-        update, ctx, digits, "권리이전/명칭변경", "🔄",
-        patentsearch.kipris_rights_change, "kipris_rights",
         is_list=True,
     )
 
@@ -6543,20 +6491,6 @@ async def cmd_kipris_priority(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _kipris_lookup_command(
         update, ctx, digits, "우선권", "⭐",
         patentsearch.kipris_priority_lookup, "kipris_priority",
-        is_list=True,
-    )
-
-
-async def cmd_kipris_trend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/kipris_trend <키워드> — KPRD 출원/등록 트렌드 (#14)."""
-    q = " ".join(ctx.args or []).strip()
-    if not q:
-        await update.message.reply_text("사용법: /kipris_trend <키워드>")
-        return
-    from .agent import patentsearch
-    await _kipris_lookup_command(
-        update, ctx, q, "출원/등록 트렌드", "📊",
-        patentsearch.kipris_trend_search, "kipris_trend",
         is_list=True,
     )
 
@@ -10378,14 +10312,10 @@ def main():
     app.add_handler(CommandHandler("kipris_pub", cmd_kipris_pub))
     app.add_handler(CommandHandler("kipris_reg", cmd_kipris_reg))
     app.add_handler(CommandHandler("kipris_inventor", cmd_kipris_inventor))
-    app.add_handler(CommandHandler("kipris_techfield", cmd_kipris_techfield))
     app.add_handler(CommandHandler("kipris_status", cmd_kipris_status))
-    app.add_handler(CommandHandler("kipris_class", cmd_kipris_class))
     app.add_handler(CommandHandler("kipris_family", cmd_kipris_family))
-    app.add_handler(CommandHandler("kipris_rights", cmd_kipris_rights))
     app.add_handler(CommandHandler("kipris_claims", cmd_kipris_claims))
     app.add_handler(CommandHandler("kipris_priority", cmd_kipris_priority))
-    app.add_handler(CommandHandler("kipris_trend", cmd_kipris_trend))
     app.add_handler(CommandHandler("kr_papers", cmd_kr_papers))
     app.add_handler(CommandHandler("kr_patents", cmd_kr_patents))
     app.add_handler(CommandHandler("kr_reports", cmd_kr_reports))
