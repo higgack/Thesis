@@ -1578,8 +1578,8 @@ NTIS 국가R&amp;D 과제. 각 행에:
 • 🎯 목표 (Goal) · 📝 초록 (Abstract) · 💡 기대효과 (Effect)
 ✅ NTIS 활성 — 3개 서비스 (과제검색·분류추천·연관콘텐츠) 동일 키 공유.
 
-<b>/kr_classifications &lt;연구 초록&gt;</b>
-NTIS 분류코드 추천 (rcmncls). 초록 20자+ 입력하면 과학기술표준분류
+<b>/kr_classifications &lt;키워드/초록&gt;</b>
+NTIS 분류코드 추천 (rcmncls). 키워드 또는 초록 입력하면 과학기술표준분류
 코드 후보 추천. 다른 type (보건의료/산업기술) 은 자연어로 호출.
 
 <b>/kr_related &lt;pjt_id&gt; [paper|patent|researchreport|project]</b>
@@ -6929,10 +6929,12 @@ async def cmd_kr_classifications(update: Update,
     if not _is_owner(update):
         return
     abstract = " ".join(ctx.args).strip()
-    if not abstract or len(abstract) < 20:
+    # NTIS rcmncls accepts short phrases — keep just enough validation
+    # to reject empty / single-word noise.
+    if len(abstract) < 5:
         await update.message.reply_text(
-            "사용법: /kr_classifications <연구 초록 20자 이상>\n"
-            "예: /kr_classifications 양자 컴퓨팅 기반 암호화 알고리즘 연구..."
+            "사용법: /kr_classifications <연구 키워드 또는 초록>\n"
+            "예: /kr_classifications 양자 컴퓨팅 기반 암호화 알고리즘"
         )
         return
     await _typing(update, ctx)
