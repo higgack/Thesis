@@ -37,21 +37,22 @@ _KIPRIS_APPLICANT_PATH = "/patUtiModInfoSearchSevice/applicantNameSearchInfo"
 _KIPRIS_APPNUM_PATH = "/patUtiModInfoSearchSevice/applicationNumberSearchInfo"
 _KIPRIS_CITING_PATH = "/CitingService/citingInfo"
 # 11 additional KIPRIS Plus services applied for 2026-05. Endpoint
-# paths are best-guess from KIPRIS naming conventions; the bot logs
-# the full URL on first call so we can confirm the path the moment
-# approval comes in. If a path is wrong KIPRIS returns 404 and we
-# adjust here.
-_KIPRIS_WORD_PATH = "/patUtiModInfoSearchSevice/wordSearchInfo"          # 통합 free-text
-_KIPRIS_PUB_PATH = "/patUtiModInfoSearchSevice/publicInfoSearchInfo"     # 공개공보
-_KIPRIS_REG_PATH = "/patUtiModInfoSearchSevice/registerInfoSearchInfo"   # 등록공보
-_KIPRIS_ADMST_PATH = "/patAdmStInfoSearchSevice/applicationAdmStInfo"    # 행정상태
-_KIPRIS_KPC_PATH = "/KPCSearchService/kpcInfoSearchInfo"                 # 한국분류코드
-_KIPRIS_FAMILY_PATH = "/familyInfoSearchSevice/familyInfoSearchOA"       # 패밀리
+# paths confirmed (when ✅) or best-guess (⏳) from KIPRIS Plus API
+# spec. The bot logs the full URL on first call so we can adjust
+# unverified paths once a spec is shared.
+# ✅ verified from KIPRIS Plus JSON spec (자유검색 operation):
+_KIPRIS_WORD_PATH = "/patUtiModInfoSearchSevice/freeSearchInfo"          # 통합 free-text ✅
+_KIPRIS_PUB_PATH = "/patUtiModInfoSearchSevice/freeSearchInfo"           # 공개공보 (lastvalue=A) ✅
+_KIPRIS_REG_PATH = "/patUtiModInfoSearchSevice/freeSearchInfo"           # 등록공보 (lastvalue=R) ✅
+# ⏳ best-guess paths; await spec:
+_KIPRIS_ADMST_PATH = "/patUtiModInfoSearchSevice/patentLegalStatusInfo"  # 행정상태 (서지정보)
+_KIPRIS_KPC_PATH = "/KPCSearchService/searchIPCInfo"                     # 분류코드
+_KIPRIS_FAMILY_PATH = "/patUtiModInfoSearchSevice/patentFamilyInfo"      # 패밀리 (서지정보)
 _KIPRIS_RIGHTS_PATH = "/rightsAlterChangeSearchService/rightsInfo"       # 권리변경
-_KIPRIS_CLAIM_PATH = "/claimSearchService/claimInfo"                     # 청구항
-_KIPRIS_PRIORITY_PATH = "/priorityInfoSearchService/priorityInfo"        # 우선권
+_KIPRIS_CLAIM_PATH = "/patUtiModInfoSearchSevice/patentClaimInfo"        # 청구항 (서지정보)
+_KIPRIS_PRIORITY_PATH = "/patUtiModInfoSearchSevice/patentPriorityInfo"  # 우선권 (서지정보)
 _KIPRIS_TECHFIELD_PATH = "/TechFieldSearchService/techFieldInfo"         # 기술분야별
-_KIPRIS_INVENTOR_PATH = "/inventorInfoSearchSevice/inventorInfoSearchInfo"  # 발명자
+_KIPRIS_INVENTOR_PATH = "/patUtiModInfoSearchSevice/inventorSearchInfo"  # 발명자 (항목별검색)
 _KIPRIS_TREND_PATH = "/KPRDSearchService/kprdSearchInfo"                 # 출원/등록 트렌드
 
 _EPO_BASE = "https://ops.epo.org/3.2"
@@ -176,6 +177,13 @@ def _kipris_to_unified(item) -> dict:
     # date when neither registration nor publication exists.
     sort_date_raw = reg_date_raw or open_date_raw or app_date_raw
 
+    # Free-text search (freeSearchInfo, verified 2026-05) returns
+    # Abstract + IPC + RegistrationStatus directly in the list
+    # response. Applicant search omits these — the _t() helper just
+    # returns "" for missing tags, so this works for both.
+    abstract = _t("Abstract")
+    ipc_str = _t("InternationalpatentclassificationNumber")
+    ipc = [c.strip() for c in ipc_str.split("|") if c.strip()] if ipc_str else []
     return _empty({
         "title": title,
         "patent_number": patent_number,
@@ -183,14 +191,10 @@ def _kipris_to_unified(item) -> dict:
         "year": year,
         "kind_label": kind_label,
         "_sort_date": sort_date_raw,  # YYYYMMDD, used by caller for ordering
-        # KIPRIS applicantNameSearchInfo doesn't return inventor or
-        # abstract in the list response — only application number,
-        # title, applicant, dates, status. We could fetch detail per
-        # patent (applicationNumberSearchInfo + Abstract) but that's
-        # N extra round trips — defer until we see real demand.
         "inventors": [],
         "assignee": applicant,
-        "abstract": "",
+        "abstract": abstract,
+        "ipc": ipc,
         "claims_count": None,
         "url": url,
     }, "KIPRIS")
@@ -1378,17 +1382,34 @@ async def _kipris_get_xml(path: str, params: dict,
         return None
 
 
-async def _kipris_word_search(word: str, limit: int) -> list[dict]:
-    """KIPRIS Plus 통합 free-text 검색 (#3 patUtiModInfoSearchSevice
-    wordSearchInfo). 제목·초록·청구항을 가로질러 키워드 매칭."""
-    root = await _kipris_get_xml(_KIPRIS_WORD_PATH, {
+def _kipris_freesearch_params(word: str, limit: int,
+                              lastvalue: str = "") -> dict:
+    """Shared params for the three /freeSearchInfo callers (통합 /
+    공개 / 등록). Mirrors the verified KIPRIS Plus spec — word
+    keyword, patent toggle, lastvalue filter ('' / A / R), pagination
+    via docsStart/docsCount (max 500), and server-side sort by
+    application date desc so newest filings come back first."""
+    return {
         "word": word,
-        "docsStart": "1",
-        "docsCount": str(min(max(1, limit), 100)),
         "patent": "true",
         "utility": "false",
-        "lastvalue": "",
-    }, "wordSearch")
+        "lastvalue": lastvalue,  # ''=all, A=공개, R=등록 등
+        "docsStart": "1",
+        "docsCount": str(min(max(1, limit), 500)),
+        "descSort": "true",  # desc — newest first
+        "sortSpec": "AD",    # AD = 출원일자 (most-recently-filed)
+    }
+
+
+async def _kipris_word_search(word: str, limit: int) -> list[dict]:
+    """KIPRIS Plus 통합 free-text 검색 — 자유검색 operation
+    (patUtiModInfoSearchSevice/freeSearchInfo, verified 2026-05).
+    제목·초록·청구항·청구범위를 가로질러 키워드 매칭. 응답에 Abstract
+    포함이라 detail enrichment 불필요."""
+    root = await _kipris_get_xml(
+        _KIPRIS_WORD_PATH, _kipris_freesearch_params(word, limit),
+        "wordSearch",
+    )
     if root is None:
         return []
     out = []
@@ -1401,15 +1422,12 @@ async def _kipris_word_search(word: str, limit: int) -> list[dict]:
 
 
 async def _kipris_pub_search(word: str, limit: int) -> list[dict]:
-    """공개공보 (#1) — 공개된 특허만 (등록 제외) 키워드 검색."""
-    root = await _kipris_get_xml(_KIPRIS_PUB_PATH, {
-        "word": word,
-        "docsStart": "1",
-        "docsCount": str(min(max(1, limit), 100)),
-        "patent": "true",
-        "utility": "false",
-        "lastvalue": "A",  # A = 공개
-    }, "pubSearch")
+    """공개공보 only — freeSearchInfo + lastvalue=A (공개 상태 필터)."""
+    root = await _kipris_get_xml(
+        _KIPRIS_PUB_PATH,
+        _kipris_freesearch_params(word, limit, lastvalue="A"),
+        "pubSearch",
+    )
     if root is None:
         return []
     out = []
@@ -1422,15 +1440,12 @@ async def _kipris_pub_search(word: str, limit: int) -> list[dict]:
 
 
 async def _kipris_reg_search(word: str, limit: int) -> list[dict]:
-    """등록공보 (#2) — 등록 완료된 특허만 키워드 검색."""
-    root = await _kipris_get_xml(_KIPRIS_REG_PATH, {
-        "word": word,
-        "docsStart": "1",
-        "docsCount": str(min(max(1, limit), 100)),
-        "patent": "true",
-        "utility": "false",
-        "lastvalue": "R",  # R = 등록
-    }, "regSearch")
+    """등록공보 only — freeSearchInfo + lastvalue=R (등록 상태 필터)."""
+    root = await _kipris_get_xml(
+        _KIPRIS_REG_PATH,
+        _kipris_freesearch_params(word, limit, lastvalue="R"),
+        "regSearch",
+    )
     if root is None:
         return []
     out = []
@@ -1603,9 +1618,10 @@ async def _kipris_trend_search(word: str, limit: int) -> list[dict]:
 
 
 async def kipris_search(word: str, limit: int = 50,
-                        enrich: bool = True) -> list[dict]:
-    """통합 free-text 검색 + 상위 30건 abstract 보강. 활용신청 승인 전
-    엔드포인트가 막혀 있으면 빈 리스트 반환."""
+                        enrich: bool = False) -> list[dict]:
+    """통합 free-text 검색 (freeSearchInfo). 응답 자체에 Abstract +
+    IPC + RegistrationStatus 포함이라 enrich 기본 False — 호출자가
+    원하면 명시적으로 enrich=True 로 detail 추가 가능."""
     try:
         rows = await _kipris_word_search(word, limit)
         if enrich and rows:
