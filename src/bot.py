@@ -6276,7 +6276,16 @@ async def _kisti_search_command(update, ctx, query: str, kind: str,
         except Exception:
             pass
         return
-    rows = result.get("results") or []
+    # kisti_scienceon search_* functions return list[dict] directly.
+    # Defensive: support dict-wrapped {"results": [...]} too in case
+    # the caller hands in an agent-tool wrapper instead of the raw
+    # client function.
+    if isinstance(result, list):
+        rows = result
+    elif isinstance(result, dict):
+        rows = result.get("results") or []
+    else:
+        rows = []
     body = _format_kisti_results(query, rows, kind)
     _kisti_tool_name = {
         "paper":         "search_kr_papers",
