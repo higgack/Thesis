@@ -24,6 +24,7 @@ import asyncio
 import base64
 import logging
 import os
+import re
 import time
 
 import httpx
@@ -175,9 +176,11 @@ async def _kipris_by_applicant(applicant: str, limit: int) -> list[dict]:
     params = {
         "applicant": applicant,
         "docsStart": "1",
-        # KIPRIS allows up to 500 per page; we cap at 30 to keep the
-        # XML response small + give the user a curated top slice.
-        "docsCount": str(min(limit, 30)),
+        # KIPRIS allows up to 500 per page; we cap at 100 — Telegram
+        # message split + downstream translation still work fine at
+        # that size, and the user wants the broadest reasonable
+        # coverage per /company_patents call.
+        "docsCount": str(min(limit, 100)),
         "patent": "true",
         "utility": "false",
         # status: A=공개, R=등록, J=거절, 빈값=전체. Pull everything;
@@ -210,7 +213,63 @@ async def _kipris_by_applicant(applicant: str, limit: int) -> list[dict]:
     return out
 
 
-async def search_by_applicant(applicant: str, limit: int = 15) -> list[dict]:
+async def _enrich_kipris_rows_with_details(
+    rows: list[dict], max_enrich: int = 30,
+) -> list[dict]:
+    """Fetch detail for the top N KIPRIS list rows in parallel to add
+    Abstract + IPC + Inventor fields that the list endpoint omits.
+    Bounded with asyncio.Semaphore(5) to avoid hammering KIPRIS. If
+    the detail service isn't approved yet, every fetch returns None
+    silently and the original row stays unchanged — no error path."""
+    if not rows:
+        return rows
+    sem = asyncio.Semaphore(5)
+    targets = rows[:max_enrich]
+
+    async def _one(idx: int, row: dict) -> None:
+        # The list endpoint stores `patent_number` as 'KR<reg>' /
+        # 'KR<open>A' / 'KR-출원<app>'. The detail endpoint needs the
+        # raw application number — pull it back out of the URL or
+        # patent_number, whichever is cleaner.
+        app_num = ""
+        url = row.get("url") or ""
+        m = re.search(r"applno=(\d+)", url)
+        if m:
+            app_num = m.group(1)
+        else:
+            pn = row.get("patent_number") or ""
+            digits = "".join(ch for ch in pn if ch.isdigit())
+            if digits:
+                app_num = digits
+        if not app_num:
+            return
+        async with sem:
+            try:
+                detail = await _kipris_patent_detail(app_num)
+            except Exception:
+                return
+        if not detail:
+            return
+        # Patch only the fields we know the list response lacks.
+        if detail.get("abstract") and not row.get("abstract"):
+            row["abstract"] = detail["abstract"]
+        if detail.get("ipc") and not row.get("ipc"):
+            row["ipc"] = detail["ipc"]
+        if detail.get("inventors") and not row.get("inventors"):
+            row["inventors"] = detail["inventors"]
+            row["inventors_total"] = detail.get(
+                "inventors_total", len(detail["inventors"])
+            )
+
+    await asyncio.gather(
+        *(_one(i, r) for i, r in enumerate(targets)),
+        return_exceptions=True,
+    )
+    return rows
+
+
+async def search_by_applicant(applicant: str, limit: int = 50,
+                              enrich: bool = True) -> list[dict]:
     """Korean company patent lookup via KIPRIS.
 
     Separate entry point from search() because the input is an
@@ -218,11 +277,20 @@ async def search_by_applicant(applicant: str, limit: int = 15) -> list[dict]:
     applicantNameSearchInfo endpoint doesn't do keyword matching
     against the title/abstract.
 
+    When enrich=True, the top 30 rows are enriched in parallel with
+    a per-patent detail fetch (Abstract / IPC / Inventor). Detail
+    endpoint requires its own activation; on auth failure the
+    enrichment silently no-ops and the original list-response rows
+    are returned unchanged.
+
     Returns [] on backend failure so callers (bot command, agent
     tool) can render an empty-result message instead of crashing.
     """
     try:
-        return await _kipris_by_applicant(applicant, limit)
+        rows = await _kipris_by_applicant(applicant, limit)
+        if enrich and rows:
+            rows = await _enrich_kipris_rows_with_details(rows)
+        return rows
     except Exception as e:
         log.warning("patent search_by_applicant kipris failed (%s)",
                     type(e).__name__)

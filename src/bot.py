@@ -5365,9 +5365,17 @@ def _format_patents_text(query: str, results: list[dict]) -> str:
     if not results:
         return (f"🔍 '<b>{_html.escape(query)}</b>' 관련 특허 결과 없음.\n"
                 f"검색어를 영문 키워드로 좁히면 결과가 나올 가능성 ↑.")
+    # Detect backend by inspecting the rows' source marker. KIPRIS
+    # rows carry source='KIPRIS' (set by _kipris_to_unified); EPO
+    # rows source='EPO'. Mixed lists are rare but possible — show
+    # both labels when so.
+    _source_label_map = {"KIPRIS": "KIPRIS Plus", "EPO": "EPO OPS"}
+    raw_sources = {p.get("source", "EPO") or "EPO" for p in results}
+    sources = sorted(_source_label_map.get(s, s) for s in raw_sources)
+    source_label = " + ".join(sources) or "EPO OPS"
     out = [
         f"⚖️ <b>특허 검색 결과 — '{_html.escape(query)}'</b>",
-        f"<i>{len(results)}건 · EPO OPS</i>",
+        f"<i>{len(results)}건 · {_html.escape(source_label)}</i>",
     ]
     for i, p in enumerate(results, 1):
         title_src = (p.get("title_ko") or p.get("title") or "(제목 없음)")
@@ -5943,7 +5951,7 @@ async def cmd_company_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     try:
         from .agent import patentsearch
-        results = await patentsearch.search_by_applicant(applicant, limit=15)
+        results = await patentsearch.search_by_applicant(applicant, limit=50)
     except Exception as e:
         log.exception("company_patents direct call failed for %r", applicant)
         try:

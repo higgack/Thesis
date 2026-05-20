@@ -158,7 +158,7 @@ async def search_papers(query: str, limit: int = 15) -> dict:
     return {"results": slim, "count": len(slim)}
 
 
-async def search_company_patents(applicant: str, limit: int = 15) -> dict:
+async def search_company_patents(applicant: str, limit: int = 50) -> dict:
     """KIPRIS Plus applicant-name patent lookup. Korean patents only.
 
     Different from search_patents: input is a company/applicant name
