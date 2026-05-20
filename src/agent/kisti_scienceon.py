@@ -166,24 +166,50 @@ def _parse_xml(text: str) -> ET.Element | None:
 
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
-
-
 _WHITESPACE_RUN_RE = re.compile(r"[\s\xa0]+")
+# ScienceON reports wrap LaTeX commands in <TEX>$ command $</TEX>
+# blocks: ○ as <TEX>$ circ$</TEX>, · as <TEX>$ cdot$</TEX>, □ as
+# <TEX>$ square$</TEX> / <TEX>$ Box$</TEX>. The generic tag stripper
+# would leave "$ circ$" residue in the visible text, so handle these
+# explicitly first.
+_TEX_BLOCK_RE = re.compile(r"<TEX>\$\s*([A-Za-z]+)?\s*\$</TEX>")
+_TEX_COMMAND_TO_UNICODE = {
+    "circ": "○", "cdot": "·", "square": "□", "Box": "□",
+    "bullet": "•", "ast": "*", "times": "×", "div": "÷",
+    "pm": "±", "leq": "≤", "geq": "≥", "neq": "≠",
+    "approx": "≈", "infty": "∞",
+    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ",
+    "mu": "µ", "pi": "π", "sigma": "σ", "omega": "ω",
+    "Delta": "Δ", "Omega": "Ω",
+    "rightarrow": "→", "leftarrow": "←",
+    "Rightarrow": "⇒", "Leftarrow": "⇐",
+}
+
+
+def _replace_tex(match: "re.Match[str]") -> str:
+    cmd = (match.group(1) or "").strip()
+    return _TEX_COMMAND_TO_UNICODE.get(cmd, "")
 
 
 def _clean_field(text: str) -> str:
-    """Decode HTML entities and strip leftover tags / control chars
-    from a ScienceON metaCode value. ScienceON abstracts/titles often
-    arrive with inline HTML — <P>...</P>, <jats:p>, <SUB>, <span>;
-    numeric entities like &#x2122; (™), &#x2010; (-), &#x00B5; (µ),
-    &#x002B; (+); and the double-encoded &amp;#xD; (carriage return).
-    Single unescape leaves the inner &#xD; literal, so unescape twice.
-    Then strip tags, then collapse any run of whitespace (including
-    \\r left by &#xD; and \\xa0 from &nbsp;) into one space."""
+    """Decode HTML entities, replace LaTeX commands, and strip
+    leftover tags / control chars from a ScienceON metaCode value.
+
+    Order matters:
+      1. Unescape HTML entities (twice — the double-encoded
+         &amp;#xD; needs two passes).
+      2. Replace <TEX>$ command $</TEX> blocks with Unicode symbols
+         (○ · □ etc.) since the generic tag stripper would otherwise
+         leave bare LaTeX command names ('$ circ$') visible.
+      3. Strip remaining tags (<P>, <SUB>, <sup>, <jats:p>, ...).
+      4. Collapse runs of whitespace (including \\r left by &#xD;
+         and \\xa0 from &nbsp;) into single spaces.
+    """
     if not text:
         return ""
     import html as _html
     s = _html.unescape(_html.unescape(text))
+    s = _TEX_BLOCK_RE.sub(_replace_tex, s)
     s = _HTML_TAG_RE.sub("", s)
     s = _WHITESPACE_RUN_RE.sub(" ", s)
     return s.strip()
