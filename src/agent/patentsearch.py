@@ -1596,6 +1596,24 @@ async def _kipris_inventor_search(inventor: str,
             out.append(_kipris_to_unified(item))
         except Exception:
             log.exception("kipris inventor row parse failed")
+    # Diagnostic: if no PatentUtilityInfo found, dump body structure
+    # so we can confirm whether KIPRIS truly returned empty or uses
+    # a different wrapper for this operation.
+    if not out:
+        header = root.find("header")
+        hdr = (
+            {c.tag: (c.text or "").strip() for c in header}
+            if header is not None else {}
+        )
+        body_dump = {}
+        body = root.find("body")
+        if body is not None:
+            for child in list(body)[:5]:
+                body_dump[child.tag] = [g.tag for g in list(child)[:8]]
+        log.info(
+            "kipris inventor: 0 patents (header=%s, body=%s)",
+            hdr, body_dump or "<empty>",
+        )
     return _sort_kipris_rows(out)
 
 
