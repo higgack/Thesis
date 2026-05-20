@@ -441,11 +441,13 @@ def _tool_bucket(name: str) -> str:
     n = name.lower()
     if "brain" in n or "compare" in n or "recent" in n:
         return "brain"
-    if "patent" in n or "citing" in n:
+    if "patent" in n or "citing" in n or n.startswith("kipris_"):
         # all patent flavours: search_patents (EPO), search_company_patents
         # (KIPRIS), get_patent_detail, get_citing_patents,
         # search_kr_patents_kisti, get_kr_patent_detail,
-        # get_kr_patent_citations.
+        # get_kr_patent_citations, and the 8 verified kipris_* commands
+        # (search / pub / reg / inventor / status / family / claims /
+        # priority) which don't carry "patent" in the tool_name.
         return "patent"
     if ("report" in n or "rnd_projects" in n
             or "related_content" in n or "classification" in n
