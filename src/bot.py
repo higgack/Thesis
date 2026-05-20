@@ -5039,7 +5039,7 @@ async def cmd_search_papers_advanced(
     )
     try:
         results = await papersearch.search_advanced(
-            q, limit=15,
+            q, limit=50,
             author=filters["author"], venue=filters["venue"],
             year_from=year_from, year_to=year_to,
             oa_only=oa_only, min_citations=min_citations,
@@ -5113,7 +5113,7 @@ async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     try:
         from .agent import papersearch
-        results = await papersearch.search(q, limit=15)
+        results = await papersearch.search(q, limit=50)
     except Exception as e:
         log.exception("search_papers direct call failed for %r", q)
         try:
@@ -5796,7 +5796,7 @@ async def cmd_search_patents_advanced(
     )
     try:
         results = await patentsearch.search_advanced(
-            q, limit=15,
+            q, limit=50,
             applicant=filters["applicant"],
             inventor=filters["inventor"],
             ipc=filters["ipc"],
@@ -5876,7 +5876,7 @@ async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"🔍 '{q}' 특허 검색 중... (한국어 번역 포함)"
     )
     try:
-        results = await patentsearch.search(q, limit=15)
+        results = await patentsearch.search(q, limit=50)
     except Exception as e:
         log.exception("search_patents direct call failed for %r", q)
         await _edit_or_send(
