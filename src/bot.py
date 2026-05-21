@@ -1220,6 +1220,42 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             break
 
 
+class _SustainedTyping:
+    """Async context manager that keeps the 'typing...' indicator
+    alive throughout a long-running block. Telegram's chat_action
+    auto-expires ~5s after each sendChatAction call; the background
+    task refreshes every 2s so the indicator never disappears mid-
+    operation. Cancels cleanly on exit even when the body raises.
+
+        async with _SustainedTyping(update, ctx):
+            rows = await long_running_api_call()
+
+    Used by the 4 shared search helpers (_kipris_search_command,
+    _kipris_lookup_command, _kisti_search_command,
+    _ntis_simple_search_command) so all 21+ KR backend commands
+    show continuous activity for the full 30-60s of API call +
+    translation + send."""
+
+    def __init__(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        self._update = update
+        self._ctx = ctx
+        self._task: asyncio.Task | None = None
+
+    async def __aenter__(self) -> "_SustainedTyping":
+        self._task = asyncio.create_task(
+            _sustained_typing(self._update, self._ctx)
+        )
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【1. 명령어】</b>
@@ -6249,76 +6285,76 @@ async def _kipris_search_command(
         return
     if not query:
         return
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"{emoji} '{query}' {label} 검색 중... (KIPRIS · 한국어 번역 포함)"
-    )
-    try:
-        results = await fn(query, limit=50)
-    except Exception as e:
-        log.exception("kipris %s direct call failed for %r", label, query)
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"⚠️ KIPRIS {label} 검색 실패: {_explain_error(e)}",
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"{emoji} '{query}' {label} 검색 중... (KIPRIS · 한국어 번역 포함)"
         )
-        return
-    if enrich and results:
         try:
-            from .agent import patentsearch as _ps
-            results = await _ps._enrich_kipris_rows_with_details(results)
-        except Exception:
-            log.exception("kipris %s enrichment failed", label)
-    if not results:
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"🔍 '{_html_escape_safe(query)}' KIPRIS {label} 결과 없음.\n"
-            f"활용신청 승인 전이거나 매칭 0건 — 승인 메일 받은 뒤 "
-            f"재시도 / 더 일반적인 키워드로 시도."
-        )
-        # Record the empty hit so the dashboard reflects activity.
+            results = await fn(query, limit=50)
+        except Exception as e:
+            log.exception("kipris %s direct call failed for %r", label, query)
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"⚠️ KIPRIS {label} 검색 실패: {_explain_error(e)}",
+            )
+            return
+        if enrich and results:
+            try:
+                from .agent import patentsearch as _ps
+                results = await _ps._enrich_kipris_rows_with_details(results)
+            except Exception:
+                log.exception("kipris %s enrichment failed", label)
+        if not results:
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"🔍 '{_html_escape_safe(query)}' KIPRIS {label} 결과 없음.\n"
+                f"활용신청 승인 전이거나 매칭 0건 — 승인 메일 받은 뒤 "
+                f"재시도 / 더 일반적인 키워드로 시도."
+            )
+            # Record the empty hit so the dashboard reflects activity.
+            _record_command_qna(
+                update,
+                question=(update.message.text or
+                          f"/{tool_name} {query}").strip(),
+                body=f"🔍 '{query}' KIPRIS {label} 결과 없음.",
+                tools=[tool_name],
+            )
+            return
+        results = await _translate_results_korean(results)
+        body = _format_patents_text(f"{query} (KIPRIS {label})", results)
         _record_command_qna(
             update,
             question=(update.message.text or
                       f"/{tool_name} {query}").strip(),
-            body=f"🔍 '{query}' KIPRIS {label} 결과 없음.",
-            tools=[tool_name],
+            body=body, tools=[tool_name],
+            sources=[p.get("patent_number", "")
+                     for p in results if p.get("patent_number")],
         )
-        return
-    results = await _translate_results_korean(results)
-    body = _format_patents_text(f"{query} (KIPRIS {label})", results)
-    _record_command_qna(
-        update,
-        question=(update.message.text or
-                  f"/{tool_name} {query}").strip(),
-        body=body, tools=[tool_name],
-        sources=[p.get("patent_number", "")
-                 for p in results if p.get("patent_number")],
-    )
-    pieces = _split_for_telegram(body)
-    if not pieces:
-        return
-    try:
-        await ctx.bot.edit_message_text(
-            chat_id=status.chat.id, message_id=status.message_id,
-            text=pieces[0], parse_mode="HTML",
-            disable_web_page_preview=True,
-        )
-    except Exception:
+        pieces = _split_for_telegram(body)
+        if not pieces:
+            return
         try:
-            await update.message.reply_text(
-                pieces[0], parse_mode="HTML",
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
                 disable_web_page_preview=True,
             )
         except Exception:
-            log.exception("kipris %s fallback failed", label)
-    for piece in pieces[1:]:
-        try:
-            await update.message.reply_text(
-                piece, parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            log.exception("kipris %s chunked send failed", label)
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("kipris %s fallback failed", label)
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("kipris %s chunked send failed", label)
 
 
 async def _kipris_lookup_command(
@@ -6334,66 +6370,66 @@ async def _kipris_lookup_command(
         return
     if not query:
         return
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"{emoji} '{query}' {label} 조회 중..."
-    )
-    try:
-        result = await fn(query)
-    except Exception as e:
-        log.exception("kipris %s lookup failed for %r", label, query)
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"⚠️ KIPRIS {label} 조회 실패: {_explain_error(e)}",
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"{emoji} '{query}' {label} 조회 중..."
         )
-        return
-    import html as _html
-    if not result:
-        body = (f"🔍 '{_html.escape(query)}' KIPRIS {label} 결과 없음.\n"
-                f"활용신청 승인 전이거나 데이터 없음 — 승인 메일 받은 "
-                f"뒤 재시도.")
-    else:
-        out = [f"{emoji} <b>KIPRIS {label} — '{_html.escape(query)}'</b>"]
-        rows = result if is_list else [result]
-        out.append(f"<i>{len(rows)}건 · KIPRIS Plus</i>")
-        for i, r in enumerate(rows, 1):
-            block = [f"\n{emoji} <b>{i}.</b>"]
-            for k, v in r.items():
-                if v:
-                    block.append(
-                        f"  <b>{_html.escape(str(k))}</b>: "
-                        f"{_html.escape(str(v)[:200])}"
-                    )
-            out.append("\n".join(block))
-        body = "\n".join(out)
-    _record_command_qna(
-        update,
-        question=(update.message.text or
-                  f"/{tool_name} {query}").strip(),
-        body=body, tools=[tool_name],
-    )
-    pieces = _split_for_telegram(body)
-    if not pieces:
-        return
-    try:
-        await ctx.bot.edit_message_text(
-            chat_id=status.chat.id, message_id=status.message_id,
-            text=pieces[0], parse_mode="HTML",
-            disable_web_page_preview=True,
-        )
-    except Exception:
-        await update.message.reply_text(
-            pieces[0], parse_mode="HTML",
-            disable_web_page_preview=True,
-        )
-    for piece in pieces[1:]:
         try:
-            await update.message.reply_text(
-                piece, parse_mode="HTML",
+            result = await fn(query)
+        except Exception as e:
+            log.exception("kipris %s lookup failed for %r", label, query)
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"⚠️ KIPRIS {label} 조회 실패: {_explain_error(e)}",
+            )
+            return
+        import html as _html
+        if not result:
+            body = (f"🔍 '{_html.escape(query)}' KIPRIS {label} 결과 없음.\n"
+                    f"활용신청 승인 전이거나 데이터 없음 — 승인 메일 받은 "
+                    f"뒤 재시도.")
+        else:
+            out = [f"{emoji} <b>KIPRIS {label} — '{_html.escape(query)}'</b>"]
+            rows = result if is_list else [result]
+            out.append(f"<i>{len(rows)}건 · KIPRIS Plus</i>")
+            for i, r in enumerate(rows, 1):
+                block = [f"\n{emoji} <b>{i}.</b>"]
+                for k, v in r.items():
+                    if v:
+                        block.append(
+                            f"  <b>{_html.escape(str(k))}</b>: "
+                            f"{_html.escape(str(v)[:200])}"
+                        )
+                out.append("\n".join(block))
+            body = "\n".join(out)
+        _record_command_qna(
+            update,
+            question=(update.message.text or
+                      f"/{tool_name} {query}").strip(),
+            body=body, tools=[tool_name],
+        )
+        pieces = _split_for_telegram(body)
+        if not pieces:
+            return
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
                 disable_web_page_preview=True,
             )
         except Exception:
-            log.exception("kipris %s chunked send failed", label)
+            await update.message.reply_text(
+                pieces[0], parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("kipris %s chunked send failed", label)
 
 
 # --- Search-style commands (return patent list, use _format_patents_text) ---
@@ -6882,78 +6918,78 @@ async def _translate_kisti_titles(rows: list[dict]) -> None:
 async def _kisti_search_command(update, ctx, query: str, kind: str,
                                 fn) -> None:
     """Shared body for /kr_papers, /kr_patents, /kr_reports."""
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"🔍 '{query}' KISTI ScienceON 검색 중..."
-    )
-    try:
-        result = await fn(query, limit=30)
-    except Exception as e:
-        log.exception("kisti %s search failed for %r", kind, query)
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"🔍 '{query}' KISTI ScienceON 검색 중..."
+        )
         try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=f"⚠️ KISTI ScienceON 검색 실패: {_explain_error(e)}",
-            )
-        except Exception:
-            pass
-        return
-    # kisti_scienceon search_* functions return list[dict] directly.
-    # Defensive: support dict-wrapped {"results": [...]} too in case
-    # the caller hands in an agent-tool wrapper instead of the raw
-    # client function.
-    if isinstance(result, list):
-        rows = result
-    elif isinstance(result, dict):
-        rows = result.get("results") or []
-    else:
-        rows = []
-    # Translate non-Korean titles to Korean before formatting so
-    # English/foreign-language results render readable headlines on
-    # mobile. Single Flash-Lite call across all eligible rows.
-    await _translate_kisti_titles(rows)
-    body = _format_kisti_results(query, rows, kind)
-    _kisti_tool_name = {
-        "paper":         "search_kr_papers",
-        "patent":        "search_kr_patents_kisti",
-        "report":        "search_kr_reports",
-        "trend":         "search_kr_trends",
-        "researcher":    "search_kr_researchers",
-        "organ":         "search_kr_organs",
-        "science_trend": "search_kr_science_trends",
-    }.get(kind, f"search_kr_{kind}")
-    _record_command_qna(
-        update,
-        question=(update.message.text or f"/kr_{kind} {query}").strip(),
-        body=body,
-        tools=[_kisti_tool_name],
-        sources=[r.get("CN", "") for r in rows if r.get("CN")],
-    )
-    pieces = _split_for_telegram(body)
-    if pieces:
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            log.warning("kisti status edit failed, sending fresh")
+            result = await fn(query, limit=30)
+        except Exception as e:
+            log.exception("kisti %s search failed for %r", kind, query)
             try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=f"⚠️ KISTI ScienceON 검색 실패: {_explain_error(e)}",
+                )
+            except Exception:
+                pass
+            return
+        # kisti_scienceon search_* functions return list[dict] directly.
+        # Defensive: support dict-wrapped {"results": [...]} too in case
+        # the caller hands in an agent-tool wrapper instead of the raw
+        # client function.
+        if isinstance(result, list):
+            rows = result
+        elif isinstance(result, dict):
+            rows = result.get("results") or []
+        else:
+            rows = []
+        # Translate non-Korean titles to Korean before formatting so
+        # English/foreign-language results render readable headlines on
+        # mobile. Single Flash-Lite call across all eligible rows.
+        await _translate_kisti_titles(rows)
+        body = _format_kisti_results(query, rows, kind)
+        _kisti_tool_name = {
+            "paper":         "search_kr_papers",
+            "patent":        "search_kr_patents_kisti",
+            "report":        "search_kr_reports",
+            "trend":         "search_kr_trends",
+            "researcher":    "search_kr_researchers",
+            "organ":         "search_kr_organs",
+            "science_trend": "search_kr_science_trends",
+        }.get(kind, f"search_kr_{kind}")
+        _record_command_qna(
+            update,
+            question=(update.message.text or f"/kr_{kind} {query}").strip(),
+            body=body,
+            tools=[_kisti_tool_name],
+            sources=[r.get("CN", "") for r in rows if r.get("CN")],
+        )
+        pieces = _split_for_telegram(body)
+        if pieces:
+            try:
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=pieces[0], parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
             except Exception:
-                log.exception("kisti fallback send failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("kisti chunked send failed")
+                log.warning("kisti status edit failed, sending fresh")
+                try:
+                    await update.message.reply_text(
+                        pieces[0], parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("kisti fallback send failed")
+            for piece in pieces[1:]:
+                try:
+                    await update.message.reply_text(
+                        piece, parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("kisti chunked send failed")
 
 
 async def cmd_kr_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -7517,65 +7553,65 @@ async def _ntis_simple_search_command(
         return
     if not query:
         return
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"{emoji} NTIS {label} 검색 중 — '{query}'..."
-    )
-    try:
-        rows = await fn(query, limit=30)
-    except Exception as e:
-        log.exception("ntis %s search failed", label)
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"⚠️ NTIS {label} 검색 실패: {_explain_error(e)}",
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"{emoji} NTIS {label} 검색 중 — '{query}'..."
         )
-        return
-    if not rows:
-        body = (
-            f"🔍 '<b>{_html_escape_safe(query)}</b>' NTIS {label} "
-            f"결과 없음.\n활용신청 승인 전이거나 매칭 0건 — 승인 메일 "
-            f"받은 뒤 재시도 / 더 일반적인 키워드로 시도."
-        )
-    else:
-        body = _format_ntis_projects(query, rows)
-        # Header label swap so the user sees the right section name.
-        body = body.replace(
-            "🔬 <b>NTIS 국가R&amp;D 과제",
-            f"{emoji} <b>NTIS {label}",
-        ).replace(
-            "🔬 <b>NTIS 국가R&D 과제",
-            f"{emoji} <b>NTIS {label}",
-        )
-    _record_command_qna(
-        update, question=(update.message.text or
-                          f"/{tool_name} {query}").strip(),
-        body=body, tools=[tool_name],
-    )
-    pieces = _split_for_telegram(body)
-    if not pieces:
-        return
-    try:
-        await ctx.bot.edit_message_text(
-            chat_id=status.chat.id, message_id=status.message_id,
-            text=pieces[0], parse_mode="HTML",
-            disable_web_page_preview=True,
-        )
-    except Exception:
         try:
-            await update.message.reply_text(
-                pieces[0], parse_mode="HTML",
+            rows = await fn(query, limit=30)
+        except Exception as e:
+            log.exception("ntis %s search failed", label)
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"⚠️ NTIS {label} 검색 실패: {_explain_error(e)}",
+            )
+            return
+        if not rows:
+            body = (
+                f"🔍 '<b>{_html_escape_safe(query)}</b>' NTIS {label} "
+                f"결과 없음.\n활용신청 승인 전이거나 매칭 0건 — 승인 메일 "
+                f"받은 뒤 재시도 / 더 일반적인 키워드로 시도."
+            )
+        else:
+            body = _format_ntis_projects(query, rows)
+            # Header label swap so the user sees the right section name.
+            body = body.replace(
+                "🔬 <b>NTIS 국가R&amp;D 과제",
+                f"{emoji} <b>NTIS {label}",
+            ).replace(
+                "🔬 <b>NTIS 국가R&D 과제",
+                f"{emoji} <b>NTIS {label}",
+            )
+        _record_command_qna(
+            update, question=(update.message.text or
+                              f"/{tool_name} {query}").strip(),
+            body=body, tools=[tool_name],
+        )
+        pieces = _split_for_telegram(body)
+        if not pieces:
+            return
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=pieces[0], parse_mode="HTML",
                 disable_web_page_preview=True,
             )
         except Exception:
-            log.exception("ntis %s fallback failed", label)
-    for piece in pieces[1:]:
-        try:
-            await update.message.reply_text(
-                piece, parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            log.exception("ntis %s chunked send failed", label)
+            try:
+                await update.message.reply_text(
+                    pieces[0], parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("ntis %s fallback failed", label)
+        for piece in pieces[1:]:
+            try:
+                await update.message.reply_text(
+                    piece, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("ntis %s chunked send failed", label)
 
 
 async def cmd_kr_outcomes(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
