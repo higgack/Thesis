@@ -4981,60 +4981,64 @@ async def cmd_paper_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("사용법: /paper_stats <키워드> [view]")
         return
     from .agent import papersearch
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"📊 '{q}' 논문 통계 분석 중 (최대 1000편, 약 20~30초 소요)..."
-    )
-    try:
-        papers = await papersearch._openalex_bulk(q, max_count=1000)
-    except Exception as e:
-        log.exception("paper_stats bulk fetch failed for %r", q)
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"⚠️ 논문 통계 가져오기 실패: {_explain_error(e)}",
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"📊 '{q}' 논문 통계 분석 중 (최대 1000편, 약 20~30초 소요)..."
         )
-        return
-    if not papers:
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"📊 '{q}' 관련 논문 없음. 키워드 조정 후 재시도.",
+        try:
+            papers = await papersearch._openalex_bulk(q, max_count=1000)
+        except Exception as e:
+            log.exception("paper_stats bulk fetch failed for %r", q)
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"⚠️ 논문 통계 가져오기 실패: {_explain_error(e)}",
+            )
+            return
+        if not papers:
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"📊 '{q}' 관련 논문 없음. 키워드 조정 후 재시도.",
+            )
+            return
+        try:
+            if view == "trend":
+                data = papersearch.compute_paper_trend(papers)
+                body = _format_paper_stats_trend(q, data)
+            elif view == "newcomers":
+                data = papersearch.compute_paper_newcomers(papers)
+                body = _format_paper_stats_newcomers(q, data)
+            elif view == "network":
+                data = papersearch.compute_paper_coauthors(papers)
+                body = _format_paper_stats_network(q, data)
+            elif view == "keywords":
+                data = await papersearch.extract_paper_keywords(papers)
+                body = _format_paper_stats_keywords(q, data)
+            elif view == "top":
+                ranked_top = sorted(
+                    papers,
+                    key=lambda p: int(p.get("citations") or 0),
+                    reverse=True,
+                )[:15]
+                from .agent.translate import translate_and_overwrite
+                await translate_and_overwrite(ranked_top)
+                body = _format_paper_stats_top(q, ranked_top)
+            else:
+                data = papersearch.compute_paper_stats(papers)
+                body = _format_paper_stats_overview(q, data)
+        except Exception as e:
+            log.exception("paper_stats render failed (view=%s)", view)
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"⚠️ 통계 렌더 실패: {_explain_error(e)}",
+            )
+            return
+        _record_command_qna(
+            update,
+            question=(update.message.text or f"/paper_stats {q} {view}").strip(),
+            body=body,
+            tools=["paper_stats"],
         )
-        return
-    try:
-        if view == "trend":
-            data = papersearch.compute_paper_trend(papers)
-            body = _format_paper_stats_trend(q, data)
-        elif view == "newcomers":
-            data = papersearch.compute_paper_newcomers(papers)
-            body = _format_paper_stats_newcomers(q, data)
-        elif view == "network":
-            data = papersearch.compute_paper_coauthors(papers)
-            body = _format_paper_stats_network(q, data)
-        elif view == "keywords":
-            data = await papersearch.extract_paper_keywords(papers)
-            body = _format_paper_stats_keywords(q, data)
-        elif view == "top":
-            body = _format_paper_stats_top(q, papers)
-        else:
-            data = papersearch.compute_paper_stats(papers)
-            body = _format_paper_stats_overview(q, data)
-    except Exception as e:
-        log.exception("paper_stats render failed (view=%s)", view)
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"⚠️ 통계 렌더 실패: {_explain_error(e)}",
-        )
-        return
-    _record_command_qna(
-        update,
-        question=(update.message.text or f"/paper_stats {q} {view}").strip(),
-        body=body,
-        tools=["paper_stats"],
-    )
-    # trend view emits ```mermaid``` blocks; _send_body_with_mermaid
-    # extracts them and renders to PNG (no diagrams in overview /
-    # newcomers / network / keywords / top — that path is a no-op).
-    await _send_body_with_mermaid(update, ctx, body, status_msg=status)
+        await _send_body_with_mermaid(update, ctx, body, status_msg=status)
 
 
 async def cmd_search_papers_advanced(
@@ -5097,79 +5101,79 @@ async def cmd_search_papers_advanced(
             return
     oa_only = filters["oa"].lower() in ("true", "1", "yes", "y")
     from .agent import papersearch
-    await _typing(update, ctx)
-    label = q if q else "(no keyword)"
-    extra: list[str] = []
-    if filters["author"]:
-        extra.append(f"저자={filters['author']}")
-    if filters["venue"]:
-        extra.append(f"학술지={filters['venue']}")
-    if filters["concept"]:
-        extra.append(f"주제={filters['concept']}")
-    if year_from:
-        extra.append(f"≥{year_from}")
-    if year_to:
-        extra.append(f"≤{year_to}")
-    if oa_only:
-        extra.append("OA only")
-    if min_citations:
-        extra.append(f"인용≥{min_citations}")
-    if filters["type"]:
-        extra.append(f"type={filters['type']}")
-    if extra:
-        label += f" [{' · '.join(extra)}]"
-    status = await update.message.reply_text(
-        f"🔍 '{label}' 고급 논문 검색 중 (한국어 번역 포함)..."
-    )
-    try:
-        results = await papersearch.search_advanced(
-            q, limit=50,
-            author=filters["author"], venue=filters["venue"],
-            year_from=year_from, year_to=year_to,
-            oa_only=oa_only, min_citations=min_citations,
-            concept=filters["concept"], type_=filters["type"],
+    async with _SustainedTyping(update, ctx):
+        label = q if q else "(no keyword)"
+        extra: list[str] = []
+        if filters["author"]:
+            extra.append(f"저자={filters['author']}")
+        if filters["venue"]:
+            extra.append(f"학술지={filters['venue']}")
+        if filters["concept"]:
+            extra.append(f"주제={filters['concept']}")
+        if year_from:
+            extra.append(f"≥{year_from}")
+        if year_to:
+            extra.append(f"≤{year_to}")
+        if oa_only:
+            extra.append("OA only")
+        if min_citations:
+            extra.append(f"인용≥{min_citations}")
+        if filters["type"]:
+            extra.append(f"type={filters['type']}")
+        if extra:
+            label += f" [{' · '.join(extra)}]"
+        status = await update.message.reply_text(
+            f"🔍 '{label}' 고급 논문 검색 중 (한국어 번역 포함)..."
         )
-    except Exception as e:
-        log.exception("search_papers_advanced failed for %r", q)
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"⚠️ 검색 실패: {_explain_error(e)}",
-        )
-        return
-    results = await _translate_results_korean(results)
-    body = _format_papers_text(label, results)
-    _record_command_qna(
-        update,
-        question=(update.message.text or
-                  f"/search_papers_advanced {q}").strip(),
-        body=body,
-        tools=["search_papers_advanced", "search_papers"],
-        sources=[p.get("doi", "") for p in results if p.get("doi")],
-    )
-    pieces = _split_for_telegram(body)
-    if pieces:
         try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
+            results = await papersearch.search_advanced(
+                q, limit=50,
+                author=filters["author"], venue=filters["venue"],
+                year_from=year_from, year_to=year_to,
+                oa_only=oa_only, min_citations=min_citations,
+                concept=filters["concept"], type_=filters["type"],
             )
-        except Exception:
+        except Exception as e:
+            log.exception("search_papers_advanced failed for %r", q)
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"⚠️ 검색 실패: {_explain_error(e)}",
+            )
+            return
+        results = await _translate_results_korean(results)
+        body = _format_papers_text(label, results)
+        _record_command_qna(
+            update,
+            question=(update.message.text or
+                      f"/search_papers_advanced {q}").strip(),
+            body=body,
+            tools=["search_papers_advanced", "search_papers"],
+            sources=[p.get("doi", "") for p in results if p.get("doi")],
+        )
+        pieces = _split_for_telegram(body)
+        if pieces:
             try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=pieces[0], parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
             except Exception:
-                log.exception("search_papers_advanced fallback send failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("search_papers_advanced chunked send failed")
+                try:
+                    await update.message.reply_text(
+                        pieces[0], parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("search_papers_advanced fallback send failed")
+            for piece in pieces[1:]:
+                try:
+                    await update.message.reply_text(
+                        piece, parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("search_papers_advanced chunked send failed")
 
 
 async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -5191,60 +5195,57 @@ async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not q:
         await update.message.reply_text("사용법: /search_papers <검색어>")
         return
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"🔍 '{q}' 논문 검색 중... (한국어 번역 포함)"
-    )
-    try:
-        from .agent import papersearch
-        results = await papersearch.search(q, limit=50)
-    except Exception as e:
-        log.exception("search_papers direct call failed for %r", q)
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"🔍 '{q}' 논문 검색 중... (한국어 번역 포함)"
+        )
         try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=f"⚠️ 논문 검색 실패: {_explain_error(e)}",
-            )
-        except Exception:
-            pass
-        return
-    # Batch translation: title + abstract → Korean. Single Flash-Lite
-    # call (~₩5-7), populates title_ko/abstract_ko on each row. The
-    # formatter prefers those when present.
-    results = await _translate_results_korean(results)
-    body = _format_papers_text(q, results)
-    _record_command_qna(
-        update,
-        question=(update.message.text or f"/search_papers {q}").strip(),
-        body=body,
-        tools=["search_papers"],
-        sources=[p.get("doi", "") for p in results if p.get("doi")],
-    )
-    pieces = _split_for_telegram(body)
-    if pieces:
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            log.warning("search_papers status edit failed, sending fresh")
+            from .agent import papersearch
+            results = await papersearch.search(q, limit=50)
+        except Exception as e:
+            log.exception("search_papers direct call failed for %r", q)
             try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=f"⚠️ 논문 검색 실패: {_explain_error(e)}",
+                )
+            except Exception:
+                pass
+            return
+        results = await _translate_results_korean(results)
+        body = _format_papers_text(q, results)
+        _record_command_qna(
+            update,
+            question=(update.message.text or f"/search_papers {q}").strip(),
+            body=body,
+            tools=["search_papers"],
+            sources=[p.get("doi", "") for p in results if p.get("doi")],
+        )
+        pieces = _split_for_telegram(body)
+        if pieces:
+            try:
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=pieces[0], parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
             except Exception:
-                log.exception("search_papers fallback send failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("search_papers chunked send failed")
+                log.warning("search_papers status edit failed, sending fresh")
+                try:
+                    await update.message.reply_text(
+                        pieces[0], parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("search_papers fallback send failed")
+            for piece in pieces[1:]:
+                try:
+                    await update.message.reply_text(
+                        piece, parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("search_papers chunked send failed")
 
 
 def _truncate_at_sentence(text: str, cap: int) -> str:
@@ -5285,107 +5286,18 @@ def _truncate_at_sentence(text: str, cap: int) -> str:
 
 
 async def _translate_results_korean(results: list[dict]) -> list[dict]:
-    """Batch-translate title + abstract of each result to Korean in a
-    single Flash-Lite call. Mutates each row by adding `title_ko` and
-    `abstract_ko` fields; falls back to English originals when the
-    LLM call fails. ~₩5-10 per search (15 papers × ~800-char input
-    abstracts ≈ 10k input + 25k output tokens at Flash-Lite
-    ₩140/1M / ₩420/1M).
+    """Thin wrapper around `agent.translate.translate_to_korean`.
 
-    Shared by /search_papers /search_papers_advanced /search_patents
-    /search_patents_advanced /company_patents /patent_detail —
-    formatters treat title_ko / abstract_ko as the canonical render
-    fields when present, so this function is the one switch that
-    turns Korean rendering on/off for all those commands.
-
-    Sizing notes:
-    - Input abstract cap: 800 chars (formatter shows max 900 Korean
-      chars, more input = waste).
-    - max_tokens: 32768. With 15 papers × Korean translation a single
-      call easily hits 20k+ output tokens; the previous 8192 cap
-      silently truncated → JSON parse fail → all rows fell back to
-      English. Symptom: every result line shows the original title."""
-    if not results:
-        return results
-    import json as _json
-    import re as _re
-    # Numbered packing — keeps the response aligned with the request
-    # order so partial completions still map cleanly.
-    lines: list[str] = []
-    for i, r in enumerate(results, 1):
-        title = (r.get("title") or "").strip()
-        abstract = (r.get("abstract") or "").strip()[:800]
-        lines.append(f"[{i}]")
-        if title:
-            lines.append(f"TITLE: {title}")
-        if abstract:
-            lines.append(f"ABSTRACT: {abstract}")
-        lines.append("")
-    user_text = "\n".join(lines)
-    system_prompt = (
-        "You are a precise English-to-Korean translator for academic "
-        "papers and patents. Translate each TITLE and ABSTRACT into "
-        "natural Korean. Preserve technical terms (model names, "
-        "company names, acronyms like HBM/CMP/Cu-Cu/FC-BGA/LLM) in "
-        "their original form. Output JSON only:\n"
-        '{"items": [{"n": 1, "title_ko": "...", "abstract_ko": "..."}, ...]}\n'
-        "Omit fields that were missing in the input. No preamble."
-    )
-    resp = ""
-    try:
-        from .llm.gemini import complete
-        resp = await complete(
-            model=config.SUMMARY_MODEL,
-            system=system_prompt,
-            user=user_text,
-            max_tokens=32768,
-            temperature=0.1,
-            purpose="translate",
-        )
-        m = _re.search(r"\{.*\}", resp, _re.DOTALL)
-        if not m:
-            log.warning(
-                "translate_results_korean: no JSON block in response "
-                "(len=%d, last200=%r)", len(resp), resp[-200:],
-            )
-            return results
-        try:
-            data = _json.loads(m.group(0))
-        except Exception as e:
-            log.warning(
-                "translate_results_korean: JSON parse failed "
-                "(resp len=%d, last 200 chars=%r): %s",
-                len(resp), resp[-200:], e,
-            )
-            return results
-        by_n: dict[int, dict] = {}
-        for item in (data.get("items") or []):
-            try:
-                by_n[int(item.get("n"))] = item
-            except (TypeError, ValueError):
-                continue
-        translated = 0
-        for i, r in enumerate(results, 1):
-            t = by_n.get(i)
-            if not t:
-                continue
-            tk = (t.get("title_ko") or "").strip()
-            ak = (t.get("abstract_ko") or "").strip()
-            if tk:
-                r["title_ko"] = tk
-                translated += 1
-            if ak:
-                r["abstract_ko"] = ak
-        log.info(
-            "translate_results_korean: %d/%d rows translated (resp len=%d)",
-            translated, len(results), len(resp),
-        )
-    except Exception:
-        log.exception(
-            "translate_results_korean failed; using originals "
-            "(resp len=%d)", len(resp),
-        )
-    return results
+    Kept as a local name so the existing call sites in bot.py don't
+    have to import the agent package. The shared implementation
+    batches 50-row searches across ≤15-row chunks in parallel so
+    nothing falls off the end past max_tokens (the older single-call
+    path silently truncated paper #~30+ at limit=50). The same shared
+    function is invoked from the agent tools layer (search_papers,
+    search_patents, …) so natural-language queries also come back in
+    Korean — see `agent.translate` for the full story."""
+    from .agent.translate import translate_to_korean
+    return await translate_to_korean(results)
 
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -5745,59 +5657,55 @@ async def cmd_patent_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "⚠️ EPO_API_KEY/EPO_API_SECRET 누락 — 글로벌 특허 분석 불가."
         )
         return
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"📊 '{q}' 특허 통계 분석 중 (최대 2000건, 약 60~120초 소요)..."
-    )
-    try:
-        patents = await patentsearch._epo_search_bulk(q, max_count=2000)
-    except Exception as e:
-        log.exception("patent_stats bulk fetch failed for %r", q)
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"⚠️ 특허 통계 가져오기 실패: {_explain_error(e)}",
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"📊 '{q}' 특허 통계 분석 중 (최대 2000건, 약 60~120초 소요)..."
         )
-        return
-    if not patents:
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"📊 '{q}' 관련 특허 없음. 키워드 조정 후 재시도.",
+        try:
+            patents = await patentsearch._epo_search_bulk(q, max_count=2000)
+        except Exception as e:
+            log.exception("patent_stats bulk fetch failed for %r", q)
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"⚠️ 특허 통계 가져오기 실패: {_explain_error(e)}",
+            )
+            return
+        if not patents:
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"📊 '{q}' 관련 특허 없음. 키워드 조정 후 재시도.",
+            )
+            return
+        try:
+            if view == "trend":
+                data = patentsearch.compute_patent_trend(patents)
+                body = _format_patent_stats_trend(q, data)
+            elif view == "newcomers":
+                data = patentsearch.compute_patent_newcomers(patents)
+                body = _format_patent_stats_newcomers(q, data)
+            elif view == "network":
+                data = patentsearch.compute_patent_coapplicants(patents)
+                body = _format_patent_stats_network(q, data)
+            elif view == "keywords":
+                data = await patentsearch.extract_patent_keywords(patents)
+                body = _format_patent_stats_keywords(q, data)
+            else:
+                data = patentsearch.compute_patent_stats(patents)
+                body = _format_patent_stats_overview(q, data)
+        except Exception as e:
+            log.exception("patent_stats render failed (view=%s)", view)
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"⚠️ 통계 렌더 실패: {_explain_error(e)}",
+            )
+            return
+        _record_command_qna(
+            update,
+            question=(update.message.text or f"/patent_stats {q} {view}").strip(),
+            body=body,
+            tools=["patent_stats"],
         )
-        return
-    try:
-        if view == "trend":
-            data = patentsearch.compute_patent_trend(patents)
-            body = _format_patent_stats_trend(q, data)
-        elif view == "newcomers":
-            data = patentsearch.compute_patent_newcomers(patents)
-            body = _format_patent_stats_newcomers(q, data)
-        elif view == "network":
-            data = patentsearch.compute_patent_coapplicants(patents)
-            body = _format_patent_stats_network(q, data)
-        elif view == "keywords":
-            data = await patentsearch.extract_patent_keywords(patents)
-            body = _format_patent_stats_keywords(q, data)
-        else:
-            data = patentsearch.compute_patent_stats(patents)
-            body = _format_patent_stats_overview(q, data)
-    except Exception as e:
-        log.exception("patent_stats render failed (view=%s)", view)
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"⚠️ 통계 렌더 실패: {_explain_error(e)}",
-        )
-        return
-    _record_command_qna(
-        update,
-        question=(update.message.text or f"/patent_stats {q} {view}").strip(),
-        body=body,
-        tools=["patent_stats"],
-    )
-    # trend view emits ```mermaid``` blocks; _send_body_with_mermaid
-    # extracts them, renders to PNG via _render_mermaid_png, and
-    # interleaves with the text legend so each chart appears next
-    # to its description.
-    await _send_body_with_mermaid(update, ctx, body, status_msg=status)
+        await _send_body_with_mermaid(update, ctx, body, status_msg=status)
 
 
 async def cmd_search_patents_advanced(
@@ -5858,76 +5766,76 @@ async def cmd_search_patents_advanced(
             "⚠️ EPO_API_KEY/EPO_API_SECRET 누락."
         )
         return
-    await _typing(update, ctx)
-    label = q
-    extra: list[str] = []
-    if filters["applicant"]:
-        extra.append(f"출원인={filters['applicant']}")
-    if filters["inventor"]:
-        extra.append(f"발명자={filters['inventor']}")
-    if filters["ipc"]:
-        extra.append(f"IPC={filters['ipc']}")
-    if filters["country"]:
-        extra.append(f"국가={filters['country']}")
-    if year_from:
-        extra.append(f"≥{year_from}")
-    if year_to:
-        extra.append(f"≤{year_to}")
-    if extra:
-        label += f" [{' · '.join(extra)}]"
-    status = await update.message.reply_text(
-        f"🔍 '{label}' 고급 특허 검색 중 (한국어 번역 포함)..."
-    )
-    try:
-        results = await patentsearch.search_advanced(
-            q, limit=50,
-            applicant=filters["applicant"],
-            inventor=filters["inventor"],
-            ipc=filters["ipc"],
-            country=filters["country"],
-            year_from=year_from, year_to=year_to,
-        )
-    except Exception as e:
-        log.exception("search_patents_advanced failed for %r", q)
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"⚠️ 검색 실패: {_explain_error(e)}",
-        )
-        return
-    results = await _translate_results_korean(results)
-    body = _format_patents_text(label, results)
-    _record_command_qna(
-        update,
-        question=(update.message.text or
-                  f"/search_patents_advanced {q}").strip(),
-        body=body,
-        tools=["search_patents_advanced", "search_patents"],
-        sources=[p.get("patent_number", "")
-                 for p in results if p.get("patent_number")],
-    )
-    pieces = _split_for_telegram(body)
-    if pieces:
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("search_patents_advanced fallback send failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
+    async with _SustainedTyping(update, ctx):
+      label = q
+      extra: list[str] = []
+      if filters["applicant"]:
+          extra.append(f"출원인={filters['applicant']}")
+      if filters["inventor"]:
+          extra.append(f"발명자={filters['inventor']}")
+      if filters["ipc"]:
+          extra.append(f"IPC={filters['ipc']}")
+      if filters["country"]:
+          extra.append(f"국가={filters['country']}")
+      if year_from:
+          extra.append(f"≥{year_from}")
+      if year_to:
+          extra.append(f"≤{year_to}")
+      if extra:
+          label += f" [{' · '.join(extra)}]"
+      status = await update.message.reply_text(
+          f"🔍 '{label}' 고급 특허 검색 중 (한국어 번역 포함)..."
+      )
+      try:
+          results = await patentsearch.search_advanced(
+              q, limit=50,
+              applicant=filters["applicant"],
+              inventor=filters["inventor"],
+              ipc=filters["ipc"],
+              country=filters["country"],
+              year_from=year_from, year_to=year_to,
+          )
+      except Exception as e:
+          log.exception("search_patents_advanced failed for %r", q)
+          await _edit_or_send(
+              ctx, status.chat.id, status.message_id,
+              f"⚠️ 검색 실패: {_explain_error(e)}",
+          )
+          return
+      results = await _translate_results_korean(results)
+      body = _format_patents_text(label, results)
+      _record_command_qna(
+          update,
+          question=(update.message.text or
+                    f"/search_patents_advanced {q}").strip(),
+          body=body,
+          tools=["search_patents_advanced", "search_patents"],
+          sources=[p.get("patent_number", "")
+                   for p in results if p.get("patent_number")],
+      )
+      pieces = _split_for_telegram(body)
+      if pieces:
+          try:
+              await ctx.bot.edit_message_text(
+                  chat_id=status.chat.id, message_id=status.message_id,
+                  text=pieces[0], parse_mode="HTML",
+                  disable_web_page_preview=True,
+              )
+          except Exception:
+              try:
+                  await update.message.reply_text(
+                      pieces[0], parse_mode="HTML",
+                      disable_web_page_preview=True,
+                  )
+              except Exception:
+                  log.exception("search_patents_advanced fallback send failed")
+          for piece in pieces[1:]:
+              try:
+                  await update.message.reply_text(
+                      piece, parse_mode="HTML",
+                      disable_web_page_preview=True,
+                  )
+              except Exception:
                 log.exception("search_patents_advanced chunked send failed")
 
 
@@ -5955,57 +5863,54 @@ async def cmd_search_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "    /company_patents SK하이닉스"
         )
         return
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"🔍 '{q}' 특허 검색 중... (한국어 번역 포함)"
-    )
-    try:
-        results = await patentsearch.search(q, limit=50)
-    except Exception as e:
-        log.exception("search_patents direct call failed for %r", q)
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"⚠️ 특허 검색 실패: {_explain_error(e)}",
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"🔍 '{q}' 특허 검색 중... (한국어 번역 포함)"
         )
-        return
-    results = await _translate_results_korean(results)
-    body = _format_patents_text(q, results)
-    _record_command_qna(
-        update,
-        question=(update.message.text or f"/search_patents {q}").strip(),
-        body=body,
-        tools=["search_patents"],
-        sources=[p.get("patent_number", "")
-                 for p in results if p.get("patent_number")],
-    )
-    pieces = _split_for_telegram(body)
-    # Edit the status row into the first piece (HTML mode needed for
-    # the <b> tags in the formatter), fall back to a fresh send if
-    # the edit fails. Remaining pieces go out as new messages.
-    if pieces:
         try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
+            results = await patentsearch.search(q, limit=50)
+        except Exception as e:
+            log.exception("search_patents direct call failed for %r", q)
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"⚠️ 특허 검색 실패: {_explain_error(e)}",
             )
-        except Exception:
-            log.warning("search_patents status edit failed, sending fresh")
+            return
+        results = await _translate_results_korean(results)
+        body = _format_patents_text(q, results)
+        _record_command_qna(
+            update,
+            question=(update.message.text or f"/search_patents {q}").strip(),
+            body=body,
+            tools=["search_patents"],
+            sources=[p.get("patent_number", "")
+                     for p in results if p.get("patent_number")],
+        )
+        pieces = _split_for_telegram(body)
+        if pieces:
             try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=pieces[0], parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
             except Exception:
-                log.exception("search_patents fallback send failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("search_patents chunked send failed")
+                log.warning("search_patents status edit failed, sending fresh")
+                try:
+                    await update.message.reply_text(
+                        pieces[0], parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("search_patents fallback send failed")
+            for piece in pieces[1:]:
+                try:
+                    await update.message.reply_text(
+                        piece, parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("search_patents chunked send failed")
 
 
 async def cmd_company_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -6029,65 +5934,60 @@ async def cmd_company_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "    /company_patents 한양대학교 산학협력단"
         )
         return
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"🔍 '{applicant}' 한국 특허 검색 중... (KIPRIS · 한국어 번역 포함)"
-    )
-    try:
-        from .agent import patentsearch
-        results = await patentsearch.search_by_applicant(applicant, limit=50)
-    except Exception as e:
-        log.exception("company_patents direct call failed for %r", applicant)
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"🔍 '{applicant}' 한국 특허 검색 중... (KIPRIS · 한국어 번역 포함)"
+        )
         try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=f"⚠️ KIPRIS 검색 실패: {_explain_error(e)}",
-            )
-        except Exception:
-            pass
-        return
-    # KIPRIS list response has no abstract (applicantNameSearchInfo
-    # endpoint design), but titles are Korean already — translation
-    # call still runs in case mixed-language titles or future
-    # detail-fetched abstracts surface. Cheap with empty abstracts
-    # (~₩1).
-    results = await _translate_results_korean(results)
-    body = _format_patents_text(
-        f"{applicant} (KIPRIS 출원인 검색)", results,
-    )
-    _record_command_qna(
-        update,
-        question=(update.message.text or f"/company_patents {applicant}").strip(),
-        body=body,
-        tools=["search_company_patents"],
-        sources=[p.get("patent_number", "")
-                 for p in results if p.get("patent_number")],
-    )
-    pieces = _split_for_telegram(body)
-    if pieces:
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            log.warning("company_patents status edit failed, sending fresh")
+            from .agent import patentsearch
+            results = await patentsearch.search_by_applicant(applicant, limit=50)
+        except Exception as e:
+            log.exception("company_patents direct call failed for %r", applicant)
             try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=f"⚠️ KIPRIS 검색 실패: {_explain_error(e)}",
+                )
+            except Exception:
+                pass
+            return
+        results = await _translate_results_korean(results)
+        body = _format_patents_text(
+            f"{applicant} (KIPRIS 출원인 검색)", results,
+        )
+        _record_command_qna(
+            update,
+            question=(update.message.text or f"/company_patents {applicant}").strip(),
+            body=body,
+            tools=["search_company_patents"],
+            sources=[p.get("patent_number", "")
+                     for p in results if p.get("patent_number")],
+        )
+        pieces = _split_for_telegram(body)
+        if pieces:
+            try:
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=pieces[0], parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
             except Exception:
-                log.exception("company_patents fallback send failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("company_patents chunked send failed")
+                log.warning("company_patents status edit failed, sending fresh")
+                try:
+                    await update.message.reply_text(
+                        pieces[0], parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("company_patents fallback send failed")
+            for piece in pieces[1:]:
+                try:
+                    await update.message.reply_text(
+                        piece, parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("company_patents chunked send failed")
 
 
 async def cmd_patent_detail(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -6115,67 +6015,67 @@ async def cmd_patent_detail(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "출원번호는 숫자만 인식. 예: 1020230012345"
         )
         return
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"🔍 출원 {digits} 상세 조회 중... (KIPRIS · 한국어 번역 포함)"
-    )
-    try:
-        from .agent import patentsearch
-        row = await patentsearch.get_patent_detail(digits)
-    except Exception as e:
-        log.exception("patent_detail call failed for %r", digits)
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"🔍 출원 {digits} 상세 조회 중... (KIPRIS · 한국어 번역 포함)"
+        )
         try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=f"⚠️ KIPRIS 상세 조회 실패: {_explain_error(e)}",
-            )
-        except Exception:
-            pass
-        return
-    if not row:
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=f"🔍 출원번호 {digits} — KIPRIS 매칭 없음 "
-                     "(번호 오타 또는 비공개 출원).",
-            )
-        except Exception:
-            pass
-        return
-    results = await _translate_results_korean([row])
-    body = _format_patents_text(f"출원번호 {digits} 상세", results)
-    _record_command_qna(
-        update,
-        question=(update.message.text or f"/patent_detail {digits}").strip(),
-        body=body,
-        tools=["get_patent_detail"],
-        sources=[results[0].get("patent_number", "")] if results else [],
-    )
-    pieces = _split_for_telegram(body)
-    if pieces:
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            log.warning("patent_detail status edit failed, sending fresh")
+            from .agent import patentsearch
+            row = await patentsearch.get_patent_detail(digits)
+        except Exception as e:
+            log.exception("patent_detail call failed for %r", digits)
             try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=f"⚠️ KIPRIS 상세 조회 실패: {_explain_error(e)}",
+                )
+            except Exception:
+                pass
+            return
+        if not row:
+            try:
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=f"🔍 출원번호 {digits} — KIPRIS 매칭 없음 "
+                         "(번호 오타 또는 비공개 출원).",
+                )
+            except Exception:
+                pass
+            return
+        results = await _translate_results_korean([row])
+        body = _format_patents_text(f"출원번호 {digits} 상세", results)
+        _record_command_qna(
+            update,
+            question=(update.message.text or f"/patent_detail {digits}").strip(),
+            body=body,
+            tools=["get_patent_detail"],
+            sources=[results[0].get("patent_number", "")] if results else [],
+        )
+        pieces = _split_for_telegram(body)
+        if pieces:
+            try:
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=pieces[0], parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
             except Exception:
-                log.exception("patent_detail fallback send failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("patent_detail chunked send failed")
+                log.warning("patent_detail status edit failed, sending fresh")
+                try:
+                    await update.message.reply_text(
+                        pieces[0], parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("patent_detail fallback send failed")
+            for piece in pieces[1:]:
+                try:
+                    await update.message.reply_text(
+                        piece, parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("patent_detail chunked send failed")
 
 
 async def cmd_citing_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -6201,68 +6101,67 @@ async def cmd_citing_patents(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "출원번호는 숫자만 인식. 예: 1020200012345"
         )
         return
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"🔍 출원 {digits} 인용 특허 조회 중... (KIPRIS)"
-    )
-    try:
-        from .agent import patentsearch
-        rows = await patentsearch.get_citing_patents(digits)
-    except Exception as e:
-        log.exception("citing_patents call failed for %r", digits)
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"🔍 출원 {digits} 인용 특허 조회 중... (KIPRIS)"
+        )
         try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=f"⚠️ KIPRIS 인용 조회 실패: {_explain_error(e)}",
-            )
-        except Exception:
-            pass
-        return
-    if not rows:
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=f"🔍 출원 {digits} 를 인용한 후행 특허 없음 "
-                     "(또는 KIPRIS 미수록).",
-            )
-        except Exception:
-            pass
-        return
-    # Translation is cheap on these (no abstract) but title shells
-    # are formulaic — skip the LLM call. Use raw rows.
-    body = _format_patents_text(f"출원번호 {digits} 인용 특허", rows)
-    _record_command_qna(
-        update,
-        question=(update.message.text or f"/citing_patents {digits}").strip(),
-        body=body,
-        tools=["get_citing_patents"],
-        sources=[r.get("patent_number", "") for r in rows if r.get("patent_number")],
-    )
-    pieces = _split_for_telegram(body)
-    if pieces:
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
-            log.warning("citing_patents status edit failed, sending fresh")
+            from .agent import patentsearch
+            rows = await patentsearch.get_citing_patents(digits)
+        except Exception as e:
+            log.exception("citing_patents call failed for %r", digits)
             try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=f"⚠️ KIPRIS 인용 조회 실패: {_explain_error(e)}",
+                )
+            except Exception:
+                pass
+            return
+        if not rows:
+            try:
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=f"🔍 출원 {digits} 를 인용한 후행 특허 없음 "
+                         "(또는 KIPRIS 미수록).",
+                )
+            except Exception:
+                pass
+            return
+        rows = await _translate_results_korean(rows)
+        body = _format_patents_text(f"출원번호 {digits} 인용 특허", rows)
+        _record_command_qna(
+            update,
+            question=(update.message.text or f"/citing_patents {digits}").strip(),
+            body=body,
+            tools=["get_citing_patents"],
+            sources=[r.get("patent_number", "") for r in rows if r.get("patent_number")],
+        )
+        pieces = _split_for_telegram(body)
+        if pieces:
+            try:
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=pieces[0], parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
             except Exception:
-                log.exception("citing_patents fallback send failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("citing_patents chunked send failed")
+                log.warning("citing_patents status edit failed, sending fresh")
+                try:
+                    await update.message.reply_text(
+                        pieces[0], parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("citing_patents fallback send failed")
+            for piece in pieces[1:]:
+                try:
+                    await update.message.reply_text(
+                        piece, parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("citing_patents chunked send failed")
 
 
 # ---------------------------------------------------------------------------
@@ -6701,10 +6600,10 @@ def _format_kisti_results(query: str, results: list[dict],
     # legacy codes for any target whose response format we haven't
     # confirmed yet. RESEARCHER/ORGAN may use Author/Affiliation as
     # their "title" since they have no Title field.
-    # Title_ko (added by _translate_kisti_titles for non-Korean rows)
-    # always wins so the display headline is readable on mobile.
-    # Original Title still appears below as a small line for term
-    # cross-reference.
+    # Title_ko (added by agent.translate.translate_kisti_rows for
+    # non-Korean rows) always wins so the display headline is
+    # readable on mobile. Original Title still appears below as a
+    # small line for term cross-reference.
     _title_keys = ("Title_ko",
                    "Title", "Title2",
                    "TI", "TIE",
@@ -6778,10 +6677,9 @@ def _format_kisti_results(query: str, results: list[dict],
             block.append(f"   <i>{original_title}</i>")
         if meta_line:
             block.append(f"   {meta_line}")
-        abstract = (r.get("Abstract") or r.get("Abstract2")
+        abstract = (r.get("Abstract_ko")
+                    or r.get("Abstract") or r.get("Abstract2")
                     or r.get("AB") or r.get("ABE")
-                    # TREND target: Definition holds the descriptive
-                    # body of the curated trend report
                     or r.get("Definition") or "").strip()
         if abstract:
             block.append(f"   {_html.escape(_truncate_at_sentence(abstract, 700))}")
@@ -6847,74 +6745,6 @@ def _kisti_row_needs_translation(row: dict) -> bool:
     return not _looks_korean(title_candidates)
 
 
-async def _translate_kisti_titles(rows: list[dict]) -> None:
-    """Batch-translate Title/Title2 of non-Korean ScienceON rows to
-    Korean in one Flash-Lite call. Mutates rows by adding
-    `Title_ko` (used as the display title by the formatter when
-    present). Silent fallback to originals on any failure.
-
-    Per user policy (2026-05): translate the TITLE only — abstracts
-    stay in original language. One model call across all eligible
-    rows from a search; ~₩2-3 per /kr_papers query at typical sizes
-    (30 titles × ~100 chars ≈ 3KB total)."""
-    if not rows:
-        return
-    targets: list[tuple[int, str]] = []
-    for i, r in enumerate(rows):
-        if not _kisti_row_needs_translation(r):
-            continue
-        title = (r.get("Title") or r.get("Title2")
-                 or r.get("TI") or r.get("TIE") or "").strip()
-        if title:
-            targets.append((i, title))
-    if not targets:
-        return
-    lines = [f"[{i}] {t}" for i, t in targets]
-    user_text = "\n".join(lines)
-    system_prompt = (
-        "You translate scientific paper / patent / report titles "
-        "from English (or any other non-Korean language) to natural "
-        "Korean. Preserve technical acronyms, model names, chemical "
-        "formulas, and proper nouns in their original form (e.g. "
-        "HBM3, CMOS, TSV, BaTiO3, IEEE). Output JSON only:\n"
-        '{"items": [{"n": <index>, "ko": "<번역된 제목>"}, ...]}\n'
-        "Use the bracket number as `n`. No preamble, no markdown."
-    )
-    try:
-        from .llm.gemini import complete
-        import json as _json
-        resp = await complete(
-            model=config.SUMMARY_MODEL,
-            system=system_prompt,
-            user=user_text,
-            max_tokens=8192,
-            temperature=0.1,
-            purpose="kisti_translate_titles",
-        )
-        m = re.search(r"\{.*\}", resp, re.DOTALL)
-        if not m:
-            log.warning("kisti translate: no JSON in resp (len=%d)",
-                        len(resp))
-            return
-        data = _json.loads(m.group(0))
-        by_n: dict[int, str] = {}
-        for item in (data.get("items") or []):
-            try:
-                ko = (item.get("ko") or "").strip()
-                if ko:
-                    by_n[int(item.get("n"))] = ko
-            except (TypeError, ValueError):
-                continue
-        for i, _ in targets:
-            ko = by_n.get(i)
-            if ko:
-                rows[i]["Title_ko"] = ko
-        log.info("kisti translate: %d/%d titles → KR",
-                 len(by_n), len(targets))
-    except Exception:
-        log.exception("kisti translate failed; using originals")
-
-
 async def _kisti_search_command(update, ctx, query: str, kind: str,
                                 fn) -> None:
     """Shared body for /kr_papers, /kr_patents, /kr_reports."""
@@ -6944,10 +6774,12 @@ async def _kisti_search_command(update, ctx, query: str, kind: str,
             rows = result.get("results") or []
         else:
             rows = []
-        # Translate non-Korean titles to Korean before formatting so
-        # English/foreign-language results render readable headlines on
-        # mobile. Single Flash-Lite call across all eligible rows.
-        await _translate_kisti_titles(rows)
+        # Translate both title AND abstract of non-Korean rows so the
+        # rendered card body is fully Korean. Shared agent.translate
+        # helper handles batching + skip-Korean-rows; same code path
+        # the natural-language search_kr_* agent tools use.
+        from .agent.translate import translate_kisti_rows
+        await translate_kisti_rows(rows)
         body = _format_kisti_results(query, rows, kind)
         _kisti_tool_name = {
             "paper":         "search_kr_papers",
@@ -7192,7 +7024,8 @@ def _format_ntis_projects(query: str, rows: list[dict]) -> str:
     ]
     for i, r in enumerate(rows, 1):
         title = _html.escape(
-            (r.get("ProjectTitle") or r.get("과제명")
+            (r.get("Title_ko")
+             or r.get("ProjectTitle") or r.get("과제명")
              or r.get("title") or "(제목 없음)")
         )[:240]
         pjt_id = (r.get("ProjectNumber") or r.get("과제번호")
@@ -7258,56 +7091,58 @@ async def cmd_kr_rnd_projects(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not q:
         await update.message.reply_text("사용법: /kr_rnd_projects <검색어>")
         return
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"🔍 '{q}' NTIS 국가R&D 검색 중..."
-    )
-    try:
-        from .agent import kisti_ntis as _ntis
-        rows = await _ntis.search_projects(q, limit=30)
-    except Exception as e:
-        log.exception("ntis projects failed for %r", q)
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"🔍 '{q}' NTIS 국가R&D 검색 중..."
+        )
         try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=f"⚠️ NTIS 검색 실패: {_explain_error(e)}",
-            )
-        except Exception:
-            pass
-        return
-    body = _format_ntis_projects(q, rows)
-    _record_command_qna(
-        update,
-        question=(update.message.text or f"/kr_rnd_projects {q}").strip(),
-        body=body,
-        tools=["search_kr_rnd_projects"],
-        sources=[r.get("ProjectNumber") or r.get("과제번호") or ""
-                 for r in rows if r.get("ProjectNumber") or r.get("과제번호")],
-    )
-    pieces = _split_for_telegram(body)
-    if pieces:
-        try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
-        except Exception:
+            from .agent import kisti_ntis as _ntis
+            rows = await _ntis.search_projects(q, limit=30)
+        except Exception as e:
+            log.exception("ntis projects failed for %r", q)
             try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=f"⚠️ NTIS 검색 실패: {_explain_error(e)}",
+                )
+            except Exception:
+                pass
+            return
+        from .agent.translate import translate_kisti_rows
+        await translate_kisti_rows(rows)
+        body = _format_ntis_projects(q, rows)
+        _record_command_qna(
+            update,
+            question=(update.message.text or f"/kr_rnd_projects {q}").strip(),
+            body=body,
+            tools=["search_kr_rnd_projects"],
+            sources=[r.get("ProjectNumber") or r.get("과제번호") or ""
+                     for r in rows if r.get("ProjectNumber") or r.get("과제번호")],
+        )
+        pieces = _split_for_telegram(body)
+        if pieces:
+            try:
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=pieces[0], parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
             except Exception:
-                log.exception("ntis projects fallback send failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("ntis projects chunked send failed")
+                try:
+                    await update.message.reply_text(
+                        pieces[0], parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("ntis projects fallback send failed")
+            for piece in pieces[1:]:
+                try:
+                    await update.message.reply_text(
+                        piece, parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("ntis projects chunked send failed")
 
 
 def _format_ntis_classifications(query: str, rows: list[dict]) -> str:
@@ -7351,53 +7186,53 @@ async def cmd_kr_classifications(update: Update,
             "예: /kr_classifications 양자 컴퓨팅 기반 암호화 알고리즘"
         )
         return
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"🏷️ NTIS 분류코드 추천 중 ({len(abstract)}자 초록)..."
-    )
-    try:
-        from .agent import kisti_ntis as _ntis
-        rows = await _ntis.recommend_classifications(
-            abstract, classification_type="standard",
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"🏷️ NTIS 분류코드 추천 중 ({len(abstract)}자 초록)..."
         )
-    except Exception as e:
-        log.exception("ntis classifications failed")
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"⚠️ NTIS 분류코드 추천 실패: {_explain_error(e)}",
-        )
-        return
-    body = _format_ntis_classifications(abstract[:80], rows)
-    _record_command_qna(
-        update,
-        question=(update.message.text or "/kr_classifications").strip()[:200],
-        body=body,
-        tools=["recommend_kr_classifications"],
-    )
-    pieces = _split_for_telegram(body)
-    if pieces:
         try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
+            from .agent import kisti_ntis as _ntis
+            rows = await _ntis.recommend_classifications(
+                abstract, classification_type="standard",
             )
-        except Exception:
+        except Exception as e:
+            log.exception("ntis classifications failed")
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"⚠️ NTIS 분류코드 추천 실패: {_explain_error(e)}",
+            )
+            return
+        body = _format_ntis_classifications(abstract[:80], rows)
+        _record_command_qna(
+            update,
+            question=(update.message.text or "/kr_classifications").strip()[:200],
+            body=body,
+            tools=["recommend_kr_classifications"],
+        )
+        pieces = _split_for_telegram(body)
+        if pieces:
             try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=pieces[0], parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
             except Exception:
-                log.exception("ntis cls fallback failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("ntis cls chunked send failed")
+                try:
+                    await update.message.reply_text(
+                        pieces[0], parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("ntis cls fallback failed")
+            for piece in pieces[1:]:
+                try:
+                    await update.message.reply_text(
+                        piece, parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("ntis cls chunked send failed")
 
 
 def _format_ntis_related(query: str, rows: list[dict],
@@ -7430,11 +7265,10 @@ def _format_ntis_related(query: str, rows: list[dict],
     except Exception:
         pass
     for i, r in enumerate(rows, 1):
-        title = (r.get("title") or r.get("Title") or
+        title = (r.get("Title_ko") or
+                 r.get("title") or r.get("Title") or
                  r.get("ProjectTitle") or r.get("논문명") or
                  r.get("특허명") or r.get("보고서명") or
-                 # NTIS ConnectionContent (researchreport) uses
-                 # all-caps keys like KOR_RPT_TITLE_NM.
                  r.get("KOR_RPT_TITLE_NM") or r.get("KOR_TITLE_NM") or
                  r.get("ENG_RPT_TITLE_NM") or r.get("ENG_TITLE_NM") or
                  "(제목 없음)")
@@ -7482,54 +7316,56 @@ async def cmd_kr_related(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if len(args) >= 2 and args[1].lower() in (
             "paper", "patent", "researchreport", "project"):
         coll = args[1].lower()
-    await _typing(update, ctx)
-    status = await update.message.reply_text(
-        f"🔗 NTIS 연관 콘텐츠 ({coll}) 조회 중 — pjtId {pjt_id}..."
-    )
-    try:
-        from .agent import kisti_ntis as _ntis
-        rows = await _ntis.related_content(
-            pjt_id, collection_type=coll,
+    async with _SustainedTyping(update, ctx):
+        status = await update.message.reply_text(
+            f"🔗 NTIS 연관 콘텐츠 ({coll}) 조회 중 — pjtId {pjt_id}..."
         )
-    except Exception as e:
-        log.exception("ntis related failed")
-        await _edit_or_send(
-            ctx, status.chat.id, status.message_id,
-            f"⚠️ NTIS 연관 콘텐츠 실패: {_explain_error(e)}",
-        )
-        return
-    body = _format_ntis_related(pjt_id, rows, coll)
-    _record_command_qna(
-        update,
-        question=(update.message.text or
-                  f"/kr_related {pjt_id} {coll}").strip(),
-        body=body,
-        tools=["get_kr_related_content"],
-    )
-    pieces = _split_for_telegram(body)
-    if pieces:
         try:
-            await ctx.bot.edit_message_text(
-                chat_id=status.chat.id, message_id=status.message_id,
-                text=pieces[0], parse_mode="HTML",
-                disable_web_page_preview=True,
+            from .agent import kisti_ntis as _ntis
+            rows = await _ntis.related_content(
+                pjt_id, collection_type=coll,
             )
-        except Exception:
+        except Exception as e:
+            log.exception("ntis related failed")
+            await _edit_or_send(
+                ctx, status.chat.id, status.message_id,
+                f"⚠️ NTIS 연관 콘텐츠 실패: {_explain_error(e)}",
+            )
+            return
+        from .agent.translate import translate_kisti_rows
+        await translate_kisti_rows(rows)
+        body = _format_ntis_related(pjt_id, rows, coll)
+        _record_command_qna(
+            update,
+            question=(update.message.text or
+                      f"/kr_related {pjt_id} {coll}").strip(),
+            body=body,
+            tools=["get_kr_related_content"],
+        )
+        pieces = _split_for_telegram(body)
+        if pieces:
             try:
-                await update.message.reply_text(
-                    pieces[0], parse_mode="HTML",
+                await ctx.bot.edit_message_text(
+                    chat_id=status.chat.id, message_id=status.message_id,
+                    text=pieces[0], parse_mode="HTML",
                     disable_web_page_preview=True,
                 )
             except Exception:
-                log.exception("ntis related fallback failed")
-        for piece in pieces[1:]:
-            try:
-                await update.message.reply_text(
-                    piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                log.exception("ntis related chunked send failed")
+                try:
+                    await update.message.reply_text(
+                        pieces[0], parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("ntis related fallback failed")
+            for piece in pieces[1:]:
+                try:
+                    await update.message.reply_text(
+                        piece, parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    log.exception("ntis related chunked send failed")
 
 
 def _html_escape_safe(s: str) -> str:
@@ -7573,6 +7409,8 @@ async def _ntis_simple_search_command(
                 f"받은 뒤 재시도 / 더 일반적인 키워드로 시도."
             )
         else:
+            from .agent.translate import translate_kisti_rows
+            await translate_kisti_rows(rows)
             body = _format_ntis_projects(query, rows)
             # Header label swap so the user sees the right section name.
             body = body.replace(

@@ -14,7 +14,7 @@ from .. import config
 from ..store import meta, vector, cost
 from ..ingest import pipeline
 from . import (retrieve, papersearch, patentsearch,
-               kisti_scienceon, kisti_ntis)
+               kisti_scienceon, kisti_ntis, translate)
 
 log = logging.getLogger(__name__)
 
@@ -135,6 +135,11 @@ async def search_my_brain(query: str, k: int = 10) -> dict:
 
 async def search_papers(query: str, limit: int = 15) -> dict:
     results = await papersearch.search(query, limit=limit)
+    # Translate first so the agent sees Korean titles+abstracts in
+    # the tool result. Per user policy: every paper/patent rendered
+    # to the user is Korean regardless of source. Overwrite path so
+    # the slim dict below picks up the Korean strings directly.
+    await translate.translate_and_overwrite(results)
     slim = []
     for p in results:
         slim.append({
@@ -167,6 +172,7 @@ async def search_company_patents(applicant: str, limit: int = 50) -> dict:
     applicant string. Use for "삼성전기 특허 알려줘" type questions.
     """
     results = await patentsearch.search_by_applicant(applicant, limit=limit)
+    await translate.translate_and_overwrite(results)
     slim = []
     for p in results:
         slim.append({
@@ -194,6 +200,7 @@ async def search_patents(query: str, limit: int = 15) -> dict:
     write a 3-5 sentence summary per top patent.
     """
     results = await patentsearch.search(query, limit=limit)
+    await translate.translate_and_overwrite(results)
     slim = []
     for p in results:
         slim.append({
@@ -223,6 +230,7 @@ async def search_patents(query: str, limit: int = 15) -> dict:
 
 async def search_kr_papers(query: str, limit: int = 10) -> dict:
     rows = await kisti_scienceon.search_papers(query, limit=limit)
+    await translate.translate_kisti_rows(rows)
     return {"results": rows, "count": len(rows)}
 
 
@@ -237,6 +245,7 @@ async def search_kr_patents_kisti(query: str, limit: int = 10) -> dict:
     /company_patents (KIPRIS applicant-only). ScienceON's coverage
     overlaps but adds Korean-language metadata not in EPO."""
     rows = await kisti_scienceon.search_patents(query, limit=limit)
+    await translate.translate_kisti_rows(rows)
     return {"results": rows, "count": len(rows)}
 
 
@@ -252,6 +261,7 @@ async def get_kr_patent_citations(cn: str) -> dict:
 
 async def search_kr_reports(query: str, limit: int = 10) -> dict:
     rows = await kisti_scienceon.search_reports(query, limit=limit)
+    await translate.translate_kisti_rows(rows)
     return {"results": rows, "count": len(rows)}
 
 
@@ -266,21 +276,25 @@ async def get_kr_report_detail(cn: str) -> dict:
 
 async def search_kr_trends(query: str, limit: int = 10) -> dict:
     rows = await kisti_scienceon.search_trends(query, limit=limit)
+    await translate.translate_kisti_rows(rows)
     return {"results": rows, "count": len(rows)}
 
 
 async def search_kr_researchers(query: str, limit: int = 10) -> dict:
     rows = await kisti_scienceon.search_researchers(query, limit=limit)
+    await translate.translate_kisti_rows(rows)
     return {"results": rows, "count": len(rows)}
 
 
 async def search_kr_organs(query: str, limit: int = 10) -> dict:
     rows = await kisti_scienceon.search_organs(query, limit=limit)
+    await translate.translate_kisti_rows(rows)
     return {"results": rows, "count": len(rows)}
 
 
 async def search_kr_science_trends(query: str, limit: int = 10) -> dict:
     rows = await kisti_scienceon.search_science_trends(query, limit=limit)
+    await translate.translate_kisti_rows(rows)
     return {"results": rows, "count": len(rows)}
 
 
@@ -292,6 +306,7 @@ async def search_kr_science_trends(query: str, limit: int = 10) -> dict:
 
 async def search_kr_rnd_projects(query: str, limit: int = 10) -> dict:
     rows = await kisti_ntis.search_projects(query, limit=limit)
+    await translate.translate_kisti_rows(rows)
     return {"results": rows, "count": len(rows)}
 
 
@@ -319,21 +334,25 @@ async def search_kr_rnd_outcomes(
     query: str, kind: str = "paper", limit: int = 10,
 ) -> dict:
     rows = await kisti_ntis.search_outcomes(query, kind=kind, limit=limit)
+    await translate.translate_kisti_rows(rows)
     return {"results": rows, "count": len(rows), "kind": kind}
 
 
 async def search_kr_govt_reports(query: str, limit: int = 10) -> dict:
     rows = await kisti_ntis.search_research_reports(query, limit=limit)
+    await translate.translate_kisti_rows(rows)
     return {"results": rows, "count": len(rows)}
 
 
 async def search_kr_agency_rnd(query: str, limit: int = 10) -> dict:
     rows = await kisti_ntis.search_agency_rnd(query, limit=limit)
+    await translate.translate_kisti_rows(rows)
     return {"results": rows, "count": len(rows)}
 
 
 async def search_kr_rnd_issues(query: str, limit: int = 10) -> dict:
     rows = await kisti_ntis.search_rnd_issues(query, limit=limit)
+    await translate.translate_kisti_rows(rows)
     return {"results": rows, "count": len(rows)}
 
 
