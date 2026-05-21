@@ -1206,7 +1206,7 @@ async def _typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Re-send the 'typing...' chat action every few seconds so the
     user sees continuous activity through long agent runs (Pro
-    synthesis on a 50-doc compare can be ~30-60s). 2s cadence keeps
+    synthesis on a 50-doc compare can be ~30-60s). 3s cadence keeps
     the indicator visibly active even when the Telegram client
     refreshes lazily."""
     while True:
@@ -1215,7 +1215,7 @@ async def _sustained_typing(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         try:
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
         except asyncio.CancelledError:
             break
 
