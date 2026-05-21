@@ -1736,11 +1736,11 @@ async def cmd_guide_lookup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     분리. _split_for_telegram 이 길이 초과시 자동 분할 송신."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    for chunk in _split_for_telegram(_LOOKUP_GUIDE_TEXT):
-        await update.message.reply_text(
-            chunk, parse_mode="HTML", disable_web_page_preview=True,
-        )
+    async with _SustainedTyping(update, ctx):
+        for chunk in _split_for_telegram(_LOOKUP_GUIDE_TEXT):
+            await update.message.reply_text(
+                chunk, parse_mode="HTML", disable_web_page_preview=True,
+            )
 
 
 _PATENTS_GUIDE_TEXT = """<b>📘 특허 명령어 상세 가이드</b>
@@ -1974,11 +1974,11 @@ async def _send_pieces_with_throttle(
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    for chunk in _split_for_telegram(_HELP_TEXT):
-        await update.message.reply_text(
-            chunk, parse_mode="HTML", disable_web_page_preview=True,
-        )
+    async with _SustainedTyping(update, ctx):
+        for chunk in _split_for_telegram(_HELP_TEXT):
+            await update.message.reply_text(
+                chunk, parse_mode="HTML", disable_web_page_preview=True,
+            )
 
 
 
@@ -2096,11 +2096,11 @@ async def cmd_papers_guide(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     한 곳에서. _HELP_TEXT 4000 cap 보호하려고 분리."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    for chunk in _split_for_telegram(_PAPERS_GUIDE_TEXT):
-        await update.message.reply_text(
-            chunk, parse_mode="HTML", disable_web_page_preview=True,
-        )
+    async with _SustainedTyping(update, ctx):
+        for chunk in _split_for_telegram(_PAPERS_GUIDE_TEXT):
+            await update.message.reply_text(
+                chunk, parse_mode="HTML", disable_web_page_preview=True,
+            )
 
 
 async def cmd_patents_guide(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2111,20 +2111,20 @@ async def cmd_patents_guide(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     _HELP_TEXT 가 4000 cap 에 걸려있어서 별도 명령어로 빼둠."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    for chunk in _split_for_telegram(_PATENTS_GUIDE_TEXT):
-        await update.message.reply_text(
-            chunk, parse_mode="HTML", disable_web_page_preview=True,
-        )
+    async with _SustainedTyping(update, ctx):
+        for chunk in _split_for_telegram(_PATENTS_GUIDE_TEXT):
+            await update.message.reply_text(
+                chunk, parse_mode="HTML", disable_web_page_preview=True,
+            )
 
 
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    await update.message.reply_text(
-        f"문서 {meta.count()}개 / 청크 {vector.chunk_count()}개"
-    )
+    async with _SustainedTyping(update, ctx):
+        await update.message.reply_text(
+            f"문서 {meta.count()}개 / 청크 {vector.chunk_count()}개"
+        )
 
 
 async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2133,71 +2133,71 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     is busy with ingest. Owner-only."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    ingest_capacity = _INGEST_SEM_CAPACITY
-    ingest_idle = _INGEST_SEM._value  # remaining slots
-    ingest_busy = max(0, ingest_capacity - ingest_idle)
-    last = _LAST_REPLY_AT
-    last_str = "-"
-    if last:
-        age = int((datetime.utcnow() - last).total_seconds())
-        if age < 60:
-            last_str = f"{age}초 전"
-        elif age < 3600:
-            last_str = f"{age // 60}분 전"
+    async with _SustainedTyping(update, ctx):
+        ingest_capacity = _INGEST_SEM_CAPACITY
+        ingest_idle = _INGEST_SEM._value  # remaining slots
+        ingest_busy = max(0, ingest_capacity - ingest_idle)
+        last = _LAST_REPLY_AT
+        last_str = "-"
+        if last:
+            age = int((datetime.utcnow() - last).total_seconds())
+            if age < 60:
+                last_str = f"{age}초 전"
+            elif age < 3600:
+                last_str = f"{age // 60}분 전"
+            else:
+                last_str = f"{age // 3600}시간 전"
+        rss = _process_rss_mb()
+        limit = _cgroup_mem_limit_mb()
+        if limit > 0:
+            mem_line = f"\n🧠 메모리: {rss:.0f} / {limit:.0f} MB ({rss/limit*100:.0f}%)"
         else:
-            last_str = f"{age // 3600}시간 전"
-    rss = _process_rss_mb()
-    limit = _cgroup_mem_limit_mb()
-    if limit > 0:
-        mem_line = f"\n🧠 메모리: {rss:.0f} / {limit:.0f} MB ({rss/limit*100:.0f}%)"
-    else:
-        mem_line = f"\n🧠 메모리: {rss:.0f} MB"
-    cleanup_at = _LAST_CLEANUP_AT
-    if cleanup_at:
-        age = int((datetime.utcnow() - cleanup_at).total_seconds())
-        if age < 60:
-            ago = f"{age}초 전"
-        elif age < 3600:
-            ago = f"{age // 60}분 전"
+            mem_line = f"\n🧠 메모리: {rss:.0f} MB"
+        cleanup_at = _LAST_CLEANUP_AT
+        if cleanup_at:
+            age = int((datetime.utcnow() - cleanup_at).total_seconds())
+            if age < 60:
+                ago = f"{age}초 전"
+            elif age < 3600:
+                ago = f"{age // 60}분 전"
+            else:
+                ago = f"{age // 3600}시간 전"
+            cleanup_line = (
+                f"\n🧹 마지막 메모리 청소: {ago} "
+                f"({_LAST_CLEANUP_FREED_MB:+.1f} MB 회수)"
+            )
         else:
-            ago = f"{age // 3600}시간 전"
-        cleanup_line = (
-            f"\n🧹 마지막 메모리 청소: {ago} "
-            f"({_LAST_CLEANUP_FREED_MB:+.1f} MB 회수)"
+            cleanup_line = "\n🧹 마지막 메모리 청소: 아직 없음 (5분 주기 자동)"
+        # Active ingest detail — file name + elapsed time per running
+        # slot. Sorted by start time (oldest first) so the user sees
+        # "what's been running longest, is it stuck?" at a glance.
+        active = sorted(
+            _ACTIVE_INGESTS.values(), key=lambda v: v.get("started_at", 0)
         )
-    else:
-        cleanup_line = "\n🧹 마지막 메모리 청소: 아직 없음 (5분 주기 자동)"
-    # Active ingest detail — file name + elapsed time per running
-    # slot. Sorted by start time (oldest first) so the user sees
-    # "what's been running longest, is it stuck?" at a glance.
-    active = sorted(
-        _ACTIVE_INGESTS.values(), key=lambda v: v.get("started_at", 0)
-    )
-    now = time.time()
-    ingest_lines = []
-    for i, info in enumerate(active):
-        elapsed = now - info.get("started_at", now)
-        label = (info.get("label") or "(unknown)")[:60]
-        kind = info.get("kind", "")
-        kind_tag = f" [{kind}]" if kind and kind not in ("doc", "text") else ""
-        prefix = "   └─" if i == len(active) - 1 else "   ├─"
-        ingest_lines.append(
-            f"\n{prefix} {label}{kind_tag} ({_fmt_elapsed(elapsed)})"
-        )
-    ingest_detail = "".join(ingest_lines)
+        now = time.time()
+        ingest_lines = []
+        for i, info in enumerate(active):
+            elapsed = now - info.get("started_at", now)
+            label = (info.get("label") or "(unknown)")[:60]
+            kind = info.get("kind", "")
+            kind_tag = f" [{kind}]" if kind and kind not in ("doc", "text") else ""
+            prefix = "   └─" if i == len(active) - 1 else "   ├─"
+            ingest_lines.append(
+                f"\n{prefix} {label}{kind_tag} ({_fmt_elapsed(elapsed)})"
+            )
+        ingest_detail = "".join(ingest_lines)
 
-    out = (
-        "🤖 봇 상태\n"
-        f"\n💬 활성 agent: {_ACTIVE_AGENT_RUNS}건"
-        f"\n📥 동시 학습: {ingest_busy}건 (슬롯 {ingest_busy}/{ingest_capacity}){ingest_detail}"
-        f"\n🔁 인입 재시도 큐: {len(_INGEST_RETRY_QUEUE)}건"
-        f"\n💤 agent 재시도 큐: {len(_RETRY_QUEUE)}건"
-        f"\n❌ 영구 실패: {len(_INGEST_FAILED)}건"
-        f"\n⏱ 마지막 응답: {last_str}"
-        + mem_line + cleanup_line
-    )
-    await update.message.reply_text(out)
+        out = (
+            "🤖 봇 상태\n"
+            f"\n💬 활성 agent: {_ACTIVE_AGENT_RUNS}건"
+            f"\n📥 동시 학습: {ingest_busy}건 (슬롯 {ingest_busy}/{ingest_capacity}){ingest_detail}"
+            f"\n🔁 인입 재시도 큐: {len(_INGEST_RETRY_QUEUE)}건"
+            f"\n💤 agent 재시도 큐: {len(_RETRY_QUEUE)}건"
+            f"\n❌ 영구 실패: {len(_INGEST_FAILED)}건"
+            f"\n⏱ 마지막 응답: {last_str}"
+            + mem_line + cleanup_line
+        )
+        await update.message.reply_text(out)
 
 
 async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2205,83 +2205,83 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     can spot anomalies (sudden surge, drop) at a glance."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    s = meta.usage_stats()
-    chunks = vector.chunk_count()
-    queue_len = len(_INGEST_RETRY_QUEUE)
-    failed_len = len(_INGEST_FAILED)
+    async with _SustainedTyping(update, ctx):
+        s = meta.usage_stats()
+        chunks = vector.chunk_count()
+        queue_len = len(_INGEST_RETRY_QUEUE)
+        failed_len = len(_INGEST_FAILED)
 
-    types_line = ", ".join(f"{t}:{c}" for t, c in s["types"][:8]) or "-"
+        types_line = ", ".join(f"{t}:{c}" for t, c in s["types"][:8]) or "-"
 
-    today = cost.today_krw()
-    week = cost.period_krw(7)
-    mtd = cost.month_to_date_krw()
-    by_today = today["by_model"]
-    cost_lines = []
-    for m in ("gemini-2.5-pro", "gemini-2.5-flash",
-              "gemini-2.5-flash-lite", "gemini-embedding-001"):
-        if m in by_today:
-            d = by_today[m]
-            cost_lines.append(
-                f"    {m.replace('gemini-2.5-', '').replace('gemini-', '')}"
-                f"  ₩{d['cost']:,.1f}  ({d['calls']}콜)"
+        today = cost.today_krw()
+        week = cost.period_krw(7)
+        mtd = cost.month_to_date_krw()
+        by_today = today["by_model"]
+        cost_lines = []
+        for m in ("gemini-2.5-pro", "gemini-2.5-flash",
+                  "gemini-2.5-flash-lite", "gemini-embedding-001"):
+            if m in by_today:
+                d = by_today[m]
+                cost_lines.append(
+                    f"    {m.replace('gemini-2.5-', '').replace('gemini-', '')}"
+                    f"  ₩{d['cost']:,.1f}  ({d['calls']}콜)"
+                )
+        cost_breakdown = ("\n" + "\n".join(cost_lines)) if cost_lines else ""
+
+        by_purpose = today.get("by_purpose", {})
+        purpose_lines = []
+        for tag, label in (("ingest", "📥 ingest"), ("query", "💬 query"),
+                           ("unknown", "❓ unknown")):
+            if tag in by_purpose:
+                d = by_purpose[tag]
+                purpose_lines.append(
+                    f"    {label}  ₩{d['cost']:,.1f}  ({d['calls']}콜)"
+                )
+        purpose_breakdown = ("\n" + "\n".join(purpose_lines)) if purpose_lines else ""
+
+        # Tiny inline bar chart for the last 7 days so trends are visible
+        # without leaving the /usage screen.
+        daily = cost.daily_breakdown(7)
+        max_cost = max((d["cost"] for d in daily), default=0.0)
+        daily_lines = []
+        for d in daily:
+            bar_len = int(round((d["cost"] / max_cost) * 20)) if max_cost else 0
+            bar = "█" * bar_len if bar_len else "·"
+            daily_lines.append(
+                f"  {d['date'][5:]}  {bar:<20}  ₩{d['cost']:,.0f}"
+                + (f"  ({d['calls']}콜)" if d["calls"] else "")
             )
-    cost_breakdown = ("\n" + "\n".join(cost_lines)) if cost_lines else ""
+        daily_block = "\n".join(daily_lines)
 
-    by_purpose = today.get("by_purpose", {})
-    purpose_lines = []
-    for tag, label in (("ingest", "📥 ingest"), ("query", "💬 query"),
-                       ("unknown", "❓ unknown")):
-        if tag in by_purpose:
-            d = by_purpose[tag]
-            purpose_lines.append(
-                f"    {label}  ₩{d['cost']:,.1f}  ({d['calls']}콜)"
-            )
-    purpose_breakdown = ("\n" + "\n".join(purpose_lines)) if purpose_lines else ""
-
-    # Tiny inline bar chart for the last 7 days so trends are visible
-    # without leaving the /usage screen.
-    daily = cost.daily_breakdown(7)
-    max_cost = max((d["cost"] for d in daily), default=0.0)
-    daily_lines = []
-    for d in daily:
-        bar_len = int(round((d["cost"] / max_cost) * 20)) if max_cost else 0
-        bar = "█" * bar_len if bar_len else "·"
-        daily_lines.append(
-            f"  {d['date'][5:]}  {bar:<20}  ₩{d['cost']:,.0f}"
-            + (f"  ({d['calls']}콜)" if d["calls"] else "")
+        out = (
+            "📊 봇 사용 현황\n"
+            f"\n총 문서: {s['total']}개  /  청크: {chunks}개"
+            f"\n\n📥 ingest 속도"
+            f"\n  • 24h: {s['last_24h']}건"
+            f"\n  • 7d:  {s['last_7d']}건"
+            f"\n  • 30d: {s['last_30d']}건"
+            f"\n\n📂 type별 분포"
+            f"\n  {types_line}"
+            f"\n\n💰 추정 비용 (Gemini API · KST)"
+            f"\n  • 오늘: ₩{today['total_krw']:,.0f}  ({today['calls']}콜)"
+            f"\n  • 7일:  ₩{week['total_krw']:,.0f}"
+            f"\n  • 이번 달 ({mtd['year']}년 {mtd['month']}월): "
+            f"₩{mtd['total_krw']:,.0f}  ({mtd['day']}일차)"
+            f"{cost_breakdown}"
+            f"{purpose_breakdown}"
+            f"\n\n📅 최근 7일 (KST)\n{daily_block}"
+            f"\n\n📖 모델 용도"
+            f"\n  embedding   인입 chunk+summary / 질문 쿼리 임베딩"
+            f"\n  flash-lite  인입 요약·메타·OCR·STT / 질문 확장·rerank·verify"
+            f"\n  flash       질문 agent 추론·web_search"
+            f"\n  pro         /deep 질문 전용"
+            f"\n\n📚 가장 최근 학습"
+            f"\n  {s['latest_title'][:80]}"
+            f"\n  {s['latest_at'][:16].replace('T', ' ')}"
+            f"\n\n🔁 retry 큐: {queue_len}건"
+            f"\n❌ failed 누적: {failed_len}건"
         )
-    daily_block = "\n".join(daily_lines)
-
-    out = (
-        "📊 봇 사용 현황\n"
-        f"\n총 문서: {s['total']}개  /  청크: {chunks}개"
-        f"\n\n📥 ingest 속도"
-        f"\n  • 24h: {s['last_24h']}건"
-        f"\n  • 7d:  {s['last_7d']}건"
-        f"\n  • 30d: {s['last_30d']}건"
-        f"\n\n📂 type별 분포"
-        f"\n  {types_line}"
-        f"\n\n💰 추정 비용 (Gemini API · KST)"
-        f"\n  • 오늘: ₩{today['total_krw']:,.0f}  ({today['calls']}콜)"
-        f"\n  • 7일:  ₩{week['total_krw']:,.0f}"
-        f"\n  • 이번 달 ({mtd['year']}년 {mtd['month']}월): "
-        f"₩{mtd['total_krw']:,.0f}  ({mtd['day']}일차)"
-        f"{cost_breakdown}"
-        f"{purpose_breakdown}"
-        f"\n\n📅 최근 7일 (KST)\n{daily_block}"
-        f"\n\n📖 모델 용도"
-        f"\n  embedding   인입 chunk+summary / 질문 쿼리 임베딩"
-        f"\n  flash-lite  인입 요약·메타·OCR·STT / 질문 확장·rerank·verify"
-        f"\n  flash       질문 agent 추론·web_search"
-        f"\n  pro         /deep 질문 전용"
-        f"\n\n📚 가장 최근 학습"
-        f"\n  {s['latest_title'][:80]}"
-        f"\n  {s['latest_at'][:16].replace('T', ' ')}"
-        f"\n\n🔁 retry 큐: {queue_len}건"
-        f"\n❌ failed 누적: {failed_len}건"
-    )
-    await update.message.reply_text(out)
+        await update.message.reply_text(out)
 
 
 async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2295,81 +2295,80 @@ async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     spike better than the calendar month-to-date number does."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
+    async with _SustainedTyping(update, ctx):
+        today = cost.today_krw()
+        week = cost.period_krw(7)
+        mtd = cost.month_to_date_krw()
+        daily = cost.daily_breakdown(14)
 
-    today = cost.today_krw()
-    week = cost.period_krw(7)
-    mtd = cost.month_to_date_krw()
-    daily = cost.daily_breakdown(14)
+        # Daily average over the last 7 days; project monthly at that rate.
+        # Also derive a "remaining days × today's rate" forecast so a spiky
+        # day surfaces immediately instead of after a week of averaging.
+        avg_7d = week["total_krw"] / 7 if week["total_krw"] else 0.0
+        projected_monthly = avg_7d * 30
+        today_pace_monthly = today["total_krw"] * 30  # if today's pace held all month
 
-    # Daily average over the last 7 days; project monthly at that rate.
-    # Also derive a "remaining days × today's rate" forecast so a spiky
-    # day surfaces immediately instead of after a week of averaging.
-    avg_7d = week["total_krw"] / 7 if week["total_krw"] else 0.0
-    projected_monthly = avg_7d * 30
-    today_pace_monthly = today["total_krw"] * 30  # if today's pace held all month
+        # Per-purpose split for the 7-day window so the user can see which
+        # bucket (ingest / query / unknown) is driving the bill.
+        by_purpose = (week.get("by_purpose") or {})
+        purpose_lines = []
+        for label, key in (("ingest 학습", "ingest"),
+                           ("query 답변", "query"),
+                           ("기타", "unknown")):
+            info = by_purpose.get(key) or {}
+            krw = info.get("cost") or 0.0
+            calls = info.get("calls") or 0
+            if krw or calls:
+                purpose_lines.append(f"  {label}: ₩{krw:,.0f}  ({calls}콜)")
+        purpose_block = "\n".join(purpose_lines) or "  (데이터 없음)"
 
-    # Per-purpose split for the 7-day window so the user can see which
-    # bucket (ingest / query / unknown) is driving the bill.
-    by_purpose = (week.get("by_purpose") or {})
-    purpose_lines = []
-    for label, key in (("ingest 학습", "ingest"),
-                       ("query 답변", "query"),
-                       ("기타", "unknown")):
-        info = by_purpose.get(key) or {}
-        krw = info.get("cost") or 0.0
-        calls = info.get("calls") or 0
-        if krw or calls:
-            purpose_lines.append(f"  {label}: ₩{krw:,.0f}  ({calls}콜)")
-    purpose_block = "\n".join(purpose_lines) or "  (데이터 없음)"
+        max_cost = max((d["cost"] for d in daily), default=0.0)
+        daily_lines = []
+        for d in daily:
+            bar_len = int(round((d["cost"] / max_cost) * 24)) if max_cost else 0
+            bar = "█" * bar_len if bar_len else "·"
+            daily_lines.append(
+                f"  {d['date'][5:]}  {bar:<24}  ₩{d['cost']:,.0f}"
+                + (f"  ({d['calls']}콜)" if d["calls"] else "")
+            )
+        daily_block = "\n".join(daily_lines)
 
-    max_cost = max((d["cost"] for d in daily), default=0.0)
-    daily_lines = []
-    for d in daily:
-        bar_len = int(round((d["cost"] / max_cost) * 24)) if max_cost else 0
-        bar = "█" * bar_len if bar_len else "·"
-        daily_lines.append(
-            f"  {d['date'][5:]}  {bar:<24}  ₩{d['cost']:,.0f}"
-            + (f"  ({d['calls']}콜)" if d["calls"] else "")
+        out = (
+            "💰 비용 현황 (KST · Gemini API)\n"
+            f"\n• 오늘:    ₩{today['total_krw']:,.0f}  ({today['calls']}콜)"
+            f"\n• 7일 합계: ₩{week['total_krw']:,.0f}"
+            f"\n• 이번 달:  ₩{mtd['total_krw']:,.0f}  ({mtd['day']}일차)"
+            f"\n\n📈 월말 예상치"
+            f"\n  ₩{projected_monthly:,.0f}/월  (최근 7일 평균 × 30)"
+            f"\n  ₩{today_pace_monthly:,.0f}/월  (오늘 페이스 × 30)"
+            f"\n\n🧩 7일 용도별"
+            f"\n{purpose_block}"
+            f"\n\n🎯 가이드 (Gemini 임베딩 + Vision-Lite 캡 적용)"
+            f"\n  일상 트래픽:  ~₩60,000 ~ 100,000/월"
+            f"\n  heavy 업로드:  ~₩120,000 ~ 180,000/월"
+            f"\n\n📅 최근 14일 (KST)\n{daily_block}"
+            f"\n\n💡 세부 분석: /usage"
         )
-    daily_block = "\n".join(daily_lines)
-
-    out = (
-        "💰 비용 현황 (KST · Gemini API)\n"
-        f"\n• 오늘:    ₩{today['total_krw']:,.0f}  ({today['calls']}콜)"
-        f"\n• 7일 합계: ₩{week['total_krw']:,.0f}"
-        f"\n• 이번 달:  ₩{mtd['total_krw']:,.0f}  ({mtd['day']}일차)"
-        f"\n\n📈 월말 예상치"
-        f"\n  ₩{projected_monthly:,.0f}/월  (최근 7일 평균 × 30)"
-        f"\n  ₩{today_pace_monthly:,.0f}/월  (오늘 페이스 × 30)"
-        f"\n\n🧩 7일 용도별"
-        f"\n{purpose_block}"
-        f"\n\n🎯 가이드 (Gemini 임베딩 + Vision-Lite 캡 적용)"
-        f"\n  일상 트래픽:  ~₩60,000 ~ 100,000/월"
-        f"\n  heavy 업로드:  ~₩120,000 ~ 180,000/월"
-        f"\n\n📅 최근 14일 (KST)\n{daily_block}"
-        f"\n\n💡 세부 분석: /usage"
-    )
-    await update.message.reply_text(out)
+        await update.message.reply_text(out)
 
 
 async def cmd_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    n = 10
-    if ctx.args and ctx.args[0].isdigit():
-        n = max(1, min(int(ctx.args[0]), 50))
-    items = meta.recent(n)
-    if not items:
-        await update.message.reply_text("아직 비어있어요.")
-        return
-    lines = [f"📚 최근 {len(items)}개 학습"]
-    for r in items:
-        title = _clean_text(r.get("title") or "(제목 없음)")[:90]
-        ingested = (r.get("ingested_at") or "")[:10]
-        lines.append(f"\n[{r['type']}]  {title}\n  {ingested}  ·  id {r['id']}")
-    await update.message.reply_text("\n".join(lines))
+    async with _SustainedTyping(update, ctx):
+        n = 10
+        if ctx.args and ctx.args[0].isdigit():
+            n = max(1, min(int(ctx.args[0]), 50))
+        items = meta.recent(n)
+        if not items:
+            await update.message.reply_text("아직 비어있어요.")
+            return
+        lines = [f"📚 최근 {len(items)}개 학습"]
+        for r in items:
+            title = _clean_text(r.get("title") or "(제목 없음)")[:90]
+            ingested = (r.get("ingested_at") or "")[:10]
+            lines.append(f"\n[{r['type']}]  {title}\n  {ingested}  ·  id {r['id']}")
+        await update.message.reply_text("\n".join(lines))
 
 
 async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2674,83 +2673,83 @@ async def cmd_find(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     later results."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    # Trailing numeric arg overrides the default 50-cap. Lets the user
-    # widen common-keyword searches (/find 배터리 200) without burying
-    # narrow queries under 200 default results.
-    args = list(ctx.args or [])
-    limit = 50
-    # Trailing numeric arg as limit only when there are other tokens
-    # remaining — protects "/find 100" from being parsed as
-    # "search for nothing with limit 100".
-    if len(args) >= 2 and args[-1].isdigit():
-        n = int(args[-1])
-        if 10 <= n <= 500:
-            limit = n
-            args = args[:-1]
-    query = " ".join(args).strip()
-    if not query:
-        await update.message.reply_text(
-            "사용법: /find <제목 일부> [개수]\n"
-            "예: /find 배터리          (기본 50)\n"
-            "     /find 배터리 200    (최대 500)"
-        )
-        return
-    matches = meta.search_broad(query, limit=limit)
-    if not matches:
-        await update.message.reply_text(f"매칭 없음: '{query}'")
-        return
-
-    header = f"🔍 '{query}' — {len(matches)}개 매칭"
-
-    # Bulk chunk-count fetch so each match can show its size without
-    # firing 50+ individual ChromaDB queries. Fails open (empty map →
-    # size omitted) so /find never breaks just because vector store
-    # blipped.
-    try:
-        doc_ids = [m.get("id") for m in matches if m.get("id")]
-        chunk_counts = await asyncio.to_thread(vector.chunk_counts, doc_ids)
-    except Exception:
-        log.exception("find: chunk_counts bulk fetch failed")
-        chunk_counts = {}
-    # _format_find_item handles all the title/dates/source/meta/summary
-    # rendering — same renderer is reused by the find-nav preview so
-    # the page-by-page walking output looks identical to /find.
-    blocks: list[str] = [header]
-    for m in matches:
-        blocks.append(_format_find_item(m, index=None,
-                                         chunk_counts=chunk_counts))
-    out = "".join(blocks)
-    # Reuse the help-splitter so any number of matches fits across
-    # however many Telegram messages it takes. Paragraph (blank-line)
-    # boundaries between items keep each chunk readable.
-    pieces = _split_for_telegram(out)
-    first_message_id = await _send_pieces_with_throttle(
-        update.message.reply_text, pieces,
-        parse_mode="HTML", disable_web_page_preview=True,
-    )
-    # "처음으로" footer — same pattern as /show. A common keyword like
-    # HBM / CoWoS fans out across 30+ messages and the user has no
-    # way back to the header without manually scrolling.
-    if first_message_id is not None and len(pieces) > 1:
-        try:
+    async with _SustainedTyping(update, ctx):
+        # Trailing numeric arg overrides the default 50-cap. Lets the user
+        # widen common-keyword searches (/find 배터리 200) without burying
+        # narrow queries under 200 default results.
+        args = list(ctx.args or [])
+        limit = 50
+        # Trailing numeric arg as limit only when there are other tokens
+        # remaining — protects "/find 100" from being parsed as
+        # "search for nothing with limit 100".
+        if len(args) >= 2 and args[-1].isdigit():
+            n = int(args[-1])
+            if 10 <= n <= 500:
+                limit = n
+                args = args[:-1]
+        query = " ".join(args).strip()
+        if not query:
             await update.message.reply_text(
-                "⬆️ 처음으로",
-                reply_to_message_id=first_message_id,
-                disable_web_page_preview=True,
+                "사용법: /find <제목 일부> [개수]\n"
+                "예: /find 배터리          (기본 50)\n"
+                "     /find 배터리 200    (최대 500)"
+            )
+            return
+        matches = meta.search_broad(query, limit=limit)
+        if not matches:
+            await update.message.reply_text(f"매칭 없음: '{query}'")
+            return
+
+        header = f"🔍 '{query}' — {len(matches)}개 매칭"
+
+        # Bulk chunk-count fetch so each match can show its size without
+        # firing 50+ individual ChromaDB queries. Fails open (empty map →
+        # size omitted) so /find never breaks just because vector store
+        # blipped.
+        try:
+            doc_ids = [m.get("id") for m in matches if m.get("id")]
+            chunk_counts = await asyncio.to_thread(vector.chunk_counts, doc_ids)
+        except Exception:
+            log.exception("find: chunk_counts bulk fetch failed")
+            chunk_counts = {}
+        # _format_find_item handles all the title/dates/source/meta/summary
+        # rendering — same renderer is reused by the find-nav preview so
+        # the page-by-page walking output looks identical to /find.
+        blocks: list[str] = [header]
+        for m in matches:
+            blocks.append(_format_find_item(m, index=None,
+                                             chunk_counts=chunk_counts))
+        out = "".join(blocks)
+        # Reuse the help-splitter so any number of matches fits across
+        # however many Telegram messages it takes. Paragraph (blank-line)
+        # boundaries between items keep each chunk readable.
+        pieces = _split_for_telegram(out)
+        first_message_id = await _send_pieces_with_throttle(
+            update.message.reply_text, pieces,
+            parse_mode="HTML", disable_web_page_preview=True,
+        )
+        # "처음으로" footer — same pattern as /show. A common keyword like
+        # HBM / CoWoS fans out across 30+ messages and the user has no
+        # way back to the header without manually scrolling.
+        if first_message_id is not None and len(pieces) > 1:
+            try:
+                await update.message.reply_text(
+                    "⬆️ 처음으로",
+                    reply_to_message_id=first_message_id,
+                    disable_web_page_preview=True,
+                )
+            except Exception:
+                log.exception("find: top-link footer send failed")
+        # Cache the full result list so /show can offer "다음 항목" walk
+        # from the user's clicked position — addresses the pain of scrolling
+        # the whole /find back to the top after each /show.
+        try:
+            _set_find_context(
+                update.effective_chat.id, query, matches, first_message_id,
+                chunk_counts=chunk_counts,
             )
         except Exception:
-            log.exception("find: top-link footer send failed")
-    # Cache the full result list so /show can offer "다음 항목" walk
-    # from the user's clicked position — addresses the pain of scrolling
-    # the whole /find back to the top after each /show.
-    try:
-        _set_find_context(
-            update.effective_chat.id, query, matches, first_message_id,
-            chunk_counts=chunk_counts,
-        )
-    except Exception:
-        log.exception("find: context cache write failed (non-fatal)")
+            log.exception("find: context cache write failed (non-fatal)")
 
 
 _SHOW_ID_RE = re.compile(r"^/show_([a-f0-9]{6,32})\b")
@@ -2787,155 +2786,155 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chars across ~15 Telegram messages."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    if not ctx.args:
-        await update.message.reply_text(
-            "사용법: /show <doc_id 또는 제목 키워드>\n"
-            "/find 로 찾은 doc의 본문 전체 청크를 차례대로 보여줍니다."
-        )
-        return
-    query = " ".join(ctx.args).strip()
-
-    # Lookup priority: exact id → keyword search. Picker now sorts by
-    # recency primary (matches /find's order, so /show <kw> picks the
-    # same doc /find lists first), with type rank and summary length
-    # as tiebreakers when two docs share the same ingest time. Earlier
-    # the picker preferred url/pdf over text regardless of date, which
-    # surfaced week-old PDFs when the user wanted today's DART msg.
-    doc = await asyncio.to_thread(meta.get_doc, query)
-    multi_match_count = 0
-    if not doc:
-        matches = await asyncio.to_thread(meta.search_broad, query, 20)
-        if not matches:
-            await update.message.reply_text(f"매칭 없음: '{query[:60]}'")
-            return
-        _TYPE_RANK = {
-            "url": 0, "pdf": 0, "pptx": 0, "docx": 0, "xlsx": 0,
-            "audio": 1, "youtube": 0,
-            "image": 2,
-            "text": 3,
-        }
-        # Multi-pass stable sort: tertiary (summary length DESC) →
-        # secondary (type rank ASC) → primary (ingested_at DESC).
-        matches.sort(key=lambda d: -(len(d.get("summary") or "")))
-        matches.sort(key=lambda d: _TYPE_RANK.get(
-            (d.get("type") or "").lower(), 4))
-        matches.sort(key=lambda d: d.get("ingested_at") or "", reverse=True)
-        doc = matches[0]
-        multi_match_count = len(matches)
-        if len(matches) > 1:
-            log.info(
-                "show: %d matches for %r, picked id=%s type=%s "
-                "ts=%s summary_len=%d (others: %s)",
-                len(matches), query[:50], doc["id"],
-                doc.get("type"), doc.get("ingested_at"),
-                len(doc.get("summary") or ""),
-                [(m["id"], m.get("type"), m.get("ingested_at"))
-                 for m in matches[1:5]],
+    async with _SustainedTyping(update, ctx):
+        if not ctx.args:
+            await update.message.reply_text(
+                "사용법: /show <doc_id 또는 제목 키워드>\n"
+                "/find 로 찾은 doc의 본문 전체 청크를 차례대로 보여줍니다."
             )
+            return
+        query = " ".join(ctx.args).strip()
 
-    doc_id = doc["id"]
-    title = doc.get("title") or "(제목 없음)"
-    chunks = await asyncio.to_thread(vector.get_doc_chunks, doc_id)
-    if not chunks:
-        await update.message.reply_text(
-            f"⚠️ '{title[:60]}' — Chroma 청크 없음. "
-            f"(meta 만 있고 본문 청크가 삭제됐을 가능성)"
+        # Lookup priority: exact id → keyword search. Picker now sorts by
+        # recency primary (matches /find's order, so /show <kw> picks the
+        # same doc /find lists first), with type rank and summary length
+        # as tiebreakers when two docs share the same ingest time. Earlier
+        # the picker preferred url/pdf over text regardless of date, which
+        # surfaced week-old PDFs when the user wanted today's DART msg.
+        doc = await asyncio.to_thread(meta.get_doc, query)
+        multi_match_count = 0
+        if not doc:
+            matches = await asyncio.to_thread(meta.search_broad, query, 20)
+            if not matches:
+                await update.message.reply_text(f"매칭 없음: '{query[:60]}'")
+                return
+            _TYPE_RANK = {
+                "url": 0, "pdf": 0, "pptx": 0, "docx": 0, "xlsx": 0,
+                "audio": 1, "youtube": 0,
+                "image": 2,
+                "text": 3,
+            }
+            # Multi-pass stable sort: tertiary (summary length DESC) →
+            # secondary (type rank ASC) → primary (ingested_at DESC).
+            matches.sort(key=lambda d: -(len(d.get("summary") or "")))
+            matches.sort(key=lambda d: _TYPE_RANK.get(
+                (d.get("type") or "").lower(), 4))
+            matches.sort(key=lambda d: d.get("ingested_at") or "", reverse=True)
+            doc = matches[0]
+            multi_match_count = len(matches)
+            if len(matches) > 1:
+                log.info(
+                    "show: %d matches for %r, picked id=%s type=%s "
+                    "ts=%s summary_len=%d (others: %s)",
+                    len(matches), query[:50], doc["id"],
+                    doc.get("type"), doc.get("ingested_at"),
+                    len(doc.get("summary") or ""),
+                    [(m["id"], m.get("type"), m.get("ingested_at"))
+                     for m in matches[1:5]],
+                )
+
+        doc_id = doc["id"]
+        title = doc.get("title") or "(제목 없음)"
+        chunks = await asyncio.to_thread(vector.get_doc_chunks, doc_id)
+        if not chunks:
+            await update.message.reply_text(
+                f"⚠️ '{title[:60]}' — Chroma 청크 없음. "
+                f"(meta 만 있고 본문 청크가 삭제됐을 가능성)"
+            )
+            return
+
+        import html as _html
+        chunk_chunks = [c for c in chunks if c.get("kind") == "chunk"]
+        summary_chunks = [c for c in chunks if c.get("kind") == "summary"]
+
+        header_lines = [
+            f"📄 <b>{_html.escape(title[:120])}</b>",
+            f"🆔 <code>{_html.escape(doc_id)}</code>"
+            f" · 청크 {len(chunk_chunks)}개"
+            + (f" + 요약 1" if summary_chunks else ""),
+        ]
+        if multi_match_count > 1:
+            header_lines.append(
+                f"ℹ️ {multi_match_count}개 매칭 중 가장 최근 1개 표시. "
+                f"다른 doc 보려면 /show &lt;id&gt;"
+            )
+        src = doc.get("source") or ""
+        if src.startswith(("http://", "https://")):
+            header_lines.append(f"📎 {_html.escape(src[:120])}")
+        elif src.startswith("tg-"):
+            header_lines.append(f"💬 {_html.escape(src.split(':', 1)[0])}")
+        header = "\n".join(header_lines)
+
+        # Compute body upfront so we can decide whether to attach the
+        # translate button. Hangul ratio < 30% across the joined body
+        # implies the doc is primarily foreign (English / CJK other) and
+        # the user might want a Korean translation.
+        raw_body = "\n".join(c.get("text") or "" for c in chunk_chunks)
+        show_xlate_btn = _is_mostly_foreign(raw_body)
+        # Header keyboard composes up to 2 rows:
+        #   Row 1: [🌐 한국어 번역] when doc is mostly foreign
+        #   Row 2: [⏩ find 다음 #N+1~#N+5] when this doc was reached via /find
+        #          — lets the user walk through the find result without
+        #          scrolling back to the top of the (possibly massive)
+        #          /find message every time.
+        kb_rows: list[list[InlineKeyboardButton]] = []
+        if show_xlate_btn:
+            kb_rows.append([InlineKeyboardButton(
+                "🌐 한국어 번역", callback_data=f"xlate:{doc_id}",
+            )])
+        find_ctx = _get_find_context(update.effective_chat.id)
+        find_idx: int | None = None
+        if find_ctx:
+            find_idx = _find_item_index(find_ctx["items"], doc_id)
+            if find_idx is not None:
+                next_kb = _find_next_keyboard(
+                    find_ctx["items"], find_idx + 1,
+                )
+                if next_kb is not None:
+                    kb_rows.extend(next_kb.inline_keyboard)
+        header_kb = InlineKeyboardMarkup(kb_rows) if kb_rows else None
+
+        body_parts: list[str] = []
+        for c in chunk_chunks:
+            idx = c.get("idx", 0)
+            text = _html.escape(c.get("text") or "")
+            body_parts.append(f"\n\n<b>━━ chunk #{idx} ━━</b>\n{text}")
+        body = "".join(body_parts)
+
+        # Header is its own message so the translate button is attached
+        # cleanly (one inline keyboard per message). Body chunks follow.
+        first_sent = await update.message.reply_text(
+            header, parse_mode="HTML", disable_web_page_preview=True,
+            reply_markup=header_kb,
         )
-        return
-
-    import html as _html
-    chunk_chunks = [c for c in chunks if c.get("kind") == "chunk"]
-    summary_chunks = [c for c in chunks if c.get("kind") == "summary"]
-
-    header_lines = [
-        f"📄 <b>{_html.escape(title[:120])}</b>",
-        f"🆔 <code>{_html.escape(doc_id)}</code>"
-        f" · 청크 {len(chunk_chunks)}개"
-        + (f" + 요약 1" if summary_chunks else ""),
-    ]
-    if multi_match_count > 1:
-        header_lines.append(
-            f"ℹ️ {multi_match_count}개 매칭 중 가장 최근 1개 표시. "
-            f"다른 doc 보려면 /show &lt;id&gt;"
+        first_message_id = first_sent.message_id
+        body_pieces = _split_for_telegram(body) if body.strip() else []
+        await _send_pieces_with_throttle(
+            update.message.reply_text, body_pieces,
+            parse_mode="HTML", disable_web_page_preview=True,
         )
-    src = doc.get("source") or ""
-    if src.startswith(("http://", "https://")):
-        header_lines.append(f"📎 {_html.escape(src[:120])}")
-    elif src.startswith("tg-"):
-        header_lines.append(f"💬 {_html.escape(src.split(':', 1)[0])}")
-    header = "\n".join(header_lines)
-
-    # Compute body upfront so we can decide whether to attach the
-    # translate button. Hangul ratio < 30% across the joined body
-    # implies the doc is primarily foreign (English / CJK other) and
-    # the user might want a Korean translation.
-    raw_body = "\n".join(c.get("text") or "" for c in chunk_chunks)
-    show_xlate_btn = _is_mostly_foreign(raw_body)
-    # Header keyboard composes up to 2 rows:
-    #   Row 1: [🌐 한국어 번역] when doc is mostly foreign
-    #   Row 2: [⏩ find 다음 #N+1~#N+5] when this doc was reached via /find
-    #          — lets the user walk through the find result without
-    #          scrolling back to the top of the (possibly massive)
-    #          /find message every time.
-    kb_rows: list[list[InlineKeyboardButton]] = []
-    if show_xlate_btn:
-        kb_rows.append([InlineKeyboardButton(
-            "🌐 한국어 번역", callback_data=f"xlate:{doc_id}",
-        )])
-    find_ctx = _get_find_context(update.effective_chat.id)
-    find_idx: int | None = None
-    if find_ctx:
-        find_idx = _find_item_index(find_ctx["items"], doc_id)
-        if find_idx is not None:
-            next_kb = _find_next_keyboard(
+        # "처음으로" footer that replies-to the header message —
+        # Telegram renders the reply quote as tappable, scrolling the
+        # chat back to that message. /show output can be 50+ messages
+        # long; without this the user has no way back to the top.
+        # Also re-attaches the [⏩ find 다음] button to the bottom so the
+        # user doesn't have to scroll back up to the header keyboard
+        # after reading the whole body.
+        footer_kb = None
+        if find_ctx and find_idx is not None:
+            footer_kb = _find_next_keyboard(
                 find_ctx["items"], find_idx + 1,
             )
-            if next_kb is not None:
-                kb_rows.extend(next_kb.inline_keyboard)
-    header_kb = InlineKeyboardMarkup(kb_rows) if kb_rows else None
-
-    body_parts: list[str] = []
-    for c in chunk_chunks:
-        idx = c.get("idx", 0)
-        text = _html.escape(c.get("text") or "")
-        body_parts.append(f"\n\n<b>━━ chunk #{idx} ━━</b>\n{text}")
-    body = "".join(body_parts)
-
-    # Header is its own message so the translate button is attached
-    # cleanly (one inline keyboard per message). Body chunks follow.
-    first_sent = await update.message.reply_text(
-        header, parse_mode="HTML", disable_web_page_preview=True,
-        reply_markup=header_kb,
-    )
-    first_message_id = first_sent.message_id
-    body_pieces = _split_for_telegram(body) if body.strip() else []
-    await _send_pieces_with_throttle(
-        update.message.reply_text, body_pieces,
-        parse_mode="HTML", disable_web_page_preview=True,
-    )
-    # "처음으로" footer that replies-to the header message —
-    # Telegram renders the reply quote as tappable, scrolling the
-    # chat back to that message. /show output can be 50+ messages
-    # long; without this the user has no way back to the top.
-    # Also re-attaches the [⏩ find 다음] button to the bottom so the
-    # user doesn't have to scroll back up to the header keyboard
-    # after reading the whole body.
-    footer_kb = None
-    if find_ctx and find_idx is not None:
-        footer_kb = _find_next_keyboard(
-            find_ctx["items"], find_idx + 1,
-        )
-    if body_pieces:
-        try:
-            await update.message.reply_text(
-                "⬆️ 처음으로",
-                reply_to_message_id=first_message_id,
-                disable_web_page_preview=True,
-                reply_markup=footer_kb,
-            )
-        except Exception:
-            log.exception("show: top-link footer send failed")
+        if body_pieces:
+            try:
+                await update.message.reply_text(
+                    "⬆️ 처음으로",
+                    reply_to_message_id=first_message_id,
+                    disable_web_page_preview=True,
+                    reply_markup=footer_kb,
+                )
+            except Exception:
+                log.exception("show: top-link footer send failed")
 
 
 async def _handle_translate(ctx, chat_id: int, doc_id: str, q) -> None:
@@ -3314,76 +3313,76 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     work as text commands too."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    if ctx.args and ctx.args[0] == "clear":
-        await update.message.reply_text(_failed_clear_all())
-        return
-    if ctx.args and ctx.args[0] == "retry":
+    async with _SustainedTyping(update, ctx):
+        if ctx.args and ctx.args[0] == "clear":
+            await update.message.reply_text(_failed_clear_all())
+            return
+        if ctx.args and ctx.args[0] == "retry":
+            await update.message.reply_text(
+                _failed_retry_all(update.effective_chat.id)
+            )
+            return
+        if not _INGEST_FAILED:
+            await update.message.reply_text("실패 / 빈본문 없음 ✨")
+            return
+        out = f"❌ 실패/빈본문 누적 {len(_INGEST_FAILED)}건 (최근순)"
+        LIMIT = 3800
+        truncated = 0
+        recent = _failed_recent_snapshot()
+        # How many entries get their own per-item retry/drop buttons.
+        # Telegram allows ~100 buttons per message and each entry adds 2
+        # — capping at 20 keeps the keyboard responsive while covering
+        # the typical "what failed today" working set.
+        PER_ITEM_BUTTON_CAP = 20
+        button_rows: list[list[InlineKeyboardButton]] = []
+        for i, r in enumerate(recent):
+            ts = (r.get("ts", "")[:16]).replace("T", " ")
+            title = _clean_text(r.get("title", "(unknown)"))[:90]
+            status = r.get("status", "error")
+            detail = _clean_text(r.get("detail", ""))[:120]
+            icon = "❌" if status == "error" else "⚠️"
+            cycles = int(r.get("failed_cycles") or 1)
+            cycle_tag = f" [{cycles}/{_FAILED_MAX_CYCLES}]" if cycles > 1 else ""
+            size = int(r.get("file_size") or 0)
+            if size >= 1024 * 1024:
+                size_tag = f" · {size / 1024 / 1024:.1f}MB"
+            elif size >= 1024:
+                size_tag = f" · {size // 1024}KB"
+            else:
+                size_tag = ""
+            item = f"\n\n{icon} #{i + 1} {ts}{cycle_tag}{size_tag}\n   {title}"
+            if detail and detail != title:
+                item += f"\n   {detail}"
+            if len(out) + len(item) > LIMIT:
+                truncated = len(recent) - i
+                break
+            out += item
+            if i < PER_ITEM_BUTTON_CAP and r.get("retry"):
+                button_rows.append([
+                    InlineKeyboardButton(
+                        f"🔁 #{i + 1}", callback_data=f"failed_retry_one:{i}"
+                    ),
+                    InlineKeyboardButton(
+                        f"🗑 #{i + 1}", callback_data=f"failed_drop_one:{i}"
+                    ),
+                ])
+            elif i < PER_ITEM_BUTTON_CAP:
+                # No retry payload — only the drop button is useful here.
+                button_rows.append([
+                    InlineKeyboardButton(
+                        f"🗑 #{i + 1}", callback_data=f"failed_drop_one:{i}"
+                    ),
+                ])
+        if truncated:
+            out += f"\n\n…(나머지 {truncated}개 생략)"
+        button_rows.append([
+            InlineKeyboardButton("🔁 일괄 재시도", callback_data="failed_retry"),
+            InlineKeyboardButton("🗑 비우기", callback_data="failed_clear"),
+        ])
         await update.message.reply_text(
-            _failed_retry_all(update.effective_chat.id)
+            out, disable_web_page_preview=True,
+            reply_markup=InlineKeyboardMarkup(button_rows),
         )
-        return
-    if not _INGEST_FAILED:
-        await update.message.reply_text("실패 / 빈본문 없음 ✨")
-        return
-    out = f"❌ 실패/빈본문 누적 {len(_INGEST_FAILED)}건 (최근순)"
-    LIMIT = 3800
-    truncated = 0
-    recent = _failed_recent_snapshot()
-    # How many entries get their own per-item retry/drop buttons.
-    # Telegram allows ~100 buttons per message and each entry adds 2
-    # — capping at 20 keeps the keyboard responsive while covering
-    # the typical "what failed today" working set.
-    PER_ITEM_BUTTON_CAP = 20
-    button_rows: list[list[InlineKeyboardButton]] = []
-    for i, r in enumerate(recent):
-        ts = (r.get("ts", "")[:16]).replace("T", " ")
-        title = _clean_text(r.get("title", "(unknown)"))[:90]
-        status = r.get("status", "error")
-        detail = _clean_text(r.get("detail", ""))[:120]
-        icon = "❌" if status == "error" else "⚠️"
-        cycles = int(r.get("failed_cycles") or 1)
-        cycle_tag = f" [{cycles}/{_FAILED_MAX_CYCLES}]" if cycles > 1 else ""
-        size = int(r.get("file_size") or 0)
-        if size >= 1024 * 1024:
-            size_tag = f" · {size / 1024 / 1024:.1f}MB"
-        elif size >= 1024:
-            size_tag = f" · {size // 1024}KB"
-        else:
-            size_tag = ""
-        item = f"\n\n{icon} #{i + 1} {ts}{cycle_tag}{size_tag}\n   {title}"
-        if detail and detail != title:
-            item += f"\n   {detail}"
-        if len(out) + len(item) > LIMIT:
-            truncated = len(recent) - i
-            break
-        out += item
-        if i < PER_ITEM_BUTTON_CAP and r.get("retry"):
-            button_rows.append([
-                InlineKeyboardButton(
-                    f"🔁 #{i + 1}", callback_data=f"failed_retry_one:{i}"
-                ),
-                InlineKeyboardButton(
-                    f"🗑 #{i + 1}", callback_data=f"failed_drop_one:{i}"
-                ),
-            ])
-        elif i < PER_ITEM_BUTTON_CAP:
-            # No retry payload — only the drop button is useful here.
-            button_rows.append([
-                InlineKeyboardButton(
-                    f"🗑 #{i + 1}", callback_data=f"failed_drop_one:{i}"
-                ),
-            ])
-    if truncated:
-        out += f"\n\n…(나머지 {truncated}개 생략)"
-    button_rows.append([
-        InlineKeyboardButton("🔁 일괄 재시도", callback_data="failed_retry"),
-        InlineKeyboardButton("🗑 비우기", callback_data="failed_clear"),
-    ])
-    await update.message.reply_text(
-        out, disable_web_page_preview=True,
-        reply_markup=InlineKeyboardMarkup(button_rows),
-    )
 
 
 async def cmd_failed_retry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -3674,23 +3673,23 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     failures). They re-attempt every 2 minutes."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    if not _INGEST_RETRY_QUEUE:
-        await update.message.reply_text("재시도 큐 비어있음 ✨")
-        return
-    out = (
-        f"🔁 재시도 큐 {len(_INGEST_RETRY_QUEUE)}건 "
-        f"({_RETRY_INGEST_INTERVAL_SEC}초 간격, 최대 "
-        f"{_RETRY_INGEST_BATCH}건/회 자동)"
-    )
-    for item in _INGEST_RETRY_QUEUE[:25]:
-        kind = item.get("kind", "?")
-        title = item.get("file_name") or item.get("url") or "(unknown)"
-        attempts = item.get("attempts", 0)
-        out += f"\n• [{kind}] {title[:80]} (시도 {attempts}회)"
-    if len(_INGEST_RETRY_QUEUE) > 25:
-        out += f"\n... 외 {len(_INGEST_RETRY_QUEUE) - 25}건"
-    await update.message.reply_text(out, disable_web_page_preview=True)
+    async with _SustainedTyping(update, ctx):
+        if not _INGEST_RETRY_QUEUE:
+            await update.message.reply_text("재시도 큐 비어있음 ✨")
+            return
+        out = (
+            f"🔁 재시도 큐 {len(_INGEST_RETRY_QUEUE)}건 "
+            f"({_RETRY_INGEST_INTERVAL_SEC}초 간격, 최대 "
+            f"{_RETRY_INGEST_BATCH}건/회 자동)"
+        )
+        for item in _INGEST_RETRY_QUEUE[:25]:
+            kind = item.get("kind", "?")
+            title = item.get("file_name") or item.get("url") or "(unknown)"
+            attempts = item.get("attempts", 0)
+            out += f"\n• [{kind}] {title[:80]} (시도 {attempts}회)"
+        if len(_INGEST_RETRY_QUEUE) > 25:
+            out += f"\n... 외 {len(_INGEST_RETRY_QUEUE) - 25}건"
+        await update.message.reply_text(out, disable_web_page_preview=True)
 
 
 async def cmd_blocked_hosts(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -3751,69 +3750,68 @@ async def cmd_audit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     이 한 줄로 판단."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
+    async with _SustainedTyping(update, ctx):
+        queue_n = len(_INGEST_RETRY_QUEUE)
+        in_flight = sum(1 for it in _INGEST_RETRY_QUEUE
+                        if it.get("in_flight_ts"))
+        waiting = queue_n - in_flight
+        failed_n = len(_INGEST_FAILED)
 
-    queue_n = len(_INGEST_RETRY_QUEUE)
-    in_flight = sum(1 for it in _INGEST_RETRY_QUEUE
-                    if it.get("in_flight_ts"))
-    waiting = queue_n - in_flight
-    failed_n = len(_INGEST_FAILED)
+        try:
+            orphans = await asyncio.to_thread(_scan_orphan_files)
+        except Exception:
+            orphans = []
+        orphan_n = len(orphans)
 
-    try:
-        orphans = await asyncio.to_thread(_scan_orphan_files)
-    except Exception:
-        orphans = []
-    orphan_n = len(orphans)
+        try:
+            pending_ocr_n = len(await asyncio.to_thread(pending_store.list_ocr))
+            pending_pro_n = len(await asyncio.to_thread(pending_store.list_pro))
+        except Exception:
+            pending_ocr_n = pending_pro_n = 0
 
-    try:
-        pending_ocr_n = len(await asyncio.to_thread(pending_store.list_ocr))
-        pending_pro_n = len(await asyncio.to_thread(pending_store.list_pro))
-    except Exception:
-        pending_ocr_n = pending_pro_n = 0
+        # Disk truth: read the persisted files directly so the user sees
+        # both in-memory and on-disk counts. Disk count >= memory means
+        # we have everything; disk < memory shouldn't happen under the
+        # atomic-write pattern but flag if it does.
+        disk_queue_n = disk_failed_n = -1
+        try:
+            d = _load_json_with_recovery(_RETRY_QUEUE_PATH)
+            if isinstance(d, list):
+                disk_queue_n = len(d)
+        except Exception:
+            pass
+        try:
+            d = _load_json_with_recovery(_FAILED_LOG_PATH)
+            if isinstance(d, list):
+                disk_failed_n = len(d)
+        except Exception:
+            pass
 
-    # Disk truth: read the persisted files directly so the user sees
-    # both in-memory and on-disk counts. Disk count >= memory means
-    # we have everything; disk < memory shouldn't happen under the
-    # atomic-write pattern but flag if it does.
-    disk_queue_n = disk_failed_n = -1
-    try:
-        d = _load_json_with_recovery(_RETRY_QUEUE_PATH)
-        if isinstance(d, list):
-            disk_queue_n = len(d)
-    except Exception:
-        pass
-    try:
-        d = _load_json_with_recovery(_FAILED_LOG_PATH)
-        if isinstance(d, list):
-            disk_failed_n = len(d)
-    except Exception:
-        pass
+        total_pending = queue_n + orphan_n + failed_n + pending_ocr_n + pending_pro_n
 
-    total_pending = queue_n + orphan_n + failed_n + pending_ocr_n + pending_pro_n
-
-    lines = [
-        "🔍 <b>학습 대기 감사</b>",
-        f"• 재시도 큐: <b>{queue_n}건</b>"
-        f" (처리중 {in_flight} · 대기 {waiting})",
-        f"  └ 디스크: {disk_queue_n if disk_queue_n >= 0 else '?'}건"
-        f"{' ⚠️ 메모리와 불일치' if disk_queue_n != queue_n and disk_queue_n >= 0 else ''}",
-        f"• 실패 로그: <b>{failed_n}건</b>"
-        f" (디스크 {disk_failed_n if disk_failed_n >= 0 else '?'})",
-        f"• Orphan 파일: <b>{orphan_n}건</b>"
-        " (디스크에는 있지만 미학습 — 다음 스캔/재시작 시 자동 큐 등록)",
-        f"• Pending OCR: <b>{pending_ocr_n}건</b>"
-        f" / Pending Pro: <b>{pending_pro_n}건</b>",
-        f"━━━━━━━━━━━━━━━",
-        f"📦 <b>합계 {total_pending}건</b> 학습 대기 (이 외엔 모두 처리 끝)",
-        "",
-        "💡 같은 자료를 또 올릴 필요 있는지 확인:",
-        "  → 위 합계가 0이면 다 학습됐거나 영구 무시됨 (/failed 참고)",
-        "  → 합계가 0보다 크면 자동 처리 대기중 — 더 보낼 필요 X",
-    ]
-    await update.message.reply_text(
-        "\n".join(lines), parse_mode="HTML",
-        disable_web_page_preview=True,
-    )
+        lines = [
+            "🔍 <b>학습 대기 감사</b>",
+            f"• 재시도 큐: <b>{queue_n}건</b>"
+            f" (처리중 {in_flight} · 대기 {waiting})",
+            f"  └ 디스크: {disk_queue_n if disk_queue_n >= 0 else '?'}건"
+            f"{' ⚠️ 메모리와 불일치' if disk_queue_n != queue_n and disk_queue_n >= 0 else ''}",
+            f"• 실패 로그: <b>{failed_n}건</b>"
+            f" (디스크 {disk_failed_n if disk_failed_n >= 0 else '?'})",
+            f"• Orphan 파일: <b>{orphan_n}건</b>"
+            " (디스크에는 있지만 미학습 — 다음 스캔/재시작 시 자동 큐 등록)",
+            f"• Pending OCR: <b>{pending_ocr_n}건</b>"
+            f" / Pending Pro: <b>{pending_pro_n}건</b>",
+            f"━━━━━━━━━━━━━━━",
+            f"📦 <b>합계 {total_pending}건</b> 학습 대기 (이 외엔 모두 처리 끝)",
+            "",
+            "💡 같은 자료를 또 올릴 필요 있는지 확인:",
+            "  → 위 합계가 0이면 다 학습됐거나 영구 무시됨 (/failed 참고)",
+            "  → 합계가 0보다 크면 자동 처리 대기중 — 더 보낼 필요 X",
+        ]
+        await update.message.reply_text(
+            "\n".join(lines), parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
 
 
 async def cmd_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -3823,33 +3821,33 @@ async def cmd_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     push them onto the retry queue."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    orphans = await asyncio.to_thread(_scan_orphan_files)
-    if not orphans:
-        await update.message.reply_text(
-            "✨ 미학습 파일 없음 — 모든 디스크 파일이 meta에 기록됨."
+    async with _SustainedTyping(update, ctx):
+        orphans = await asyncio.to_thread(_scan_orphan_files)
+        if not orphans:
+            await update.message.reply_text(
+                "✨ 미학습 파일 없음 — 모든 디스크 파일이 meta에 기록됨."
+            )
+            return
+        # By extension breakdown so the user sees "23 PDFs, 4 PPTs, ..." at
+        # a glance. Sorted alphabetically inside each group for predictability.
+        by_ext: dict[str, list[Path]] = {}
+        for p in orphans:
+            by_ext.setdefault(p.suffix.lower() or "(no ext)", []).append(p)
+        summary_line = " · ".join(
+            f"{ext} {len(files)}개"
+            for ext, files in sorted(by_ext.items(), key=lambda kv: -len(kv[1]))
         )
-        return
-    # By extension breakdown so the user sees "23 PDFs, 4 PPTs, ..." at
-    # a glance. Sorted alphabetically inside each group for predictability.
-    by_ext: dict[str, list[Path]] = {}
-    for p in orphans:
-        by_ext.setdefault(p.suffix.lower() or "(no ext)", []).append(p)
-    summary_line = " · ".join(
-        f"{ext} {len(files)}개"
-        for ext, files in sorted(by_ext.items(), key=lambda kv: -len(kv[1]))
-    )
-    # Cap the visible list so a 200-file orphan set doesn't overflow
-    # Telegram's 4096-char message limit. The full list is still
-    # accessible via shell or future paging if needed.
-    show = orphans[:30]
-    listing = "\n".join(f"  • {p.name[:80]}" for p in show)
-    more = f"\n... 외 {len(orphans) - len(show)}건" if len(orphans) > len(show) else ""
-    await update.message.reply_text(
-        f"📂 미학습 파일 {len(orphans)}건\n  ({summary_line})\n\n"
-        f"{listing}{more}\n\n"
-        f"학습 시작: /recover_orphans"
-    )
+        # Cap the visible list so a 200-file orphan set doesn't overflow
+        # Telegram's 4096-char message limit. The full list is still
+        # accessible via shell or future paging if needed.
+        show = orphans[:30]
+        listing = "\n".join(f"  • {p.name[:80]}" for p in show)
+        more = f"\n... 외 {len(orphans) - len(show)}건" if len(orphans) > len(show) else ""
+        await update.message.reply_text(
+            f"📂 미학습 파일 {len(orphans)}건\n  ({summary_line})\n\n"
+            f"{listing}{more}\n\n"
+            f"학습 시작: /recover_orphans"
+        )
 
 
 def _scan_orphan_files_sorted() -> list[Path]:
@@ -3903,66 +3901,66 @@ async def cmd_recover_orphans(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     to silence background work."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    marker_was_present = False
-    try:
-        if _RECOVERY_SUPPRESS_PATH.exists():
-            _RECOVERY_SUPPRESS_PATH.unlink()
-            marker_was_present = True
-    except Exception:
-        log.exception("failed to clear recovery suppress marker")
-    orphans = await asyncio.to_thread(_scan_orphan_files_sorted)
-    if not orphans:
-        msg = "✨ 미학습 파일 없음 — 모든 디스크 파일이 meta에 기록됨."
-        if marker_was_present:
-            msg += "\n🔓 자동 복구 다시 활성화됨 (재시작 시 자동 스캔 재개)"
-        await update.message.reply_text(msg)
-        return
-    header_lines = [
-        f"📂 미학습 파일 {len(orphans)}건 (작은 것부터)",
-    ]
-    if marker_was_present:
-        header_lines.append("🔓 자동 복구도 재활성화됨")
-    header_lines.append(
-        "건별 [📥 학습] / [🗑 영구 무시] · 또는 맨 아래 일괄 버튼"
-    )
-    await update.message.reply_text("\n".join(header_lines))
-
-    # Per-item bubbles, cap at 10 to keep the keyboard responsive.
-    # User can re-run /recover_orphans to see the next batch.
-    ORPHAN_INLINE_CAP = 10
-    for i, p in enumerate(orphans[:ORPHAN_INLINE_CAP]):
+    async with _SustainedTyping(update, ctx):
+        marker_was_present = False
         try:
-            size = p.stat().st_size
+            if _RECOVERY_SUPPRESS_PATH.exists():
+                _RECOVERY_SUPPRESS_PATH.unlink()
+                marker_was_present = True
         except Exception:
-            size = 0
-        size_tag = _format_size(size)
-        title = f"📄 #{i + 1} · {size_tag}\n{p.name[:100]}"
+            log.exception("failed to clear recovery suppress marker")
+        orphans = await asyncio.to_thread(_scan_orphan_files_sorted)
+        if not orphans:
+            msg = "✨ 미학습 파일 없음 — 모든 디스크 파일이 meta에 기록됨."
+            if marker_was_present:
+                msg += "\n🔓 자동 복구 다시 활성화됨 (재시작 시 자동 스캔 재개)"
+            await update.message.reply_text(msg)
+            return
+        header_lines = [
+            f"📂 미학습 파일 {len(orphans)}건 (작은 것부터)",
+        ]
+        if marker_was_present:
+            header_lines.append("🔓 자동 복구도 재활성화됨")
+        header_lines.append(
+            "건별 [📥 학습] / [🗑 영구 무시] · 또는 맨 아래 일괄 버튼"
+        )
+        await update.message.reply_text("\n".join(header_lines))
+
+        # Per-item bubbles, cap at 10 to keep the keyboard responsive.
+        # User can re-run /recover_orphans to see the next batch.
+        ORPHAN_INLINE_CAP = 10
+        for i, p in enumerate(orphans[:ORPHAN_INLINE_CAP]):
+            try:
+                size = p.stat().st_size
+            except Exception:
+                size = 0
+            size_tag = _format_size(size)
+            title = f"📄 #{i + 1} · {size_tag}\n{p.name[:100]}"
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton(
+                    f"📥 학습 #{i + 1}",
+                    callback_data=f"orphan_learn:{i}",
+                ),
+                InlineKeyboardButton(
+                    f"🗑 영구 무시 #{i + 1}",
+                    callback_data=f"orphan_ignore:{i}",
+                ),
+            ]])
+            await update.message.reply_text(title, reply_markup=kb)
+        if len(orphans) > ORPHAN_INLINE_CAP:
+            await update.message.reply_text(
+                f"…외 {len(orphans) - ORPHAN_INLINE_CAP}건 더 있음. "
+                f"위 처리 후 /recover_orphans 다시 호출, 또는 일괄 버튼 사용."
+            )
+
+        # Bulk fallback for users who don't want to triage manually.
         kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("📥 전체 학습", callback_data="orphan_learn_all"),
             InlineKeyboardButton(
-                f"📥 학습 #{i + 1}",
-                callback_data=f"orphan_learn:{i}",
-            ),
-            InlineKeyboardButton(
-                f"🗑 영구 무시 #{i + 1}",
-                callback_data=f"orphan_ignore:{i}",
+                "🗑 전체 영구 무시", callback_data="orphan_ignore_all"
             ),
         ]])
-        await update.message.reply_text(title, reply_markup=kb)
-    if len(orphans) > ORPHAN_INLINE_CAP:
-        await update.message.reply_text(
-            f"…외 {len(orphans) - ORPHAN_INLINE_CAP}건 더 있음. "
-            f"위 처리 후 /recover_orphans 다시 호출, 또는 일괄 버튼 사용."
-        )
-
-    # Bulk fallback for users who don't want to triage manually.
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📥 전체 학습", callback_data="orphan_learn_all"),
-        InlineKeyboardButton(
-            "🗑 전체 영구 무시", callback_data="orphan_ignore_all"
-        ),
-    ]])
-    await update.message.reply_text("일괄 작업:", reply_markup=kb)
+        await update.message.reply_text("일괄 작업:", reply_markup=kb)
 
 
 async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -3974,132 +3972,132 @@ async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     here so they never get lost in scroll."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    ocr_items = await asyncio.to_thread(pending_store.list_ocr)
-    pro_items = await asyncio.to_thread(pending_store.list_pro)
-    url_items = await asyncio.to_thread(pending_url_decisions.list_overdue)
-    if not ocr_items and not pro_items and not url_items:
-        await update.message.reply_text(
-            "📭 검토 대기 항목 없음 — 모든 확인 prompt가 처리됨."
-        )
-        return
-
-    # Header summary
-    total = len(ocr_items) + len(pro_items) + len(url_items)
-    header = [f"📋 검토 대기 항목 ({total}개)"]
-    if ocr_items:
-        header.append(f"🔵 OCR 확장 가능 {len(ocr_items)}개 — "
-                      f"아래 항목별 버튼으로 한 번에 결정")
-    if pro_items:
-        header.append(f"🟣 Pro 합성 가능 {len(pro_items)}개")
-    if url_items:
-        header.append(f"🟠 URL 추출 실패 {len(url_items)}개 — "
-                      f"5분 이상 대기 중 (재시도/차단 선택 필요)")
-    await update.message.reply_text("\n".join(header))
-
-    # OCR items: per-item bubble with 3 inline buttons. Cap at 10
-    # so a 30-item backlog doesn't spam 30 messages — user clears
-    # the top batch, then re-runs /pending to see the rest. Sorted
-    # by file size ASC so small PDFs surface first; the user gets
-    # quick wins instead of bumping into a 200-page chart deck at
-    # the top.
-    def _ocr_size(it: dict) -> int:
-        path = it.get("pdf_path")
-        if not path:
-            return 0
-        try:
-            return Path(path).stat().st_size
-        except Exception:
-            return 0
-    ocr_items_sorted = sorted(ocr_items, key=_ocr_size)
-    OCR_INLINE_CAP = 10
-    for it in ocr_items_sorted[:OCR_INLINE_CAP]:
-        remaining = max(0, it["total_pages"] - it["applied_pages"])
-        est = max(5, remaining * 3)
-        title = (it.get("title") or "(no title)")[:120]
-        size_tag = _format_size(_ocr_size(it))
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                f"📄 OCR 추가 ({remaining}p, ~₩{est})",
-                callback_data=f"ocr:{it['id']}:go",
-            )],
-            [InlineKeyboardButton(
-                f"📝 텍스트만 유지" + (f" ({it['applied_pages']}p)"
-                                       if it['applied_pages'] > 0 else ""),
-                callback_data=f"ocr:{it['id']}:skip",
-            )],
-            [InlineKeyboardButton(
-                "🚫 학습 취소 (문서 삭제)",
-                callback_data=f"ocr:{it['id']}:forget",
-            )],
-        ])
-        status = (f"{it['applied_pages']}/{it['total_pages']}p OCR 적용됨"
-                  if it['applied_pages'] > 0
-                  else f"총 {it['total_pages']}p · 텍스트만 추출됨")
-        await update.message.reply_text(
-            f"📊 {title} · {size_tag}\n{status}",
-            reply_markup=kb,
-        )
-    if len(ocr_items) > OCR_INLINE_CAP:
-        await update.message.reply_text(
-            f"…외 {len(ocr_items) - OCR_INLINE_CAP}건 더 있음. "
-            f"위 항목 처리 후 /pending 다시 호출."
-        )
-
-    # Pro items stay text-only (need full question replay)
-    if pro_items:
-        lines = ["🟣 Pro 합성 가능"]
-        for it in pro_items[:30]:
-            est = max(80, it["count"] * 3 + 30)
-            q = (it.get("question") or "")[:70]
-            lines.append(
-                f"  [{it['id']}] \"{q}\"\n"
-                f"        {it['count']}개 자료 · Pro ~₩{est}"
-            )
-        if len(pro_items) > 30:
-            lines.append(f"  ... 외 {len(pro_items) - 30}건")
-        lines.append("  → /pending_pro <번호> 로 Pro 답변 시작")
-        await update.message.reply_text(
-            "\n".join(lines), disable_web_page_preview=True,
-        )
-
-    # URL decisions: same per-item bubble pattern as OCR. These are
-    # entries the drain prompted ≥ OVERDUE_MIN min ago that the user
-    # never acted on, plus any retry-failed ones (mark_retry_failed
-    # back-dates prompted_at to surface immediately). Cap at 10 to
-    # keep the keyboard responsive — user reruns /pending for more.
-    if url_items:
-        import hashlib as _h
-        URL_INLINE_CAP = 10
-        for entry in url_items[:URL_INLINE_CAP]:
-            url = entry.get("url") or ""
-            if not url:
-                continue
-            title = (entry.get("title") or "")[:80]
-            error = (entry.get("error") or "본문 비어있음")[:80]
-            retry_n = int(entry.get("retry_count") or 0)
-            retry_tag = f" (시도 #{retry_n + 1})" if retry_n else ""
-            text = f"🟠 URL 추출 실패{retry_tag}\n"
-            if title and title != url:
-                text += f"{title}\n"
-            text += f"{url}\n오류: {error}"
-            key = _h.sha1(url.encode("utf-8")).hexdigest()[:16]
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton(
-                    "🔁 재시도", callback_data=f"urldec_retry:{key}",
-                ),
-                InlineKeyboardButton(
-                    "🚫 차단", callback_data=f"urldec_block:{key}",
-                ),
-            ]])
+    async with _SustainedTyping(update, ctx):
+        ocr_items = await asyncio.to_thread(pending_store.list_ocr)
+        pro_items = await asyncio.to_thread(pending_store.list_pro)
+        url_items = await asyncio.to_thread(pending_url_decisions.list_overdue)
+        if not ocr_items and not pro_items and not url_items:
             await update.message.reply_text(
-                text, reply_markup=kb, disable_web_page_preview=True,
+                "📭 검토 대기 항목 없음 — 모든 확인 prompt가 처리됨."
             )
-        if len(url_items) > URL_INLINE_CAP:
+            return
+
+        # Header summary
+        total = len(ocr_items) + len(pro_items) + len(url_items)
+        header = [f"📋 검토 대기 항목 ({total}개)"]
+        if ocr_items:
+            header.append(f"🔵 OCR 확장 가능 {len(ocr_items)}개 — "
+                          f"아래 항목별 버튼으로 한 번에 결정")
+        if pro_items:
+            header.append(f"🟣 Pro 합성 가능 {len(pro_items)}개")
+        if url_items:
+            header.append(f"🟠 URL 추출 실패 {len(url_items)}개 — "
+                          f"5분 이상 대기 중 (재시도/차단 선택 필요)")
+        await update.message.reply_text("\n".join(header))
+
+        # OCR items: per-item bubble with 3 inline buttons. Cap at 10
+        # so a 30-item backlog doesn't spam 30 messages — user clears
+        # the top batch, then re-runs /pending to see the rest. Sorted
+        # by file size ASC so small PDFs surface first; the user gets
+        # quick wins instead of bumping into a 200-page chart deck at
+        # the top.
+        def _ocr_size(it: dict) -> int:
+            path = it.get("pdf_path")
+            if not path:
+                return 0
+            try:
+                return Path(path).stat().st_size
+            except Exception:
+                return 0
+        ocr_items_sorted = sorted(ocr_items, key=_ocr_size)
+        OCR_INLINE_CAP = 10
+        for it in ocr_items_sorted[:OCR_INLINE_CAP]:
+            remaining = max(0, it["total_pages"] - it["applied_pages"])
+            est = max(5, remaining * 3)
+            title = (it.get("title") or "(no title)")[:120]
+            size_tag = _format_size(_ocr_size(it))
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    f"📄 OCR 추가 ({remaining}p, ~₩{est})",
+                    callback_data=f"ocr:{it['id']}:go",
+                )],
+                [InlineKeyboardButton(
+                    f"📝 텍스트만 유지" + (f" ({it['applied_pages']}p)"
+                                           if it['applied_pages'] > 0 else ""),
+                    callback_data=f"ocr:{it['id']}:skip",
+                )],
+                [InlineKeyboardButton(
+                    "🚫 학습 취소 (문서 삭제)",
+                    callback_data=f"ocr:{it['id']}:forget",
+                )],
+            ])
+            status = (f"{it['applied_pages']}/{it['total_pages']}p OCR 적용됨"
+                      if it['applied_pages'] > 0
+                      else f"총 {it['total_pages']}p · 텍스트만 추출됨")
             await update.message.reply_text(
-                f"…외 {len(url_items) - URL_INLINE_CAP}건 더 있음. "
-                f"위 처리 후 /pending 다시 호출."
+                f"📊 {title} · {size_tag}\n{status}",
+                reply_markup=kb,
             )
+        if len(ocr_items) > OCR_INLINE_CAP:
+            await update.message.reply_text(
+                f"…외 {len(ocr_items) - OCR_INLINE_CAP}건 더 있음. "
+                f"위 항목 처리 후 /pending 다시 호출."
+            )
+
+        # Pro items stay text-only (need full question replay)
+        if pro_items:
+            lines = ["🟣 Pro 합성 가능"]
+            for it in pro_items[:30]:
+                est = max(80, it["count"] * 3 + 30)
+                q = (it.get("question") or "")[:70]
+                lines.append(
+                    f"  [{it['id']}] \"{q}\"\n"
+                    f"        {it['count']}개 자료 · Pro ~₩{est}"
+                )
+            if len(pro_items) > 30:
+                lines.append(f"  ... 외 {len(pro_items) - 30}건")
+            lines.append("  → /pending_pro <번호> 로 Pro 답변 시작")
+            await update.message.reply_text(
+                "\n".join(lines), disable_web_page_preview=True,
+            )
+
+        # URL decisions: same per-item bubble pattern as OCR. These are
+        # entries the drain prompted ≥ OVERDUE_MIN min ago that the user
+        # never acted on, plus any retry-failed ones (mark_retry_failed
+        # back-dates prompted_at to surface immediately). Cap at 10 to
+        # keep the keyboard responsive — user reruns /pending for more.
+        if url_items:
+            import hashlib as _h
+            URL_INLINE_CAP = 10
+            for entry in url_items[:URL_INLINE_CAP]:
+                url = entry.get("url") or ""
+                if not url:
+                    continue
+                title = (entry.get("title") or "")[:80]
+                error = (entry.get("error") or "본문 비어있음")[:80]
+                retry_n = int(entry.get("retry_count") or 0)
+                retry_tag = f" (시도 #{retry_n + 1})" if retry_n else ""
+                text = f"🟠 URL 추출 실패{retry_tag}\n"
+                if title and title != url:
+                    text += f"{title}\n"
+                text += f"{url}\n오류: {error}"
+                key = _h.sha1(url.encode("utf-8")).hexdigest()[:16]
+                kb = InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "🔁 재시도", callback_data=f"urldec_retry:{key}",
+                    ),
+                    InlineKeyboardButton(
+                        "🚫 차단", callback_data=f"urldec_block:{key}",
+                    ),
+                ]])
+                await update.message.reply_text(
+                    text, reply_markup=kb, disable_web_page_preview=True,
+                )
+            if len(url_items) > URL_INLINE_CAP:
+                await update.message.reply_text(
+                    f"…외 {len(url_items) - URL_INLINE_CAP}건 더 있음. "
+                    f"위 처리 후 /pending 다시 호출."
+                )
 
 
 async def cmd_ocr_extend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -4121,86 +4119,86 @@ async def cmd_ocr_extend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
     query = " ".join(ctx.args).strip()
-    await _typing(update, ctx)
-    # Look up the doc — try direct id first, then title substring.
-    doc = await asyncio.to_thread(meta.get_doc, query)
-    if not doc:
-        matches = await asyncio.to_thread(meta.search_title, query, 1)
-        if not matches:
+    async with _SustainedTyping(update, ctx):
+        # Look up the doc — try direct id first, then title substring.
+        doc = await asyncio.to_thread(meta.get_doc, query)
+        if not doc:
+            matches = await asyncio.to_thread(meta.search_title, query, 1)
+            if not matches:
+                await update.message.reply_text(
+                    f"⚠️ 매칭 doc 없음: '{query[:60]}'"
+                )
+                return
+            doc = matches[0]
+        doc_id = doc["id"]
+        title = doc.get("title") or query
+        source = doc.get("source") or ""
+        # Derive filename from the source label.
+        if source.startswith("tg-doc:"):
+            fname = source.split(":", 2)[-1]
+        elif source.startswith("local:"):
+            fname = source[len("local:"):]
+        else:
             await update.message.reply_text(
-                f"⚠️ 매칭 doc 없음: '{query[:60]}'"
+                f"⚠️ 비-PDF source: {source[:60]} (OCR 확장은 디스크 PDF만 지원)"
             )
             return
-        doc = matches[0]
-    doc_id = doc["id"]
-    title = doc.get("title") or query
-    source = doc.get("source") or ""
-    # Derive filename from the source label.
-    if source.startswith("tg-doc:"):
-        fname = source.split(":", 2)[-1]
-    elif source.startswith("local:"):
-        fname = source[len("local:"):]
-    else:
-        await update.message.reply_text(
-            f"⚠️ 비-PDF source: {source[:60]} (OCR 확장은 디스크 PDF만 지원)"
+        pdf_path = Path(config.DATA_DIR) / "files" / fname
+        if not pdf_path.exists():
+            await update.message.reply_text(
+                f"⚠️ 디스크에 파일 없음: {fname[:60]}"
+            )
+            return
+        # Count pages via PyMuPDF.
+        try:
+            def _count_pages(p: str) -> int:
+                import fitz
+                d = fitz.open(p)
+                try:
+                    return d.page_count
+                finally:
+                    d.close()
+            total_pages = await asyncio.to_thread(_count_pages, str(pdf_path))
+        except Exception as e:
+            await update.message.reply_text(
+                f"⚠️ 페이지 수 확인 실패: {_explain_error(e)}"
+            )
+            return
+        if total_pages <= 0:
+            await update.message.reply_text("⚠️ 페이지 0 — OCR 대상 없음")
+            return
+        # Cost estimate. ~₩3 per Vision-Lite page, text-dense pages
+        # auto-skipped at extend time.
+        est_cost = max(10, total_pages * 3)
+        row_id = await asyncio.to_thread(
+            pending_store.add_ocr,
+            chat_id=update.effective_chat.id,
+            doc_id=doc_id,
+            title=title,
+            pdf_path=str(pdf_path),
+            applied_pages=0,  # extend from page 1
+            total_pages=total_pages,
         )
-        return
-    pdf_path = Path(config.DATA_DIR) / "files" / fname
-    if not pdf_path.exists():
+        if row_id is None:
+            await update.message.reply_text("⚠️ pending_store 등록 실패.")
+            return
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                f"📄 {total_pages}p OCR (~₩{est_cost})",
+                callback_data=f"ocr:{row_id}:go",
+            )],
+            [InlineKeyboardButton(
+                "❌ 취소", callback_data=f"ocr:{row_id}:skip",
+            )],
+        ])
+        title_short = (title or fname)[:80]
         await update.message.reply_text(
-            f"⚠️ 디스크에 파일 없음: {fname[:60]}"
+            f"📊 OCR 확장 요청 — {title_short}\n"
+            f"총 {total_pages}p (텍스트 충분한 페이지는 자동 skip)\n"
+            f"예상 비용: ~₩{est_cost}\n\n"
+            f"버튼은 만료 없음 — 언제든 선택 가능.",
+            reply_markup=kb,
         )
-        return
-    # Count pages via PyMuPDF.
-    try:
-        def _count_pages(p: str) -> int:
-            import fitz
-            d = fitz.open(p)
-            try:
-                return d.page_count
-            finally:
-                d.close()
-        total_pages = await asyncio.to_thread(_count_pages, str(pdf_path))
-    except Exception as e:
-        await update.message.reply_text(
-            f"⚠️ 페이지 수 확인 실패: {_explain_error(e)}"
-        )
-        return
-    if total_pages <= 0:
-        await update.message.reply_text("⚠️ 페이지 0 — OCR 대상 없음")
-        return
-    # Cost estimate. ~₩3 per Vision-Lite page, text-dense pages
-    # auto-skipped at extend time.
-    est_cost = max(10, total_pages * 3)
-    row_id = await asyncio.to_thread(
-        pending_store.add_ocr,
-        chat_id=update.effective_chat.id,
-        doc_id=doc_id,
-        title=title,
-        pdf_path=str(pdf_path),
-        applied_pages=0,  # extend from page 1
-        total_pages=total_pages,
-    )
-    if row_id is None:
-        await update.message.reply_text("⚠️ pending_store 등록 실패.")
-        return
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            f"📄 {total_pages}p OCR (~₩{est_cost})",
-            callback_data=f"ocr:{row_id}:go",
-        )],
-        [InlineKeyboardButton(
-            "❌ 취소", callback_data=f"ocr:{row_id}:skip",
-        )],
-    ])
-    title_short = (title or fname)[:80]
-    await update.message.reply_text(
-        f"📊 OCR 확장 요청 — {title_short}\n"
-        f"총 {total_pages}p (텍스트 충분한 페이지는 자동 skip)\n"
-        f"예상 비용: ~₩{est_cost}\n\n"
-        f"버튼은 만료 없음 — 언제든 선택 가능.",
-        reply_markup=kb,
-    )
 
 
 async def cmd_pending_ocr(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -4225,37 +4223,37 @@ async def cmd_pending_ocr(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         pending_store.delete_ocr(row_id)
         return
-    await _typing(update, ctx)
-    sent = await update.message.reply_text(
-        f"⏳ OCR 확장 진행 중: {item['title'][:80]} "
-        f"({item['applied_pages']+1}-{item['total_pages']}p)"
-    )
-    try:
-        r = await pipeline.extend_pdf_ocr(
-            pdf_path, item["doc_id"],
-            int(item["applied_pages"]) + 1, int(item["total_pages"]),
+    async with _SustainedTyping(update, ctx):
+        sent = await update.message.reply_text(
+            f"⏳ OCR 확장 진행 중: {item['title'][:80]} "
+            f"({item['applied_pages']+1}-{item['total_pages']}p)"
         )
-    except Exception as e:
-        log.exception("pending OCR extend failed")
-        await _edit_or_send(
-            ctx, sent.chat.id, sent.message_id,
-            f"⚠️ OCR 확장 실패: {_explain_error(e)}",
-        )
-        return
-    pending_store.delete_ocr(row_id)
-    if r.get("status") == "ok":
-        skip_note = (f" · {r['pages_skipped']}p 텍스트 충분 스킵"
-                     if r.get("pages_skipped") else "")
-        await _edit_or_send(
-            ctx, sent.chat.id, sent.message_id,
-            f"✅ {item['title'][:80]}\n"
-            f"   +{r['pages_ocrd']}p OCR{skip_note} · +{r['chunks_added']} 청크"
-        )
-    else:
-        await _edit_or_send(
-            ctx, sent.chat.id, sent.message_id,
-            f"⚠️ OCR 결과 없음: {item['title'][:80]}",
-        )
+        try:
+            r = await pipeline.extend_pdf_ocr(
+                pdf_path, item["doc_id"],
+                int(item["applied_pages"]) + 1, int(item["total_pages"]),
+            )
+        except Exception as e:
+            log.exception("pending OCR extend failed")
+            await _edit_or_send(
+                ctx, sent.chat.id, sent.message_id,
+                f"⚠️ OCR 확장 실패: {_explain_error(e)}",
+            )
+            return
+        pending_store.delete_ocr(row_id)
+        if r.get("status") == "ok":
+            skip_note = (f" · {r['pages_skipped']}p 텍스트 충분 스킵"
+                         if r.get("pages_skipped") else "")
+            await _edit_or_send(
+                ctx, sent.chat.id, sent.message_id,
+                f"✅ {item['title'][:80]}\n"
+                f"   +{r['pages_ocrd']}p OCR{skip_note} · +{r['chunks_added']} 청크"
+            )
+        else:
+            await _edit_or_send(
+                ctx, sent.chat.id, sent.message_id,
+                f"⚠️ OCR 결과 없음: {item['title'][:80]}",
+            )
 
 
 async def cmd_pending_pro(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -4295,26 +4293,26 @@ async def cmd_pending_approve_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE
     easily hit ~₩1k+; we don't want a slip-tap to spend it."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    ocr_items = await asyncio.to_thread(pending_store.list_ocr)
-    pro_items = await asyncio.to_thread(pending_store.list_pro)
-    if not ocr_items and not pro_items:
-        await update.message.reply_text("📭 일괄 승인 대상 없음 — /pending 비어있음.")
-        return
-    ocr_cost = sum(
-        _ocr_cost_est(int(it["applied_pages"]), int(it["total_pages"]))
-        for it in ocr_items
-    )
-    pro_cost = sum(_pro_cost_est(int(it["count"])) for it in pro_items)
-    total = len(ocr_items) + len(pro_items)
-    lines = [
-        "📋 일괄 승인 대상\n",
-        f"🔵 OCR {len(ocr_items)}건 (예상 ~₩{ocr_cost:,})",
-        f"🟣 Pro {len(pro_items)}건 (예상 ~₩{pro_cost:,})",
-        f"   합계 {total}건 · 약 ~₩{ocr_cost + pro_cost:,}\n",
-        "진행하려면 /pending_approve_all_confirm",
-    ]
-    await update.message.reply_text("\n".join(lines))
+    async with _SustainedTyping(update, ctx):
+        ocr_items = await asyncio.to_thread(pending_store.list_ocr)
+        pro_items = await asyncio.to_thread(pending_store.list_pro)
+        if not ocr_items and not pro_items:
+            await update.message.reply_text("📭 일괄 승인 대상 없음 — /pending 비어있음.")
+            return
+        ocr_cost = sum(
+            _ocr_cost_est(int(it["applied_pages"]), int(it["total_pages"]))
+            for it in ocr_items
+        )
+        pro_cost = sum(_pro_cost_est(int(it["count"])) for it in pro_items)
+        total = len(ocr_items) + len(pro_items)
+        lines = [
+            "📋 일괄 승인 대상\n",
+            f"🔵 OCR {len(ocr_items)}건 (예상 ~₩{ocr_cost:,})",
+            f"🟣 Pro {len(pro_items)}건 (예상 ~₩{pro_cost:,})",
+            f"   합계 {total}건 · 약 ~₩{ocr_cost + pro_cost:,}\n",
+            "진행하려면 /pending_approve_all_confirm",
+        ]
+        await update.message.reply_text("\n".join(lines))
 
 
 async def cmd_pending_approve_all_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -4324,47 +4322,47 @@ async def cmd_pending_approve_all_confirm(update: Update, ctx: ContextTypes.DEFA
     (separate drain job, 1/tick × 90s)."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    ocr_items = await asyncio.to_thread(pending_store.list_ocr)
-    pro_items = await asyncio.to_thread(pending_store.list_pro)
-    if not ocr_items and not pro_items:
-        await update.message.reply_text("📭 일괄 승인 대상 없음.")
-        return
-    ocr_pushed = 0
-    for it in ocr_items:
-        if not it.get("pdf_path"):
-            continue
-        _INGEST_RETRY_QUEUE.append({
-            "kind": "ocr_extend",
-            "doc_id": it["doc_id"],
-            "title": it["title"],
-            "pdf_path": it["pdf_path"],
-            "start_page": int(it["applied_pages"]) + 1,
-            "end_page": int(it["total_pages"]),
-            "chat_id": int(it["chat_id"]),
-            "attempts": 0,
-        })
-        ocr_pushed += 1
-    pro_pushed = 0
-    for it in pro_items:
-        if not it.get("question"):
-            continue
-        _PENDING_PRO_RUN_QUEUE.append({
-            "chat_id": int(it["chat_id"]),
-            "question": it["question"],
-        })
-        pro_pushed += 1
-    pending_store.delete_all_ocr()
-    pending_store.delete_all_pro()
-    _persist_retry_queue()
-    eta_ocr_min = (ocr_pushed * 2)
-    eta_pro_min = (pro_pushed * 2)  # 90s tick ≈ 1.5min, round up
-    await update.message.reply_text(
-        f"✅ 일괄 승인 완료\n"
-        f"🔵 OCR {ocr_pushed}건 인입 큐 추가 (~{eta_ocr_min}분 소요)\n"
-        f"🟣 Pro {pro_pushed}건 답변 큐 추가 (~{eta_pro_min}분 소요)\n"
-        f"진행 상황 → /queue · /status"
-    )
+    async with _SustainedTyping(update, ctx):
+        ocr_items = await asyncio.to_thread(pending_store.list_ocr)
+        pro_items = await asyncio.to_thread(pending_store.list_pro)
+        if not ocr_items and not pro_items:
+            await update.message.reply_text("📭 일괄 승인 대상 없음.")
+            return
+        ocr_pushed = 0
+        for it in ocr_items:
+            if not it.get("pdf_path"):
+                continue
+            _INGEST_RETRY_QUEUE.append({
+                "kind": "ocr_extend",
+                "doc_id": it["doc_id"],
+                "title": it["title"],
+                "pdf_path": it["pdf_path"],
+                "start_page": int(it["applied_pages"]) + 1,
+                "end_page": int(it["total_pages"]),
+                "chat_id": int(it["chat_id"]),
+                "attempts": 0,
+            })
+            ocr_pushed += 1
+        pro_pushed = 0
+        for it in pro_items:
+            if not it.get("question"):
+                continue
+            _PENDING_PRO_RUN_QUEUE.append({
+                "chat_id": int(it["chat_id"]),
+                "question": it["question"],
+            })
+            pro_pushed += 1
+        pending_store.delete_all_ocr()
+        pending_store.delete_all_pro()
+        _persist_retry_queue()
+        eta_ocr_min = (ocr_pushed * 2)
+        eta_pro_min = (pro_pushed * 2)  # 90s tick ≈ 1.5min, round up
+        await update.message.reply_text(
+            f"✅ 일괄 승인 완료\n"
+            f"🔵 OCR {ocr_pushed}건 인입 큐 추가 (~{eta_ocr_min}분 소요)\n"
+            f"🟣 Pro {pro_pushed}건 답변 큐 추가 (~{eta_pro_min}분 소요)\n"
+            f"진행 상황 → /queue · /status"
+        )
 
 
 async def cmd_pending_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -4372,15 +4370,15 @@ async def cmd_pending_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
     a DB delete on the two pending tables."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    ocr_n = await asyncio.to_thread(pending_store.delete_all_ocr)
-    pro_n = await asyncio.to_thread(pending_store.delete_all_pro)
-    if ocr_n == 0 and pro_n == 0:
-        await update.message.reply_text("📭 취소할 항목 없음.")
-        return
-    await update.message.reply_text(
-        f"🗑 {ocr_n + pro_n}건 취소됨 (OCR {ocr_n} · Pro {pro_n})"
-    )
+    async with _SustainedTyping(update, ctx):
+        ocr_n = await asyncio.to_thread(pending_store.delete_all_ocr)
+        pro_n = await asyncio.to_thread(pending_store.delete_all_pro)
+        if ocr_n == 0 and pro_n == 0:
+            await update.message.reply_text("📭 취소할 항목 없음.")
+            return
+        await update.message.reply_text(
+            f"🗑 {ocr_n + pro_n}건 취소됨 (OCR {ocr_n} · Pro {pro_n})"
+        )
 
 
 def _retry_item_to_failed_entry(item: dict, reason: str) -> dict:
@@ -4426,30 +4424,30 @@ async def cmd_queue_to_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     awaiting user decisions, not failures."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    moved_n = 0
-    for item in list(_INGEST_RETRY_QUEUE):
-        entry = _retry_item_to_failed_entry(
-            item, "큐에서 /failed로 수동 이동"
-        )
-        _INGEST_FAILED.append(entry)
-        moved_n += 1
-    _INGEST_RETRY_QUEUE.clear()
-    if len(_INGEST_FAILED) > _FAILED_MAX:
-        del _INGEST_FAILED[: len(_INGEST_FAILED) - _FAILED_MAX]
-    _persist_retry_queue()
-    _persist_failed_log()
-    if moved_n == 0:
+    async with _SustainedTyping(update, ctx):
+        moved_n = 0
+        for item in list(_INGEST_RETRY_QUEUE):
+            entry = _retry_item_to_failed_entry(
+                item, "큐에서 /failed로 수동 이동"
+            )
+            _INGEST_FAILED.append(entry)
+            moved_n += 1
+        _INGEST_RETRY_QUEUE.clear()
+        if len(_INGEST_FAILED) > _FAILED_MAX:
+            del _INGEST_FAILED[: len(_INGEST_FAILED) - _FAILED_MAX]
+        _persist_retry_queue()
+        _persist_failed_log()
+        if moved_n == 0:
+            await update.message.reply_text(
+                "📭 큐 비어있음 — 옮길 항목 없음"
+            )
+            return
         await update.message.reply_text(
-            "📭 큐 비어있음 — 옮길 항목 없음"
+            f"📋 retry queue → /failed 이동 완료 ({moved_n}건)\n"
+            f"💡 /failed 에서 작은 파일부터 정렬돼 보임. "
+            f"건별 [🔁 #N] 재시도 / [🗑 #N] 삭제 가능.\n"
+            f"⚠️ 처리중인 항목은 끝까지 가서 자체 결과에 따라 정착됨."
         )
-        return
-    await update.message.reply_text(
-        f"📋 retry queue → /failed 이동 완료 ({moved_n}건)\n"
-        f"💡 /failed 에서 작은 파일부터 정렬돼 보임. "
-        f"건별 [🔁 #N] 재시도 / [🗑 #N] 삭제 가능.\n"
-        f"⚠️ 처리중인 항목은 끝까지 가서 자체 결과에 따라 정착됨."
-    )
 
 
 async def cmd_queue_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -4460,42 +4458,42 @@ async def cmd_queue_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     Use when the bot is overwhelmed and you want a fresh slate."""
     if not _is_owner(update):
         return
-    await _typing(update, ctx)
-    ingest_n = len(_INGEST_RETRY_QUEUE)
-    pro_q_n = len(_PENDING_PRO_RUN_QUEUE)
-    agent_q_n = len(_RETRY_QUEUE)
-    _INGEST_RETRY_QUEUE.clear()
-    _PENDING_PRO_RUN_QUEUE.clear()
-    _RETRY_QUEUE.clear()
-    _persist_retry_queue()
-    ocr_n = await asyncio.to_thread(pending_store.delete_all_ocr)
-    pro_n = await asyncio.to_thread(pending_store.delete_all_pro)
-    # Drop a marker so the next container boot's orphan scan stays
-    # quiet — previously a redeploy after cancel would re-enqueue
-    # everything from disk and undo the user's intent.
-    try:
-        _RECOVERY_SUPPRESS_PATH.touch(exist_ok=True)
-    except Exception:
-        log.exception("failed to create recovery suppress marker")
-    total = ingest_n + pro_q_n + agent_q_n + ocr_n + pro_n
-    if total == 0:
+    async with _SustainedTyping(update, ctx):
+        ingest_n = len(_INGEST_RETRY_QUEUE)
+        pro_q_n = len(_PENDING_PRO_RUN_QUEUE)
+        agent_q_n = len(_RETRY_QUEUE)
+        _INGEST_RETRY_QUEUE.clear()
+        _PENDING_PRO_RUN_QUEUE.clear()
+        _RETRY_QUEUE.clear()
+        _persist_retry_queue()
+        ocr_n = await asyncio.to_thread(pending_store.delete_all_ocr)
+        pro_n = await asyncio.to_thread(pending_store.delete_all_pro)
+        # Drop a marker so the next container boot's orphan scan stays
+        # quiet — previously a redeploy after cancel would re-enqueue
+        # everything from disk and undo the user's intent.
+        try:
+            _RECOVERY_SUPPRESS_PATH.touch(exist_ok=True)
+        except Exception:
+            log.exception("failed to create recovery suppress marker")
+        total = ingest_n + pro_q_n + agent_q_n + ocr_n + pro_n
+        if total == 0:
+            await update.message.reply_text(
+                "📭 비울 항목 없음 — 모든 큐 비어있음.\n"
+                "🚫 자동 복구도 영구 중단 (재시작해도 orphan 자동 학습 X)\n"
+                "다시 학습하려면 /recover_orphans"
+            )
+            return
         await update.message.reply_text(
-            "📭 비울 항목 없음 — 모든 큐 비어있음.\n"
-            "🚫 자동 복구도 영구 중단 (재시작해도 orphan 자동 학습 X)\n"
-            "다시 학습하려면 /recover_orphans"
+            f"🛑 전체 작업 취소 — 총 {total}건 정리\n"
+            f"  • 인입 재시도 큐: {ingest_n}건\n"
+            f"  • Pro 답변 큐: {pro_q_n}건\n"
+            f"  • agent 과부하 재시도: {agent_q_n}건\n"
+            f"  • 보류 OCR: {ocr_n}건\n"
+            f"  • 보류 Pro: {pro_n}건\n\n"
+            f"🚫 자동 복구도 영구 중단 (재시작해도 orphan 자동 학습 안 됨)\n"
+            f"진행 중인 ingest 1-2건은 끝까지 처리되고 새 작업은 시작 안 됨.\n"
+            f"다시 학습하려면 /recover_orphans 로 재시작 (suppress 마커 해제)"
         )
-        return
-    await update.message.reply_text(
-        f"🛑 전체 작업 취소 — 총 {total}건 정리\n"
-        f"  • 인입 재시도 큐: {ingest_n}건\n"
-        f"  • Pro 답변 큐: {pro_q_n}건\n"
-        f"  • agent 과부하 재시도: {agent_q_n}건\n"
-        f"  • 보류 OCR: {ocr_n}건\n"
-        f"  • 보류 Pro: {pro_n}건\n\n"
-        f"🚫 자동 복구도 영구 중단 (재시작해도 orphan 자동 학습 안 됨)\n"
-        f"진행 중인 ingest 1-2건은 끝까지 처리되고 새 작업은 시작 안 됨.\n"
-        f"다시 학습하려면 /recover_orphans 로 재시작 (suppress 마커 해제)"
-    )
 
 
 async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
