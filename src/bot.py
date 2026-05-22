@@ -977,7 +977,7 @@ _TOOL_EMOJI = {
     "search_kr_organs": "🇰🇷🏛️",
     "search_kr_science_trends": "🇰🇷📈",
     "search_kr_rnd_projects": "🇰🇷🔬",
-    "recommend_kr_classifications": "🇰🇷🏷️",
+
     "get_kr_related_content": "🇰🇷🔗",
     "search_kr_rnd_outcomes": "🇰🇷🎯",
     "search_kr_govt_reports": "🇰🇷📑",
@@ -1293,7 +1293,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
           /kipris_{search,pub,reg,inventor,status,family,claims,priority}
   ScienceON: /kr_papers · /kr_patents · /kr_reports · /kr_trends · /kr_researcher · /kr_organ · /kr_science_trend
-  NTIS: /kr_rnd_projects · /kr_classifications · /kr_related
+  NTIS: /kr_rnd_projects · /kr_related
         /kr_outcomes · /kr_govt_reports · /kr_agency_rnd · /kr_rnd_issues
 
 ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup · /patents_guide · /papers_guide
@@ -1646,9 +1646,6 @@ NTIS 국가R&amp;D 과제. 각 행에:
 • 🎯 목표 (Goal) · 📝 초록 (Abstract) · 💡 기대효과 (Effect)
 ✅ NTIS 활성 — 3개 서비스 (과제검색·분류추천·연관콘텐츠) 동일 키 공유.
 
-<b>/kr_classifications &lt;키워드/초록&gt;</b>
-NTIS 분류코드 추천 (rcmncls). 키워드 또는 초록 입력하면 과학기술표준분류
-코드 후보 추천. 다른 type (보건의료/산업기술) 은 자연어로 호출.
 
 <b>/kr_related &lt;pjt_id&gt; [paper|patent|researchreport|project]</b>
 NTIS 연관 콘텐츠 (ConnectionContent). 과제번호로 관련 논문/특허/
@@ -1676,7 +1673,7 @@ NTIS 이슈로보는R&amp;D — 정부R&amp;D 한정 트렌드. ⏳ 승인 대�
 ✅ KISTI ScienceON — 활성 (7개 콘텐츠 사용 가능: ARTI/PATENT/REPORT/
    ATT/RESEARCHER/ORGAN/TREND. SCENT/SNEWS 는 searchField 코드 미공개로 보류)
 ✅ KISTI NTIS — 3건 활성 (public_project · ConnectionContent) +
-   ⏳ 5건 신청중 (rcmncls 기관용 · public_paper · public_patent ·
+   ⏳ 6건 신청중 (public_paper · public_patent ·
    public_equipment · public_report · public_organization · public_issue)
 
 ═══════════════════════════════════════
@@ -7143,94 +7140,6 @@ async def cmd_kr_rnd_projects(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     log.exception("ntis projects chunked send failed")
 
 
-def _format_ntis_classifications(query: str, rows: list[dict]) -> str:
-    """NTIS rcmncls 응답 — abstract → 분류코드 추천. row shape 가
-    아직 운영 환경 확인 안 됐어서 모든 child 태그 그대로 보여주는
-    defensive formatter (필요시 재정비)."""
-    import html as _html
-    if not rows:
-        return (
-            f"🔍 '<b>{_html.escape(query[:80])}</b>...' NTIS 분류코드 추천 결과 없음.\n"
-            f"abstract 가 너무 짧거나 NTIS 가 매핑 못 한 경우 — 더 긴 본문 시도."
-        )
-    out = [
-        "🏷️ <b>NTIS 분류코드 추천 결과</b>",
-        f"<i>{len(rows)}건 · NTIS</i>",
-    ]
-    for i, r in enumerate(rows, 1):
-        block = [f"\n🏷️ <b>{i}.</b>"]
-        for k, v in r.items():
-            if not v:
-                continue
-            block.append(f"  {_html.escape(str(k))}: {_html.escape(str(v)[:200])}")
-        out.append("\n".join(block))
-    return "\n".join(out)
-
-
-async def cmd_kr_classifications(update: Update,
-                                  ctx: ContextTypes.DEFAULT_TYPE):
-    """/kr_classifications <abstract> — NTIS 분류코드 추천 (rcmncls).
-    연구 초록을 받아 과학기술 표준분류 / 보건의료 / 산업기술 코드를
-    NTIS 가 추천. 기본은 standard (과기표준). 다른 type 은 자연어로:
-    '이 초록 산업기술 분류 추천해줘 ...'"""
-    if not _is_owner(update):
-        return
-    abstract = " ".join(ctx.args).strip()
-    # NTIS rcmncls accepts short phrases — keep just enough validation
-    # to reject empty / single-word noise.
-    if len(abstract) < 5:
-        await update.message.reply_text(
-            "사용법: /kr_classifications <연구 키워드 또는 초록>\n"
-            "예: /kr_classifications 양자 컴퓨팅 기반 암호화 알고리즘"
-        )
-        return
-    async with _SustainedTyping(update, ctx):
-        status = await update.message.reply_text(
-            f"🏷️ NTIS 분류코드 추천 중 ({len(abstract)}자 초록)..."
-        )
-        try:
-            from .agent import kisti_ntis as _ntis
-            rows = await _ntis.recommend_classifications(
-                abstract, classification_type="standard",
-            )
-        except Exception as e:
-            log.exception("ntis classifications failed")
-            await _edit_or_send(
-                ctx, status.chat.id, status.message_id,
-                f"⚠️ NTIS 분류코드 추천 실패: {_explain_error(e)}",
-            )
-            return
-        body = _format_ntis_classifications(abstract[:80], rows)
-        _record_command_qna(
-            update,
-            question=(update.message.text or "/kr_classifications").strip()[:200],
-            body=body,
-            tools=["recommend_kr_classifications"],
-        )
-        pieces = _split_for_telegram(body)
-        if pieces:
-            try:
-                await ctx.bot.edit_message_text(
-                    chat_id=status.chat.id, message_id=status.message_id,
-                    text=pieces[0], parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-            except Exception:
-                try:
-                    await update.message.reply_text(
-                        pieces[0], parse_mode="HTML",
-                        disable_web_page_preview=True,
-                    )
-                except Exception:
-                    log.exception("ntis cls fallback failed")
-            for piece in pieces[1:]:
-                try:
-                    await update.message.reply_text(
-                        piece, parse_mode="HTML",
-                        disable_web_page_preview=True,
-                    )
-                except Exception:
-                    log.exception("ntis cls chunked send failed")
 
 
 def _format_ntis_related(query: str, rows: list[dict],
@@ -10245,8 +10154,6 @@ def main():
     app.add_handler(CommandHandler("kr_science_trend",
                                     cmd_kr_science_trend))
     app.add_handler(CommandHandler("kr_rnd_projects", cmd_kr_rnd_projects))
-    app.add_handler(CommandHandler("kr_classifications",
-                                    cmd_kr_classifications))
     app.add_handler(CommandHandler("kr_related", cmd_kr_related))
     app.add_handler(CommandHandler("kr_outcomes", cmd_kr_outcomes))
     app.add_handler(CommandHandler("kr_govt_reports", cmd_kr_govt_reports))

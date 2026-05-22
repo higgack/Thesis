@@ -8,9 +8,7 @@ ntis.go.kr but the issued key works across all three):
   1. 국가R&D 과제검색 (public_project) — government-funded R&D
      project search. Returns project ID + 수행기관 + 연구비 +
      과제번호 + 책임자 + 기간.
-  2. 과학기술표준분류 추천 (rcmncls) — given a research abstract,
-     recommends Korea's standard sci-tech classification codes.
-  3. 연관콘텐츠 추천 (ConnectionContent) — given a project ID,
+  2. 연관콘텐츠 추천 (ConnectionContent) — given a project ID,
      surfaces related papers / patents / reports / projects.
 
 No token exchange — just GET with `apprvKey` URL param. JSON or
@@ -37,8 +35,7 @@ def _parse_xml_records(text: str) -> list[dict[str, str]]:
     """Legacy NTIS schema parser — <result><record>...</record>×N
     with flat child tags. Returns [] on parse failure or error
     status. Kept for any classic-schema endpoint that hasn't moved
-    to the new <RESULTSET><HIT> structure yet (rcmncls might still
-    use this)."""
+    to the new <RESULTSET><HIT> structure yet."""
     try:
         root = ET.fromstring(text)
     except ET.ParseError as e:
@@ -245,49 +242,6 @@ async def search_projects(query: str, limit: int = 10) -> list[dict[str, Any]]:
         log.warning("ntis search_projects failed: %s", e)
         return []
 
-
-async def recommend_classifications(
-    abstract: str, classification_type: str = "standard",
-) -> list[dict[str, Any]]:
-    """과학기술 분류코드 추천. abstract = 연구 초록 / 과제 요약.
-    classification_type: 'standard' (과학기술표준분류), 'health'
-    (보건의료기술), 'industry' (산업기술)."""
-    key = _key()
-    if not key:
-        return []
-    configs = {
-        "standard": "rcmncls",
-        "health": "rcmnhtcls",
-        "industry": "rcmnitcls",
-    }
-    coll = configs.get(classification_type, "rcmncls")
-    params = {
-        "apprvKey": key,
-        "collection": coll,
-        "rqstDes": abstract,
-    }
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as http:
-            r = await http.get(f"{_NTIS_BASE}/rndopen/openApi/rcmncls",
-                               params=params)
-            if r.status_code != 200:
-                log.warning("ntis classify %d: %r",
-                            r.status_code, r.text[:200])
-                return []
-            rows = _parse_xml_records(r.text)
-            # Diagnostic: log first 400 chars of raw XML response when
-            # parser returns zero rows, so we can confirm whether NTIS
-            # genuinely matched nothing or our parser missed the tag.
-            if not rows:
-                log.info(
-                    "ntis classify zero rows for %r (raw resp len=%d, "
-                    "first 400 chars: %r)",
-                    abstract[:80], len(r.text), r.text[:400],
-                )
-            return rows
-    except Exception as e:
-        log.warning("ntis recommend_classifications failed: %s", e)
-        return []
 
 
 async def related_content(

@@ -310,14 +310,6 @@ async def search_kr_rnd_projects(query: str, limit: int = 10) -> dict:
     return {"results": rows, "count": len(rows)}
 
 
-async def recommend_kr_classifications(
-    abstract: str, classification_type: str = "standard",
-) -> dict:
-    rows = await kisti_ntis.recommend_classifications(
-        abstract, classification_type=classification_type,
-    )
-    return {"results": rows, "count": len(rows)}
-
 
 async def get_kr_related_content(
     pjt_id: str, collection_type: str = "researchreport",
@@ -535,7 +527,7 @@ TOOL_DISPATCH = {
     "search_kr_organs": search_kr_organs,
     "search_kr_science_trends": search_kr_science_trends,
     "search_kr_rnd_projects": search_kr_rnd_projects,
-    "recommend_kr_classifications": recommend_kr_classifications,
+
     "get_kr_related_content": get_kr_related_content,
     "search_kr_rnd_outcomes": search_kr_rnd_outcomes,
     "search_kr_govt_reports": search_kr_govt_reports,
@@ -980,32 +972,7 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
             required=["query"],
         ),
     ),
-    types.FunctionDeclaration(
-        name="recommend_kr_classifications",
-        description=(
-            "Given a research abstract, recommend Korea's standard "
-            "sci-tech classification codes via NTIS. Useful when the "
-            "user has a 과제 초록 and wants to know what 분류코드 to "
-            "apply for grant submission etc."
-        ),
-        parameters=types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                "abstract": types.Schema(
-                    type=types.Type.STRING,
-                    description="Korean research abstract / 과제 초록.",
-                ),
-                "classification_type": types.Schema(
-                    type=types.Type.STRING,
-                    description=(
-                        "'standard' (과학기술표준분류, default) / "
-                        "'health' (보건의료기술) / 'industry' (산업기술)."
-                    ),
-                ),
-            },
-            required=["abstract"],
-        ),
-    ),
+
     types.FunctionDeclaration(
         name="get_kr_related_content",
         description=(
