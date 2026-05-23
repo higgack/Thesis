@@ -3623,6 +3623,7 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # [⏩ 다음] button if more remain. Replies-to the original
         # /find first message so Telegram's quote-bar lets the user
         # jump back to the search header if they want.
+        log.info("findnext: callback fired data=%r chat=%s", q.data, chat_id)
         try:
             start_idx = int(q.data.split(":", 1)[1])
         except (IndexError, ValueError):
@@ -3633,6 +3634,7 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         find_ctx = _get_find_context(chat_id)
         if not find_ctx:
+            log.warning("findnext: no find_ctx for chat=%s (expired?)", chat_id)
             try:
                 await q.answer(
                     "⏰ find 컨텍스트 만료 (1h). /find 다시 실행해줘.",
@@ -3668,6 +3670,11 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # attach [⏩ 다음] keyboard only to the LAST piece (where
         # the user lands after reading all items).
         pieces = _split_for_telegram(body)
+        log.info(
+            "findnext: rendering start=%d total=%d pieces=%d first_msg=%s",
+            start_idx, len(items), len(pieces),
+            find_ctx.get("first_message_id"),
+        )
         if not pieces:
             return
         first_msg_id = find_ctx.get("first_message_id")
@@ -3689,6 +3696,7 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 send_kw["allow_sending_without_reply"] = True
             try:
                 await ctx.bot.send_message(**send_kw)
+                log.info("findnext: sent piece %d/%d ok", i + 1, len(pieces))
             except Exception:
                 log.exception(
                     "findnext: send preview piece %d failed — "
