@@ -2953,9 +2953,21 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     reply_to_message_id=first_message_id,
                     disable_web_page_preview=True,
                     reply_markup=footer_kb,
+                    allow_sending_without_reply=True,
                 )
             except Exception:
-                log.exception("show: top-link footer send failed")
+                log.exception("show: top-link footer send failed — "
+                              "retrying without reply")
+                # Keep the [⏩ find 다음] button reachable at the bottom
+                # even if the reply link errored.
+                try:
+                    await update.message.reply_text(
+                        "⬆️ 처음으로",
+                        disable_web_page_preview=True,
+                        reply_markup=footer_kb,
+                    )
+                except Exception:
+                    log.exception("show: footer fallback send failed")
 
 
 async def _handle_translate(ctx, chat_id: int, doc_id: str, q) -> None:
@@ -3433,7 +3445,13 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not user or user.id != config.TELEGRAM_OWNER_ID:
         await q.answer("권한 없음", show_alert=False)
         return
-    await q.answer()  # dismiss the loading spinner
+    # findnext answers its own query in every branch (with informative
+    # "끝까지 봤어"/"만료" alerts). Pre-answering here would swallow those
+    # alerts — Telegram rejects a second answer on an already-answered
+    # query — so the user got NO feedback on a stale/end button. Skip
+    # the blanket answer for findnext and let its branch own it.
+    if not (q.data or "").startswith("findnext:"):
+        await q.answer()  # dismiss the loading spinner
     chat_id = q.message.chat.id if q.message else config.TELEGRAM_OWNER_ID
     if q.data == "failed_retry":
         await q.edit_message_text(_failed_retry_all(chat_id))
@@ -3655,16 +3673,38 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         first_msg_id = find_ctx.get("first_message_id")
         for i, piece in enumerate(pieces):
             is_last = (i == len(pieces) - 1)
+            kb = next_kb if is_last else None
+            send_kw = dict(
+                chat_id=chat_id, text=piece, parse_mode="HTML",
+                disable_web_page_preview=True, reply_markup=kb,
+            )
+            # Reply-link only on the first piece, back to the original
+            # /find header. allow_sending_without_reply so a missing
+            # target (header scrolled far up / gone after the user
+            # walked through a /show dump) doesn't make Telegram reject
+            # the whole send — otherwise the now-single-piece preview
+            # silently vanishes and the button looks dead.
+            if i == 0 and first_msg_id is not None:
+                send_kw["reply_to_message_id"] = first_msg_id
+                send_kw["allow_sending_without_reply"] = True
             try:
-                await ctx.bot.send_message(
-                    chat_id=chat_id, text=piece, parse_mode="HTML",
-                    disable_web_page_preview=True,
-                    reply_markup=next_kb if is_last else None,
-                    reply_to_message_id=(first_msg_id if i == 0
-                                         else None),
-                )
+                await ctx.bot.send_message(**send_kw)
             except Exception:
-                log.exception("findnext: send preview piece %d failed", i)
+                log.exception(
+                    "findnext: send preview piece %d failed — "
+                    "retrying without reply", i,
+                )
+                # Last-resort fallback: drop the reply link entirely so
+                # the preview (and its [⏩ 다음] button) always reaches
+                # the user even if the reply path errored.
+                send_kw.pop("reply_to_message_id", None)
+                send_kw.pop("allow_sending_without_reply", None)
+                try:
+                    await ctx.bot.send_message(**send_kw)
+                except Exception:
+                    log.exception(
+                        "findnext: fallback send piece %d also failed", i,
+                    )
         return
     elif q.data.startswith("urldec_block:"):
         key = q.data.split(":", 1)[1]
