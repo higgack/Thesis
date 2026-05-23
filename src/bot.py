@@ -2521,6 +2521,13 @@ _FIND_CONTEXT: dict[int, dict] = {}
 _FIND_CONTEXT_TTL = 3600  # 1h — beyond that the user has probably
                           # moved on and a fresh /find is cheaper.
 
+# Summary truncation for the find-nav '다음' preview. 5 full summaries
+# can overflow Telegram's 4000-char cap → multi-message split → N
+# sequential sends = the slow '다음' the user hit. 250 chars/item keeps
+# 5 items inside one message (one round-trip). Full summary stays on
+# the initial /find render and via /show_<id>.
+_FIND_PREVIEW_SUMMARY_LIMIT = 250
+
 
 def _set_find_context(chat_id: int, query: str, items: list[dict],
                       first_message_id: int | None,
@@ -2558,22 +2565,36 @@ def _find_item_index(items: list[dict], doc_id: str) -> int | None:
 
 
 def _format_find_item(m: dict, index: int | None = None,
-                      chunk_counts: dict | None = None) -> str:
+                      chunk_counts: dict | None = None,
+                      summary_limit: int | None = None) -> str:
     """Render one /find result as a per-item block.
 
     Shared by /find (no index numbering, bulk render) and the
     find-nav preview (numbered #N. for position context, same
     chunk_counts cached at /find time). The two paths render
     identically — same fields, same summary, same icons — so the
-    user can decide whether to /show without re-running /find."""
+    user can decide whether to /show without re-running /find.
+
+    summary_limit: when set, the summary is truncated to that many
+    chars (+ /show pointer) so the find-nav '다음' preview stays
+    inside ONE Telegram message — one round-trip instead of N
+    sequential sends. Full summary still shows on the initial /find
+    and via /show. None = full summary (initial /find path)."""
     import html as _html
     import json as _json
     title = _html.escape(_clean_text(
         m.get("title") or "(제목 없음)")[:80])
     ingested = (m.get("ingested_at") or "")[:10]
     source = m.get("source") or ""
-    summary_full = _html.escape(_clean_text(m.get("summary") or ""))
+    summary_raw = _clean_text(m.get("summary") or "")
     doc_id = m.get("id") or ""
+    truncated = (
+        summary_limit is not None
+        and len(summary_raw) > summary_limit
+    )
+    if truncated:
+        summary_raw = summary_raw[:summary_limit].rstrip()
+    summary_full = _html.escape(summary_raw)
 
     loc = ""
     if source.startswith(("http://", "https://")):
@@ -2622,6 +2643,8 @@ def _format_find_item(m: dict, index: int | None = None,
         out += f"\n  🏷 {meta_line}"
     if summary_full:
         out += f"\n\n{summary_full}"
+        if truncated:
+            out += f"… <i>(전문 /show_{_html.escape(doc_id)})</i>"
     return out
 
 
@@ -2644,6 +2667,7 @@ def _format_find_preview_chunk(query: str, items: list[dict],
     for i in range(start_idx, end_idx):
         out.append(_format_find_item(
             items[i], index=i + 1, chunk_counts=chunk_counts,
+            summary_limit=_FIND_PREVIEW_SUMMARY_LIMIT,
         ))
     return "".join(out)
 
