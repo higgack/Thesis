@@ -444,3 +444,19 @@ pin: 2.7.3 (proven API). v3.x rewrite exists (3.5.0 current) — see
   mid-process kill is recoverable.
 - `docker-compose.yml` `stop_grace_period: 120s` gives short
   ingests time to finish gracefully on deploy.
+
+## Backlog / future considerations (not active work)
+
+Low-priority items parked here so they survive context compaction.
+None of these are authorised for work until the user explicitly asks.
+
+- **CodeGraph 시범 적용** — when `src/bot.py` grows to ~15k lines
+  (currently ~10.5k), trial `npx @colbymchenry/codegraph` (local
+  semantic knowledge graph, zero config, no cloud/API key). Goal:
+  cut agent exploration token cost on the single large file (handler
+  lookup, callback patterns, command registration) without reading
+  the whole file each session. Not impactful now — this project's
+  context cost is dominated by `bot.py` size + conversation length,
+  not multi-file exploration, so don't expect the marketed ~59%
+  token reduction. After indexing, compare agent-session token use
+  before/after to decide whether to keep it.
