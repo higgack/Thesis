@@ -21,6 +21,16 @@ log = logging.getLogger(__name__)
 
 USD_TO_KRW = 1400  # rough; ok for back-of-envelope reporting
 
+# Gemini 2.5 bills cached input tokens at 0.25× the normal input rate
+# (75% discount), for both implicit (automatic, default-on) and
+# explicit caching. usage_metadata.prompt_token_count INCLUDES the
+# cached tokens, so we split them out and price the cached portion
+# cheaper. Without this, /usage over-reports spend on every query —
+# the agent loop re-sends a stable system + tool-schema prefix that
+# Gemini caches automatically across the loop's steps and same-day
+# queries.
+CACHED_INPUT_RATE = 0.25
+
 # All UI-facing aggregates are bucketed by Korean local time so the
 # user's "today" matches their wall clock. Storage stays in UTC ISO
 # strings (ts column) for portability — only the boundaries differ.
@@ -49,22 +59,32 @@ def _conn() -> sqlite3.Connection:
             in_tokens INTEGER NOT NULL,
             out_tokens INTEGER NOT NULL,
             cost_krw REAL NOT NULL,
-            purpose TEXT NOT NULL DEFAULT 'unknown'
+            purpose TEXT NOT NULL DEFAULT 'unknown',
+            cached_tokens INTEGER NOT NULL DEFAULT 0
         )
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")
-    # Migrate older DBs that pre-date the purpose column.
+    # Migrate older DBs that pre-date later columns.
     cols = {row[1] for row in c.execute("PRAGMA table_info(calls)")}
     if "purpose" not in cols:
         c.execute("ALTER TABLE calls ADD COLUMN purpose TEXT NOT NULL DEFAULT 'unknown'")
+    if "cached_tokens" not in cols:
+        c.execute("ALTER TABLE calls ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0")
     return c
 
 
-def _price_krw(model: str, in_tokens: int, out_tokens: int) -> float:
+def _price_krw(model: str, in_tokens: int, out_tokens: int,
+               cached_tokens: int = 0) -> float:
     p = _PRICES_USD.get(model) or _PRICES_USD.get(_normalize(model))
     if not p:
         return 0.0
-    usd = (in_tokens * p["in"] + out_tokens * p["out"]) / 1_000_000
+    # prompt_token_count already includes cached_tokens — split them so
+    # the cached slice is billed at the discounted rate.
+    cached = max(0, min(cached_tokens, in_tokens))
+    fresh_in = in_tokens - cached
+    usd = (fresh_in * p["in"]
+           + cached * p["in"] * CACHED_INPUT_RATE
+           + out_tokens * p["out"]) / 1_000_000
     return usd * USD_TO_KRW
 
 
@@ -76,20 +96,23 @@ def _normalize(model: str) -> str:
 
 
 def record(model: str, in_tokens: int = 0, out_tokens: int = 0,
-           purpose: str = "unknown") -> float:
+           purpose: str = "unknown", cached_tokens: int = 0) -> float:
     """Persist one call. `purpose` is a free-form tag used for
-    breakdowns ('ingest' vs 'query', etc.). Returns the KRW cost it
-    added so callers can log / surface it inline. Swallow all errors —
-    billing tracking must never break a user request."""
+    breakdowns ('ingest' vs 'query', etc.). `cached_tokens` is the
+    cache-hit slice of `in_tokens` (billed at CACHED_INPUT_RATE).
+    Returns the KRW cost it added so callers can log / surface it
+    inline. Swallow all errors — billing tracking must never break a
+    user request."""
     try:
-        cost = _price_krw(_normalize(model), in_tokens, out_tokens)
+        cost = _price_krw(_normalize(model), in_tokens, out_tokens,
+                          cached_tokens)
         with _conn() as c:
             c.execute(
-                "INSERT INTO calls(ts, model, in_tokens, out_tokens, cost_krw, purpose)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO calls(ts, model, in_tokens, out_tokens, cost_krw,"
+                " purpose, cached_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (datetime.utcnow().isoformat(timespec="seconds"),
                  _normalize(model), int(in_tokens), int(out_tokens), cost,
-                 purpose or "unknown"),
+                 purpose or "unknown", int(cached_tokens)),
             )
         return cost
     except Exception:
@@ -104,14 +127,16 @@ def record_resp(model: str, resp, purpose: str = "unknown") -> float:
         return 0.0
     in_tok = getattr(um, "prompt_token_count", 0) or 0
     out_tok = getattr(um, "candidates_token_count", 0) or 0
-    return record(model, in_tok, out_tok, purpose)
+    cached = getattr(um, "cached_content_token_count", 0) or 0
+    return record(model, in_tok, out_tok, purpose, cached_tokens=cached)
 
 
 def _since(start_iso: str) -> dict:
     with _conn() as c:
         cur = c.execute(
             "SELECT model, SUM(in_tokens), SUM(out_tokens), SUM(cost_krw),"
-            "       COUNT(*) FROM calls WHERE ts >= ? GROUP BY model",
+            "       COUNT(*), SUM(cached_tokens) FROM calls "
+            "WHERE ts >= ? GROUP BY model",
             (start_iso,),
         )
         rows = cur.fetchall()
@@ -124,15 +149,20 @@ def _since(start_iso: str) -> dict:
     by_model = {}
     total = 0.0
     calls = 0
-    for model, in_tok, out_tok, cost, n in rows:
+    total_in = 0
+    total_cached = 0
+    for model, in_tok, out_tok, cost, n, cached_tok in rows:
         by_model[model] = {
             "in": int(in_tok or 0),
             "out": int(out_tok or 0),
             "cost": float(cost or 0.0),
             "calls": int(n or 0),
+            "cached": int(cached_tok or 0),
         }
         total += float(cost or 0.0)
         calls += int(n or 0)
+        total_in += int(in_tok or 0)
+        total_cached += int(cached_tok or 0)
     by_purpose = {
         (purpose or "unknown"): {
             "cost": float(cost or 0.0),
@@ -141,7 +171,8 @@ def _since(start_iso: str) -> dict:
         for purpose, cost, n in purpose_rows
     }
     return {"by_model": by_model, "by_purpose": by_purpose,
-            "total_krw": total, "calls": calls}
+            "total_krw": total, "calls": calls,
+            "total_in": total_in, "total_cached": total_cached}
 
 
 def _kst_day_start_utc(d) -> datetime:

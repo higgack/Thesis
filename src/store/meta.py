@@ -1,9 +1,10 @@
 import hashlib
+import json
 import logging
 import re
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from .. import config
 
 log = logging.getLogger(__name__)
@@ -96,6 +97,20 @@ def init():
             "CREATE TABLE IF NOT EXISTS chunk_embed_cache("
             " chunk_hash TEXT PRIMARY KEY,"
             " chroma_id TEXT NOT NULL,"
+            " ts TEXT NOT NULL)"
+        )
+        # Summary cache (cost cut, 2026-05): maps a hash of the summarize
+        # inputs (doc_type + skip_meta + hint + title + body) to the
+        # produced (summary, metadata). A retry of a doc that failed at
+        # the embedding stage — or a later re-ingest of byte-identical
+        # content — reuses the summary instead of paying the Lite model
+        # to regenerate it. Same content → same output, so quality is
+        # unchanged. Bounded by a 30-day TTL pruned on write.
+        c.execute(
+            "CREATE TABLE IF NOT EXISTS summary_cache("
+            " cache_key TEXT PRIMARY KEY,"
+            " summary TEXT NOT NULL,"
+            " metadata_json TEXT NOT NULL,"
             " ts TEXT NOT NULL)"
         )
 
@@ -194,6 +209,58 @@ def chunk_embed_remember(mapping: list[tuple[str, str]]) -> None:
             "VALUES(?, ?, ?)",
             [(h, cid, ts) for h, cid in mapping],
         )
+
+
+_SUMMARY_CACHE_TTL_DAYS = 30
+
+
+def summary_cache_get(cache_key: str) -> dict | None:
+    """Return {'summary': str, 'metadata': dict} for a previously
+    computed summarize result, or None on miss / corrupt row. Used to
+    skip the Lite summary call on retries and identical re-ingests."""
+    if not cache_key:
+        return None
+    try:
+        with _conn() as c:
+            row = c.execute(
+                "SELECT summary, metadata_json FROM summary_cache "
+                "WHERE cache_key=?",
+                (cache_key,),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            metadata = json.loads(row["metadata_json"]) or {}
+        except Exception:
+            metadata = {}
+        return {"summary": row["summary"] or "", "metadata": metadata}
+    except Exception:
+        log.exception("summary_cache_get failed")
+        return None
+
+
+def summary_cache_remember(cache_key: str, summary: str,
+                           metadata: dict | None) -> None:
+    """Persist a summarize result keyed by its input hash. Prunes rows
+    older than the TTL on each write so the table stays bounded.
+    Swallows all errors — the cache is an optimisation, never a
+    correctness dependency."""
+    if not cache_key or not summary:
+        return
+    try:
+        ts = datetime.utcnow()
+        with _conn() as c:
+            c.execute(
+                "INSERT OR REPLACE INTO summary_cache"
+                "(cache_key, summary, metadata_json, ts) VALUES(?, ?, ?, ?)",
+                (cache_key, summary,
+                 json.dumps(metadata or {}, ensure_ascii=False),
+                 ts.isoformat()),
+            )
+            cutoff = (ts - timedelta(days=_SUMMARY_CACHE_TTL_DAYS)).isoformat()
+            c.execute("DELETE FROM summary_cache WHERE ts < ?", (cutoff,))
+    except Exception:
+        log.exception("summary_cache_remember failed")
 
 
 def find_by_file_hash(file_hash: str) -> dict | None:

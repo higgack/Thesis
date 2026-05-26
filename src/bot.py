@@ -2236,6 +2236,19 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
         purpose_breakdown = ("\n" + "\n".join(purpose_lines)) if purpose_lines else ""
 
+        # Context-cache hit rate (Gemini implicit caching, 75% off the
+        # repeated system+tool prefix). High % on query traffic = the
+        # agent loop is reusing its cached prefix as intended.
+        total_in = today.get("total_in", 0)
+        total_cached = today.get("total_cached", 0)
+        cache_line = ""
+        if total_in:
+            pct = total_cached / total_in * 100
+            cache_line = (
+                f"\n    💾 캐시 적중  {pct:.0f}%  "
+                f"({total_cached:,}/{total_in:,} 입력토큰 할인)"
+            )
+
         # Tiny inline bar chart for the last 7 days so trends are visible
         # without leaving the /usage screen.
         daily = cost.daily_breakdown(7)
@@ -2266,6 +2279,7 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"₩{mtd['total_krw']:,.0f}  ({mtd['day']}일차)"
             f"{cost_breakdown}"
             f"{purpose_breakdown}"
+            f"{cache_line}"
             f"\n\n📅 최근 7일 (KST)\n{daily_block}"
             f"\n\n📖 모델 용도"
             f"\n  embedding   인입 chunk+summary / 질문 쿼리 임베딩"

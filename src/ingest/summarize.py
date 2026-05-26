@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import re
@@ -57,6 +58,18 @@ async def summarize(title: str, text: str, hint: str | None = None) -> str:
     return await _summarize_one(title, combined)
 
 
+def _summary_cache_key(title: str, body: str, doc_type: str,
+                       hint: str | None, skip_meta: bool) -> str:
+    """Stable hash of everything that determines the summarize output.
+    Any change to title / body / doc_type / skip_meta / hint yields a
+    different key, so a cache hit guarantees byte-identical inputs."""
+    raw = "\x00".join([
+        doc_type or "", "1" if skip_meta else "0",
+        hint or "", title or "", body or "",
+    ])
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:24]
+
+
 async def summarize_and_extract(
     title: str, body: str, doc_type: str,
     hint: str | None = None, skip_meta: bool = False,
@@ -67,23 +80,50 @@ async def summarize_and_extract(
     metadata). Saves one Lite call per ingest (~₩0.5/doc) for ~50%
     of docs that take this main path.
 
+    Content-keyed cache (cost cut, 2026-05): a retry of a doc that
+    failed at the embedding stage — or a re-ingest of byte-identical
+    content — reuses the previously produced summary instead of paying
+    the Lite model again. Only LLM-backed results are cached;
+    passthrough / hint-only paths cost nothing so they skip the cache.
+
     Returns (summary, metadata). Metadata is {} when body is too short,
     skip_meta is True, or the LLM extraction failed (failures swallowed
     so they never block ingest)."""
+    from ..store import meta as _meta
+
+    key = _summary_cache_key(title, body, doc_type, hint, skip_meta)
+    hit = _meta.summary_cache_get(key)
+    if hit is not None:
+        return hit["summary"], hit["metadata"]
+
+    summary, metadata, llm_used = await _summarize_and_extract_impl(
+        title, body, doc_type, hint, skip_meta)
+    if llm_used:
+        _meta.summary_cache_remember(key, summary, metadata)
+    return summary, metadata
+
+
+async def _summarize_and_extract_impl(
+    title: str, body: str, doc_type: str,
+    hint: str | None, skip_meta: bool,
+) -> tuple[str, dict, bool]:
+    """Core summarize logic. Returns (summary, metadata, llm_used);
+    llm_used is False for the no-cost passthrough / hint-only paths so
+    the wrapper knows not to cache them."""
     # Hint fallback — free summary, still need metadata
     if hint and config.HINT_SUMMARY_MIN_CHARS <= len(hint) <= config.HINT_SUMMARY_MAX_CHARS:
         summary = hint.strip()
         if skip_meta or len(body) < 100:
-            return summary, {}
-        return summary, await _extract_metadata_only(title, body, doc_type)
+            return summary, {}, False
+        return summary, await _extract_metadata_only(title, body, doc_type), True
 
     # Body too short — passthrough, no LLM
     if token_len(body) <= 400:
-        return body.strip(), {}
+        return body.strip(), {}, False
 
     # Caller said meta is noise (short forwarded text etc.) — summary only
     if skip_meta:
-        return await summarize(title, body), {}
+        return await summarize(title, body), {}, True
 
     # Main path: single combined Lite call.
     # Threshold raised 6000 → 12000 tokens (2026-05). Flash-Lite handles
@@ -92,7 +132,8 @@ async def summarize_and_extract(
     # chained 4k calls + a final combine. 60-75% Flash-Lite call
     # reduction on medium-long PDFs.
     if token_len(body) <= 12000:
-        return await _combined_call(title, body, doc_type)
+        summary, metadata = await _combined_call(title, body, doc_type)
+        return summary, metadata, True
 
     # Long doc — chain summarize first (multiple calls), then combine
     # the final pass with metadata. Partial size raised 4000 → 8000 so
@@ -102,10 +143,11 @@ async def summarize_and_extract(
     partials = [await _summarize_one(title, p) for p in parts]
     combined_text = "\n\n".join(partials)
     if token_len(combined_text) <= 12000:
-        return await _combined_call(title, combined_text, doc_type)
+        summary, metadata = await _combined_call(title, combined_text, doc_type)
+        return summary, metadata, True
     # Very long after chain — fall back to old behaviour (rare)
     final_summary = await _summarize_one(title, combined_text)
-    return final_summary, await _extract_metadata_only(title, body, doc_type)
+    return final_summary, await _extract_metadata_only(title, body, doc_type), True
 
 
 async def _summarize_one(title: str, text: str) -> str:
