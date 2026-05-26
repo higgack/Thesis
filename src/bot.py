@@ -1263,7 +1263,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 📋 <b>조회</b>
   /find &lt;kw&gt; [N=50](헤더 학습/발행/청크수) · /find_all &lt;kw&gt;(최대 500)
   /show &lt;id|kw&gt;(본문 + [🌐 한국어 번역]) · /recent [N]
-  /stats · /status · /usage · /cost
+  /stats · /status · /usage · /cost · /eval
 
 💬 <b>대화</b>
   /reset · /deep &lt;질문&gt;(Pro 강제)
@@ -1384,6 +1384,17 @@ doc_id 4자 이상 또는 키워드로 매치되는 문서의 본문 dump.
 
 <b>/cost</b>
 일별/월별 비용 (.usage_log 기반) — 모델별 분해.
+
+<b>/eval</b>
+답변 품질 회귀 테스트. <code>data/eval_golden.json</code>에 정의된 골든셋을
+에이전트에 돌려 출처 적중률·사실 포함 여부를 채점.
+• 처음 실행하면 골든셋이 비어있음 → 편집 방법 안내 출력.
+• 골든셋 형식: <code>{"items":[{"id":"q001","query":"질문",
+  "expected_sources":["출처 키워드"],"expected_facts":["핵심 사실"]}]}</code>
+• expected_sources (OR): 반환 출처 제목에 키워드 하나라도 있으면 통과.
+• expected_facts (AND): 답변 본문에 모두 포함돼야 통과.
+• 빈 배열 [] → 해당 체크 스킵.
+언제: 프롬프트·청크·TOP_K 변경 후 품질 회귀 확인.
 
 ═══════════════════════════════════════
 <b>💬 2. 대화</b>
@@ -2361,6 +2372,19 @@ async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"\n\n💡 세부 분석: /usage"
         )
         await update.message.reply_text(out)
+
+
+async def cmd_eval(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Run the answer-quality regression eval against data/eval_golden.json."""
+    if not _is_owner(update):
+        return
+    from .agent import eval as _eval
+    _eval.ensure_template()
+    async with _SustainedTyping(update, ctx):
+        ev = await _eval.run_eval()
+    report = _eval.format_report(ev)
+    await update.message.reply_text(report, parse_mode="HTML",
+                                    disable_web_page_preview=True)
 
 
 async def cmd_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -10133,6 +10157,7 @@ def main():
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("usage", cmd_usage))
     app.add_handler(CommandHandler("cost", cmd_cost))
+    app.add_handler(CommandHandler("eval", cmd_eval))
     app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("forget_search", cmd_forget_search))
