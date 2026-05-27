@@ -121,6 +121,55 @@ def _tokenize(text: str) -> list[str]:
     return [t.lower() for t in _TOKEN_RE.findall(text)]
 
 
+# BM25 index cache. Building the index (tokenize every chunk + IDF
+# tables) over the full corpus is the expensive part — on a 176k-chunk
+# corpus it pegged the event loop ~58s PER QUERY (retrieve rebuilt it
+# inline every call), starving the heartbeat → watchdog restarts. Now
+# the index is built once in a daemon thread and reused; per-query we
+# only run get_scores (offloaded). Rebuild triggers when the corpus
+# snapshot drifts; the `building` flag prevents pile-ups during ingest
+# bursts. ids/docs/metas are stored aligned with the index so scoring
+# maps back without an O(n) ids.index() lookup.
+_BM25: dict = {"count": -1, "index": None, "ids": None,
+               "docs": None, "metas": None, "building": False}
+_BM25_LOCK = threading.Lock()
+
+
+def _build_bm25_sync(chunks: list, count: int) -> None:
+    try:
+        ids = [c[0] for c in chunks]
+        docs = [c[1] for c in chunks]
+        metas = [c[2] for c in chunks]
+        index = BM25Okapi([_tokenize(d) for d in docs])
+        with _BM25_LOCK:
+            _BM25.update(count=count, index=index, ids=ids,
+                         docs=docs, metas=metas, building=False)
+        log.info("bm25 index built (%d docs)", len(docs))
+    except Exception:
+        with _BM25_LOCK:
+            _BM25["building"] = False
+        log.exception("bm25 index build failed")
+
+
+def _ensure_bm25() -> dict | None:
+    """Return the cached BM25 bundle, kicking off a background rebuild
+    when the corpus snapshot drifts. Returns None on cold start (caller
+    falls back to dense-only this turn); returns a possibly-stale bundle
+    while a rebuild is in flight (better recall than dense-only)."""
+    snap = vector.all_documents_text()
+    if not snap:
+        return None
+    n = len(snap)
+    if _BM25["index"] is not None and _BM25["count"] == n:
+        return _BM25
+    with _BM25_LOCK:
+        if not _BM25["building"]:
+            _BM25["building"] = True
+            threading.Thread(target=_build_bm25_sync, args=(snap, n),
+                             daemon=True).start()
+    return _BM25 if _BM25["index"] is not None else None
+
+
 async def expand_query(query: str) -> list[str]:
     """Spawn 0-2 alternate phrasings that surface different facets of
     the same question. Cheap Flash-Lite call (~₩0.3) — caller still
@@ -211,28 +260,30 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
 
     dense = {h["id"]: (1.0 - h["distance"], h) for h in summary_hits + chunk_hits}
 
-    # BM25 is augmentary; if the corpus snapshot isn't cached yet (cold
-    # start), skip it for this query and let the background build catch
-    # up. Dense retrieval alone still answers well.
-    all_chunks = vector.all_documents_text()
-    if all_chunks:
-        ids, docs, _ = zip(*all_chunks)
-        bm25 = BM25Okapi([_tokenize(d) for d in docs])
-        scores = bm25.get_scores(_tokenize(query))
-        max_s = max(scores) if scores.any() else 1.0
-        for cid, s in zip(ids, scores):
+    # BM25 augmentary signal. The index is built+cached off the event
+    # loop (_ensure_bm25); a cold start falls back to dense-only this
+    # turn. Scoring (still O(corpus)) is offloaded so it can't block the
+    # loop. ids/docs/metas come from the index's own aligned snapshot.
+    bundle = _ensure_bm25()
+    if bundle is not None and bundle["index"] is not None:
+        index = bundle["index"]
+        ids = bundle["ids"]
+        docs = bundle["docs"]
+        metas = bundle["metas"]
+        scores = await asyncio.to_thread(index.get_scores, _tokenize(query))
+        max_s = float(scores.max()) if len(scores) else 0.0
+        for i, (cid, s) in enumerate(zip(ids, scores)):
             n = (s / max_s) if max_s else 0
             if cid in dense:
                 old, hit = dense[cid]
                 dense[cid] = (old + 0.4 * n, hit)
             elif n > 0.55:
-                doc_idx = ids.index(cid)
                 dense[cid] = (0.4 * n, {
-                    "id": cid, "text": docs[doc_idx],
-                    "metadata": all_chunks[doc_idx][2], "distance": 1.0 - n,
+                    "id": cid, "text": docs[i],
+                    "metadata": metas[i], "distance": 1.0 - n,
                 })
     else:
-        log.info("bm25 cache cold — dense-only retrieval this turn")
+        log.info("bm25 index cold — dense-only retrieval this turn")
 
     # Cache per-doc score modifiers (recency × depth_bonus) so we look
     # up each parent doc at most once even when several of its chunks

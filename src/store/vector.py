@@ -88,8 +88,15 @@ async def add_chunks(doc_id: str, chunks: list[dict]) -> None:
                     _collection.get, ids=referenced_chroma_ids,
                     include=["embeddings"],
                 )
-            for cid, vec in zip(got.get("ids") or [],
-                                got.get("embeddings") or []):
+            # got["embeddings"] is a numpy array — `arr or []` raises
+            # "truth value of an array is ambiguous", so guard with
+            # `is None`. The old `or []` made every cache hit throw and
+            # fall through to a needless re-embed (cost + load).
+            _got_ids = got.get("ids")
+            _got_embs = got.get("embeddings")
+            _got_ids = [] if _got_ids is None else _got_ids
+            _got_embs = [] if _got_embs is None else _got_embs
+            for cid, vec in zip(_got_ids, _got_embs):
                 if vec is not None and len(vec) > 0:
                     cached_vectors[cid] = (vec.tolist()
                                            if hasattr(vec, "tolist")
