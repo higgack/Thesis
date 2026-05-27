@@ -1382,7 +1382,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【9. 답변 품질】</b> 자료 시점 필수·부족시 솔직 / brain 재검색 의무 / web [도메인] · 인용 [N] 자동 / 회사 분석 숫자 자동 audit · _verify Flash-Lite 출처-주제+숫자 검증 (₩1/회)
 
-<b>【10. 운영】</b> VM n2-standard-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8 · concurrent_updates+HTTPX 32 · 영속(retry/failed/history/qna/cost/ocr_cache/chunk_cache/bubbles) · 메모리 5분(90%즉시 95%거부) · 60s call · 10분 ingest · 질문/명령＞학습 우선(ingest 양보)
+<b>【10. 운영】</b> VM n2-standard-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8 · concurrent_updates+HTTPX 32 · 영속(retry/failed/history/qna/cost/ocr_cache/chunk_cache/bubbles) · 메모리 5분(90%즉시 95%거부) · 60s call · 15분 ingest · 질문/명령＞학습 우선(ingest 양보)
 
 <b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 · 요약/메타/번역 flash-lite(503→flash) · 답변 flash · /deep pro · Vision flash-lite · 1M ₩ Pro 1,750/Flash 420/Lite 140/Embed 200 · 답변 1h 캐시(200건) · 번역 30k+ 배치 ₩3-40
 
@@ -8624,12 +8624,16 @@ def _explain_error(e: BaseException, max_len: int = 280) -> str:
     return f"{type(cause).__name__}: {msg}"[:max_len]
 
 
-_INGEST_TIMEOUT_SEC = 600  # 10 minutes per message — sized for the
-# Gemini-embed era. Earlier 15min was for BGE-M3 CPU embedding which is
-# no longer used; current pipeline (Vision OCR ≤7 pages × ~3s, Flash-Lite
-# summary ~5s, Gemini embed ~3s) finishes well under 5 min, so 10 min
-# is conservative enough for unusual edge cases without pinning slots
-# on truly stuck items.
+_INGEST_TIMEOUT_SEC = 900  # 15 minutes per message. Real processing
+# (Vision OCR ≤7 pages × ~3s, Flash-Lite summary ~5s, Gemini embed ~3s)
+# finishes well under 5 min; the extra margin (was 10 min) is a safety
+# buffer for large-batch bursts where event-loop contention can stretch
+# an item's wall-clock. The real burst fix is keeping the loop free
+# (Chroma/tiktoken offloaded to threads) — this just avoids killing a
+# slow-but-progressing item. Downside: a truly stuck item pins its
+# semaphore slot for 15 min instead of 10. _IN_FLIGHT_TIMEOUT and the
+# retry-path wait_for both derive from this constant, so they scale
+# together automatically.
 
 
 _LIVE_EDIT_INTERVAL = 30  # seconds between status edits. 30 s × 4 concurrent
@@ -9760,7 +9764,7 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
 # becomes eligible again after _IN_FLIGHT_TIMEOUT — previously the
 # pop-then-persist sequence meant in-flight items vanished from both
 # the queue and the failed log on restart.
-_IN_FLIGHT_TIMEOUT = _INGEST_TIMEOUT_SEC + 120  # 12 min
+_IN_FLIGHT_TIMEOUT = _INGEST_TIMEOUT_SEC + 120  # 17 min (timeout + grace)
 
 
 def _pop_eligible_retry_item() -> dict | None:
