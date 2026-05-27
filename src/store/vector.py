@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import os
@@ -38,6 +39,15 @@ _collection = _client.get_or_create_collection(
 )
 log.info("vector collection=%s (backend=%s)", COLLECTION_NAME, _EMBED_BACKEND)
 
+# Chroma calls now run via asyncio.to_thread to keep the event loop
+# free (so the typing indicator + concurrent Q&A never stall behind a
+# big HNSW write/search). This lock serialises those off-loop DB ops so
+# we don't increase write concurrency past what the single-loop design
+# already had — PersistentClient/SQLite can raise 'database is locked'
+# under parallel writes. Held only around the DB call, never around the
+# network embed() above it.
+_CHROMA_LOCK = asyncio.Lock()
+
 
 async def add_chunks(doc_id: str, chunks: list[dict]) -> None:
     """chunks: [{id, text, kind: 'summary'|'chunk', idx}].
@@ -73,9 +83,11 @@ async def add_chunks(doc_id: str, chunks: list[dict]) -> None:
     cached_vectors: dict[str, list[float]] = {}
     if referenced_chroma_ids:
         try:
-            got = _collection.get(
-                ids=referenced_chroma_ids, include=["embeddings"],
-            )
+            async with _CHROMA_LOCK:
+                got = await asyncio.to_thread(
+                    _collection.get, ids=referenced_chroma_ids,
+                    include=["embeddings"],
+                )
             for cid, vec in zip(got.get("ids") or [],
                                 got.get("embeddings") or []):
                 if vec is not None and len(vec) > 0:
@@ -109,12 +121,17 @@ async def add_chunks(doc_id: str, chunks: list[dict]) -> None:
         log.info("chunk dedup: reused %d/%d embeddings (saved %d Gemini calls)",
                  reused, len(chunks), reused)
 
-    _collection.add(
-        ids=[c["id"] for c in chunks],
-        embeddings=final_vectors,
-        documents=[c["text"] for c in chunks],
-        metadatas=[{"doc_id": doc_id, "kind": c["kind"], "idx": c["idx"]} for c in chunks],
-    )
+    # Off the event loop — a large doc's Chroma write (HNSW insert +
+    # SQLite) otherwise blocks the loop for ~seconds, freezing the
+    # typing indicator + every concurrent Q&A.
+    async with _CHROMA_LOCK:
+        await asyncio.to_thread(
+            _collection.add,
+            ids=[c["id"] for c in chunks],
+            embeddings=final_vectors,
+            documents=[c["text"] for c in chunks],
+            metadatas=[{"doc_id": doc_id, "kind": c["kind"], "idx": c["idx"]} for c in chunks],
+        )
 
     # Step 6: remember newly-embedded chunks for future reuse. Only
     # the freshly-embedded ones — the cached hits already had a row.
@@ -130,7 +147,12 @@ async def add_chunks(doc_id: str, chunks: list[dict]) -> None:
 async def query(text: str, k: int = 5, kind: str | None = None) -> list[dict]:
     vec = (await embed([text], task_type="RETRIEVAL_QUERY"))[0]
     where = {"kind": kind} if kind else None
-    res = _collection.query(query_embeddings=[vec], n_results=k, where=where)
+    # Off the event loop — HNSW search over the full corpus blocks the
+    # loop (and the typing indicator) otherwise. On the Q&A hot path.
+    async with _CHROMA_LOCK:
+        res = await asyncio.to_thread(
+            _collection.query, query_embeddings=[vec], n_results=k, where=where,
+        )
     if not res["ids"] or not res["ids"][0]:
         return []
     out = []

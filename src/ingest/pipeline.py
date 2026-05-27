@@ -498,7 +498,10 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
                 "title": title_existing["title"]}
 
     _emit(on_stage, "청크 분할")
-    chunks = split(body)
+    # tiktoken-encoding the whole body is CPU-bound; keep it off the
+    # event loop so a big doc's chunking doesn't freeze the typing
+    # indicator + concurrent Q&A.
+    chunks = await asyncio.to_thread(split, body)
     chunk_items = [{
         "id": f"{doc_id}:{i}",
         "text": c,
