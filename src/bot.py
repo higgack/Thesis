@@ -69,6 +69,16 @@ _RETRY_INGEST_BATCH = 8
 _RETRY_BACKOFF_SEC = int(os.getenv("RETRY_BACKOFF_SEC", "3600"))
 _INGEST_RETRY_QUEUE: list[dict] = []
 _INGEST_FAILED: list[dict] = []
+# /failed_retry progress tracker (one active batch at a time — personal
+# bot). _failed_retry_all stamps each re-queued item with `_batch=id`
+# and seeds this; _refresh_retry_progress (called from the drain tick)
+# edits a single "🔄 재시도 N/M 완료" message as batch items leave the
+# queue, so the user can see progress instead of only per-item results.
+# In-memory only: a restart drops the live message (items still drain).
+_RETRY_PROGRESS: dict = {
+    "chat_id": None, "msg_id": None, "batch_id": None,
+    "total": 0, "last_done": -1,
+}
 # Live counters for /status — incremented on entry, decremented in
 # finally so they stay accurate even when an exception unwinds.
 _ACTIVE_AGENT_RUNS = 0
@@ -3410,12 +3420,14 @@ def _failed_retry_all(chat_id: int) -> str:
     the auto-retry queue. Returns the user-facing summary message."""
     retried = 0
     kept: list[dict] = []
+    batch_id = f"b{time.time():.0f}"
     for entry in _INGEST_FAILED:
         payload = entry.get("retry")
         if payload:
             payload = dict(payload)
             payload["attempts"] = 0
             payload["chat_id"] = chat_id
+            payload["_batch"] = batch_id
             _INGEST_RETRY_QUEUE.append(payload)
             retried += 1
         else:
@@ -3424,6 +3436,13 @@ def _failed_retry_all(chat_id: int) -> str:
     _INGEST_FAILED.extend(kept)
     _persist_retry_queue()
     _persist_failed_log()
+    # Seed the progress tracker; the async caller sends the message and
+    # _refresh_retry_progress (drain tick) updates it as items drain.
+    if retried:
+        _RETRY_PROGRESS.update(
+            chat_id=chat_id, msg_id=None, batch_id=batch_id,
+            total=retried, last_done=-1,
+        )
     msg = (
         f"🔁 retry queue로 {retried}건 재등록\n"
         f"{_RETRY_INGEST_INTERVAL_SEC}초 간격, 최대 "
@@ -3432,6 +3451,50 @@ def _failed_retry_all(chat_id: int) -> str:
     if kept:
         msg += f"\n\n♻️ retry 정보 없는 {len(kept)}건은 그대로 — 채널 스크롤로 직접 다시 보내주세요."
     return msg
+
+
+async def _start_retry_progress(ctx: ContextTypes.DEFAULT_TYPE,
+                                chat_id: int) -> None:
+    """Send the initial "🔄 재시도 0/M 완료" message for a batch just
+    seeded by _failed_retry_all. No-op if no batch is pending."""
+    if _RETRY_PROGRESS["total"] <= 0 or _RETRY_PROGRESS["msg_id"] is not None:
+        return
+    try:
+        sent = await ctx.bot.send_message(
+            chat_id, f"🔄 재시도 0/{_RETRY_PROGRESS['total']} 완료")
+        _RETRY_PROGRESS["msg_id"] = sent.message_id
+        _RETRY_PROGRESS["last_done"] = 0
+    except Exception:
+        log.exception("retry progress start send failed")
+
+
+async def _refresh_retry_progress(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Edit the batch progress message to reflect how many batch items
+    have left the retry queue. Called from the drain tick; edits only
+    when the count changed (no spam) and finalises + clears the tracker
+    when the batch drains. 'done' = left the queue (success / dup /
+    permanent drop) — items still retrying stay counted as remaining."""
+    t = _RETRY_PROGRESS
+    if t["msg_id"] is None or t["total"] <= 0:
+        return
+    remaining = sum(1 for it in _INGEST_RETRY_QUEUE
+                    if it.get("_batch") == t["batch_id"])
+    done = t["total"] - remaining
+    if done == t["last_done"]:
+        return
+    t["last_done"] = done
+    chat_id, msg_id, total = t["chat_id"], t["msg_id"], t["total"]
+    finished = remaining <= 0
+    text = (f"✅ 재시도 {total}건 처리 완료" if finished
+            else f"🔄 재시도 {done}/{total} 완료")
+    if finished:
+        t.update(chat_id=None, msg_id=None, batch_id=None,
+                 total=0, last_done=-1)
+    try:
+        await ctx.bot.edit_message_text(
+            chat_id=chat_id, message_id=msg_id, text=text)
+    except Exception:
+        log.exception("retry progress edit failed")
 
 
 def _failed_clear_all() -> str:
@@ -3541,9 +3604,9 @@ async def cmd_failed_retry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     needs the user to type 'retry' manually)."""
     if not _is_owner(update):
         return
-    await update.message.reply_text(
-        _failed_retry_all(update.effective_chat.id)
-    )
+    chat_id = update.effective_chat.id
+    await update.message.reply_text(_failed_retry_all(chat_id))
+    await _start_retry_progress(ctx, chat_id)
 
 
 async def cmd_failed_clear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -3572,6 +3635,7 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = q.message.chat.id if q.message else config.TELEGRAM_OWNER_ID
     if q.data == "failed_retry":
         await q.edit_message_text(_failed_retry_all(chat_id))
+        await _start_retry_progress(ctx, chat_id)
     elif q.data == "failed_clear":
         await q.edit_message_text(_failed_clear_all())
     elif q.data.startswith("failed_retry_one:"):
@@ -9759,6 +9823,12 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
     Per-item not_before_ts (linear backoff on failure) is enforced
     inside _pop_eligible_retry_item, so stuck items hold while
     healthy ones drain around them."""
+    # Update the /failed_retry progress message first — must run even
+    # when the queue is empty so the final "✅ 완료" still renders.
+    try:
+        await _refresh_retry_progress(ctx)
+    except Exception:
+        log.exception("retry progress refresh failed")
     if not _INGEST_RETRY_QUEUE:
         return
     # Interactive priority: skip this drain tick entirely while a user
