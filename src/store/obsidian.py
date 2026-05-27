@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 import subprocess
+import time
 from datetime import date
 from pathlib import Path
 
@@ -14,6 +15,14 @@ _VAULT: Path | None = (
 )
 _REMOTE = config.OBSIDIAN_GIT_REMOTE
 _GIT_LOCK = asyncio.Lock()
+# Background sync task refs (prevent GC of fire-and-forget tasks).
+_BG_SYNC_TASKS: set = set()
+# Push circuit breaker: after a failed/hung push, skip pushes until this
+# epoch so a broken/unreachable remote can't make every ingested note
+# pay the push timeout. Commits still land locally; a later successful
+# push ships the whole backlog at once.
+_PUSH_DISABLED_UNTIL = 0.0
+_PUSH_BACKOFF_SEC = 600
 
 _FOLDERS = {
     "url": "Web",
@@ -45,7 +54,8 @@ def init() -> None:
         _git("config", "user.email", "bot@local")
 
 
-def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+def _git(*args: str, cwd: Path | None = None,
+         timeout: int = 60) -> subprocess.CompletedProcess:
     where = cwd if cwd is not None else _VAULT
     return subprocess.run(
         ["git", *args],
@@ -53,7 +63,7 @@ def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
         check=True,
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=timeout,
     )
 
 
@@ -100,10 +110,23 @@ async def write_note(*, doc_type: str, title: str, source: str,
     path.write_text(md, encoding="utf-8")
     rel = path.relative_to(_VAULT).as_posix()
 
+    # Fire-and-forget: the .md is already on disk (the note is saved);
+    # commit/push runs in the background so a slow/hung remote can NEVER
+    # block ingest. (A blocking await here serialized ingests behind a
+    # 60s-hanging `git push` → small items waited 15min and timed out.)
     if _REMOTE:
-        async with _GIT_LOCK:
-            await asyncio.to_thread(_commit_push, rel, title)
+        t = asyncio.create_task(_commit_push_bg(rel, title))
+        _BG_SYNC_TASKS.add(t)
+        t.add_done_callback(_BG_SYNC_TASKS.discard)
     return rel
+
+
+async def _commit_push_bg(relpath: str, title: str) -> None:
+    try:
+        async with _GIT_LOCK:
+            await asyncio.to_thread(_commit_push, relpath, title)
+    except Exception:
+        log.exception("obsidian background sync failed")
 
 
 def _commit_push(relpath: str, title: str) -> None:
@@ -115,7 +138,20 @@ def _commit_push(relpath: str, title: str) -> None:
     except subprocess.CalledProcessError as e:
         log.debug("nothing to commit or commit failed: %s", e.stderr)
         return
+    except subprocess.TimeoutExpired:
+        log.warning("git commit timed out")
+        return
+    global _PUSH_DISABLED_UNTIL
+    if time.time() < _PUSH_DISABLED_UNTIL:
+        return  # push circuit-broken; commit stays local, syncs later
     try:
-        _git("push", "origin", "HEAD")
-    except subprocess.CalledProcessError as e:
-        log.warning("git push failed: %s", e.stderr)
+        # Shorter timeout than other git ops: a push is the only one that
+        # talks to the network, so it's the one that hangs.
+        _git("push", "origin", "HEAD", timeout=20)
+    except Exception as e:
+        # Catch BOTH CalledProcessError AND TimeoutExpired (the hang) —
+        # the old code only caught the former, so a timed-out push raised
+        # all the way up and the next note tried again immediately.
+        _PUSH_DISABLED_UNTIL = time.time() + _PUSH_BACKOFF_SEC
+        log.warning("git push failed (%s); pausing pushes %ds",
+                    str(e)[:120], _PUSH_BACKOFF_SEC)
