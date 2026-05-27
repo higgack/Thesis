@@ -36,6 +36,14 @@ log = logging.getLogger(__name__)
 _PATH = config.DATA_DIR / "auto_blocked_hosts.json"
 _THRESHOLD = int(os.getenv("URL_BLOCKLIST_THRESHOLD", "2"))
 
+# Hosts we never auto-block, no matter how many extractions miss.
+# Naver blogs are JS-rendered: even with the PostView rewrite a given
+# post can extract empty, and a couple of those used to nuke the WHOLE
+# host (every Naver blog silently skipped). For these we keep trying —
+# a real miss just lands in /failed (visible, retryable) instead of
+# disappearing. This also neutralises any pre-existing stored block.
+_NEVER_BLOCK = {"blog.naver.com", "m.blog.naver.com"}
+
 _BLOCKED: dict[str, dict] = {}
 _loaded = False
 
@@ -79,7 +87,7 @@ def is_blocked(url: str) -> bool:
     just a dict lookup after the one-time JSON load on first call."""
     _load_once()
     h = _host_of(url)
-    if not h:
+    if not h or h in _NEVER_BLOCK:
         return False
     rec = _BLOCKED.get(h)
     return bool(rec and rec.get("count", 0) >= _THRESHOLD)
@@ -90,7 +98,7 @@ def record_failure(url: str) -> None:
     pipeline.ingest_url when body extraction returns empty."""
     _load_once()
     h = _host_of(url)
-    if not h:
+    if not h or h in _NEVER_BLOCK:
         return
     rec = _BLOCKED.get(h, {"count": 0})
     rec["count"] = int(rec.get("count", 0)) + 1
@@ -134,7 +142,8 @@ def list_all() -> list[dict]:
             "count": int(rec.get("count", 0)),
             "last_url": rec.get("last_url", ""),
             "last_at": rec.get("last_at", ""),
-            "is_blocked": int(rec.get("count", 0)) >= _THRESHOLD,
+            "is_blocked": (h not in _NEVER_BLOCK
+                           and int(rec.get("count", 0)) >= _THRESHOLD),
         })
     out.sort(key=lambda r: (-r["count"], r["host"]))
     return out

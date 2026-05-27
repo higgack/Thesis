@@ -79,6 +79,16 @@ def _is_blocked_host(url: str) -> bool:
         return False
 
 
+# Realistic desktop Chrome UA. Naver (and several other sites) serve a
+# stub/redirect to a bare "Mozilla/5.0 SecondBrain" UA but the full post
+# HTML to a normal browser string. A realistic UA is strictly more
+# widely accepted than a custom one, so it doubles as a small recall win
+# for other hosts too.
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
 _NAVER_BLOG_RE = re.compile(
     r"^https?://(?:m\.)?blog\.naver\.com/([^/?#]+)/(\d+)(?:[/?#].*)?$"
 )
@@ -87,14 +97,20 @@ _NAVER_BLOG_RE = re.compile(
 def _rewrite_for_better_fetch(url: str) -> str:
     """Rewrite known JS-iframe / SPA URLs to alternative forms that
     yield real HTML body to trafilatura. Currently:
-      • blog.naver.com/<user>/<id>  →  m.blog.naver.com/<user>/<id>
-        (mobile view ships the post body inline, desktop view loads
-         it via an iframe that trafilatura can't follow)
+      • blog.naver.com/<user>/<id>  →
+        blog.naver.com/PostView.naver?blogId=<user>&logNo=<id>
+        The desktop post page is just a shell whose <iframe id=mainFrame>
+        loads this PostView endpoint; the mobile (m.blog) page renders
+        the body via JS. PostView ships the full post HTML inline, so
+        trafilatura sees real markup. (Was m.blog rewrite — that page
+        also lazy-loads the body via JS and extracted empty, which
+        auto-blocked the whole host.)
     Returns the original URL when no rewrite rule matches."""
     m = _NAVER_BLOG_RE.match(url)
     if m:
         user, post_id = m.group(1), m.group(2)
-        return f"https://m.blog.naver.com/{user}/{post_id}"
+        return (f"https://blog.naver.com/PostView.naver?"
+                f"blogId={user}&logNo={post_id}")
     return url
 
 
@@ -119,10 +135,15 @@ async def load_url(url: str) -> tuple[str, str, str | None]:
     # fetch so trafilatura sees real markup. Naver blog is the big
     # one: desktop ships an iframe, mobile ships inline content.
     fetch_url = _rewrite_for_better_fetch(url)
+    headers = {"User-Agent": _BROWSER_UA}
+    # Naver PostView serves the body only when the Referer points at the
+    # owning post; supply the original URL the user forwarded.
+    if fetch_url != url and "blog.naver.com" in fetch_url:
+        headers["Referer"] = url
     title, body, hint = "", "", None
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True,
-                                     headers={"User-Agent": "Mozilla/5.0 SecondBrain"}) as c:
+                                     headers=headers) as c:
             r = await c.get(fetch_url)
             r.raise_for_status()
             ct = r.headers.get("content-type", "").lower()
@@ -135,7 +156,9 @@ async def load_url(url: str) -> tuple[str, str, str | None]:
 
     if _is_js_placeholder(body):
         try:
-            j_title, j_body, j_hint = await _load_via_jina(url)
+            # Use the rewritten URL (e.g. Naver PostView) so Jina renders
+            # the content endpoint, not the JS-only wrapper page.
+            j_title, j_body, j_hint = await _load_via_jina(fetch_url)
             if j_body and len(j_body) >= _MIN_BODY_CHARS:
                 title = j_title or title
                 body = j_body
