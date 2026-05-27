@@ -86,6 +86,32 @@ def _doc_age_days(doc: dict) -> float | None:
     return max(0.0, (datetime.utcnow() - ts).total_seconds() / 86400.0)
 
 
+def _analyst_meta(doc: dict) -> dict:
+    """Pull analyst-report metadata (company / brokerage / analyst /
+    report_date) off a doc row so retrieval tools can surface it to the
+    agent. The (F) company-analysis lens needs these to attribute
+    guidance numbers per analyst and to A./F.-tag rows by date. Stored
+    as a JSON string in the 'metadata' column at ingest; missing /
+    corrupt → {} (never blocks retrieval)."""
+    raw = doc.get("metadata")
+    if not raw:
+        return {}
+    if isinstance(raw, str):
+        import json
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for k in ("company", "brokerage", "analyst", "report_date"):
+        v = raw.get(k)
+        if v:
+            out[k] = v
+    return out
+
+
 async def search_my_brain(query: str, k: int = 10) -> dict:
     """Hybrid retrieval over the user's saved corpus.
 
@@ -123,13 +149,15 @@ async def search_my_brain(query: str, k: int = 10) -> dict:
     for h in merged[:k]:
         doc_id = h["metadata"]["doc_id"]
         doc = meta.get_doc(doc_id) or {}
-        out.append({
+        item = {
             "doc_id": doc_id,
             "title": doc.get("title", ""),
             "type": doc.get("type", ""),
             "kind": h["metadata"]["kind"],
             "snippet": h["text"][:800],
-        })
+        }
+        item.update(_analyst_meta(doc))
+        out.append(item)
     return {"hits": out, "count": len(out), "variants": variants}
 
 
@@ -471,7 +499,7 @@ async def compare_papers(topic: str, limit: int = 50,
                 digest_quota_dropped += 1
                 continue
             digest_kept += 1
-        bundles.append({
+        bundle = {
             # doc_id intentionally omitted from the bundle. Earlier we
             # exposed it for follow-up lookups, but the model latched
             # onto the hex string as a citation key (writing
@@ -482,7 +510,14 @@ async def compare_papers(topic: str, limit: int = 50,
             "title": title,
             "type": doc.get("type", ""),
             "summary": summary[:1500],
-        })
+        }
+        # Analyst-report metadata (brokerage / analyst / report_date /
+        # company) so the (F) company-analysis lens can build the
+        # per-analyst guidance table and A./F.-tag rows by date. These
+        # are human-readable so they don't reintroduce the hex-citation
+        # problem that doc_id omission avoids.
+        bundle.update(_analyst_meta(doc))
+        bundles.append(bundle)
         if len(bundles) >= limit:
             break
 
