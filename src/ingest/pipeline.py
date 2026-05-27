@@ -128,6 +128,38 @@ def _canonical_url(url: str) -> str:
         return url
 
 
+# Access-denied / paywall / bot-check pages return a short body that
+# isn't empty, so they slip past the `if not body` guard and get learned
+# as junk (e.g. a 13-char "Access Denied" doc). Treat them like an empty
+# body: not learned, host failure recorded (→ auto-block after 2), routed
+# to /failed (manual retry possible) instead of churning the retry queue.
+# Only UNAMBIGUOUS denial markers — phrases that essentially never
+# appear in a real article body. Ambiguous Korean paywall/login words
+# (로그인/구독/유료/결제) are deliberately excluded: they show up in
+# legitimate short articles too, so keying on them would route real
+# content to /failed. Better to occasionally learn a tiny paywall stub
+# than to drop a genuine article.
+_DENIAL_MARKERS = (
+    "access denied", "403 forbidden", "forbidden", "unauthorized",
+    "are you a robot", "are you human", "captcha", "cloudflare",
+    "enable javascript", "please enable js", "bot detection",
+    "verify you are human", "접근이 거부", "권한이 없", "차단되었",
+    "로봇이 아닙니",
+)
+
+
+def _looks_like_denial(title: str, body: str) -> bool:
+    """True when a SHORT page (<500 chars) is dominated by an
+    access-denied / bot-check marker. Length gate keeps real articles
+    (which are longer and rarely contain these phrases) safe; a false
+    positive is recoverable anyway — it lands in /failed, not lost."""
+    b = (body or "").strip()
+    if len(b) >= 500:
+        return False
+    hay = f"{title or ''} {b}".lower()
+    return any(m in hay for m in _DENIAL_MARKERS)
+
+
 async def ingest_url(url: str) -> dict:
     canonical = _canonical_url(url)
     if existing := meta.find_by_source(canonical):
@@ -155,9 +187,11 @@ async def ingest_url(url: str) -> dict:
         return {"status": "blocked", "title": canonical, "source": canonical,
                 "detail": "auto-blocked (반복 추출 실패)"}
     title, body, hint = await load_url(canonical)
-    if not body:
+    if not body or _looks_like_denial(title, body):
         url_blocklist.record_failure(canonical)
-        return {"status": "empty", "title": title, "source": canonical}
+        detail = "접근 거부/페이월 추정" if body else "본문 추출 실패"
+        return {"status": "empty", "title": title, "source": canonical,
+                "detail": detail}
     # Body extracted OK — reset any prior failure count for this host.
     url_blocklist.record_success(canonical)
     body = _strip_disclaimer(body)
