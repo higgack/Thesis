@@ -243,6 +243,25 @@ async def _write_heartbeat(ctx: ContextTypes.DEFAULT_TYPE) -> None:
         log.exception("heartbeat write failed")
 
 
+async def _startup_smoke(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Run the post-deploy smoke test (src/smoke.py) and DM the owner the
+    result. Pass and fail both reported — after every deploy the user
+    gets one line confirming the live query+embed path actually works,
+    not just that the container booted."""
+    try:
+        from . import smoke
+        ok, msg = await smoke.run_smoke()
+    except Exception as e:
+        log.exception("startup smoke crashed")
+        ok, msg = False, f"❌ 스모크 실행 자체 실패: {type(e).__name__}: {e}"
+    if not config.TELEGRAM_OWNER_ID:
+        return
+    try:
+        await ctx.bot.send_message(config.TELEGRAM_OWNER_ID, msg)
+    except Exception:
+        log.exception("smoke result send failed")
+
+
 def _load_json_with_recovery(path):
     """Load JSON, falling back to the .bak snapshot if the primary file
     is corrupt (truncated mid-write by a previous crash). Returns None
@@ -10445,6 +10464,16 @@ def main():
             interval=60,
             first=15,
             name="heartbeat",
+        )
+        # Post-deploy smoke test: ~3 min after boot (BM25 cache + reranker
+        # warmed), run the real read-only hot path (retrieval + embed)
+        # against the live corpus and report failures / perf regressions.
+        # Catches the integration/scale bug class that local syntax +
+        # stub tests structurally cannot (numpy-array truthiness, BM25
+        # blocking at real corpus scale). Runs once per restart, i.e.
+        # after every auto-deploy.
+        app.job_queue.run_once(
+            _startup_smoke, when=180, name="startup_smoke",
         )
         # One-shot Telegram flood-ban release notification. Today's
         # 22207s ban (logged at 2026-05-14 01:28:56 UTC) lifts at
