@@ -3551,10 +3551,12 @@ async def cmd_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         truncated = 0
         recent = _failed_recent_snapshot()
         # How many entries get their own per-item retry/drop buttons.
-        # Telegram allows ~100 buttons per message and each entry adds 2
-        # — capping at 20 keeps the keyboard responsive while covering
-        # the typical "what failed today" working set.
-        PER_ITEM_BUTTON_CAP = 20
+        # Telegram allows ~100 buttons per message and each entry adds 2,
+        # so 40 → 82 buttons (incl. the 2 bulk) stays safely under the
+        # limit. The 3800-char text LIMIT above can still truncate the
+        # list before 40 when titles are long — graceful (bulk buttons
+        # remain), no error.
+        PER_ITEM_BUTTON_CAP = 40
         button_rows: list[list[InlineKeyboardButton]] = []
         for i, r in enumerate(recent):
             ts = (r.get("ts", "")[:16]).replace("T", " ")
