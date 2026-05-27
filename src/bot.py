@@ -8927,6 +8927,21 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
             )
         elif results:
             final_text = _format_results(results)
+            if not final_text.strip():
+                # All results were silently handled (blocked host /
+                # skipped format) → _format_results returns "". Editing
+                # the ⏳ bubble to an empty string fails (Telegram
+                # rejects it), leaving it frozen at "학습 시작" forever —
+                # which LOOKS stuck though the ingest already finished.
+                # Resolve it in place (an edit, not a new send → no
+                # flood) so the user sees why nothing was learned.
+                sts = ", ".join(sorted({(r.get("status") or "?")
+                                        for r in results}))
+                det = next((r.get("detail") for r in results
+                            if r.get("detail")), "")
+                final_text = f"🚫 학습 안 함 ({sts}): {label[:70]}"
+                if det:
+                    final_text += f"\n   {det[:100]}"
         else:
             final_text = f"(빈 결과: {label[:60]})"
 
