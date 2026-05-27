@@ -133,6 +133,20 @@ def delete(qna_id: int) -> int:
         return 0
 
 
+def purge_expired() -> int:
+    """Drop junk rows left by Pro-confirmation timeouts — empty question,
+    model='expired'. They aren't real Q&As, clutter the dashboard, and
+    used to reappear on refresh (deleted from the DB but re-rendered from
+    a stale static page). Idempotent — safe to call on every startup."""
+    try:
+        with _conn() as c:
+            cur = c.execute("DELETE FROM qna WHERE model = 'expired'")
+            return cur.rowcount
+    except Exception:
+        log.exception("qna purge_expired failed")
+        return 0
+
+
 def delete_search(keyword: str) -> int:
     """Bulk-drop rows whose question or answer contains `keyword`
     (case-insensitive substring). Returns rows affected."""

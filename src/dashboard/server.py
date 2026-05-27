@@ -96,6 +96,14 @@ class Handler(SimpleHTTPRequestHandler):
                 cur = c.execute("DELETE FROM qna WHERE id = ?", (qid,))
                 n = cur.rowcount
             log.info("deleted qna #%d (rows=%d)", qid, n)
+            # Regenerate the static HTML now so a browser refresh reflects
+            # the delete immediately. Without this the row reappears until
+            # the bot's 60s refresh_dashboard tick rebuilds the page.
+            try:
+                from .regenerate import regenerate
+                regenerate()
+            except Exception:
+                log.exception("post-delete regenerate failed")
         except Exception as e:
             log.exception("delete failed")
             self.send_error(500, f"delete failed: {e}")

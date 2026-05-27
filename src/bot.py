@@ -8699,6 +8699,17 @@ async def on_pro_confirmation_callback(update: Update,
         typing_task.cancel()
     chat_id = q.message.chat.id
     text = result.get("query") or ""
+    # Expired Pro-confirmation: surface the notice only. Don't log it as
+    # a Q&A — query is empty and model='expired', which produced an
+    # un-deletable empty-question junk row on the dashboard.
+    if result.get("model") == "expired":
+        try:
+            await q.message.reply_text(
+                result.get("text") or "⚠️ 확인 요청이 만료됐습니다.")
+        finally:
+            _ACTIVE_AGENT_RUNS = max(0, _ACTIVE_AGENT_RUNS - 1)
+            _LAST_REPLY_AT = datetime.utcnow()
+        return
     try:
         await _finalize_agent_reply(q.message, ctx, chat_id, text, result)
     finally:
@@ -10581,6 +10592,17 @@ def main():
     _load_persisted_state()
     _load_dedup_confirmed()
     _load_permanently_ignored()
+    # One-time hygiene: drop legacy empty-question 'expired' junk rows
+    # (Pro-confirmation timeouts) that couldn't be deleted from the
+    # dashboard before the next regen. Idempotent.
+    try:
+        _purged = qna.purge_expired()
+        if _purged:
+            log.info("startup: purged %d expired qna rows", _purged)
+            from .dashboard import regenerate as _dash_regen
+            _dash_regen.regenerate()
+    except Exception:
+        log.exception("startup qna purge_expired failed")
     # Stamp the heartbeat immediately so the freshly-booted container's
     # file is current before the cold BM25 warm-up below (which delays
     # the first 60s heartbeat tick) — prevents the watchdog from judging
