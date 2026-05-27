@@ -108,10 +108,18 @@ REMOTE=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo none)
 # this script reliably, remove the duplicate cron line:
 #   crontab -e   → delete the '~/Thesis/scripts/auto_deploy.sh' row
 # leaving only the 'scripts/auto_pull.sh' entry.
-# No new commits → steady state. Run the liveness watchdog (silent
-# unless it actually restarts a hung bot) and exit.
+# No new commits → steady state, nothing to do.
+#
+# Heartbeat watchdog DISABLED (2026-05-27). It caused a restart cycle:
+# each restart triggers the cold 178k-chunk BM25 warm-up + retry-queue
+# drain, which starves the event loop long enough to re-trip the 10-min
+# heartbeat threshold → another restart → warm-up never finishes (saw
+# 무응답 658s @19:17, 632s @19:30 in a loop). Docker's
+# `restart: unless-stopped` already recovers genuine crashes, so the
+# hang-watchdog was net-negative for this workload. check_heartbeat()
+# above is kept dormant in case a smarter (warm-up-aware) version is
+# wired later; the bot still stamps data/bot_heartbeat harmlessly.
 if [ "$LOCAL" = "$REMOTE" ]; then
-    check_heartbeat
     exit 0
 fi
 
