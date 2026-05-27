@@ -1425,7 +1425,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【10-2. 비용 절감】</b> 6단 dedup · 청크 1000 · Vision DPI 100 · OCR cap 0p · Progressive OCR · 청크/임베딩 캐시 · 메타 gating · 차단 도메인 · .txt/.md/.csv 제외 · failed URL skip
 
-<b>【10-3. Retry/무손실 재개】</b> 5회 선형(1h→2h→3h→4h→/failed)·silent retry · in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개·atomic JSON+.bak·/audit 검증
+<b>【10-3. Retry/무손실 재개】</b> 자동 1회→/failed(🔁수동·3회후 자동폐기) · in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개·atomic JSON+.bak·/audit 검증
 
 <b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→워치독 10분뒤 자동재시작·docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
 
@@ -1530,7 +1530,7 @@ Gemini 2.5 Pro 강제 사용. 기본 답변은 Flash, /deep 만 Pro (비용 ~4�
 실패 큐 전체 영구 무시 — [🗑] 일괄. 복구 불가.
 
 <b>/queue</b>
-retry 대기 중 — 5회 선형 (1h→2h→3h→4h→/failed 이동). 다음 시도 시각 표시.
+자동 재처리 대기/진행 중인 인입 항목. 처리 실패 시 자동 1회 후 /failed로 이동(거기서 🔁 수동 재시도, 3 cycle 초과 시 자동 폐기). 항목별 종류·제목·시도 횟수 표시.
 
 <b>/queue_to_failed</b>
 retry 큐 모두 실패 큐로 강제 이동.
@@ -10260,9 +10260,10 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                      item["attempts"], _MAX_RETRY_ATTEMPTS, title[:80])
             # Linear backoff per attempt: 1×_RETRY_BACKOFF_SEC on 1st
             # failure, 2× on 2nd, ... so a chronically-stuck item never
-            # monopolises the queue. With default 3600s and
-            # _MAX_RETRY_ATTEMPTS=5 the final wait is up to 5 h before
-            # /failed pickup.
+            # monopolises the queue. NOTE: with _MAX_RETRY_ATTEMPTS=1
+            # (current) the give-up branch above always fires first, so
+            # this soft-fail/backoff path is effectively dormant — kept
+            # for the case the cap is raised again.
             hold = _RETRY_BACKOFF_SEC * item["attempts"]
             _retry_item_soft_fail(item, hold)
             wait_min = max(1, hold // 60)
