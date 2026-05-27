@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -51,7 +52,7 @@ async def summarize(title: str, text: str, hint: str | None = None) -> str:
     if token_len(text) <= 12000:
         return await _summarize_one(title, text)
     parts = split(text, size=8000, overlap=200)
-    partials = [await _summarize_one(title, p) for p in parts]
+    partials = await _summarize_partials(title, parts)
     combined = "\n\n".join(partials)
     if token_len(combined) <= 4000:
         return combined
@@ -140,7 +141,7 @@ async def _summarize_and_extract_impl(
     # a 100k-token PDF needs ~13 partials instead of 25 — same content
     # coverage, half the calls.
     parts = split(body, size=8000, overlap=200)
-    partials = [await _summarize_one(title, p) for p in parts]
+    partials = await _summarize_partials(title, parts)
     combined_text = "\n\n".join(partials)
     if token_len(combined_text) <= 12000:
         summary, metadata = await _combined_call(title, combined_text, doc_type)
@@ -159,6 +160,24 @@ async def _summarize_one(title: str, text: str) -> str:
         temperature=0.1,
         purpose="ingest",
     )
+
+
+# Bound partial-summary parallelism GLOBALLY so a long doc (12+ 8k
+# partials) — or several at once — can't fan out into a Gemini
+# rate-limit flood. Shared across all concurrent ingests.
+_PARTIAL_SUMMARY_SEM = asyncio.Semaphore(6)
+
+
+async def _summarize_partials(title: str, parts: list[str]) -> list[str]:
+    """Summarize each chunk concurrently (was sequential — a 12-partial
+    PDF paid ~12×call latency in series). gather preserves input order,
+    so the downstream join keeps document order. Same call count → same
+    cost; identical per-partial output → same quality. The semaphore
+    caps concurrent Gemini calls so it stays safe under load."""
+    async def _one(p: str) -> str:
+        async with _PARTIAL_SUMMARY_SEM:
+            return await _summarize_one(title, p)
+    return list(await asyncio.gather(*[_one(p) for p in parts]))
 
 
 async def _combined_call(title: str, body: str, doc_type: str) -> tuple[str, dict]:
