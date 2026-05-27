@@ -31,6 +31,16 @@ log = logging.getLogger("bot")
 
 _INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "8"))
 _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
+# Interactive-priority gate. A user's command (_SustainedTyping bumps
+# _INTERACTIVE_INFLIGHT) or Q&A (_run_agent bumps _ACTIVE_AGENT_RUNS)
+# should win event-loop + Gemini concurrency over background learning.
+# Ingest waits on _await_interactive_idle() before grabbing an
+# _INGEST_SEM slot, and the retry-drain tick is skipped entirely while
+# interactive work is in flight. Bounded by _INTERACTIVE_MAX_DEFER_SEC
+# so a continuous chat session can never starve ingest forever. Ingest
+# paths touch NEITHER counter, so there's no self-wait / deadlock.
+_INTERACTIVE_INFLIGHT = 0
+_INTERACTIVE_MAX_DEFER_SEC = float(os.getenv("INGEST_DEFER_SEC", "45"))
 # How many queued retries to drain per tick + how often we tick. Tuned
 # for c3-standard-4 / n2-standard-4 (4 vCPU, 16 GiB RAM) + 12 GiB bot
 # mem_limit + BGE-M3 (local embed, no API wait). 4 items per 30 s =
@@ -214,6 +224,22 @@ def _atomic_write_json(path, data) -> None:
     os.replace(tmp, path)
 
 
+async def _write_heartbeat(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """JobQueue tick → stamp _HEARTBEAT_PATH with the current epoch.
+    Runs on the asyncio loop so a wedged loop freezes the stamp, which
+    the host watchdog (auto_pull.sh) uses to detect + restart a hung
+    bot. Plain integer text for trivial shell parsing; errors swallowed
+    so a transient FS issue never kills the loop."""
+    try:
+        import os
+        import time as _t
+        tmp = _HEARTBEAT_PATH.with_suffix(".tmp")
+        tmp.write_text(str(int(_t.time())))
+        os.replace(tmp, _HEARTBEAT_PATH)
+    except Exception:
+        log.exception("heartbeat write failed")
+
+
 def _load_json_with_recovery(path):
     """Load JSON, falling back to the .bak snapshot if the primary file
     is corrupt (truncated mid-write by a previous crash). Returns None
@@ -385,6 +411,12 @@ def _run_memory_cleanup(reason: str = "scheduled") -> float:
 _RETRY_QUEUE_PATH = config.DATA_DIR / "retry_queue.json"
 _FAILED_LOG_PATH = config.DATA_DIR / "failed_log.json"
 _HISTORY_PATH = config.DATA_DIR / "chat_history.json"
+# Liveness heartbeat: a JobQueue tick stamps this file with the current
+# epoch every 60 s. It runs on the asyncio loop, so a wedged loop (hung
+# bot that Docker's restart-on-exit can't catch) freezes the stamp. The
+# host watchdog in scripts/auto_pull.sh reads it every minute and
+# force-recreates the bot container + alerts when it goes stale.
+_HEARTBEAT_PATH = config.DATA_DIR / "bot_heartbeat"
 # Marker file: when present, _recover_orphan_files_at_startup skips
 # the boot-time orphan rescan. /queue_cancel_all creates it so a
 # cancel survives container restarts (auto_pull rebuilds, etc.).
@@ -1242,18 +1274,43 @@ class _SustainedTyping:
         self._task: asyncio.Task | None = None
 
     async def __aenter__(self) -> "_SustainedTyping":
+        global _INTERACTIVE_INFLIGHT
+        _INTERACTIVE_INFLIGHT += 1
         self._task = asyncio.create_task(
             _sustained_typing(self._update, self._ctx)
         )
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        global _INTERACTIVE_INFLIGHT
+        _INTERACTIVE_INFLIGHT = max(0, _INTERACTIVE_INFLIGHT - 1)
         if self._task is not None:
             self._task.cancel()
             try:
                 await self._task
             except (asyncio.CancelledError, Exception):
                 pass
+
+
+def _interactive_busy() -> bool:
+    """True while any user-facing command (_SustainedTyping) or Q&A
+    (_run_agent → _ACTIVE_AGENT_RUNS) is running. Ingest consults this
+    to yield to interactive work."""
+    return _INTERACTIVE_INFLIGHT > 0 or _ACTIVE_AGENT_RUNS > 0
+
+
+async def _await_interactive_idle(
+    max_wait: float = _INTERACTIVE_MAX_DEFER_SEC,
+) -> None:
+    """Hold the calling ingest task while a command / Q&A is in flight,
+    so interactive requests get loop + Gemini headroom first. Bounded by
+    max_wait so continuous chatting can't starve ingest indefinitely."""
+    if not _interactive_busy():
+        return
+    import time as _t
+    deadline = _t.monotonic() + max_wait
+    while _interactive_busy() and _t.monotonic() < deadline:
+        await asyncio.sleep(0.5)
 
 
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
@@ -1322,7 +1379,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【9. 답변 품질】</b> 자료 시점 필수·부족시 솔직 / brain 재검색 의무 / web [도메인] · 인용 [N] 자동 / 회사 분석 숫자 자동 audit · _verify Flash-Lite 출처-주제+숫자 검증 (₩1/회)
 
-<b>【10. 운영】</b> VM n2-standard-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8 · concurrent_updates+HTTPX 32 · 영속(retry/failed/history/qna/cost/ocr_cache/chunk_cache/bubbles) · 메모리 5분(90%즉시 95%거부) · 60s call · 10분 ingest
+<b>【10. 운영】</b> VM n2-standard-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8 · concurrent_updates+HTTPX 32 · 영속(retry/failed/history/qna/cost/ocr_cache/chunk_cache/bubbles) · 메모리 5분(90%즉시 95%거부) · 60s call · 10분 ingest · 질문/명령＞학습 우선(ingest 양보)
 
 <b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 · 요약/메타/번역 flash-lite(503→flash) · 답변 flash · /deep pro · Vision flash-lite · 1M ₩ Pro 1,750/Flash 420/Lite 140/Embed 200 · 답변 1h 캐시(200건) · 번역 30k+ 배치 ₩3-40
 
@@ -1330,7 +1387,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【10-3. Retry/무손실 재개】</b> 5회 선형(1h→2h→3h→4h→/failed)·silent retry · in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개·atomic JSON+.bak·/audit 검증
 
-<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
+<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→워치독 5분뒤 자동재시작·docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
 
 <b>【12. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS 14건 활용신청 + NTIS 5건 추가신청 승인 대기"""
 
@@ -8647,6 +8704,9 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
     the whole bot. While work runs we keep editing a single status
     message instead of going silent, so the user sees the ingest
     is alive."""
+    # Yield to any in-flight command / Q&A first (bounded) so a user's
+    # question isn't stuck behind a just-forwarded document's ingest.
+    await _await_interactive_idle()
     async with _INGEST_SEM:
         kind, label = _ingest_label_from_msg(msg)
         job_id = _register_ingest(label, kind, notify_chat_id)
@@ -9675,6 +9735,11 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
     healthy ones drain around them."""
     if not _INGEST_RETRY_QUEUE:
         return
+    # Interactive priority: skip this drain tick entirely while a user
+    # command / Q&A is running. The next tick (10 s later) resumes the
+    # drain — background retries can always wait for a chat to finish.
+    if _interactive_busy():
+        return
     free_slots = _INGEST_SEM._value
     n = min(_RETRY_INGEST_BATCH, free_slots, len(_INGEST_RETRY_QUEUE))
     if n <= 0:
@@ -10361,6 +10426,18 @@ def main():
             interval=60,
             first=120,
             name="drain_pending_url_decisions",
+        )
+        # Every 60s: liveness heartbeat. Stamps data/bot_heartbeat on the
+        # asyncio loop so the host watchdog (auto_pull.sh) can detect a
+        # wedged loop (hung bot) that Docker's restart-on-exit misses,
+        # and force-recreate the container. first=15 so a fresh boot
+        # writes one promptly (watchdog's 5-min threshold tolerates the
+        # gap regardless).
+        app.job_queue.run_repeating(
+            _write_heartbeat,
+            interval=60,
+            first=15,
+            name="heartbeat",
         )
         # One-shot Telegram flood-ban release notification. Today's
         # 22207s ban (logged at 2026-05-14 01:28:56 UTC) lifts at
