@@ -45,6 +45,23 @@ check_heartbeat() {
     status=$(docker inspect -f '{{.State.Status}}' thesis-bot-1 2>/dev/null || echo missing)
     [ "$status" = "running" ] || return 0
 
+    # Container-uptime guard. A freshly (re)started/deployed container
+    # inherits the PREVIOUS run's heartbeat file (bind mount) and may not
+    # have written a fresh stamp yet — esp. during the cold BM25 warm-up
+    # that delays the heartbeat job for the first minute. Without this we
+    # restart-loop every healthy deploy (saw "무응답 638s" one minute
+    # after "배포 완료"). Only judge a container hung once it has been up
+    # at least as long as the stale window.
+    local started_at started_epoch uptime
+    started_at=$(docker inspect -f '{{.State.StartedAt}}' thesis-bot-1 2>/dev/null)
+    if [ -n "$started_at" ]; then
+        started_epoch=$(date -d "$started_at" +%s 2>/dev/null || echo 0)
+        if [ "$started_epoch" -gt 0 ]; then
+            uptime=$(( $(date +%s) - started_epoch ))
+            [ "$uptime" -ge "$HEARTBEAT_STALE_SEC" ] || return 0
+        fi
+    fi
+
     # Missing file → bot hasn't stamped yet (fresh boot / pre-watchdog
     # image). Don't act, so a healthy-but-young container is never
     # restart-looped.

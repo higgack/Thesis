@@ -237,12 +237,13 @@ def _atomic_write_json(path, data) -> None:
     os.replace(tmp, path)
 
 
-async def _write_heartbeat(ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """JobQueue tick → stamp _HEARTBEAT_PATH with the current epoch.
-    Runs on the asyncio loop so a wedged loop freezes the stamp, which
-    the host watchdog (auto_pull.sh) uses to detect + restart a hung
-    bot. Plain integer text for trivial shell parsing; errors swallowed
-    so a transient FS issue never kills the loop."""
+def _stamp_heartbeat() -> None:
+    """Write the current epoch to _HEARTBEAT_PATH (atomic). Plain integer
+    text for trivial shell parsing; errors swallowed so a transient FS
+    issue never kills the caller. Called once at startup (so a fresh
+    container's file is current the instant it boots, not only after the
+    first 60s job tick — closes the post-deploy false-restart window)
+    and every 60s thereafter via _write_heartbeat."""
     try:
         import os
         import time as _t
@@ -251,6 +252,13 @@ async def _write_heartbeat(ctx: ContextTypes.DEFAULT_TYPE) -> None:
         os.replace(tmp, _HEARTBEAT_PATH)
     except Exception:
         log.exception("heartbeat write failed")
+
+
+async def _write_heartbeat(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """JobQueue tick → stamp _HEARTBEAT_PATH. Runs on the asyncio loop so
+    a wedged loop freezes the stamp, which the host watchdog
+    (auto_pull.sh) uses to detect + restart a hung bot."""
+    _stamp_heartbeat()
 
 
 async def _startup_smoke(ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -10573,6 +10581,11 @@ def main():
     _load_persisted_state()
     _load_dedup_confirmed()
     _load_permanently_ignored()
+    # Stamp the heartbeat immediately so the freshly-booted container's
+    # file is current before the cold BM25 warm-up below (which delays
+    # the first 60s heartbeat tick) — prevents the watchdog from judging
+    # a just-deployed bot as hung on the old, inherited stamp.
+    _stamp_heartbeat()
     _cleanup_stale_bubbles_at_startup(app)
     _recover_orphan_files_at_startup(app)
     vector.warm_bm25_cache()  # background scan; first query stays fast
