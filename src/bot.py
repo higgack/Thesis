@@ -36,11 +36,14 @@ _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # should win event-loop + Gemini concurrency over background learning.
 # Ingest waits on _await_interactive_idle() before grabbing an
 # _INGEST_SEM slot, and the retry-drain tick is skipped entirely while
-# interactive work is in flight. Bounded by _INTERACTIVE_MAX_DEFER_SEC
-# so a continuous chat session can never starve ingest forever. Ingest
-# paths touch NEITHER counter, so there's no self-wait / deadlock.
+# interactive work is in flight. _ACTIVE_AGENT_RUNS stays high through
+# _finalize_agent_reply (the full answer render+send), so a live forward
+# can't cut into a long multi-part answer (charts/diagrams). 300s cap so
+# a stuck query can't starve ingest forever — forwards aren't urgent and
+# the retry queue loses nothing. Ingest paths touch NEITHER counter, so
+# there's no self-wait / deadlock.
 _INTERACTIVE_INFLIGHT = 0
-_INTERACTIVE_MAX_DEFER_SEC = float(os.getenv("INGEST_DEFER_SEC", "45"))
+_INTERACTIVE_MAX_DEFER_SEC = float(os.getenv("INGEST_DEFER_SEC", "300"))
 # How many queued retries to drain per tick + how often we tick. Tuned
 # for c3-standard-4 / n2-standard-4 (4 vCPU, 16 GiB RAM) + 12 GiB bot
 # mem_limit + BGE-M3 (local embed, no API wait). 4 items per 30 s =
@@ -1387,7 +1390,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【10-3. Retry/무손실 재개】</b> 5회 선형(1h→2h→3h→4h→/failed)·silent retry · in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개·atomic JSON+.bak·/audit 검증
 
-<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→워치독 5분뒤 자동재시작·docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
+<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→워치독 10분뒤 자동재시작·docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
 
 <b>【12. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS 14건 활용신청 + NTIS 5건 추가신청 승인 대기"""
 

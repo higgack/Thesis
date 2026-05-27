@@ -24,7 +24,7 @@ NL=$'\n'
 # Liveness watchdog tuning. bot.py stamps data/bot_heartbeat with the
 # current epoch every 60s on the asyncio loop; a wedged loop freezes it.
 HEARTBEAT_FILE="data/bot_heartbeat"
-HEARTBEAT_STALE_SEC=300        # 5 min with no stamp = hung loop
+HEARTBEAT_STALE_SEC=600        # 10 min with no stamp = hung loop
 WATCHDOG_COOLDOWN_FILE="/tmp/thesis_watchdog_cooldown"
 WATCHDOG_COOLDOWN_SEC=600      # restart at most once / 10 min
 
