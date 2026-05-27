@@ -2235,7 +2235,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"({_LAST_CLEANUP_FREED_MB:+.1f} MB 회수)"
             )
         else:
-            cleanup_line = "\n🧹 마지막 메모리 청소: 아직 없음 (5분 주기 자동)"
+            cleanup_line = "\n🧹 마지막 메모리 청소: 아직 없음 (3분 주기 자동)"
         # Active ingest detail — file name + elapsed time per running
         # slot. Sorted by start time (oldest first) so the user sees
         # "what's been running longest, is it stuck?" at a glance.
@@ -9361,7 +9361,7 @@ async def _promote_expired_pending(ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def _periodic_memory_cleanup(ctx: ContextTypes.DEFAULT_TYPE):
-    """Idle-only gc + malloc_trim every 5min. Skip when agent runs
+    """Idle-only gc + malloc_trim every 3min. Skip when agent runs
     are active so we don't steal CPU from in-flight answers; the
     pre-run threshold guard handles the busy-but-pressured case
     separately."""
@@ -10376,7 +10376,7 @@ def main():
         )
         app.job_queue.run_repeating(
             _periodic_memory_cleanup,
-            interval=300,
+            interval=180,
             first=180,
             name="periodic_memory_cleanup",
         )
