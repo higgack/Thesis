@@ -183,6 +183,13 @@ _BM25_LOCK = threading.Lock()
 # via live dense search in the meantime, so recall isn't hurt.
 _BM25_DRIFT_MIN = 200
 _BM25_MIN_INTERVAL_SEC = 300
+# Above this many chunks, skip BM25 entirely and use dense-only
+# retrieval. BM25 here is an augmentary signal; on a very large corpus
+# its cold rebuild pegs the GIL on every restart and per-query
+# get_scores is O(n), which made the bot sluggish (the whole reason the
+# watchdog kept firing). Dense (embedding) retrieval handles recall at
+# this scale. Env-tunable; raise it to re-enable BM25 on a big corpus.
+_BM25_MAX_CHUNKS = int(os.getenv("BM25_MAX_CHUNKS", "50000"))
 
 
 def _scan_all_chunks() -> list[tuple[str, str, dict]]:
@@ -234,8 +241,13 @@ def all_documents_text() -> list[tuple[str, str, dict]] | None:
     _BM25_MIN_INTERVAL_SEC has elapsed since the last build (or on a cold
     cache). Serves the slightly-stale snapshot otherwise so an ingest
     burst can't trigger back-to-back full-corpus rescans that starve the
-    loop. Avoids blocking the event loop on multi-thousand-chunk scans."""
+    loop. Avoids blocking the event loop on multi-thousand-chunk scans.
+
+    Returns None unconditionally once the corpus exceeds _BM25_MAX_CHUNKS
+    (dense-only) — no scan, no build thread, no per-query scoring."""
     n = _collection.count()
+    if n > _BM25_MAX_CHUNKS:
+        return None
     cached = _BM25_CACHE["data"]
     if cached is not None:
         drift = abs(n - _BM25_CACHE["count"])
