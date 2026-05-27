@@ -8804,6 +8804,45 @@ async def _live_status_updater(ctx, chat_id: int, msg_id: int,
             # Other errors (message too old etc) — swallow and continue.
 
 
+def _retry_payload_from_msg(msg, chat_id: int) -> dict | None:
+    """Rebuild the retry payload for a message's PRIMARY content so a
+    timed-out ingest stays retryable. The per-kind branches in
+    _ingest_message_locked build these, but the timeout is caught one
+    level up (here) where those are out of scope — so mirror them.
+    Returns None when nothing is retryable. Kept read-only / off the
+    success path: only the timeout handler calls it."""
+    if msg.document:
+        d = msg.document
+        return {"kind": "doc", "file_id": d.file_id,
+                "file_unique_id": d.file_unique_id,
+                "file_name": d.file_name, "chat_id": chat_id}
+    if msg.photo:
+        p = msg.photo[-1]
+        return {"kind": "photo", "file_id": p.file_id,
+                "file_unique_id": p.file_unique_id,
+                "caption": msg.caption or "", "chat_id": chat_id}
+    if msg.voice:
+        v = msg.voice
+        return {"kind": "voice", "file_id": v.file_id,
+                "file_unique_id": v.file_unique_id,
+                "mime_type": v.mime_type or "audio/ogg",
+                "caption": msg.caption or "", "chat_id": chat_id}
+    if msg.audio:
+        a = msg.audio
+        return {"kind": "audio", "file_id": a.file_id,
+                "file_unique_id": a.file_unique_id,
+                "file_name": a.file_name or "", "title": a.title or "",
+                "mime_type": a.mime_type or "audio/mpeg",
+                "caption": msg.caption or "", "chat_id": chat_id}
+    urls, plain = _collect_message_urls(msg)
+    if urls:
+        return {"kind": "url", "url": urls[0], "chat_id": chat_id}
+    if plain and len(plain) >= 80:
+        return {"kind": "text", "text": plain,
+                "label": f"tg-msg:{msg.message_id}", "chat_id": chat_id}
+    return None
+
+
 async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: int):
     """Cap concurrent ingests via semaphore + per-message timeout
     + per-message live status bubble.
@@ -8859,8 +8898,13 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
         except asyncio.TimeoutError:
             timed_out = True
             log.warning("ingest timeout (%ds) for %s", _INGEST_TIMEOUT_SEC, label)
+            # Save a retry payload so a timed-out item shows the 🔁 #N
+            # button in /failed (and works with 일괄 재시도) — previously
+            # timeouts recorded no payload, so they were drop-only.
             _record_failure("timeout", label,
-                            f"ingest exceeded {_INGEST_TIMEOUT_SEC}s")
+                            f"ingest exceeded {_INGEST_TIMEOUT_SEC}s",
+                            retry_payload=_retry_payload_from_msg(
+                                msg, notify_chat_id))
         finally:
             if updater_task:
                 updater_task.cancel()
