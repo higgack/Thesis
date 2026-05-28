@@ -1373,7 +1373,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 🔍 <b>Orphan</b>: /orphans · /recover_orphans(건별 [📥]/[🗑])
 
 ⏸️ <b>보류 (5분)</b>
-  /pending(건별 결정) · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /ocr_extend &lt;id|kw&gt;
+  /pending · /pending_ocr &lt;N&gt; · /pending_pro &lt;N&gt; · /pending_links · /ocr_extend &lt;id|kw&gt;
   /pending_approve_all · /pending_approve_all_confirm · /pending_cancel_all
 
 🗑️ <b>삭제</b>
@@ -1574,6 +1574,11 @@ N번째 항목에 OCR 추가 결정.
 <b>/pending_pro &lt;N&gt;</b>
 N번째 항목을 Pro 모델 (Gemini 2.5 Pro) 처리. 비용 4배, 정확도 향상.
 
+<b>/pending_links</b>
+학습한 URL 본문에서 찾은 링크 묶음을 다시 표시 (제목·요약 미리보기 +
+선택 버튼). 학습 직후 못 골랐거나 봇이 재시작돼도 여기서 확인·선택.
+선택한 링크만 추가 학습 (글 속 링크까지 — 1단계).
+
 <b>/pending_approve_all</b>
 모든 보류 일괄 기본값 (텍스트만) 승인 미리보기.
 
@@ -1663,6 +1668,11 @@ Gemini Grounding 라이브 구글 검색. 한국어 3-7 bullet + [도메인] 출
 <b>/ingest_url &lt;URL&gt;</b>
 URL 영구 학습 — fetch → 청크 → 요약 → 임베딩 → Obsidian. 일반 웹 ·
 arXiv · YouTube 자막 · Jina readability. 차단: LinkedIn/FB/IG/주요 paywall.
+네이버 블로그는 PostView 엔드포인트로 본문 추출(차단 면제).
+글 본문에 다른 링크가 있으면 학습 직후 각 링크의 제목·요약 미리보기와
+함께 버튼으로 떠서, 원하는 것만 골라 추가 학습 가능 (글 속 링크까지만 —
+1단계, 링크의 링크는 안 따라감). 바로 못 고르면 /pending(또는
+/pending_links)에 묶음으로 남아 나중에 확인·선택 가능 (봇 재시작에도 유지).
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
@@ -4020,6 +4030,10 @@ async def cmd_audit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pending_pro_n = len(await asyncio.to_thread(pending_store.list_pro))
         except Exception:
             pending_ocr_n = pending_pro_n = 0
+        try:
+            pending_links_n = len(await asyncio.to_thread(pending_store.list_links))
+        except Exception:
+            pending_links_n = 0
 
         # Disk truth: read the persisted files directly so the user sees
         # both in-memory and on-disk counts. Disk count >= memory means
@@ -4039,7 +4053,8 @@ async def cmd_audit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-        total_pending = queue_n + orphan_n + failed_n + pending_ocr_n + pending_pro_n
+        total_pending = (queue_n + orphan_n + failed_n + pending_ocr_n
+                         + pending_pro_n + pending_links_n)
 
         lines = [
             "🔍 <b>학습 대기 감사</b>",
@@ -4053,6 +4068,7 @@ async def cmd_audit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             " (디스크에는 있지만 미학습 — 다음 스캔/재시작 시 자동 큐 등록)",
             f"• Pending OCR: <b>{pending_ocr_n}건</b>"
             f" / Pending Pro: <b>{pending_pro_n}건</b>",
+            f"• 본문 링크 대기: <b>{pending_links_n}묶음</b> (/pending_links)",
             f"━━━━━━━━━━━━━━━",
             f"📦 <b>합계 {total_pending}건</b> 학습 대기 (이 외엔 모두 처리 끝)",
             "",
@@ -4228,15 +4244,19 @@ async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ocr_items = await asyncio.to_thread(pending_store.list_ocr)
         pro_items = await asyncio.to_thread(pending_store.list_pro)
         url_items = await asyncio.to_thread(pending_url_decisions.list_overdue)
-        if not ocr_items and not pro_items and not url_items:
+        link_items = await asyncio.to_thread(pending_store.list_links)
+        if not ocr_items and not pro_items and not url_items and not link_items:
             await update.message.reply_text(
                 "📭 검토 대기 항목 없음 — 모든 확인 prompt가 처리됨."
             )
             return
 
         # Header summary
-        total = len(ocr_items) + len(pro_items) + len(url_items)
+        total = (len(ocr_items) + len(pro_items) + len(url_items)
+                 + len(link_items))
         header = [f"📋 검토 대기 항목 ({total}개)"]
+        if link_items:
+            header.append(f"🔗 본문 링크 {len(link_items)}묶음")
         if ocr_items:
             header.append(f"🔵 OCR 확장 가능 {len(ocr_items)}개 — "
                           f"아래 항목별 버튼으로 한 번에 결정")
@@ -4350,6 +4370,52 @@ async def cmd_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     f"…외 {len(url_items) - URL_INLINE_CAP}건 더 있음. "
                     f"위 처리 후 /pending 다시 호출."
                 )
+
+        # In-post link prompts: re-send the preview list + buttons for any
+        # bundle still holding undone links (a prompt the user scrolled
+        # past). Cap to keep the keyboard responsive.
+        if link_items:
+            await update.message.reply_text(
+                f"🔗 본문 링크 대기 {len(link_items)}묶음 — 아래에서 선택 "
+                f"(또는 /pending_links):"
+            )
+            LINK_INLINE_CAP = 10
+            for it in link_items[:LINK_INLINE_CAP]:
+                await _send_one_link_prompt(
+                    ctx, update.effective_chat.id, it["id"],
+                    it.get("parent_title") or "", it["links"],
+                )
+            if len(link_items) > LINK_INLINE_CAP:
+                await update.message.reply_text(
+                    f"…외 {len(link_items) - LINK_INLINE_CAP}묶음 더 있음. "
+                    f"위 처리 후 /pending_links."
+                )
+
+
+async def cmd_pending_links(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Re-list outstanding in-post link prompts (preview + buttons) so a
+    missed prompt can be acted on later. State lives in pending_links."""
+    if not _is_owner(update):
+        return
+    async with _SustainedTyping(update, ctx):
+        items = await asyncio.to_thread(pending_store.list_links)
+        if not items:
+            await update.message.reply_text(
+                "📭 대기 중인 본문 링크 묶음 없음 — 모두 처리됨."
+            )
+            return
+        await update.message.reply_text(
+            f"🔗 본문 링크 대기 {len(items)}묶음:"
+        )
+        for it in items[:10]:
+            await _send_one_link_prompt(
+                ctx, update.effective_chat.id, it["id"],
+                it.get("parent_title") or "", it["links"],
+            )
+        if len(items) > 10:
+            await update.message.reply_text(
+                f"…외 {len(items) - 10}묶음. 위 처리 후 /pending_links 재호출."
+            )
 
 
 async def cmd_ocr_extend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -8441,6 +8507,155 @@ async def _send_pro_confirmation(update: Update, result: dict) -> None:
 _PENDING_SHORT_TO_FULL: dict[str, str] = {}
 
 
+def _short_link_label(url: str) -> str:
+    """Compact host+tail label for a link button (Telegram caps button
+    text; keep it readable)."""
+    from urllib.parse import urlparse
+    p = urlparse(url)
+    host = p.netloc.replace("www.", "")
+    tail = (p.path or "").rstrip("/").rsplit("/", 1)[-1][:24]
+    return f"{host}/{tail}"[:36] if tail else host[:36]
+
+
+_LINK_PREVIEW_SEM = asyncio.Semaphore(5)
+
+
+async def _preview_links(links: list[dict]) -> list[dict]:
+    """Enrich raw {url,anchor} link items with a cheap title/desc preview
+    (bounded concurrency + short per-link timeout). Falls back to the
+    anchor text when metadata fetch yields nothing. Returns items shaped
+    for the pending store: {url,title,desc}."""
+    from .ingest.loaders import fetch_link_preview
+
+    async def _one(item: dict) -> dict:
+        url = item.get("url", "")
+        anchor = (item.get("anchor") or "").strip()
+        async with _LINK_PREVIEW_SEM:
+            try:
+                p = await fetch_link_preview(url)
+            except Exception:
+                p = {"title": "", "desc": ""}
+        title = (p.get("title") or anchor or "").strip()[:120]
+        return {"url": url, "title": title,
+                "desc": (p.get("desc") or "").strip()[:200]}
+
+    return list(await asyncio.gather(*[_one(l) for l in links]))
+
+
+async def _send_one_link_prompt(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int,
+                                row_id: int, parent_title: str,
+                                links: list[dict]) -> None:
+    """Render one persistent link-prompt row as a preview list + inline
+    buttons keyed on the pending_links row id. Skips links already
+    learned (done=True). Shared by the post-ingest prompt and
+    /pending_links."""
+    pending = [(i, l) for i, l in enumerate(links) if not l.get("done")]
+    if not pending:
+        return
+    head = f"🔗 '{(parent_title or '글')[:50]}' 본문 링크 {len(pending)}개 — 학습할 것 선택"
+    lines = [head, "(글 속 링크만 — 더 깊이는 안 들어감)", ""]
+    rows: list[list[InlineKeyboardButton]] = []
+    for i, l in pending:
+        title = l.get("title") or _short_link_label(l["url"])
+        desc = l.get("desc") or ""
+        lines.append(f"{i + 1}. {title}")
+        if desc:
+            lines.append(f"   ↳ {desc}")
+        lines.append(f"   🔗 {l['url'][:90]}")
+        rows.append([InlineKeyboardButton(
+            f"📥 {i + 1}. {title[:30]}", callback_data=f"lnk:{row_id}:{i}")])
+    rows.append([
+        InlineKeyboardButton("📥 전체 학습", callback_data=f"lnk:{row_id}:all"),
+        InlineKeyboardButton("❌ 닫기", callback_data=f"lnk:{row_id}:skip"),
+    ])
+    await ctx.bot.send_message(
+        chat_id, "\n".join(lines)[:4000],
+        reply_markup=InlineKeyboardMarkup(rows),
+        disable_web_page_preview=True,
+    )
+
+
+async def _send_link_prompts(ctx: ContextTypes.DEFAULT_TYPE,
+                             chat_id: int, results: list[dict]) -> None:
+    """For each freshly-learned URL whose body carried author links,
+    persist a pending_links row (so a missed prompt resurfaces via
+    /pending) and show a preview list + inline buttons. Depth 1: chosen
+    links are ingested but NOT re-scanned for further links."""
+    for r in results:
+        links = r.get("found_links") or []
+        if not links:
+            continue
+        enriched = await _preview_links(links)
+        row_id = await asyncio.to_thread(
+            pending_store.add_links,
+            chat_id=chat_id,
+            parent_title=str(r.get("title") or "")[:200],
+            parent_url=str(r.get("source") or "")[:300],
+            links=enriched,
+        )
+        if row_id is None:
+            log.warning("pending.add_links returned None — skipping link prompt")
+            continue
+        await _send_one_link_prompt(
+            ctx, chat_id, row_id, str(r.get("title") or ""), enriched)
+
+
+async def on_link_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """In-post link prompt handler (callback_data 'lnk:<row_id>:<sel>').
+    sel is a link index, 'all', or 'skip'. State lives in pending_links
+    (SQLite) so buttons survive restart; chosen links go through the
+    resume-safe _ingest_one_url with scan_links=False (depth-1 cap)."""
+    q = update.callback_query
+    await q.answer()
+    try:
+        _, sid, sel = q.data.split(":", 2)
+        row_id = int(sid)
+    except (ValueError, AttributeError):
+        return
+    rec = await asyncio.to_thread(pending_store.get_links, row_id)
+    if rec is None:
+        try:
+            await q.edit_message_text("⌛ 이미 처리됐거나 사라진 링크 목록이야.")
+        except Exception:
+            pass
+        return
+    links: list[dict] = rec["links"]
+    if sel == "skip":
+        await asyncio.to_thread(pending_store.delete_links, row_id)
+        await q.edit_message_text("❌ 링크 학습 취소됨 (목록 삭제).")
+        return
+    if sel == "all":
+        targets = [i for i, l in enumerate(links) if not l.get("done")]
+    else:
+        try:
+            idx = int(sel)
+        except ValueError:
+            return
+        if idx < 0 or idx >= len(links) or links[idx].get("done"):
+            return  # already learned / out of range — top q.answer() sufficed
+        targets = [idx]
+    if not targets:
+        await asyncio.to_thread(pending_store.delete_links, row_id)
+        await q.edit_message_text("✅ 이 목록의 링크는 모두 처리했어.")
+        return
+    chat_id = rec["chat_id"]
+    await q.edit_message_text(f"📥 링크 {len(targets)}개 학습 중…")
+    out_lines: list[str] = []
+    for idx in targets:
+        u = links[idx]["url"]
+        res = await _ingest_one_url(u, chat_id, scan_links=False)
+        links[idx]["done"] = True
+        line = _format_results([res]).strip()
+        out_lines.append(line or f"🚫 학습 안 함: {u[:60]}")
+    if all(l.get("done") for l in links):
+        await asyncio.to_thread(pending_store.delete_links, row_id)
+    else:
+        await asyncio.to_thread(pending_store.set_links, row_id, links)
+    body = "🔗 링크 학습 결과:\n" + "\n".join(out_lines)
+    await ctx.bot.send_message(chat_id, body[:4000],
+                               disable_web_page_preview=True)
+
+
 async def _send_ocr_extend_prompts(ctx: ContextTypes.DEFAULT_TYPE,
                                    chat_id: int, results: list[dict]) -> None:
     """For each PDF result with capped Vision OCR, register a pending
@@ -8968,6 +9183,10 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
                 await _send_ocr_extend_prompts(ctx, notify_chat_id, results)
             except Exception:
                 log.exception("ocr extend prompts failed")
+            try:
+                await _send_link_prompts(ctx, notify_chat_id, results)
+            except Exception:
+                log.exception("link prompts failed")
 
         return results
 
@@ -9105,6 +9324,45 @@ def _is_retryable(e: BaseException) -> bool:
         *_OVERLOAD_MARKERS,
         "Timeout", "ReadError", "ConnectError", "RemoteProtocolError",
     ))
+
+
+async def _ingest_one_url(url: str, notify_chat_id: int,
+                          *, scan_links: bool = True) -> dict:
+    """Resume-safe single-URL ingest shared by the main message path and
+    the in-post link buttons. Honours the ignored / previously-failed
+    skip lists, enqueues an in-flight marker BEFORE the pipeline call so
+    a mid-process kill is recoverable, and mirrors the main path's
+    status handling. scan_links=False strips found_links so a
+    link-button ingest doesn't itself spawn another link prompt
+    (depth-1 cap)."""
+    if _is_ignored_url(url):
+        log.info("url skip — permanently ignored: %s", url[:120])
+        return {"status": "skipped", "title": url, "source": url,
+                "detail": "영구 무시 URL (/failed_clear)"}
+    if _url_in_failed_log(url):
+        log.info("url skip — previously failed: %s", url[:120])
+        return {"status": "skipped", "title": url, "source": url,
+                "detail": "이전에 실패한 URL — 자동 skip"}
+    url_retry = {"kind": "url", "url": url}
+    url_item = _enqueue_with_inflight({**url_retry, "chat_id": notify_chat_id})
+    try:
+        r = await pipeline.ingest_url(url)
+        r.setdefault("source", url)
+        r.setdefault("title", url)
+        if r.get("status") in ("empty", "error"):
+            r["retry_payload"] = url_retry
+        if not scan_links:
+            r.pop("found_links", None)
+        _finish_inflight(url_item, "done")
+        return r
+    except Exception as e:
+        log.exception("url ingest failed: %s", url)
+        if _is_retryable(e):
+            _finish_inflight(url_item, "retry")
+            return {"status": "queued", "title": url}
+        _finish_inflight(url_item, "done")
+        return {"status": "error", "error": _explain_error(e),
+                "source": url, "retry_payload": url_retry}
 
 
 async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
@@ -9256,44 +9514,9 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
 
     urls, plain = _collect_message_urls(msg)
     for url in urls:
-        # Skip URLs the user explicitly cleared via /failed_clear
-        # (permanently ignored) OR URLs that have already burned
-        # through their retry budget — paywalled domains stay broken,
-        # no point spending another 5 attempts.
-        if _is_ignored_url(url):
-            log.info("url skip — permanently ignored: %s", url[:120])
-            results.append({"status": "skipped", "title": url,
-                            "source": url,
-                            "detail": "영구 무시 URL (/failed_clear)"})
-            continue
-        if _url_in_failed_log(url):
-            log.info("url skip — previously failed: %s", url[:120])
-            results.append({"status": "skipped", "title": url,
-                            "source": url,
-                            "detail": "이전에 실패한 URL — 자동 skip"})
-            continue
-        url_retry = {"kind": "url", "url": url}
-        url_item = _enqueue_with_inflight(
-            {**url_retry, "chat_id": notify_chat_id}
-        )
-        try:
-            r = await pipeline.ingest_url(url)
-            r.setdefault("source", url)
-            r.setdefault("title", url)
-            if r.get("status") in ("empty", "error"):
-                r["retry_payload"] = url_retry
-            results.append(r)
-            _finish_inflight(url_item, "done")
-        except Exception as e:
-            log.exception("url ingest failed: %s", url)
-            if _is_retryable(e):
-                _finish_inflight(url_item, "retry")
-                results.append({"status": "queued", "title": url})
-            else:
-                _finish_inflight(url_item, "done")
-                results.append({"status": "error",
-                                "error": _explain_error(e),
-                                "source": url, "retry_payload": url_retry})
+        # _ingest_one_url owns the ignore / previously-failed skips,
+        # the in-flight enqueue (resume-safety) and status mapping.
+        results.append(await _ingest_one_url(url, notify_chat_id))
 
     if (plain and not msg.document and not msg.photo
             and not msg.voice and not msg.audio and len(plain) >= 80):
@@ -10443,6 +10666,9 @@ def main():
         on_ocr_extend_callback, pattern=r"^ocr:"
     ))
     app.add_handler(CallbackQueryHandler(
+        on_link_callback, pattern=r"^lnk:"
+    ))
+    app.add_handler(CallbackQueryHandler(
         on_ack_callback, pattern=r"^ack:"
     ))
     app.add_handler(CommandHandler("queue", cmd_queue))
@@ -10453,6 +10679,7 @@ def main():
     app.add_handler(CommandHandler("recover_orphans", cmd_recover_orphans))
     app.add_handler(CommandHandler("pending", cmd_pending))
     app.add_handler(CommandHandler("pending_ocr", cmd_pending_ocr))
+    app.add_handler(CommandHandler("pending_links", cmd_pending_links))
     app.add_handler(CommandHandler("pending_pro", cmd_pending_pro))
     app.add_handler(CommandHandler("ocr_extend", cmd_ocr_extend))
     app.add_handler(CommandHandler("pending_approve_all", cmd_pending_approve_all))

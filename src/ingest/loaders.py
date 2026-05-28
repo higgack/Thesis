@@ -114,21 +114,27 @@ def _rewrite_for_better_fetch(url: str) -> str:
     return url
 
 
-async def load_url(url: str) -> tuple[str, str, str | None]:
-    """Returns (title, text, hint_summary).
+async def load_url(url: str) -> tuple[str, str, str | None, list[str]]:
+    """Returns (title, text, hint_summary, outlinks).
 
     hint_summary is a free, source-provided abstract / og:description that
-    can replace LLM summarization when good enough."""
+    can replace LLM summarization when good enough.
+
+    outlinks are http(s) URLs the author placed in the article BODY (site
+    chrome/nav excluded), surfaced for the optional in-post link prompt.
+    Empty for youtube / arxiv / pdf / blocked-host results."""
     yt = is_youtube(url)
     if yt:
-        return await load_youtube(yt, url)
+        t, b, h = await load_youtube(yt, url)
+        return t, b, h, []
     if m := _ARXIV_RE.search(url):
-        return await load_arxiv(m.group(1))
+        t, b, h = await load_arxiv(m.group(1))
+        return t, b, h, []
     try:
         from urllib.parse import urlparse
         host = urlparse(url).netloc.lower()
         if any(h in host for h in _BLOCKED_HOSTS):
-            return "", "", None  # short-circuit; downstream will say empty
+            return "", "", None, []  # short-circuit; downstream says empty
     except Exception:
         pass
     # Rewrite SPA-heavy URLs to scraper-friendly alternates BEFORE the
@@ -141,6 +147,7 @@ async def load_url(url: str) -> tuple[str, str, str | None]:
     if fetch_url != url and "blog.naver.com" in fetch_url:
         headers["Referer"] = url
     title, body, hint = "", "", None
+    links: list[str] = []
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True,
                                      headers=headers) as c:
@@ -148,9 +155,12 @@ async def load_url(url: str) -> tuple[str, str, str | None]:
             r.raise_for_status()
             ct = r.headers.get("content-type", "").lower()
             if "application/pdf" in ct or r.content[:5] == b"%PDF-":
-                return await _load_pdf_from_bytes(r.content, str(r.url))
+                t, b, h = await _load_pdf_from_bytes(r.content, str(r.url))
+                return t, b, h, []
             html = r.text
         title, body, hint = await asyncio.to_thread(_parse_html, fetch_url, html)
+        links = await asyncio.to_thread(
+            _extract_content_links, html, str(fetch_url))
     except Exception:
         pass
 
@@ -166,7 +176,7 @@ async def load_url(url: str) -> tuple[str, str, str | None]:
         except Exception:
             pass
 
-    return title or url[:200], body, hint
+    return title or url[:200], body, hint, links
 
 
 def _is_js_placeholder(body: str) -> bool:
@@ -200,6 +210,94 @@ def _parse_html(url: str, html: str) -> tuple[str, str, str | None]:
     title = (meta.title if meta and meta.title else url)[:200]
     hint = (meta.description if meta and meta.description else None)
     return title, extracted.strip(), hint
+
+
+_MAX_OUTLINKS = 12
+_OUTLINK_IMG_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp")
+# Asset / CDN / tracker hosts that are never article content — Naver
+# image stores, profile thumbnails, share widgets, etc.
+_OUTLINK_SKIP_SUBSTR = (
+    "pstatic.net", "phinf.naver", "blogpfthumb", "ssl.pstatic",
+    "naver.com/profile", "/share", "javascript:",
+)
+
+
+def _extract_content_links(html: str, base_url: str) -> list[dict]:
+    """In-post links the author placed in the article BODY (not nav /
+    menu / related-widget chrome). Runs trafilatura with include_links
+    so the content detector drops site chrome, then pulls absolute URLs
+    (and their anchor text) out of the markdown. Images, asset/tracker
+    hosts, and the page's own URL are filtered. Returns a list of
+    {"url","anchor"} — deduped, order-preserved, capped at _MAX_OUTLINKS.
+    anchor is the link's display text (often the destination's title for
+    Naver related-post cards), used as a free preview fallback."""
+    try:
+        md = trafilatura.extract(
+            html, include_links=True, include_comments=False,
+            output_format="markdown",
+        ) or ""
+    except Exception:
+        return []
+    from urllib.parse import urlparse
+    base = urlparse(base_url)
+    out: list[dict] = []
+    seen: set[str] = set()
+    # Capture both the anchor text and the URL: [anchor](url)
+    for m in re.finditer(r"\[([^\]]*)\]\((https?://[^\s)]+)\)", md):
+        anchor = (m.group(1) or "").strip()
+        u = m.group(2).rstrip(".,)")
+        low = u.lower()
+        if low.endswith(_OUTLINK_IMG_EXT):
+            continue
+        if any(s in low for s in _OUTLINK_SKIP_SUBSTR):
+            continue
+        if u in seen:
+            continue
+        p = urlparse(u)
+        # Skip the page's own URL (self-link / canonical echo).
+        if p.netloc.lower() == base.netloc.lower() and p.path == base.path:
+            continue
+        seen.add(u)
+        out.append({"url": u, "anchor": anchor[:120]})
+        if len(out) >= _MAX_OUTLINKS:
+            break
+    return out
+
+
+def _parse_preview_meta(html: str) -> dict:
+    """Title + description from a page's metadata only (og: tags /
+    <title> / meta description) — no body extraction. Cheap link-card
+    style preview."""
+    try:
+        meta = trafilatura.extract_metadata(html)
+    except Exception:
+        meta = None
+    title = (meta.title if meta and meta.title else "") or ""
+    desc = (meta.description if meta and meta.description else "") or ""
+    return {"title": title.strip()[:120], "desc": desc.strip()[:200]}
+
+
+async def fetch_link_preview(url: str) -> dict:
+    """Lightweight {"title","desc"} preview for a link WITHOUT learning
+    it: one short GET + metadata parse. No Jina, no body extraction, no
+    cost. Short timeout so a slow host can't stall the prompt; failures
+    return empties and the caller falls back to the anchor text."""
+    fetch_url = _rewrite_for_better_fetch(url)
+    headers = {"User-Agent": _BROWSER_UA}
+    if fetch_url != url and "blog.naver.com" in fetch_url:
+        headers["Referer"] = url
+    try:
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True,
+                                     headers=headers) as c:
+            r = await c.get(fetch_url)
+            r.raise_for_status()
+            ct = r.headers.get("content-type", "").lower()
+            if "text/html" not in ct and "application/xhtml" not in ct:
+                return {"title": "", "desc": ""}
+            html = r.text[:300_000]
+    except Exception:
+        return {"title": "", "desc": ""}
+    return await asyncio.to_thread(_parse_preview_meta, html)
 
 
 async def _fetch_youtube_subs_yt_dlp(video_id: str) -> str:

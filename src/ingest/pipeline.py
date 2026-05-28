@@ -186,7 +186,7 @@ async def ingest_url(url: str) -> dict:
         log.info("ingest_url skip — auto-blocked host: %s", canonical[:120])
         return {"status": "blocked", "title": canonical, "source": canonical,
                 "detail": "auto-blocked (반복 추출 실패)"}
-    title, body, hint = await load_url(canonical)
+    title, body, hint, outlinks = await load_url(canonical)
     if not body or _looks_like_denial(title, body):
         url_blocklist.record_failure(canonical)
         detail = "접근 거부/페이월 추정" if body else "본문 추출 실패"
@@ -195,7 +195,39 @@ async def ingest_url(url: str) -> dict:
     # Body extracted OK — reset any prior failure count for this host.
     url_blocklist.record_success(canonical)
     body = _strip_disclaimer(body)
-    return await _ingest("url", canonical, title, body, hint)
+    result = await _ingest("url", canonical, title, body, hint)
+    # Surface in-post links the author embedded so the bot can offer
+    # them as optional follow-up ingests (the user picks which). Only on
+    # a fresh successful learn — duplicates/empties have nothing new.
+    if isinstance(result, dict) and result.get("status") == "ok" and outlinks:
+        fresh = _filter_outlinks(outlinks)
+        if fresh:
+            result["found_links"] = fresh
+    return result
+
+
+def _filter_outlinks(links: list[dict]) -> list[dict]:
+    """Trim discovered in-post links to ones worth offering: drop
+    already-learned URLs and statically/auto-blocked hosts, so the link
+    prompt never shows a target that would just be skipped. Each item is
+    {"url","anchor"}; the shape is preserved."""
+    from .loaders import _is_blocked_host
+    from ..store import url_blocklist
+    out: list[dict] = []
+    for item in links:
+        u = item.get("url") if isinstance(item, dict) else item
+        if not u:
+            continue
+        try:
+            c = _canonical_url(u)
+        except Exception:
+            c = u
+        if meta.find_by_source(c) or meta.find_by_source(u):
+            continue
+        if _is_blocked_host(c) or url_blocklist.is_blocked(c):
+            continue
+        out.append(item if isinstance(item, dict) else {"url": u, "anchor": ""})
+    return out
 
 
 async def ingest_pdf(path: Path, source_label: str,

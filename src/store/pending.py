@@ -44,6 +44,20 @@ def init() -> None:
                     created_at TEXT NOT NULL
                 )
             """)
+            # In-post link prompts: links the bot found inside a learned
+            # URL's body, offered for optional follow-up ingest. links_json
+            # is a list of {"url","title","desc","done"} so a missed prompt
+            # survives restart and resurfaces via /pending(_links).
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS pending_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id INTEGER NOT NULL,
+                    parent_title TEXT NOT NULL,
+                    parent_url TEXT NOT NULL,
+                    links_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
     except Exception:
         log.exception("pending.init failed")
 
@@ -87,6 +101,115 @@ def add_pro(chat_id: int, question: str, count: int) -> int | None:
     except Exception:
         log.exception("pending.add_pro failed")
         return None
+
+
+def add_links(chat_id: int, parent_title: str, parent_url: str,
+              links: list[dict]) -> int | None:
+    """Record an in-post link prompt. `links` is a list of
+    {"url","title","desc"} (a "done" flag is added on write). Returns
+    the row id, or None on failure."""
+    try:
+        norm = [{"url": l.get("url", ""), "title": l.get("title", ""),
+                 "desc": l.get("desc", ""), "done": bool(l.get("done"))}
+                for l in links if l.get("url")]
+        if not norm:
+            return None
+        with _conn() as c:
+            cur = c.execute(
+                "INSERT INTO pending_links "
+                "(chat_id, parent_title, parent_url, links_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (chat_id, parent_title, parent_url,
+                 json.dumps(norm, ensure_ascii=False),
+                 datetime.utcnow().isoformat(timespec="seconds")),
+            )
+            return cur.lastrowid
+    except Exception:
+        log.exception("pending.add_links failed")
+        return None
+
+
+def _row_to_links(r) -> dict:
+    try:
+        links = json.loads(r[3])
+    except Exception:
+        links = []
+    return {"id": r[0], "chat_id": r[1], "parent_title": r[2],
+            "links": links, "created_at": r[4]}
+
+
+def list_links(chat_id: int | None = None, limit: int = 50) -> list[dict]:
+    """Outstanding link prompts (those with ≥1 undone link)."""
+    try:
+        with _conn() as c:
+            if chat_id is None:
+                rows = c.execute(
+                    "SELECT id, chat_id, parent_title, links_json, created_at "
+                    "FROM pending_links ORDER BY created_at ASC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT id, chat_id, parent_title, links_json, created_at "
+                    "FROM pending_links WHERE chat_id = ? "
+                    "ORDER BY created_at ASC LIMIT ?", (chat_id, limit),
+                ).fetchall()
+        out = []
+        for r in rows:
+            rec = _row_to_links(r)
+            if any(not l.get("done") for l in rec["links"]):
+                out.append(rec)
+        return out
+    except Exception:
+        log.exception("pending.list_links failed")
+        return []
+
+
+def get_links(row_id: int) -> dict | None:
+    try:
+        with _conn() as c:
+            r = c.execute(
+                "SELECT id, chat_id, parent_title, links_json, created_at "
+                "FROM pending_links WHERE id = ?", (row_id,),
+            ).fetchone()
+        return _row_to_links(r) if r else None
+    except Exception:
+        log.exception("pending.get_links failed")
+        return None
+
+
+def set_links(row_id: int, links: list[dict]) -> bool:
+    """Overwrite the links_json (used to flip per-link done flags)."""
+    try:
+        with _conn() as c:
+            cur = c.execute(
+                "UPDATE pending_links SET links_json = ? WHERE id = ?",
+                (json.dumps(links, ensure_ascii=False), row_id),
+            )
+            return cur.rowcount > 0
+    except Exception:
+        log.exception("pending.set_links failed")
+        return False
+
+
+def delete_links(row_id: int) -> bool:
+    try:
+        with _conn() as c:
+            cur = c.execute("DELETE FROM pending_links WHERE id = ?", (row_id,))
+            return cur.rowcount > 0
+    except Exception:
+        log.exception("pending.delete_links failed")
+        return False
+
+
+def delete_all_links() -> int:
+    try:
+        with _conn() as c:
+            cur = c.execute("DELETE FROM pending_links")
+            return cur.rowcount
+    except Exception:
+        log.exception("pending.delete_all_links failed")
+        return 0
 
 
 def list_ocr(chat_id: int | None = None, limit: int = 50) -> list[dict]:
