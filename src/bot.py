@@ -3951,6 +3951,7 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             out += f"\n• [{kind}] {title[:80]} (시도 {attempts}회)"
         if len(_INGEST_RETRY_QUEUE) > 25:
             out += f"\n... 외 {len(_INGEST_RETRY_QUEUE) - 25}건"
+        out += "\n\n💡 큐가 막혀 새 학습까지 안 풀릴 때: /queue_to_failed (전체 → /failed)"
         await update.message.reply_text(out, disable_web_page_preview=True)
 
 
