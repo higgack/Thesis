@@ -9713,10 +9713,24 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
                                 "retry_payload": audio_retry})
 
     urls, plain = _collect_message_urls(msg)
-    for url in urls:
-        # _ingest_one_url owns the ignore / previously-failed skips,
-        # the in-flight enqueue (resume-safety) and status mapping.
-        results.append(await _ingest_one_url(url, notify_chat_id))
+    if urls:
+        # URL loop is fanned out — a 9-URL Korean digest previously
+        # waited ~6 min sequentially (each URL serialised behind the
+        # previous one's full unshorten + fetch + summarise + embed).
+        # 4-wide gather inside a single message gives ~4× speedup; the
+        # outer _INGEST_SEM (8 slots) still bounds cross-message
+        # concurrency, so total Gemini/network pressure hasn't changed.
+        # gather preserves input order so the user sees URL results in
+        # the order they appeared in the message.
+        _URL_FANOUT = 4
+        url_sem = asyncio.Semaphore(_URL_FANOUT)
+        async def _do_url(u: str) -> dict:
+            async with url_sem:
+                # _ingest_one_url owns ignore / failed-log skips, the
+                # in-flight enqueue (resume-safety), and status mapping.
+                return await _ingest_one_url(u, notify_chat_id)
+        url_results = await asyncio.gather(*[_do_url(u) for u in urls])
+        results.extend(url_results)
 
     if (plain and not msg.document and not msg.photo
             and not msg.voice and not msg.audio and len(plain) >= 80):
@@ -9871,6 +9885,7 @@ def _empty_url_guidance(source: str) -> str:
 
 def _format_results(results: list[dict]) -> str:
     lines = []
+    silent: list[tuple[str, str, str]] = []  # (status, label, detail)
     for r in results:
         s = r.get("status")
         if s == "ok":
@@ -9882,9 +9897,14 @@ def _format_results(results: list[dict]) -> str:
             # drop-pattern match (알파 스캐너 등 narrative-free auto-
             # generated formats). These are KNOWN-uningestable, not
             # transient failures, so don't pile them up in /failed —
-            # just log the skip and move on.
+            # just log the skip and surface a one-line end-of-result
+            # summary so a digest with 9 silent-skipped URLs doesn't
+            # look like only the text part was processed.
             log.info("ingest %s: %s — %s",
                      s, r.get("title", "")[:80], r.get("detail", ""))
+            label = r.get("source") or r.get("title") or ""
+            silent.append((s, str(label)[:90],
+                           str(r.get("detail") or "")[:80]))
             continue
         elif s == "empty":
             title = r.get("title", "")
@@ -9920,6 +9940,19 @@ def _format_results(results: list[dict]) -> str:
             _record_failure("error", label, r.get("error", ""),
                             retry_payload=r.get("retry_payload"))
             lines.append(f"❌ {r.get('error', 'error')}")
+    if silent:
+        # Cap the per-line list so a 50-URL digest doesn't blow past
+        # Telegram's message limit; remainder is summarised.
+        if lines:
+            lines.append("")
+        lines.append(f"🔇 silent skip {len(silent)}건 "
+                     "(차단 호스트 / 이전 실패 / 영구 무시 / 미지원 포맷):")
+        for status, label, detail in silent[:10]:
+            tag = "🚫" if status == "blocked" else "⏭"
+            suffix = f" — {detail}" if detail else ""
+            lines.append(f"   {tag} {label}{suffix}")
+        if len(silent) > 10:
+            lines.append(f"   ... 외 {len(silent) - 10}건")
     return "\n".join(lines)
 
 
