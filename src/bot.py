@@ -8673,23 +8673,20 @@ async def _preview_links(links: list[dict]) -> list[dict]:
 
 
 def _link_prompt_keyboard(row_id: int, links: list[dict]) -> InlineKeyboardMarkup:
-    """Build the inline keyboard for one pending_links row: ✅ for
-    links already learned, 📥 for pending. Tapping a ✅ button is a
-    no-op (handler returns silently). 전체 학습 / 닫기 footer is shown
-    only while at least one link is still pending."""
+    """Build the inline keyboard for one pending_links row. Only
+    PENDING links get individual buttons — done ones move into the
+    body text (a compact ✅ list) so the keyboard physically shrinks
+    after each tap. 전체 학습 / 선택 종료 footer is shown only while
+    at least one link is still pending."""
     rows: list[list[InlineKeyboardButton]] = []
     for i, l in enumerate(links):
-        title = l.get("title") or _short_link_label(l["url"])
         if l.get("done"):
-            rows.append([InlineKeyboardButton(
-                f"✅ {i + 1}. {title[:30]}",
-                callback_data=f"lnk:{row_id}:done",
-            )])
-        else:
-            rows.append([InlineKeyboardButton(
-                f"📥 {i + 1}. {title[:30]}",
-                callback_data=f"lnk:{row_id}:{i}",
-            )])
+            continue  # done items appear in the body text, not the keyboard
+        title = l.get("title") or _short_link_label(l["url"])
+        rows.append([InlineKeyboardButton(
+            f"📥 {i + 1}. {title[:30]}",
+            callback_data=f"lnk:{row_id}:{i}",
+        )])
     pending_n = sum(1 for l in links if not l.get("done"))
     if pending_n > 0:
         rows.append([
@@ -8701,32 +8698,56 @@ def _link_prompt_keyboard(row_id: int, links: list[dict]) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(rows)
 
 
+def _link_prompt_body(parent_title: str, links: list[dict]) -> str:
+    """Render the message body for a link prompt — a compact ✅ section
+    listing already-learned links followed by a full 📥 section for the
+    pending ones (title + desc + URL preview). After each tap the body
+    is re-rendered so done links visually 'collapse' out of the pending
+    detail block; the keyboard shrinks in sync."""
+    done = [l for l in links if l.get("done")]
+    pending = [(i, l) for i, l in enumerate(links) if not l.get("done")]
+    total = len(links)
+    lines: list[str] = []
+    if done:
+        lines.append(
+            f"🔗 '{(parent_title or '글')[:50]}' 본문 링크 {total}개 "
+            f"— ✅ 학습 {len(done)}건 · 📥 남음 {len(pending)}건"
+        )
+        lines.append("")
+        lines.append("✅ 학습 완료:")
+        for l in done:
+            title = l.get("title") or _short_link_label(l["url"])
+            lines.append(f"   • {title}")
+        lines.append("")
+    else:
+        lines.append(
+            f"🔗 '{(parent_title or '글')[:50]}' 본문 링크 {total}개 — 학습할 것 선택"
+        )
+        lines.append("(글 속 링크만 — 더 깊이는 안 들어감)")
+        lines.append("")
+    if pending:
+        if done:
+            lines.append(f"📥 남은 후보 ({len(pending)}):")
+        for i, l in pending:
+            title = l.get("title") or _short_link_label(l["url"])
+            desc = l.get("desc") or ""
+            lines.append(f"{i + 1}. {title}")
+            if desc:
+                lines.append(f"   ↳ {desc}")
+            lines.append(f"   🔗 {l['url'][:90]}")
+    return "\n".join(lines)
+
+
 async def _send_one_link_prompt(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int,
                                 row_id: int, parent_title: str,
                                 links: list[dict]) -> None:
     """Render one persistent link-prompt row as a preview list + inline
-    buttons keyed on the pending_links row id. Shows ALL links (done
-    and pending) so the user can see what's already learned via ✅ vs
-    📥 in the keyboard. Shared by the post-ingest prompt and
-    /pending_links."""
+    buttons keyed on the pending_links row id. Shared by the post-ingest
+    prompt and /pending_links."""
     if not links:
         return
-    pending_n = sum(1 for l in links if not l.get("done"))
-    head = (
-        f"🔗 '{(parent_title or '글')[:50]}' 본문 링크 {len(links)}개 "
-        f"(학습 대기 {pending_n}개) — 학습할 것 선택"
-    )
-    lines = [head, "(글 속 링크만 — 더 깊이는 안 들어감)", ""]
-    for i, l in enumerate(links):
-        title = l.get("title") or _short_link_label(l["url"])
-        desc = l.get("desc") or ""
-        mark = "✅" if l.get("done") else f"{i + 1}."
-        lines.append(f"{mark} {title}")
-        if desc:
-            lines.append(f"   ↳ {desc}")
-        lines.append(f"   🔗 {l['url'][:90]}")
     await ctx.bot.send_message(
-        chat_id, "\n".join(lines)[:4000],
+        chat_id, _link_prompt_body(parent_title, links)[:4000],
         reply_markup=_link_prompt_keyboard(row_id, links),
         disable_web_page_preview=True,
     )
@@ -8833,11 +8854,20 @@ async def on_link_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             await asyncio.to_thread(pending_store.set_links, row_id, fresh_links)
             try:
-                await q.edit_message_reply_markup(
+                # Re-render BOTH the body text and the keyboard so done
+                # links collapse out of the pending detail block and the
+                # keyboard physically shrinks — the user sees the prompt
+                # visibly contract on each tap, confirming the action
+                # landed without having to read a separate result bubble.
+                parent_title = fresh_rec.get("parent_title") or ""
+                await q.edit_message_text(
+                    _link_prompt_body(parent_title, fresh_links)[:4000],
                     reply_markup=_link_prompt_keyboard(row_id, fresh_links),
+                    disable_web_page_preview=True,
                 )
             except Exception:
-                # Edit can fail on very old messages; ignore.
+                # Edit can fail on very old messages or "not modified"
+                # races; ignore — DB write above already persisted state.
                 pass
     # Result message as a separate bubble so the prompt itself stays
     # interactive for further taps.
