@@ -89,6 +89,55 @@ _BROWSER_UA = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
+# URL shortener hosts. We resolve these to their final destination
+# BEFORE the rest of the ingest pipeline runs so dedup, blocked-host
+# check, and body fetch operate on the real URL. Without this, every
+# buly.kr-laced Korean digest gets all its URLs silent-blocked (the
+# shortener landing page yields no body to trafilatura). After
+# unshortening, the real destination flows through normal rules — if
+# THAT host is also in _BLOCKED_HOSTS (e.g. t.co → twitter.com) the
+# usual block still catches it.
+_URL_SHORTENERS = (
+    "buly.kr", "vo.la", "zrr.kr", "han.gl",        # KR
+    "bit.ly", "tinyurl.com", "is.gd", "ow.ly",     # generic
+    "t.co", "lnkd.in", "goo.gl",                   # social/google
+)
+
+
+async def unshorten_url(url: str) -> str:
+    """If url's host is a known shortener, follow redirects (HEAD →
+    cheap, no body) to the real destination. Returns the original url
+    on any failure or non-shortener input. Bounded by a short timeout
+    so a slow/dead shortener can't stall ingest."""
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc.lower()
+    except Exception:
+        return url
+    if not any(host == s or host.endswith("." + s) for s in _URL_SHORTENERS):
+        return url
+    try:
+        async with httpx.AsyncClient(
+            timeout=10, follow_redirects=True,
+            headers={"User-Agent": _BROWSER_UA},
+        ) as c:
+            try:
+                r = await c.head(url)
+            except Exception:
+                r = await c.get(url)
+            else:
+                # Some shorteners refuse HEAD — fall back to GET.
+                if r.status_code in (400, 403, 405):
+                    r = await c.get(url)
+        final = str(r.url)
+        if final and final != url:
+            log.info("unshortened %s → %s", url[:80], final[:120])
+            return final
+    except Exception as e:
+        log.debug("unshorten failed for %s: %s", url[:80], e)
+    return url
+
+
 _NAVER_BLOG_RE = re.compile(
     r"^https?://(?:m\.)?blog\.naver\.com/([^/?#]+)/(\d+)(?:[/?#].*)?$"
 )

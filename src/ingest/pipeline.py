@@ -161,6 +161,13 @@ def _looks_like_denial(title: str, body: str) -> bool:
 
 
 async def ingest_url(url: str) -> dict:
+    # Resolve URL shorteners FIRST so dedup, blocked-host check, and
+    # canonicalisation operate on the real destination. Without this,
+    # every buly.kr/bit.ly-laced digest gets all its URLs silent-blocked
+    # at the shortener-domain level even when the real target is a
+    # perfectly fetchable article.
+    from .loaders import unshorten_url
+    url = await unshorten_url(url)
     canonical = _canonical_url(url)
     if existing := meta.find_by_source(canonical):
         return {"status": "duplicate", "doc_id": existing["id"],
