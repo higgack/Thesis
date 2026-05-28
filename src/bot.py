@@ -3322,28 +3322,36 @@ def _failed_recent_snapshot() -> list[dict]:
     return entries
 
 
-def _failed_pop_by_display_idx(idx: int) -> dict | None:
-    """Remove and return the entry corresponding to the user-visible
-    #N tag (0-based). Returns None when the index is out of range —
-    can happen if the failure log changed between display and click."""
-    if idx < 0 or idx >= len(_INGEST_FAILED):
-        return None
-    # recent[i] = _INGEST_FAILED[-(i+1)]; pop by the inverted index.
-    real_idx = len(_INGEST_FAILED) - 1 - idx
-    if real_idx < 0 or real_idx >= len(_INGEST_FAILED):
-        return None
-    return _INGEST_FAILED.pop(real_idx)
+def _failed_remove_entry(entry: dict) -> dict | None:
+    """Remove an exact entry from _INGEST_FAILED by IDENTITY (`is`).
+
+    Earlier the per-#N callbacks used a `len(_INGEST_FAILED) - 1 - idx`
+    formula on the assumption that the display order matched newest-
+    first insertion order. But _failed_recent_snapshot re-sorts by
+    (size ASC, ts DESC) so that formula popped a near-random row —
+    the displayed item kept showing up in /failed while a different
+    row vanished, which made the user think multi-tap retries were
+    queueing up sequentially instead of in parallel (they weren't —
+    they were just clobbering the wrong rows).
+
+    The snapshot list shares dict references with _INGEST_FAILED, so
+    looking up by identity is exact and race-safe (single-threaded
+    asyncio; even if a parallel tap pops first, the `is` miss is
+    handled by the None-return)."""
+    for i, e in enumerate(_INGEST_FAILED):
+        if e is entry:
+            return _INGEST_FAILED.pop(i)
+    return None
 
 
 def _failed_retry_one(chat_id: int, idx: int) -> str:
-    """Retry just one /failed entry by its #N tag (0-based). Pops the
-    entry, requeues if it has a retry payload, and persists both
-    queues to disk."""
-    if idx < 0 or idx >= len(_INGEST_FAILED):
-        return f"⚠️ #{idx + 1} 범위 초과 (현재 {len(_INGEST_FAILED)}건)"
+    """Retry just one /failed entry by its #N tag (0-based) in the
+    sorted display order. Identifies the exact dict via snapshot then
+    removes by identity, so concurrent taps each hit the row the user
+    actually pressed (no off-by-many from the old position-formula bug)."""
     snapshot = _failed_recent_snapshot()
-    if idx >= len(snapshot):
-        return f"⚠️ #{idx + 1} 매칭 없음"
+    if idx < 0 or idx >= len(snapshot):
+        return f"⚠️ #{idx + 1} 범위 초과 (현재 {len(_INGEST_FAILED)}건)"
     target = snapshot[idx]
     payload = target.get("retry")
     if not payload:
@@ -3351,9 +3359,10 @@ def _failed_retry_one(chat_id: int, idx: int) -> str:
             f"⚠️ #{idx + 1} retry 정보 없음 — 채널/원본에서 직접 다시 "
             "보내주세요"
         )
-    entry = _failed_pop_by_display_idx(idx)
+    entry = _failed_remove_entry(target)
     if entry is None:
-        return f"⚠️ #{idx + 1} 매칭 없음 (목록이 변경됐을 수 있음)"
+        # A concurrent tap already popped this exact row.
+        return f"⚠️ #{idx + 1} 방금 다른 작업으로 제거됨"
     payload = dict(payload)
     payload["attempts"] = 0
     payload["chat_id"] = chat_id
@@ -3415,14 +3424,18 @@ def _ignore_from_entry(entry: dict) -> tuple[int, int]:
 
 
 def _failed_drop_one(idx: int) -> str:
-    """Delete a single /failed entry by #N tag (0-based) AND mark
-    its filename/URL as permanently ignored — same semantics as the
-    bulk /failed_clear. Without the ignore step the next orphan scan
-    re-enqueues the file and the user gets to play whack-a-mole with
-    the same row over and over."""
-    entry = _failed_pop_by_display_idx(idx)
-    if entry is None:
+    """Delete a single /failed entry by #N tag (0-based) in the sorted
+    display order AND mark its filename/URL as permanently ignored —
+    same semantics as the bulk /failed_clear. Without the ignore step
+    the next orphan scan re-enqueues the file and the user gets to play
+    whack-a-mole with the same row over and over."""
+    snapshot = _failed_recent_snapshot()
+    if idx < 0 or idx >= len(snapshot):
         return f"⚠️ #{idx + 1} 범위 초과 (현재 {len(_INGEST_FAILED)}건)"
+    target = snapshot[idx]
+    entry = _failed_remove_entry(target)
+    if entry is None:
+        return f"⚠️ #{idx + 1} 방금 다른 작업으로 제거됨"
     added_files, added_urls = _ignore_from_entry(entry)
     if added_files or added_urls:
         _persist_permanently_ignored()
