@@ -9130,7 +9130,11 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
                 except asyncio.CancelledError:
                     pass
             _unregister_ingest(job_id)
-            _untrack_bubble(notify_chat_id, status_msg_id)
+            # _untrack_bubble moved to AFTER the final edit/fallback
+            # (below). If untrack ran here and SIGTERM hit between this
+            # line and the edit, the bubble vanished from
+            # active_bubbles.json (no startup sweep would find it) AND
+            # never got its result text → frozen at "⏳ 학습 시작" forever.
 
         # Render the final state into the live message via edit so the
         # ⏳ bubble becomes the result bubble in place — no scroll-down
@@ -9176,6 +9180,12 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
                 await ctx.bot.send_message(notify_chat_id, final_text)
             except Exception:
                 log.exception("ingest result notify failed")
+        # Bubble is now in its terminal visual state (or the user has
+        # the result via a fresh send) — safe to release tracking. If
+        # SIGTERM hits us *before* this line, the entry survives in
+        # active_bubbles.json so the next-startup sweep flips it to
+        # "⏸ 학습 중단됨" instead of leaving it frozen at "학습 시작".
+        _untrack_bubble(notify_chat_id, status_msg_id)
 
         # OCR-extend prompts run after the final result is visible.
         if results:
@@ -10493,6 +10503,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 await _edit_or_send(
                     ctx, chat_id, status_msg_id, final_fail,
                 )
+                _untrack_bubble(chat_id, status_msg_id)
                 return
             log.info("ingest retry %d/%d: %s",
                      item["attempts"], _MAX_RETRY_ATTEMPTS, title[:80])
@@ -10511,6 +10522,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 f"({item['attempts']}/{_MAX_RETRY_ATTEMPTS}): {title[:80]}\n"
                 f"{_explain_error(e)}",
             )
+            _untrack_bubble(chat_id, status_msg_id)
             log.info("retry soft-fail %d/%d (hold %dm): %s",
                      item["attempts"], _MAX_RETRY_ATTEMPTS, wait_min, title[:80])
             return
@@ -10522,7 +10534,11 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 except asyncio.CancelledError:
                     pass
             _unregister_ingest(retry_job_id)
-            _untrack_bubble(chat_id, status_msg_id)
+            # _untrack_bubble moved to AFTER each terminal edit (the
+            # exception early-returns above + the visibility block
+            # below). See _ingest_message for the rationale — running
+            # untrack here let SIGTERM strip the entry before the edit,
+            # leaving "⏳ [재시도]" frozen.
     # Visibility policy for drained retry items:
     #   - ok (newly learned)     → send '✅ title (chunks)' so the user
     #                              sees real progress through the queue.
@@ -10559,6 +10575,11 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
             await _edit_or_send(
                 ctx, chat_id, status_msg_id, f"⏰ ingest 재시도\n{summary}",
             )
+    # Bubble is now in its terminal visual state (edited or deleted) —
+    # release tracking after the edit so a SIGTERM between this point
+    # and the previous line lets the startup sweep flip the still-⏳
+    # bubble instead of leaving it frozen.
+    _untrack_bubble(chat_id, status_msg_id)
     # Item reached a terminal state (ok / duplicate / empty / other).
     # Soft-fail returns earlier via _retry_item_soft_fail, so anything
     # reaching here is done.
