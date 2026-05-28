@@ -8761,6 +8761,11 @@ async def _send_link_prompts(ctx: ContextTypes.DEFAULT_TYPE,
     links are ingested but NOT re-scanned for further links."""
     for r in results:
         links = r.get("found_links") or []
+        # Drop links the user previously marked as permanently ignored
+        # — via "✅ 선택 종료" with them unselected, /failed_clear on
+        # the URL, or per-item drop. The whole point of "permanently
+        # ignored" is "don't ask me about this again."
+        links = [l for l in links if l.get("url") not in _IGNORED_URLS]
         if not links:
             continue
         enriched = await _preview_links(links)
@@ -8807,10 +8812,31 @@ async def on_link_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     links: list[dict] = rec["links"]
     chat_id = rec["chat_id"]
     if sel == "skip":
+        # User said "선택 종료" → treat unselected (pending) links as
+        # explicitly unwanted and add them to _IGNORED_URLS so they
+        # don't resurface the next time the same parent article is
+        # forwarded. Already-done links stay learned (they're already
+        # in meta), this only marks the SKIPPED ones as permanent
+        # ignore. Matches the "필요없다는 얘기니까" intent.
+        pending_urls = [l.get("url") for l in links
+                        if not l.get("done") and l.get("url")]
+        added = 0
+        for u in pending_urls:
+            if u not in _IGNORED_URLS:
+                _IGNORED_URLS.add(u)
+                added += 1
+        if added:
+            _persist_permanently_ignored()
         await asyncio.to_thread(pending_store.delete_links, row_id)
-        await q.edit_message_text(
-            "✅ 선택 종료 — 학습한 링크는 그대로 유지, 이 목록은 닫음."
-        )
+        if added:
+            await q.edit_message_text(
+                f"✅ 선택 종료 — 학습한 링크는 유지. "
+                f"안 고른 {added}개는 영구 무시 등록 (다음번 같은 글에서 안 보임)."
+            )
+        else:
+            await q.edit_message_text(
+                "✅ 선택 종료 — 학습한 링크는 유지, 이 목록은 닫음."
+            )
         return
     if sel == "all":
         targets = [i for i, l in enumerate(links) if not l.get("done")]
