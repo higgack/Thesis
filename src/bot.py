@@ -60,6 +60,17 @@ _INTERACTIVE_MAX_DEFER_SEC = float(os.getenv("INGEST_DEFER_SEC", "300"))
 # flood-control incident) is intentionally ignored.
 _RETRY_INGEST_INTERVAL_SEC = 10
 _RETRY_INGEST_BATCH = 8
+# Bound the retry tick's deference to interactive activity. The tick
+# normally skips entirely when _interactive_busy() so a chat / command
+# gets full Gemini headroom. But with no cap that means a steadily-
+# chatting user can starve the queue indefinitely (the live-ingest path
+# has the same yield via _await_interactive_idle, but it's bounded to
+# 300 s; the retry tick had no equivalent). After this many consecutive
+# busy skips (≈60 s) the next tick force-drains a single slot so the
+# queue makes forward progress regardless. One slot is small enough
+# that the user's in-flight command barely notices the API contention.
+_RETRY_BUSY_SKIP_GRACE = 6
+_RETRY_BUSY_SKIP_COUNT = 0
 # After a failed retry, hold the item for this many seconds before
 # making it eligible again. Prevents one stuck item from monopolising
 # the queue's drain rate (without this, a perpetually-overloaded
@@ -3672,6 +3683,11 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if q.data == "failed_retry":
         await q.edit_message_text(_failed_retry_all(chat_id))
         await _start_retry_progress(ctx, chat_id)
+        # User explicitly asked for retry — don't wait for the next 10 s
+        # tick (which can be deferred up to ~60 s by busy-skip grace).
+        # Kick a drain task right now; the in-task semaphore acquire
+        # still bounds parallelism + Gemini concurrency.
+        asyncio.create_task(_retry_pending_ingest(ctx))
     elif q.data == "failed_clear":
         await q.edit_message_text(_failed_clear_all())
     elif q.data.startswith("failed_retry_one:"):
@@ -3683,6 +3699,8 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             chat_id, _failed_retry_one(chat_id, idx),
             disable_web_page_preview=True,
         )
+        # Explicit user request → immediate drain (bypass tick wait).
+        asyncio.create_task(_retry_pending_ingest(ctx))
     elif q.data.startswith("failed_drop_one:"):
         try:
             idx = int(q.data.split(":", 1)[1])
@@ -10248,13 +10266,28 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
         log.exception("retry progress refresh failed")
     if not _INGEST_RETRY_QUEUE:
         return
-    # Interactive priority: skip this drain tick entirely while a user
-    # command / Q&A is running. The next tick (10 s later) resumes the
-    # drain — background retries can always wait for a chat to finish.
+    # Interactive priority: skip this drain tick while a user command /
+    # Q&A is running so the chat gets full Gemini headroom. But cap how
+    # long the queue can be starved — after _RETRY_BUSY_SKIP_GRACE
+    # consecutive busy skips (~60 s) force a single-slot drain so a
+    # steadily-chatting user can't keep the queue parked forever.
+    global _RETRY_BUSY_SKIP_COUNT
     if _interactive_busy():
-        return
-    free_slots = _INGEST_SEM._value
-    n = min(_RETRY_INGEST_BATCH, free_slots, len(_INGEST_RETRY_QUEUE))
+        _RETRY_BUSY_SKIP_COUNT += 1
+        if _RETRY_BUSY_SKIP_COUNT < _RETRY_BUSY_SKIP_GRACE:
+            return
+        log.info(
+            "retry tick: %d consecutive busy skips — force-draining "
+            "1 slot to prevent starvation",
+            _RETRY_BUSY_SKIP_COUNT,
+        )
+        _RETRY_BUSY_SKIP_COUNT = 0
+        free_slots = _INGEST_SEM._value
+        n = min(1, free_slots, len(_INGEST_RETRY_QUEUE))
+    else:
+        _RETRY_BUSY_SKIP_COUNT = 0
+        free_slots = _INGEST_SEM._value
+        n = min(_RETRY_INGEST_BATCH, free_slots, len(_INGEST_RETRY_QUEUE))
     if n <= 0:
         return
     for _ in range(n):
