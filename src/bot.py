@@ -8672,35 +8672,62 @@ async def _preview_links(links: list[dict]) -> list[dict]:
     return list(await asyncio.gather(*[_one(l) for l in links]))
 
 
+def _link_prompt_keyboard(row_id: int, links: list[dict]) -> InlineKeyboardMarkup:
+    """Build the inline keyboard for one pending_links row: ✅ for
+    links already learned, 📥 for pending. Tapping a ✅ button is a
+    no-op (handler returns silently). 전체 학습 / 닫기 footer is shown
+    only while at least one link is still pending."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for i, l in enumerate(links):
+        title = l.get("title") or _short_link_label(l["url"])
+        if l.get("done"):
+            rows.append([InlineKeyboardButton(
+                f"✅ {i + 1}. {title[:30]}",
+                callback_data=f"lnk:{row_id}:done",
+            )])
+        else:
+            rows.append([InlineKeyboardButton(
+                f"📥 {i + 1}. {title[:30]}",
+                callback_data=f"lnk:{row_id}:{i}",
+            )])
+    pending_n = sum(1 for l in links if not l.get("done"))
+    if pending_n > 0:
+        rows.append([
+            InlineKeyboardButton("📥 전체 학습",
+                                 callback_data=f"lnk:{row_id}:all"),
+            InlineKeyboardButton("❌ 닫기",
+                                 callback_data=f"lnk:{row_id}:skip"),
+        ])
+    return InlineKeyboardMarkup(rows)
+
+
 async def _send_one_link_prompt(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int,
                                 row_id: int, parent_title: str,
                                 links: list[dict]) -> None:
     """Render one persistent link-prompt row as a preview list + inline
-    buttons keyed on the pending_links row id. Skips links already
-    learned (done=True). Shared by the post-ingest prompt and
+    buttons keyed on the pending_links row id. Shows ALL links (done
+    and pending) so the user can see what's already learned via ✅ vs
+    📥 in the keyboard. Shared by the post-ingest prompt and
     /pending_links."""
-    pending = [(i, l) for i, l in enumerate(links) if not l.get("done")]
-    if not pending:
+    if not links:
         return
-    head = f"🔗 '{(parent_title or '글')[:50]}' 본문 링크 {len(pending)}개 — 학습할 것 선택"
+    pending_n = sum(1 for l in links if not l.get("done"))
+    head = (
+        f"🔗 '{(parent_title or '글')[:50]}' 본문 링크 {len(links)}개 "
+        f"(학습 대기 {pending_n}개) — 학습할 것 선택"
+    )
     lines = [head, "(글 속 링크만 — 더 깊이는 안 들어감)", ""]
-    rows: list[list[InlineKeyboardButton]] = []
-    for i, l in pending:
+    for i, l in enumerate(links):
         title = l.get("title") or _short_link_label(l["url"])
         desc = l.get("desc") or ""
-        lines.append(f"{i + 1}. {title}")
+        mark = "✅" if l.get("done") else f"{i + 1}."
+        lines.append(f"{mark} {title}")
         if desc:
             lines.append(f"   ↳ {desc}")
         lines.append(f"   🔗 {l['url'][:90]}")
-        rows.append([InlineKeyboardButton(
-            f"📥 {i + 1}. {title[:30]}", callback_data=f"lnk:{row_id}:{i}")])
-    rows.append([
-        InlineKeyboardButton("📥 전체 학습", callback_data=f"lnk:{row_id}:all"),
-        InlineKeyboardButton("❌ 닫기", callback_data=f"lnk:{row_id}:skip"),
-    ])
     await ctx.bot.send_message(
         chat_id, "\n".join(lines)[:4000],
-        reply_markup=InlineKeyboardMarkup(rows),
+        reply_markup=_link_prompt_keyboard(row_id, links),
         disable_web_page_preview=True,
     )
 
@@ -8732,9 +8759,14 @@ async def _send_link_prompts(ctx: ContextTypes.DEFAULT_TYPE,
 
 async def on_link_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """In-post link prompt handler (callback_data 'lnk:<row_id>:<sel>').
-    sel is a link index, 'all', or 'skip'. State lives in pending_links
-    (SQLite) so buttons survive restart; chosen links go through the
-    resume-safe _ingest_one_url with scan_links=False (depth-1 cap)."""
+    sel is a link index, 'all', 'skip', or 'done' (no-op for already-
+    learned buttons). Chosen links go through the resume-safe
+    _ingest_one_url with scan_links=False (depth-1 cap). The keyboard
+    is updated in place after each tap (✅/📥 reflect state) so the
+    user can keep tapping more links without losing the prompt — the
+    old behaviour replaced the prompt with "학습 중…" which (a) killed
+    the keyboard so only the first tap landed, and (b) never updated
+    once ingest finished, leaving a stale message on screen."""
     q = update.callback_query
     await q.answer()
     try:
@@ -8742,6 +8774,8 @@ async def on_link_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         row_id = int(sid)
     except (ValueError, AttributeError):
         return
+    if sel == "done":
+        return  # tap on an already-✅ link — silent no-op
     rec = await asyncio.to_thread(pending_store.get_links, row_id)
     if rec is None:
         try:
@@ -8750,6 +8784,7 @@ async def on_link_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
         return
     links: list[dict] = rec["links"]
+    chat_id = rec["chat_id"]
     if sel == "skip":
         await asyncio.to_thread(pending_store.delete_links, row_id)
         await q.edit_message_text("❌ 링크 학습 취소됨 (목록 삭제).")
@@ -8762,25 +8797,48 @@ async def on_link_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             return
         if idx < 0 or idx >= len(links) or links[idx].get("done"):
-            return  # already learned / out of range — top q.answer() sufficed
+            return  # already learned / out of range — q.answer() above sufficed
         targets = [idx]
     if not targets:
         await asyncio.to_thread(pending_store.delete_links, row_id)
         await q.edit_message_text("✅ 이 목록의 링크는 모두 처리했어.")
         return
-    chat_id = rec["chat_id"]
-    await q.edit_message_text(f"📥 링크 {len(targets)}개 학습 중…")
+    # Ingest the chosen targets. Don't replace the keyboard with a
+    # "학습 중…" message — keeping it alive lets concurrent taps target
+    # other links, and avoids leaving a stale "학습 중" once we finish.
     out_lines: list[str] = []
     for idx in targets:
         u = links[idx]["url"]
         res = await _ingest_one_url(u, chat_id, scan_links=False)
-        links[idx]["done"] = True
         line = _format_results([res]).strip()
         out_lines.append(line or f"🚫 학습 안 함: {u[:60]}")
-    if all(l.get("done") for l in links):
-        await asyncio.to_thread(pending_store.delete_links, row_id)
-    else:
-        await asyncio.to_thread(pending_store.set_links, row_id, links)
+    # Race-safe done marking: re-read the row from SQLite so a
+    # concurrent tap's done flag isn't clobbered by our write.
+    fresh_rec = await asyncio.to_thread(pending_store.get_links, row_id)
+    if fresh_rec is not None:
+        fresh_links = fresh_rec["links"]
+        for idx in targets:
+            if idx < len(fresh_links):
+                fresh_links[idx]["done"] = True
+        if all(l.get("done") for l in fresh_links):
+            await asyncio.to_thread(pending_store.delete_links, row_id)
+            try:
+                await q.edit_message_text(
+                    f"✅ 본문 링크 모두 학습 완료 ({len(fresh_links)}개)."
+                )
+            except Exception:
+                pass
+        else:
+            await asyncio.to_thread(pending_store.set_links, row_id, fresh_links)
+            try:
+                await q.edit_message_reply_markup(
+                    reply_markup=_link_prompt_keyboard(row_id, fresh_links),
+                )
+            except Exception:
+                # Edit can fail on very old messages; ignore.
+                pass
+    # Result message as a separate bubble so the prompt itself stays
+    # interactive for further taps.
     body = "🔗 링크 학습 결과:\n" + "\n".join(out_lines)
     await ctx.bot.send_message(chat_id, body[:4000],
                                disable_web_page_preview=True)
