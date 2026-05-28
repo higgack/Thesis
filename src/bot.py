@@ -3973,16 +3973,24 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not _INGEST_RETRY_QUEUE:
             await update.message.reply_text("재시도 큐 비어있음 ✨")
             return
+        # in-flight items stay in the queue with in_flight_ts (resume
+        # safety) — split them out so they don't look like duplicates of
+        # the ⏳ [재시도] bubbles the user sees in chat.
+        in_flight_n = sum(1 for it in _INGEST_RETRY_QUEUE
+                          if it.get("in_flight_ts"))
+        waiting_n = len(_INGEST_RETRY_QUEUE) - in_flight_n
         out = (
             f"🔁 재시도 큐 {len(_INGEST_RETRY_QUEUE)}건 "
-            f"({_RETRY_INGEST_INTERVAL_SEC}초 간격, 최대 "
-            f"{_RETRY_INGEST_BATCH}건/회 자동)"
+            f"(🔄 처리중 {in_flight_n} · ⏳ 대기 {waiting_n} · "
+            f"{_RETRY_INGEST_INTERVAL_SEC}초 간격, 최대 "
+            f"{_RETRY_INGEST_BATCH}건/회)"
         )
         for item in _INGEST_RETRY_QUEUE[:25]:
             kind = item.get("kind", "?")
             title = item.get("file_name") or item.get("url") or "(unknown)"
             attempts = item.get("attempts", 0)
-            out += f"\n• [{kind}] {title[:80]} (시도 {attempts}회)"
+            tag = "🔄 처리중" if item.get("in_flight_ts") else "⏳ 대기"
+            out += f"\n• {tag} [{kind}] {title[:80]} (시도 {attempts}회)"
         if len(_INGEST_RETRY_QUEUE) > 25:
             out += f"\n... 외 {len(_INGEST_RETRY_QUEUE) - 25}건"
         out += (
