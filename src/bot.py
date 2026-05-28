@@ -1367,7 +1367,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 🚨 <b>장애 / 큐</b>
   /failed(건별 [🔁]/[🗑]·drop=영구) · /failed_retry · /failed_clear
-  /queue · /queue_to_failed · /queue_cancel_all
+  /queue · /queue_to_failed · /queue_panic · /queue_cancel_all
   /audit · /blocked_hosts · /reset_blocked_hosts
 
 🔍 <b>Orphan</b>: /orphans · /recover_orphans(건별 [📥]/[🗑])
@@ -1417,17 +1417,17 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【8. 대시보드】</b> http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html · Basic Auth(.env) · 60s 갱신·다크 19~07
 
-<b>【9. 답변 품질】</b> 자료 시점 필수·부족시 솔직 / brain 재검색 의무 / web [도메인] · 인용 [N] 자동 / 회사 분석 숫자 자동 audit · _verify Flash-Lite 출처-주제+숫자 검증 (₩1/회)
+<b>【9. 답변 품질】</b> 자료 시점 필수 · brain 재검색 의무 · web [도메인]·인용 [N] · 숫자 자동 audit · _verify (₩1/회)
 
 <b>【10. 운영】</b> VM n2-standard-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8 · concurrent_updates+HTTPX 32 · 영속(retry/failed/history/qna/cost/ocr_cache/chunk_cache/bubbles) · 메모리 5분(90%즉시 95%거부) · 60s call · 15분 ingest · 질문/명령＞학습 우선(ingest 양보)
 
-<b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 · 요약/메타/번역 flash-lite(503→flash) · 답변 flash · /deep pro · Vision flash-lite · 1M ₩ Pro 1,750/Flash 420/Lite 140/Embed 200 · 답변 1h 캐시(200건) · 번역 30k+ 배치 ₩3-40
+<b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 · 요약/번역/Vision gemini-2.5-flash-lite (503→flash) · 답변 gemini-2.5-flash · /deep gemini-2.5-pro · ₩/1M Pro 1750/Flash 420/Lite 140/Embed 200 · 답변 캐시 1h(200건)
 
-<b>【10-2. 비용 절감】</b> 6단 dedup · 청크 1000 · Vision DPI 100 · OCR cap 0p · Progressive OCR · 청크/임베딩 캐시 · 메타 gating · 차단 도메인 · .txt/.md/.csv 제외 · failed URL skip
+<b>【10-2. 비용 절감】</b> 6단 dedup · 청크 1000 · Vision DPI 100 · OCR cap 0p · 청크/임베딩 캐시 · 메타 gating · 차단 도메인 · .txt/.md/.csv 제외 · failed URL skip
 
-<b>【10-3. Retry/무손실 재개】</b> 자동 1회→/failed(🔁수동·3회후 자동폐기) · in_flight_ts 디스크 저장 → 배포/OOM/SIGKILL 자동 재개·atomic JSON+.bak·/audit 검증
+<b>【10-3. Retry/무손실 재개】</b> 자동 1회→/failed(🔁수동·3회후 폐기) · in_flight_ts 디스크 → 배포/OOM/SIGKILL 자동 재개·atomic JSON+.bak
 
-<b>【11. 트러블슈팅】</b> 본문 비어있음→차단/paywall · 무응답→워치독 10분뒤 자동재시작·docker logs · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend 전환 .env (옵션 CLAUDE.md)
+<b>【11. 트러블슈팅】</b> 본문 비어→차단/paywall · ingest 막힘→/queue_panic · brain 에러→BM25 30s · 토픽 어긋남→/reset · 비용 급등→audio/Pro/web · backend .env
 
 <b>【12. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS 14건 활용신청 + NTIS 5건 추가신청 승인 대기"""
 
@@ -1533,7 +1533,10 @@ Gemini 2.5 Pro 강제 사용. 기본 답변은 Flash, /deep 만 Pro (비용 ~4�
 자동 재처리 대기/진행 중인 인입 항목. 처리 실패 시 자동 1회 후 /failed로 이동(거기서 🔁 수동 재시도, 3 cycle 초과 시 자동 폐기). 항목별 종류·제목·시도 횟수 표시.
 
 <b>/queue_to_failed</b>
-retry 큐 모두 실패 큐로 강제 이동.
+retry 큐 모두 실패 큐로 강제 이동. 진행중인 in-flight 작업은 그대로 끝까지 돔.
+
+<b>/queue_panic</b>
+패닉 정리: 큐 → /failed (retry payload 유지) + Pro/Agent/Pending OCR·Pro 모두 비움 + orphan 복구 suppress 마커 + 봇 프로세스 종료(Docker 자동 재시작). in-flight 태스크가 세마포어·_CHROMA_LOCK 잡고 안 풀려서 새 학습까지 느릴 때 사용. 복구는 /failed 의 🔁 #N로 하나씩.
 
 <b>/queue_cancel_all</b>
 retry 큐 전체 취소 — 재시도 안 함, /failed 로도 안 감.
@@ -3951,7 +3954,11 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             out += f"\n• [{kind}] {title[:80]} (시도 {attempts}회)"
         if len(_INGEST_RETRY_QUEUE) > 25:
             out += f"\n... 외 {len(_INGEST_RETRY_QUEUE) - 25}건"
-        out += "\n\n💡 큐가 막혀 새 학습까지 안 풀릴 때: /queue_to_failed (전체 → /failed)"
+        out += (
+            "\n\n💡 큐가 막혀 새 학습까지 느려질 때:"
+            "\n  • /queue_to_failed — 큐만 /failed로, 진행중은 그대로"
+            "\n  • /queue_panic — 큐 → /failed + 봇 강제 재시작 (in-flight 까지 진짜 정리)"
+        )
         await update.message.reply_text(out, disable_web_page_preview=True)
 
 
@@ -4767,6 +4774,89 @@ async def cmd_queue_to_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"건별 [🔁 #N] 재시도 / [🗑 #N] 삭제 가능.\n"
             f"⚠️ 처리중인 항목은 끝까지 가서 자체 결과에 따라 정착됨."
         )
+
+
+async def cmd_queue_panic(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Emergency 'clean slate' — drain everything to /failed AND restart
+    the bot process so stuck in-flight tasks (which Python can't safely
+    cancel mid-pipeline, especially in to_thread + _CHROMA_LOCK) are
+    actually killed instead of slowly draining their hold on semaphore
+    slots.
+
+    Steps:
+      1. Drain _INGEST_RETRY_QUEUE → /failed with retry_payload intact
+         so the user can re-learn each item one tap at a time.
+      2. Clear sibling queues (Pro run, agent overload, pending OCR/Pro
+         tables) so the post-restart loop comes up genuinely empty.
+      3. Set _RECOVERY_SUPPRESS_PATH so the boot-time orphan scan
+         doesn't immediately re-enqueue everything from data/files/.
+      4. os._exit(0) → Docker's `restart: unless-stopped` revives the
+         container in ~3-5 s with a fresh event loop, no stuck threads,
+         no held locks.
+
+    Use when /queue_to_failed alone doesn't unstick things (i.e. the
+    queue is empty but ingest is still glacially slow). Recovery:
+      • /failed has every dropped item with [🔁 #N] for manual replay.
+      • /recover_orphans clears the suppress marker when you want the
+        orphan auto-scan back on."""
+    if not _is_owner(update):
+        return
+    async with _SustainedTyping(update, ctx):
+        # 1. Drain retry queue → /failed (retry_payload preserved).
+        drained = list(_INGEST_RETRY_QUEUE)
+        moved = 0
+        for item in drained:
+            entry = _retry_item_to_failed_entry(
+                item, "사용자 요청 — /queue_panic 으로 전체 정리 후 재시작"
+            )
+            _INGEST_FAILED.append(entry)
+            moved += 1
+        _INGEST_RETRY_QUEUE.clear()
+        if len(_INGEST_FAILED) > _FAILED_MAX:
+            del _INGEST_FAILED[: len(_INGEST_FAILED) - _FAILED_MAX]
+        _persist_retry_queue()
+        _persist_failed_log()
+
+        # 2. Clear sibling queues so restart really starts empty.
+        pro_q_n = len(_PENDING_PRO_RUN_QUEUE)
+        agent_q_n = len(_RETRY_QUEUE)
+        _PENDING_PRO_RUN_QUEUE.clear()
+        _RETRY_QUEUE.clear()
+        try:
+            ocr_n = await asyncio.to_thread(pending_store.delete_all_ocr)
+            pro_n = await asyncio.to_thread(pending_store.delete_all_pro)
+        except Exception:
+            ocr_n = pro_n = 0
+            log.exception("queue_panic: clearing pending OCR/Pro failed")
+
+        # 3. Suppress marker so post-restart orphan scan stays quiet.
+        try:
+            _RECOVERY_SUPPRESS_PATH.touch(exist_ok=True)
+        except Exception:
+            log.exception("queue_panic: suppress marker write failed")
+
+        # 4. Notify, then exit on a short delay so the reply flushes
+        # over HTTP before the process dies.
+        await update.message.reply_text(
+            f"🆘 패닉 정리 완료\n"
+            f"  • /failed 로 이동: {moved}건\n"
+            f"  • Pro 큐 비움: {pro_q_n}건\n"
+            f"  • Agent 재시도 비움: {agent_q_n}건\n"
+            f"  • 보류 OCR/Pro 비움: {ocr_n}/{pro_n}건\n"
+            f"  • Orphan 자동 복구 정지 (suppress 마커)\n\n"
+            f"🔄 봇 프로세스 종료 → Docker 자동 재시작 (~3-5초).\n"
+            f"복구: /failed 에서 🔁 #N 으로 하나씩 다시 학습.\n"
+            f"orphan 자동 복구 재개는 /recover_orphans 실행 시."
+        )
+
+        async def _exit_for_restart():
+            # Tiny grace so the Telegram POST flushes before SIGKILL-ish
+            # _exit lands. 1.5 s covers a slow network round trip.
+            await asyncio.sleep(1.5)
+            log.warning("/queue_panic — exiting process for container restart")
+            import os as _os
+            _os._exit(0)
+        asyncio.create_task(_exit_for_restart())
 
 
 async def cmd_queue_cancel_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -10711,6 +10801,7 @@ def main():
     app.add_handler(CommandHandler("pending_cancel_all", cmd_pending_cancel_all))
     app.add_handler(CommandHandler("queue_cancel_all", cmd_queue_cancel_all))
     app.add_handler(CommandHandler("queue_to_failed", cmd_queue_to_failed))
+    app.add_handler(CommandHandler("queue_panic", cmd_queue_panic))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("cleanup_confirm", cmd_cleanup_confirm))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))

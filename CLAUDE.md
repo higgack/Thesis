@@ -334,9 +334,22 @@ explicit permission. PR #1 already exists for this branch.
 - Every ingest-pipeline change must apply equally to new ingest AND
   retry queue — this is the default, never partial.
 - Always update `_HELP_TEXT` in `src/bot.py` when adding / renaming /
-  removing a command or changing user-visible policy. Help must stay
-  under the 4000-char soft-split limit so it renders as a single
-  Telegram message.
+  removing a command, changing user-visible policy, OR changing any
+  model id (SUMMARY/ANSWER/DEEP/EMBED). Help must stay under the
+  4000-char soft-split limit so it renders as a single Telegram message.
+- **Existing commands must stay listed in `_HELP_TEXT`.** Do NOT silently
+  drop a command from the listing to make room for a new one — users
+  reach commands through this surface. When the 4000-char cap is tight,
+  the rule is: **condense sections 9, 10-1, 10-2, 10-3, 11 first**
+  (they're prose, easy to tighten without losing meaning). Touch the
+  command listings only as a last resort, and only after explicit user
+  approval. The user's exact instruction (verbatim): "기존 명령어는
+  지우지말고 만약에 Help 자리가 모자라면 9, 10-1,2,3 번과 11번을 더
+  요약하는 방법을 써." Locking this in.
+- Model identifiers in `_HELP_TEXT` (section 10-1 today) must reflect
+  the actual values in `src/config.py` / `.env` defaults. When you
+  upgrade Pro/Flash/Lite/Embed versions, update the help line at the
+  same commit — don't leave stale model tags users can see.
 - **Help AND every guide constant must move together on any command /
   feature / policy change.** Four guide surfaces today:
     • `_HELP_TEXT`            — one-line summary, 4000-char cap
@@ -345,7 +358,7 @@ explicit permission. PR #1 already exists for this branch.
     • `_PATENTS_GUIDE_TEXT`   — `/patents_guide`, patent features only
     • `_PAPERS_GUIDE_TEXT`    — `/papers_guide`, paper features only
   Workflow:
-    1. Change behaviour / add a command.
+    1. Change behaviour / add a command / bump a model.
     2. Update `_HELP_TEXT` (one-line entry under right category).
     3. Update `_LOOKUP_GUIDE_TEXT` (full prose section).
     4. If it's a patent change → also `_PATENTS_GUIDE_TEXT`.
