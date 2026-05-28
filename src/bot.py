@@ -8695,7 +8695,7 @@ def _link_prompt_keyboard(row_id: int, links: list[dict]) -> InlineKeyboardMarku
         rows.append([
             InlineKeyboardButton("📥 전체 학습",
                                  callback_data=f"lnk:{row_id}:all"),
-            InlineKeyboardButton("❌ 닫기",
+            InlineKeyboardButton("✅ 선택 종료",
                                  callback_data=f"lnk:{row_id}:skip"),
         ])
     return InlineKeyboardMarkup(rows)
@@ -8787,7 +8787,9 @@ async def on_link_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = rec["chat_id"]
     if sel == "skip":
         await asyncio.to_thread(pending_store.delete_links, row_id)
-        await q.edit_message_text("❌ 링크 학습 취소됨 (목록 삭제).")
+        await q.edit_message_text(
+            "✅ 선택 종료 — 학습한 링크는 그대로 유지, 이 목록은 닫음."
+        )
         return
     if sel == "all":
         targets = [i for i, l in enumerate(links) if not l.get("done")]
