@@ -501,6 +501,11 @@ def _load_persisted_state() -> None:
                 deduped: list[dict] = []
                 dropped_unsupported = 0
                 dropped_already_learned = 0
+                # One scan instead of N per-item find_by_filename() LIKE
+                # queries — the queue can hold hundreds of local_file
+                # entries and each lookup opened its own connection,
+                # adding hundreds of ms to boot before run_polling.
+                _already_learned = meta.ingested_filename_set()
                 for item in data:
                     # Filter unsupported local_file entries (legacy
                     # orphan scan used to push .ppt/.ipynb/.png/etc).
@@ -513,7 +518,7 @@ def _load_persisted_state() -> None:
                         # Same filename already learned (possibly via
                         # tg-doc: source) → don't re-cycle it.
                         fname = Path(path).name
-                        if fname and meta.find_by_filename(fname):
+                        if fname and fname in _already_learned:
                             dropped_already_learned += 1
                             continue
                     key = (
@@ -5040,7 +5045,7 @@ async def cmd_forget_qna(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     n = qna.delete(qid)
     try:
         from .dashboard import regenerate as dashboard_regen
-        dashboard_regen.regenerate()
+        await asyncio.to_thread(dashboard_regen.regenerate)
     except Exception:
         log.exception("dashboard regen after qna delete failed")
     await update.message.reply_text(
@@ -5060,7 +5065,7 @@ async def cmd_forget_qna_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     n = qna.delete_search(keyword)
     try:
         from .dashboard import regenerate as dashboard_regen
-        dashboard_regen.regenerate()
+        await asyncio.to_thread(dashboard_regen.regenerate)
     except Exception:
         log.exception("dashboard regen after qna delete_search failed")
     await update.message.reply_text(f"✅ Q&A {n}건 삭제 · 키워드 '{keyword}'")
@@ -5823,8 +5828,13 @@ def _record_command_qna(update, question: str, body: str,
         log.exception("command qna record failed (q=%r)", question[:60])
         return
     try:
+        # Offload to the thread pool — regenerate() rewrites the detail
+        # pages and would otherwise block the event loop for the whole
+        # write. Fire-and-forget: the non-blocking lock inside
+        # regenerate() makes a concurrent/queued call a safe no-op.
         from .dashboard import regenerate as dashboard_regen
-        dashboard_regen.regenerate()
+        asyncio.get_running_loop().run_in_executor(
+            None, dashboard_regen.regenerate)
     except Exception:
         log.exception("dashboard regenerate after command qna failed")
 
@@ -8497,6 +8507,14 @@ async def on_private(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _run_agent(update, ctx, text, deep=False)
 
 
+# Hard ceiling on a single Q&A agent run. Without this a hung Gemini
+# call (network stall, provider-side wedge) blocks the awaiting task
+# indefinitely. Deep/Pro synthesis on a large compare is the slow path,
+# so the bound is generous (10 min) but finite — matches the ingest
+# pipeline's wait_for discipline.
+_AGENT_TIMEOUT_SEC = 600
+
+
 async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
                      text: str, deep: bool) -> None:
     global _ACTIVE_AGENT_RUNS, _LAST_REPLY_AT
@@ -8528,7 +8546,20 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
     typing_task = asyncio.create_task(_sustained_typing(update, ctx))
     try:
         try:
-            result = await agent.run(text, deep=deep, history=history)
+            result = await asyncio.wait_for(
+                agent.run(text, deep=deep, history=history),
+                timeout=_AGENT_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            log.warning("agent.run timeout (%ds) for chat %s",
+                        _AGENT_TIMEOUT_SEC, chat_id)
+            await update.message.reply_text(
+                f"⚠️ 응답이 {_AGENT_TIMEOUT_SEC // 60}분을 넘겨 중단했어요. "
+                "잠시 후 다시 시도해주세요."
+            )
+            _ACTIVE_AGENT_RUNS = max(0, _ACTIVE_AGENT_RUNS - 1)
+            _LAST_REPLY_AT = datetime.utcnow()
+            return
         except Exception as e:
             if _is_overload(e):
                 _RETRY_QUEUE.append({
@@ -8615,7 +8646,7 @@ async def _finalize_agent_reply(message, ctx: ContextTypes.DEFAULT_TYPE,
         )
         try:
             from .dashboard import regenerate as dashboard_regen
-            dashboard_regen.regenerate()
+            await asyncio.to_thread(dashboard_regen.regenerate)
         except Exception:
             log.exception("dashboard regen failed")
     except Exception as e:
@@ -10440,7 +10471,7 @@ async def _drain_pending_pro(ctx: ContextTypes.DEFAULT_TYPE):
                 warning=result.get("warning"),
             )
             from .dashboard import regenerate as dashboard_regen
-            dashboard_regen.regenerate()
+            await asyncio.to_thread(dashboard_regen.regenerate)
         except Exception:
             log.exception("pending pro qna/dashboard record failed")
     finally:

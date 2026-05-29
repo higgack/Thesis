@@ -418,6 +418,33 @@ def find_by_filename(filename: str) -> dict | None:
         return dict(row) if row else None
 
 
+def ingested_filename_set() -> set[str]:
+    """Return every filename already represented in `documents`,
+    derived from `tg-doc:<uniq>:<filename>` and `local:<filename>`
+    sources.
+
+    Built in ONE table scan so the retry-queue load filter can dedupe
+    N candidates against a Python set instead of issuing N separate
+    find_by_filename() LIKE-scan queries at startup (each opening its
+    own connection). Same matching semantics as find_by_filename."""
+    names: set[str] = set()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT source FROM documents "
+            "WHERE source LIKE 'tg-doc:%' OR source LIKE 'local:%'"
+        ).fetchall()
+    for r in rows:
+        src = r["source"] or ""
+        if src.startswith("local:"):
+            names.add(src[len("local:"):])
+        elif src.startswith("tg-doc:"):
+            # tg-doc:<uniq>:<filename> — filename may itself contain ':'
+            parts = src.split(":", 2)
+            if len(parts) == 3 and parts[2]:
+                names.add(parts[2])
+    return names
+
+
 _FORWARD_DIGEST_RE = re.compile(
     # Auto-aggregator emojis followed by a year — captures the daily
     # rollup pattern these forwarded summaries use. User-written notes

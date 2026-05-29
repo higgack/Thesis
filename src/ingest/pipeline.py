@@ -624,6 +624,33 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
         except Exception as e:
             log.exception("obsidian sync failed: %s", e)
 
+    # Final dedup re-check (close the race window). The body_hash /
+    # title checks above ran BEFORE the multi-second embed+summarize
+    # work; a second ingest of the same content (e.g. the same article
+    # forwarded twice, or URL + paste) can pass those early checks while
+    # we were busy, then both reach here and write two rows with
+    # different doc_ids. Re-checking immediately before the write shrinks
+    # the window from "entire embedding duration" to microseconds. If we
+    # lost the race, roll back the chunks we just added under our doc_id
+    # so Chroma doesn't accumulate orphan vectors, and report duplicate.
+    if body_hash:
+        existing = meta.find_by_body_hash(body_hash)
+        if existing and existing.get("id") != doc_id:
+            log.info("ingest body-hash duplicate (late) of %s for %s",
+                     existing["id"], source)
+            await asyncio.to_thread(vector.delete_doc, doc_id)
+            return {"status": "duplicate", "doc_id": existing["id"],
+                    "title": existing["title"]}
+    title_existing = meta.find_by_normalized_title(
+        title, body_signature=body_signature
+    )
+    if title_existing and title_existing.get("id") != doc_id:
+        log.info("ingest title-norm duplicate (late) of %s for %s",
+                 title_existing["id"], source)
+        await asyncio.to_thread(vector.delete_doc, doc_id)
+        return {"status": "duplicate", "doc_id": title_existing["id"],
+                "title": title_existing["title"]}
+
     meta.upsert_doc(doc_id, source, doc_type, title, summary, obsidian_path,
                     metadata=metadata or None, file_hash=file_hash,
                     body_hash=body_hash or None,
