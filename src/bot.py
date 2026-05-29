@@ -5201,25 +5201,31 @@ async def cmd_youtube_restub_rescan(update: Update, ctx: ContextTypes.DEFAULT_TY
         )
         return
 
-    def _purge(doc_id: str) -> int:
-        try:
-            n = vector.delete_doc(doc_id)
-        except Exception:
-            log.exception("vector.delete_doc failed for %s", doc_id)
-            n = 0
-        try:
-            meta.delete(doc_id)
-        except Exception:
-            log.exception("meta.delete failed for %s", doc_id)
-        return n
+    stub_ids = [s["id"] for s in stubs]
 
-    chunks_removed = 0
+    # Vector: one batched where-$in delete (single collection scan) for
+    # the whole stub set, instead of N per-doc delete_doc() scans.
+    try:
+        chunks_removed = await asyncio.to_thread(vector.delete_docs, stub_ids)
+    except Exception:
+        log.exception("vector.delete_docs failed for youtube stubs")
+        chunks_removed = 0
+
+    # Meta: cheap indexed single-row deletes, all in one thread hop.
+    def _purge_meta(ids: list[str]) -> None:
+        for did in ids:
+            try:
+                meta.delete(did)
+            except Exception:
+                log.exception("meta.delete failed for %s", did)
+    await asyncio.to_thread(_purge_meta, stub_ids)
+
+    # Requeue source URLs (pure in-memory; dedup against existing queue).
     requeued = 0
     skipped_dup = 0
     queued_urls = {it.get("url") for it in _INGEST_RETRY_QUEUE
                    if it.get("kind") == "url"}
     for s in stubs:
-        chunks_removed += await asyncio.to_thread(_purge, s["id"])
         url = s.get("source") or ""
         if not url.startswith("http"):
             continue

@@ -275,6 +275,21 @@ def delete_doc(doc_id: str) -> int:
     return len(res["ids"])
 
 
+def delete_docs(doc_ids: list[str]) -> int:
+    """Delete all chunks for many docs in ONE where-$in pass instead of
+    N per-doc delete_doc() calls. Each delete_doc() does a full-collection
+    metadata scan, so deleting a few-hundred-doc batch one at a time is
+    as slow as the scan bug we just fixed elsewhere. This collapses it to
+    a single scan (collect ids) + one delete. Returns total chunks removed."""
+    if not doc_ids:
+        return 0
+    res = _collection.get(where={"doc_id": {"$in": list(doc_ids)}})
+    ids = res.get("ids") or []
+    if ids:
+        _collection.delete(ids=ids)
+    return len(ids)
+
+
 def get_doc_chunks(doc_id: str) -> list[dict]:
     """Return every chunk for one doc, sorted by idx (summary first
     via idx=-1 convention). Used by /show to dump the full original
