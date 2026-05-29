@@ -320,3 +320,27 @@ def chunk_counts(doc_ids: list[str]) -> dict[str, int]:
         if did in counts and kind == "chunk":
             counts[did] += 1
     return counts
+
+
+def find_doc_ids_containing(doc_ids: list[str], marker: str) -> set[str]:
+    """Subset of `doc_ids` whose chunk text contains `marker` in any
+    chunk. Single batched ChromaDB get with `$in` — collapses what
+    would otherwise be N per-doc round trips on a metadata where-filter
+    (which scans the full collection each time) into one. Used by
+    /youtube_restub_rescan to identify failed-fetch stub bodies inside
+    YouTube docs without paying the N×collection-scan cost."""
+    if not doc_ids or not marker:
+        return set()
+    res = _collection.get(
+        where={"doc_id": {"$in": list(doc_ids)}},
+        include=["documents", "metadatas"],
+    )
+    hits: set[str] = set()
+    docs = res.get("documents") or []
+    metas = res.get("metadatas") or []
+    for text, md in zip(docs, metas):
+        if marker in (text or ""):
+            did = (md or {}).get("doc_id")
+            if did:
+                hits.add(did)
+    return hits

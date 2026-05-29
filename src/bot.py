@@ -5162,21 +5162,22 @@ async def cmd_youtube_restub_rescan(update: Update, ctx: ContextTypes.DEFAULT_TY
         await update.message.reply_text("📭 YouTube 학습 자료 없음.")
         return
 
-    # Per-doc verify by chunk content. Vector lookups are individually
-    # cheap (~ms) and the candidate set is small in practice; doing it
-    # in a thread keeps the event loop free either way.
-    def _is_stub(doc_id: str) -> bool:
-        try:
-            chunks = vector.get_doc_chunks(doc_id)
-        except Exception:
-            log.exception("get_doc_chunks failed for %s", doc_id)
-            return False
-        return any(_YT_STUB_MARKER in (ch.get("text") or "") for ch in chunks)
+    # Heads-up before the (still bounded but visibly slow) Chroma scan.
+    # On a 178k-chunk collection one batched where-$in get can take a
+    # few seconds even after the N→1 fix, so the user gets the message
+    # instead of staring at a silent prompt.
+    progress = await update.message.reply_text(
+        f"🔍 YouTube 자료 {len(candidates)}건 스캔 중…"
+    )
 
-    stubs: list[dict] = []
-    for c in candidates:
-        if await asyncio.to_thread(_is_stub, c["id"]):
-            stubs.append(c)
+    # Single batched chunk fetch (was N per-doc round trips, each a
+    # full metadata scan over the whole collection — that's why the
+    # first version felt frozen).
+    doc_ids = [c["id"] for c in candidates]
+    hit_ids = await asyncio.to_thread(
+        vector.find_doc_ids_containing, doc_ids, _YT_STUB_MARKER
+    )
+    stubs = [c for c in candidates if c["id"] in hit_ids]
 
     if not stubs:
         await update.message.reply_text(
