@@ -323,29 +323,26 @@ def chunk_counts(doc_ids: list[str]) -> dict[str, int]:
 
 
 def find_doc_ids_containing(doc_ids: list[str], marker: str) -> set[str]:
-    """Subset of `doc_ids` whose FIRST body chunk (idx=0) text contains
-    `marker`. Single batched ChromaDB get with `$in` AND an idx=0
-    filter — collapses what would otherwise be N per-doc round trips
-    (each a full-collection metadata scan) into one, and only pulls
-    one short chunk per doc instead of every chunk's body. Used by
-    /youtube_restub_rescan: the loader's failed-fetch stub is always a
-    single short body, so the marker lives in the idx=0 chunk; skipping
-    the rest avoids dragging long real transcripts over the wire."""
+    """Subset of `doc_ids` whose first body chunk text contains `marker`.
+
+    Fetches each doc's first chunk BY ID (`{doc_id}:0`) — a direct
+    primary-key lookup — NOT a metadata `where` scan. On a 178k-chunk
+    collection a `where={"doc_id": {"$in": [...]}}` get scans the whole
+    collection to evaluate the predicate; on a few-hundred-id batch that
+    was slow enough to spike memory and OOM-restart the bot (the earlier
+    `$in`/idx=0 versions all hit this). Chunk ids are deterministic —
+    pipeline writes `{doc_id}:{i}`, so the idx=0 chunk is `{doc_id}:0`.
+    The loader's failed-fetch stub is a single short body, so the marker
+    always lives in that first chunk; real transcripts never contain it,
+    so this stays precise while costing one keyed get."""
     if not doc_ids or not marker:
         return set()
-    res = _collection.get(
-        where={"$and": [
-            {"doc_id": {"$in": list(doc_ids)}},
-            {"idx": 0},
-        ]},
-        include=["documents", "metadatas"],
-    )
+    first_ids = [f"{d}:0" for d in doc_ids]
+    res = _collection.get(ids=first_ids, include=["documents"])
     hits: set[str] = set()
+    got_ids = res.get("ids") or []
     docs = res.get("documents") or []
-    metas = res.get("metadatas") or []
-    for text, md in zip(docs, metas):
+    for cid, text in zip(got_ids, docs):
         if marker in (text or ""):
-            did = (md or {}).get("doc_id")
-            if did:
-                hits.add(did)
+            hits.add(cid.rsplit(":", 1)[0])
     return hits
