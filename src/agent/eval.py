@@ -55,6 +55,78 @@ def ensure_template(path: Path = GOLDEN_PATH) -> None:
     log.info("eval: created template at %s", path)
 
 
+def _norm_q(q: str) -> str:
+    return " ".join((q or "").lower().split())
+
+
+# Answer strings that mean "no result" — don't seed eval items from
+# turns the agent couldn't answer (nothing useful to regress against).
+_REFUSAL_MARKERS = ("찾지 못했", "없습니다", "학습되지 않", "정보가 없")
+
+
+def seed_from_qna(n: int = 20, path: Path = GOLDEN_PATH) -> dict:
+    """Build a starter golden set from recent REAL Q&A turns.
+
+    Objective retrieval-regression seed:
+      • query            = the actual past question
+      • expected_sources = a distinctive slice of the recorded source
+                           titles (so the eval checks "does the right
+                           doc still surface?" — the recorded sources
+                           were what the agent actually cited)
+      • expected_facts   = [] (left blank; the user fills the 1-2 facts
+                           per item they want fact-checked, so we avoid
+                           circularly grading the agent against its own
+                           prior wording)
+
+    APPENDS new queries to any existing golden set — never clobbers
+    user-curated items (dedup by normalised query). Skips refusals and
+    trivially short answers. Returns {added, total, scanned}."""
+    from ..store import qna as _qna
+
+    existing: list[dict] = []
+    if path.exists():
+        try:
+            existing = (json.loads(path.read_text("utf-8")).get("items") or [])
+        except Exception:
+            existing = []
+    seen = {_norm_q(it.get("query", "")) for it in existing}
+
+    rows = _qna.recent(limit=max(200, n * 8))
+    seeded: list[dict] = []
+    for r in rows:
+        q = (r.get("question") or "").strip()
+        a = (r.get("answer") or "").strip()
+        srcs = [s for s in (r.get("sources") or []) if (s or "").strip()]
+        if not q or len(a) < 80:
+            continue
+        if any(m in a for m in _REFUSAL_MARKERS) and not srcs:
+            continue
+        nq = _norm_q(q)
+        if nq in seen:
+            continue
+        seen.add(nq)
+        exp_src = [s.strip()[:30] for s in srcs[:2]]
+        seeded.append({
+            "id": f"seed{len(existing) + len(seeded) + 1:03d}",
+            "query": q[:200],
+            "expected_sources": exp_src,
+            "expected_facts": [],
+        })
+        if len(seeded) >= n:
+            break
+
+    payload = {"_instructions": _TEMPLATE["_instructions"],
+               "items": existing + seeded}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), "utf-8")
+    tmp.replace(path)
+    log.info("eval: seeded %d new items (total %d)", len(seeded),
+             len(payload["items"]))
+    return {"added": len(seeded), "total": len(payload["items"]),
+            "scanned": len(rows)}
+
+
 def _score_item(item: dict, result: dict) -> dict:
     out = {
         "id": item.get("id", "?"),

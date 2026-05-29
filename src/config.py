@@ -27,10 +27,18 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "gemini-embedding-001")
 # Chunk size in tokens. 1000 (was 700 → 400) reduces total chunks by
 # ~30% on top of prior savings — less embedding cost + storage, and
 # 1000-token windows are still squarely in Gemini-embedding-001's
-# sweet spot so retrieval quality holds. Overlap scales proportionally
-# to preserve cross-boundary recall.
+# sweet spot so retrieval quality holds.
 # Env-overridable for fast revert if retrieval quality regresses.
 CHUNK_TOKENS = int(os.getenv("CHUNK_TOKENS", "1000"))
+# NOTE: CHUNK_OVERLAP only applies to the token-slice fallback in
+# chunker._slice_by_tokens (used when a SINGLE paragraph/sentence
+# exceeds CHUNK_TOKENS — dense tables, one giant run-on). The common
+# path greedily packs whole paragraphs with NO inter-chunk overlap;
+# cross-boundary recall there comes from boundary preservation
+# (chunks end on paragraph/sentence breaks, not mid-thought), not from
+# overlap. If split-fact recall ever proves weak, the fix is to add a
+# small sentence carry-over between packed chunks (cost: more chunks =
+# more embedding), not to bump this value.
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
 TOP_K = 10
 SUMMARY_MAX_TOKENS = 1000

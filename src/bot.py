@@ -1371,7 +1371,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 📋 <b>조회</b>
   /find &lt;kw&gt; [N=50](헤더 학습/발행/청크수) · /find_all &lt;kw&gt;(최대 500)
   /show &lt;id|kw&gt;(본문 + [🌐 한국어 번역]) · /recent [N]
-  /stats · /status · /usage · /cost · /eval
+  /stats · /status · /usage · /cost · /eval · /eval_seed
 
 💬 <b>대화</b>
   /reset · /deep &lt;질문&gt;(Pro 강제)
@@ -1502,7 +1502,12 @@ doc_id 4자 이상 또는 키워드로 매치되는 문서의 본문 dump.
 • expected_sources (OR): 반환 출처 제목에 키워드 하나라도 있으면 통과.
 • expected_facts (AND): 답변 본문에 모두 포함돼야 통과.
 • 빈 배열 [] → 해당 체크 스킵.
-언제: 프롬프트·청크·TOP_K 변경 후 품질 회귀 확인.
+언제: 프롬프트·청크·TOP_K·리랭커 변경 후 품질 회귀 확인.
+
+<b>/eval_seed [N]</b>
+과거 Q&A(qna.db)에서 골든셋 초안 자동 생성 — 신규 질문 N개(기본 20, 최대 50)
+append. query·expected_sources 자동, expected_facts는 비워둠(네가 채움).
+기존 항목 안 지움. 빈 골든셋부터 시작할 때 한 번 돌려 시드 확보.
 
 ═══════════════════════════════════════
 <b>💬 2. 대화</b>
@@ -2506,6 +2511,40 @@ async def cmd_eval(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     report = _eval.format_report(ev)
     await update.message.reply_text(report, parse_mode="HTML",
                                     disable_web_page_preview=True)
+
+
+async def cmd_eval_seed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Generate a starter eval golden set from recent real Q&A turns.
+
+    /eval_seed [N]  — append up to N (default 20, max 50) new items to
+    data/eval_golden.json from qna.db. Objective retrieval-regression
+    seed: query + expected_sources auto-filled, expected_facts left
+    blank for the user to curate. Never clobbers existing items."""
+    if not _is_owner(update):
+        return
+    n = 20
+    if ctx.args:
+        try:
+            n = max(1, min(50, int(ctx.args[0])))
+        except ValueError:
+            pass
+    async with _SustainedTyping(update, ctx):
+        from .agent import eval as _eval
+        res = await asyncio.to_thread(_eval.seed_from_qna, n)
+    await update.message.reply_text(
+        f"📋 골든셋 초안 생성 완료\n"
+        f"• 신규 추가: <b>{res['added']}</b>개 (총 {res['total']}개, "
+        f"과거 Q&A {res['scanned']}건 스캔)\n"
+        f"• 파일: <code>data/eval_golden.json</code>\n\n"
+        f"<b>다음 단계 (검증 정확도용):</b>\n"
+        f"1. 각 항목 <code>expected_facts</code>에 '답변에 꼭 있어야 할 사실' "
+        f"1~2개 채우기 (비우면 출처 체크만, 사실 체크는 스킵)\n"
+        f"2. <code>expected_sources</code>를 더 짧고 고유한 키워드로 다듬기 (선택)\n"
+        f"3. <code>/eval</code> 로 채점 — 코드 변경 전/후 비교에 사용\n\n"
+        f"⚠️ 출처는 과거 답변이 실제 인용한 자료라 '그 자료가 다시 나오나'를 "
+        f"객관 검증함. 사실은 순환 채점을 피하려고 비워뒀어 (네가 채움).",
+        parse_mode="HTML", disable_web_page_preview=True,
+    )
 
 
 async def cmd_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -10938,6 +10977,7 @@ def main():
     app.add_handler(CommandHandler("usage", cmd_usage))
     app.add_handler(CommandHandler("cost", cmd_cost))
     app.add_handler(CommandHandler("eval", cmd_eval))
+    app.add_handler(CommandHandler("eval_seed", cmd_eval_seed))
     app.add_handler(CommandHandler("recent", cmd_recent))
     app.add_handler(CommandHandler("forget", cmd_forget))
     app.add_handler(CommandHandler("forget_search", cmd_forget_search))
