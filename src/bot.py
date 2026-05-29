@@ -1397,6 +1397,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /forget_qna · /forget_qna_search
   /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm
   /forget_forwards · /forget_forwards_confirm
+  /youtube_restub_rescan (stub YouTube 재학습 큐)
 
 🛠️ <b>도구</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
@@ -1658,6 +1659,13 @@ Q&amp;A 검색 결과 전체 삭제.
 
 <b>/forget_forwards_confirm</b>
 포워드 전체 삭제 실행.
+
+<b>/youtube_restub_rescan</b>
+yt-dlp 가 깨져있던 동안 stub 으로 학습된 YouTube 자료를 찾아
+삭제 + 원 URL 을 retry 큐에 재투입. 자막 fetch 실패 안내문이
+본문에 그대로 들어간 케이스를 정확히 식별 (실제 자막에는 없는
+마커 매칭). bare = 미리보기, <code>confirm</code> = 실행.
+실행 후 다음 retry tick(≈60s)부터 nightly yt-dlp + Deno 로 재추출.
 
 ⚠️ 모든 삭제는 2단계 confirm — 첫 명령은 항상 미리보기.
 영구 무시 (/failed [🗑]) 와 다름: /forget 은 자료만 지움, ignored 등록 X.
@@ -5127,6 +5135,113 @@ async def cmd_cleanup_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     ctx.args = ["confirm"]
     await cmd_cleanup(update, ctx)
+
+
+# Marker string the YouTube loader writes to the body when both the
+# transcript_api and yt-dlp fetchers fail. Real captions never contain
+# this exact phrase, so it's a reliable stub-vs-real signal.
+_YT_STUB_MARKER = "자막 자동 fetch 실패"
+
+
+async def cmd_youtube_restub_rescan(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Rescue YouTube docs that got learned as the loader's stub
+    ('📺 자막 자동 fetch 실패…') while yt-dlp was broken: scan the
+    learned set, drop the stub rows from meta + vector, and re-queue
+    their source URLs so the next retry tick re-extracts captions
+    against the now-healthy nightly yt-dlp + Deno EJS path.
+
+    Two-step like the other bulk-delete commands: bare /youtube_restub_rescan
+    previews, /youtube_restub_rescan confirm executes."""
+    if not _is_owner(update):
+        return
+    confirm = bool(ctx.args) and ctx.args[0].lower() == "confirm"
+    chat_id = update.effective_chat.id
+
+    candidates = await asyncio.to_thread(meta.find_youtube_docs)
+    if not candidates:
+        await update.message.reply_text("📭 YouTube 학습 자료 없음.")
+        return
+
+    # Per-doc verify by chunk content. Vector lookups are individually
+    # cheap (~ms) and the candidate set is small in practice; doing it
+    # in a thread keeps the event loop free either way.
+    def _is_stub(doc_id: str) -> bool:
+        try:
+            chunks = vector.get_doc_chunks(doc_id)
+        except Exception:
+            log.exception("get_doc_chunks failed for %s", doc_id)
+            return False
+        return any(_YT_STUB_MARKER in (ch.get("text") or "") for ch in chunks)
+
+    stubs: list[dict] = []
+    for c in candidates:
+        if await asyncio.to_thread(_is_stub, c["id"]):
+            stubs.append(c)
+
+    if not stubs:
+        await update.message.reply_text(
+            f"✅ YouTube 학습 {len(candidates)}건 중 stub 없음 — 재학습 대상 0."
+        )
+        return
+
+    if not confirm:
+        preview = "\n".join(
+            f"  • {_html.escape((s.get('title') or '')[:50])} — "
+            f"{_html.escape((s.get('source') or '')[:60])}"
+            for s in stubs[:10]
+        )
+        more = f"\n... 외 {len(stubs) - 10}건" if len(stubs) > 10 else ""
+        await update.message.reply_text(
+            f"📺 stub으로 학습된 YouTube {len(stubs)}건:\n"
+            f"{preview}{more}\n\n"
+            f"전부 삭제 + 재학습 큐 투입:\n"
+            f"<code>/youtube_restub_rescan confirm</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    def _purge(doc_id: str) -> int:
+        try:
+            n = vector.delete_doc(doc_id)
+        except Exception:
+            log.exception("vector.delete_doc failed for %s", doc_id)
+            n = 0
+        try:
+            meta.delete(doc_id)
+        except Exception:
+            log.exception("meta.delete failed for %s", doc_id)
+        return n
+
+    chunks_removed = 0
+    requeued = 0
+    skipped_dup = 0
+    queued_urls = {it.get("url") for it in _INGEST_RETRY_QUEUE
+                   if it.get("kind") == "url"}
+    for s in stubs:
+        chunks_removed += await asyncio.to_thread(_purge, s["id"])
+        url = s.get("source") or ""
+        if not url.startswith("http"):
+            continue
+        if url in queued_urls:
+            skipped_dup += 1
+            continue
+        _INGEST_RETRY_QUEUE.append({
+            "kind": "url",
+            "url": url,
+            "chat_id": chat_id,
+            "attempts": 0,
+        })
+        queued_urls.add(url)
+        requeued += 1
+    _persist_retry_queue()
+
+    await update.message.reply_text(
+        f"✅ YouTube stub {len(stubs)}건 처리\n"
+        f"  • 메타/벡터 삭제: {len(stubs)}건 (청크 {chunks_removed})\n"
+        f"  • 재학습 큐 투입: {requeued}건\n"
+        f"  • 큐 중복 skip: {skipped_dup}건\n"
+        f"→ 다음 retry tick(≈60s)부터 재추출."
+    )
 
 
 async def cmd_forget_forwards_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -11087,6 +11202,7 @@ def main():
     app.add_handler(CommandHandler("queue_panic", cmd_queue_panic))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("cleanup_confirm", cmd_cleanup_confirm))
+    app.add_handler(CommandHandler("youtube_restub_rescan", cmd_youtube_restub_rescan))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
     app.add_handler(CommandHandler("dedupe_confirm", cmd_dedupe_confirm))
     app.add_handler(CommandHandler("forget_forwards", cmd_forget_forwards))

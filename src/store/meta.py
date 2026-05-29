@@ -418,6 +418,21 @@ def find_by_filename(filename: str) -> dict | None:
         return dict(row) if row else None
 
 
+def find_youtube_docs() -> list[dict]:
+    """All documents whose source is a YouTube URL. Caller (the
+    /youtube_restub_rescan command) then per-doc inspects chunks for
+    the loader's stub marker to identify failed-fetch placeholders
+    left behind while yt-dlp was broken. SQL-only filter — chunk
+    inspection lives in the vector store, not here."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, source, title FROM documents "
+            "WHERE source LIKE 'http%youtube.com%' "
+            "   OR source LIKE 'http%youtu.be%'"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def ingested_filename_set() -> set[str]:
     """Return every filename already represented in `documents`,
     derived from `tg-doc:<uniq>:<filename>` and `local:<filename>`
