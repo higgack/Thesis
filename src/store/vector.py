@@ -323,16 +323,21 @@ def chunk_counts(doc_ids: list[str]) -> dict[str, int]:
 
 
 def find_doc_ids_containing(doc_ids: list[str], marker: str) -> set[str]:
-    """Subset of `doc_ids` whose chunk text contains `marker` in any
-    chunk. Single batched ChromaDB get with `$in` — collapses what
-    would otherwise be N per-doc round trips on a metadata where-filter
-    (which scans the full collection each time) into one. Used by
-    /youtube_restub_rescan to identify failed-fetch stub bodies inside
-    YouTube docs without paying the N×collection-scan cost."""
+    """Subset of `doc_ids` whose FIRST body chunk (idx=0) text contains
+    `marker`. Single batched ChromaDB get with `$in` AND an idx=0
+    filter — collapses what would otherwise be N per-doc round trips
+    (each a full-collection metadata scan) into one, and only pulls
+    one short chunk per doc instead of every chunk's body. Used by
+    /youtube_restub_rescan: the loader's failed-fetch stub is always a
+    single short body, so the marker lives in the idx=0 chunk; skipping
+    the rest avoids dragging long real transcripts over the wire."""
     if not doc_ids or not marker:
         return set()
     res = _collection.get(
-        where={"doc_id": {"$in": list(doc_ids)}},
+        where={"$and": [
+            {"doc_id": {"$in": list(doc_ids)}},
+            {"idx": 0},
+        ]},
         include=["documents", "metadatas"],
     )
     hits: set[str] = set()
