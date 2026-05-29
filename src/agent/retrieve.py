@@ -56,11 +56,14 @@ async def _local_rerank(query: str, candidates: list[dict], k: int) -> list[dict
     """Cross-encoder ranking. Returns None if the local model isn't
     available so the caller can fall back to Gemini.
 
-    Gated by LOCAL_RERANKER_ENABLED env (default off) — on a 2GB
-    e2-small VM the 400MB BGE model can tip the bot container over
-    its 1500m memory cap during ingest bursts, triggering OOM kills.
-    Flip the env back to '1' after upgrading the VM."""
-    if os.getenv("LOCAL_RERANKER_ENABLED", "0") != "1":
+    Enabled by default (LOCAL_RERANKER_ENABLED defaults to '1'). The
+    BGE-reranker-base model is ~400MB resident; the bot container's
+    mem_limit is 12GB (n2-standard-4 / 16GB VM), so there's ample
+    headroom — this was previously gated OFF for an old 2GB e2-small
+    VM with a 1500m cap that no longer exists. Set the env to '0' to
+    force the Gemini Flash-Lite rerank fallback (e.g. for A/B testing
+    or if a future VM downsize reintroduces a memory squeeze)."""
+    if os.getenv("LOCAL_RERANKER_ENABLED", "1") != "1":
         return None
     if len(candidates) <= k:
         return candidates

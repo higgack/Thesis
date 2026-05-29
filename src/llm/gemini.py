@@ -49,6 +49,39 @@ def _chain_for(model: str) -> list[str]:
     return chain
 
 
+def _build_config(system: str, max_tokens: int, temperature: float,
+                  thinking_budget: int | None, model: str):
+    """Build GenerateContentConfig, disabling 'thinking' when asked.
+
+    complete() is only ever called for single-shot extraction /
+    summary / translation / rerank / keyword / audit tasks (all on
+    Flash-Lite) — none of them benefit from chain-of-thought, and the
+    thinking tokens are billed at the output rate. Pinning the budget
+    to 0 caps that spend + latency. The agent's answer synthesis and
+    /deep go through generate_content directly (not complete()), so
+    they keep dynamic thinking.
+
+    gemini-2.5-pro cannot disable thinking (min budget 128), so we skip
+    the field for any pro model. If the installed SDK predates
+    ThinkingConfig, fall back to a plain config so we never break the
+    call."""
+    base = dict(
+        system_instruction=system,
+        max_output_tokens=max_tokens,
+        temperature=temperature,
+    )
+    if thinking_budget is not None and "pro" not in model:
+        try:
+            return types.GenerateContentConfig(
+                **base,
+                thinking_config=types.ThinkingConfig(
+                    thinking_budget=thinking_budget),
+            )
+        except Exception:
+            log.debug("thinking_config unsupported by SDK; plain config")
+    return types.GenerateContentConfig(**base)
+
+
 async def complete(
     model: str,
     system: str,
@@ -56,6 +89,7 @@ async def complete(
     max_tokens: int = 1024,
     temperature: float = 0.2,
     purpose: str = "unknown",
+    thinking_budget: int | None = 0,
 ) -> str:
     chain = _chain_for(model)
     last_err: BaseException | None = None
@@ -72,11 +106,9 @@ async def complete(
                     _client.aio.models.generate_content(
                         model=m,
                         contents=user,
-                        config=types.GenerateContentConfig(
-                            system_instruction=system,
-                            max_output_tokens=max_tokens,
-                            temperature=temperature,
-                        ),
+                        config=_build_config(
+                            system, max_tokens, temperature,
+                            thinking_budget, m),
                     ),
                     timeout=60,
                 )

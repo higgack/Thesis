@@ -128,6 +128,13 @@ def record_resp(model: str, resp, purpose: str = "unknown") -> float:
     in_tok = getattr(um, "prompt_token_count", 0) or 0
     out_tok = getattr(um, "candidates_token_count", 0) or 0
     cached = getattr(um, "cached_content_token_count", 0) or 0
+    # Gemini 2.5 thinking models bill reasoning tokens at the OUTPUT
+    # rate, but report them in `thoughts_token_count` — a field NOT
+    # included in candidates_token_count. Without folding it in, /usage
+    # and the dashboard under-report every flash/pro answer + /deep call
+    # (often by 30-60% of the visible output on reasoning-heavy turns).
+    thoughts = getattr(um, "thoughts_token_count", 0) or 0
+    out_tok += thoughts
     return record(model, in_tok, out_tok, purpose, cached_tokens=cached)
 
 
