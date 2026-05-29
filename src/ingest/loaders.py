@@ -523,26 +523,20 @@ async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
     if yt_dlp_text:
         return title, yt_dlp_text, description
 
-    # Both transcript fetchers failed. DO NOT fall back to jina.ai
-    # for youtube — jina returns page HTML (nav, related videos,
-    # comments) without the JS-rendered transcript, polluting RAG
-    # retrieval. Return a minimal stub so /find surfaces the URL with
-    # a clean, actionable manual-paste instruction. The raw library
-    # error (huge wall of text including library URLs and ban-risk
-    # warnings) gets trimmed to a single line — the full error stays
-    # in the log for diagnostics.
-    log_short = (log_msg or "").splitlines()[0][:120] if log_msg else "unknown"
-    stub = (
-        f"📺 자막 자동 fetch 실패 (YouTube cloud-IP 차단)\n\n"
-        f"제목: {title}\n"
-        f"링크: {url}\n\n"
-        f"📋 수동 학습 (5초):\n"
-        f"1. 영상 페이지에서 ⋯ 메뉴 → '스크립트 표시' 클릭\n"
-        f"2. 전체 스크립트 텍스트 복사\n"
-        f"3. 이 봇에 메시지로 붙여넣기 (제목 자동 인식)\n\n"
-        f"[기술 사유: {log_short}]"
-    )
-    return title, stub, description
+    # Both transcript fetchers failed. Previously we returned a stub
+    # body with manual-paste instructions, but the pipeline ingested it
+    # as if it were real content — so find_by_source dedup later blocked
+    # any re-extraction, the stub text polluted RAG retrieval, and a
+    # transient yt-dlp outage permanently corrupted every YouTube doc
+    # learned in that window (the /youtube_restub_rescan cleanup was
+    # built to undo exactly that). Returning empty body instead routes
+    # the URL through the pipeline's existing "본문 추출 실패" path →
+    # /failed with retry_payload intact, so /failed_retry replays it
+    # cleanly once yt-dlp recovers (the [기술 사유] tail is preserved in
+    # the docker log via _fetch_youtube_subs_yt_dlp's log.info calls).
+    log.info("youtube: transcript_api + yt-dlp both failed for %s — %s",
+             video_id, log_msg)
+    return title, "", description
 
 
 async def load_arxiv(arxiv_id: str) -> tuple[str, str, str | None]:

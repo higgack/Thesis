@@ -42,7 +42,15 @@ _THRESHOLD = int(os.getenv("URL_BLOCKLIST_THRESHOLD", "2"))
 # host (every Naver blog silently skipped). For these we keep trying —
 # a real miss just lands in /failed (visible, retryable) instead of
 # disappearing. This also neutralises any pre-existing stored block.
-_NEVER_BLOCK = {"blog.naver.com", "m.blog.naver.com"}
+#   YouTube hosts: yt-dlp breakages are transient (YouTube changes its
+#   internal API every few months) and affect EVERY video equally, so a
+#   couple of failures used to flip the whole site into auto-block — and
+#   then once nightly yt-dlp recovered, no new videos came in until the
+#   block aged out. Failures still land in /failed for [🔁] retry.
+_NEVER_BLOCK = {
+    "blog.naver.com", "m.blog.naver.com",
+    "youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be",
+}
 
 _BLOCKED: dict[str, dict] = {}
 _loaded = False
