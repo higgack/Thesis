@@ -3,10 +3,12 @@ yt-dlp health tracker.
 
 Records each yt-dlp transcript-fetch attempt (success or failure)
 and computes a rolling failure rate over a 24-hour window. The bot
-fires an actionable alert when the rate crosses a threshold so the
-user can either wait for yt-dlp's upstream fix (1-3 day cycle when
-YouTube changes its internal API) or force a fresh install via
-`docker compose up -d --build --force-recreate bot`.
+fires an actionable alert when the rate crosses a threshold. The
+Dockerfile already best-effort upgrades to the latest yt-dlp nightly
+on every build (after `COPY src`, so each auto-deploy self-heals),
+so the usual remedy is just to push any commit and let auto_pull
+rebuild; the alert exists for the case where even nightly hasn't
+shipped the fix yet (wait a day) or the Deno/EJS runtime is unhealthy.
 
 State file: data/yt_dlp_health.json
 Schema:
