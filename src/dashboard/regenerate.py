@@ -931,41 +931,79 @@ text-align:center;padding:40vh 20px}</style>
 """
 
 
+# Set False after the first successful run per process so we do ONE
+# full detail-page rebuild on (re)start (propagating any template/token
+# change) and then only emit new pages incrementally.
+_FIRST_RUN = True
+
+
 def regenerate() -> None:
     """Rewrite the static HTML tree under data/dashboard/.
-    Returns silently — never raises so a render bug can't kill ingest."""
+    Returns silently — never raises so a render bug can't kill ingest.
+
+    MUST be called off the event loop (callers use asyncio.to_thread):
+    it does SQLite reads + a Chroma count over the full corpus + HTML
+    file writes. Running it on the loop froze the bot for ~60s every
+    tick.
+
+    Two cost fixes vs the old version:
+      • Non-blocking lock — overlapping ticks (scheduled + post-command)
+        skip instead of piling up or blocking the caller.
+      • Incremental detail pages — a Q&A detail page is immutable once
+        recorded, so after the first full build per process we only
+        write detail files that don't exist yet. The old code rewrote
+        ALL ~2000 detail files every 60s tick, which is what pegged the
+        loop."""
+    global _FIRST_RUN
     token = (os.getenv("DASHBOARD_TOKEN", "") or "").strip()
     if not token:
         log.warning("DASHBOARD_TOKEN unset; static dashboard skipped")
         return
+    if not _LOCK.acquire(blocking=False):
+        log.debug("dashboard regenerate already running; skipping this tick")
+        return
     try:
-        with _LOCK:
-            base = Path(config.DATA_DIR) / "dashboard"
-            target = base / token
-            target.mkdir(parents=True, exist_ok=True)
-            (base / "index.html").write_text(_PUBLIC_INDEX, encoding="utf-8")
-            rows = qna.recent(limit=2000)
-            today = cost.today_krw()
-            mtd = cost.month_to_date_krw()
-            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
-            generated_at = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d %H:%M")
-            stats = {
-                "total_qna": qna.count(),
-                "docs": meta_store.count(),
-                "chunks": vector_store.chunk_count(),
-                "today_krw": today["total_krw"],
-                "today_calls": today["calls"],
-                "mtd_krw": mtd["total_krw"],
-                "mtd_year": mtd["year"],
-                "mtd_month": mtd["month"],
-                "mtd_day": mtd["day"],
-                "generated_at": generated_at,
-            }
-            (target / "index.html").write_text(
-                _render_index(rows, stats), encoding="utf-8"
-            )
-            for it in rows:
-                fname = target / f"q-{int(it['id'])}.html"
+        base = Path(config.DATA_DIR) / "dashboard"
+        target = base / token
+        target.mkdir(parents=True, exist_ok=True)
+        (base / "index.html").write_text(_PUBLIC_INDEX, encoding="utf-8")
+        rows = qna.recent(limit=2000)
+        today = cost.today_krw()
+        mtd = cost.month_to_date_krw()
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        generated_at = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d %H:%M")
+        stats = {
+            "total_qna": qna.count(),
+            "docs": meta_store.count(),
+            "chunks": vector_store.chunk_count(),
+            "today_krw": today["total_krw"],
+            "today_calls": today["calls"],
+            "mtd_krw": mtd["total_krw"],
+            "mtd_year": mtd["year"],
+            "mtd_month": mtd["month"],
+            "mtd_day": mtd["day"],
+            "generated_at": generated_at,
+        }
+        # Atomic index write so the http.server never serves a
+        # half-written page.
+        idx = target / "index.html"
+        tmp = target / "index.html.tmp"
+        tmp.write_text(_render_index(rows, stats), encoding="utf-8")
+        os.replace(tmp, idx)
+        # Detail pages: full rebuild only on first run after (re)start;
+        # afterwards just the ids whose file is missing (new Q&As).
+        full = _FIRST_RUN
+        written = 0
+        for it in rows:
+            fname = target / f"q-{int(it['id'])}.html"
+            if full or not fname.exists():
                 fname.write_text(_render_detail(it, token), encoding="utf-8")
+                written += 1
+        _FIRST_RUN = False
+        if written:
+            log.info("dashboard: wrote %d detail page(s)%s", written,
+                     " (full rebuild)" if full else "")
     except Exception:
         log.exception("dashboard regenerate failed")
+    finally:
+        _LOCK.release()

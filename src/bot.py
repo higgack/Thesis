@@ -10089,10 +10089,18 @@ async def _periodic_memory_cleanup(ctx: ContextTypes.DEFAULT_TYPE):
 
 async def _refresh_dashboard(ctx: ContextTypes.DEFAULT_TYPE):
     """Regenerate the static dashboard HTML on a tick so ingest-only
-    activity (no Q&As happening) still shows up in the totals."""
+    activity (no Q&As happening) still shows up in the totals.
+
+    Offloaded to a worker thread: regenerate() does SQLite reads, a
+    Chroma count over the full corpus, and HTML writes. Running it
+    directly on the event loop froze the bot ~60s every tick (logs
+    showed all scheduler jobs piling up with 'maximum number of
+    running instances reached' + 'missed by 0:00:58'). to_thread keeps
+    the loop free; regenerate()'s own non-blocking lock prevents
+    overlapping runs."""
     try:
         from .dashboard import regenerate as dashboard_regen
-        dashboard_regen.regenerate()
+        await asyncio.to_thread(dashboard_regen.regenerate)
     except Exception:
         log.exception("scheduled dashboard refresh failed")
 
