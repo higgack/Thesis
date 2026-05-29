@@ -5142,8 +5142,33 @@ async def cmd_cleanup_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # this exact phrase, so it's a reliable stub-vs-real signal.
 _YT_STUB_MARKER = "자막 자동 fetch 실패"
 
+# Single-flight guard. The stub scan is a heavy ChromaDB op; firing it
+# multiple times (impatient re-taps) runs N of them concurrently across
+# to_thread workers on the same collection object, which thrash each
+# other so none finish. Reject overlap with a clear message instead.
+_YT_RESCAN_INFLIGHT = False
+
 
 async def cmd_youtube_restub_rescan(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Single-flight wrapper around the rescan so concurrent invocations
+    don't pile up heavy Chroma scans on top of each other."""
+    global _YT_RESCAN_INFLIGHT
+    if not _is_owner(update):
+        return
+    if _YT_RESCAN_INFLIGHT:
+        await update.message.reply_text(
+            "⏳ 이미 스캔/처리 중이에요. 끝날 때까지 기다려주세요 "
+            "(다시 누르면 경합으로 더 느려져요)."
+        )
+        return
+    _YT_RESCAN_INFLIGHT = True
+    try:
+        await _youtube_restub_rescan_impl(update, ctx)
+    finally:
+        _YT_RESCAN_INFLIGHT = False
+
+
+async def _youtube_restub_rescan_impl(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Rescue YouTube docs that got learned as the loader's stub
     ('📺 자막 자동 fetch 실패…') while yt-dlp was broken: scan the
     learned set, drop the stub rows from meta + vector, and re-queue
