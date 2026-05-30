@@ -141,6 +141,13 @@ TELETHON_CONN_RETRIES = 1000
 _DIGEST_TG_RE = re.compile(r"📋[^\n]*채널\s*요약")
 _DIGEST_SUBSTACK_RE = re.compile(r"📰[^\n]*Substack\s*요약")
 
+# '석학들의 마켓 (인)사이트' (t.me/getfeed) format marker. These posts
+# carry a 📝 AI 본문 요약 + ✨(In)sight commentary that we DON'T want,
+# wrapped around a 📜원문보기📜 link to the source article/news. For the
+# original-link channels we extract ONLY that source URL (see
+# _extract_original_link) and relay it so the bot ingests the original.
+_ORIGINAL_LINK_MARKER_RE = re.compile(r"원문\s*보기")
+
 # Pull every t.me/<channel>/<msg_id> or t.me/c/<chat_id>/<msg_id> hit
 # from the digest body. Private-channel links use the numeric c/... form
 # and only resolve when the listener's Telethon account is already a
@@ -515,6 +522,74 @@ def _strip_plain_urls(text: str, channel_key: str) -> str:
 # case) here to switch it from "text-only" to "full ingestion".
 _PLAIN_FULL_INGEST = {"aicorporateanalysisdeepdive", "benineb9"}
 
+# Channels whose posts wrap an AI 요약 around a 원문보기 source link, where
+# we want ONLY the original link ingested (not the AI body). Hardcoded
+# like _PLAIN_FULL_INGEST; add more usernames here as needed.
+#   getfeed = '석학들의 마켓 (인)사이트'
+_ORIGINAL_LINK_CHANNELS = {"getfeed"}
+
+
+def _extract_original_link(msg) -> str | None:
+    """Return ONLY the 원문보기 (original-source) URL from a
+    '석학들의 마켓 (인)사이트'-style post, skipping the 📝 AI 요약 and
+    ✨(In)sight body. The link is either a text-url entity whose visible
+    label covers the 원문 marker (hyperlinked 원문보기), or a plain URL
+    printed right after the 원문보기 marker (e.g. '원문보기 (https://…)').
+    Returns None when no such link is present (→ the post is dropped)."""
+    from telethon.tl.types import MessageEntityTextUrl
+    text = msg.message or ""
+    # 1) Hyperlinked 원문보기 — URL hidden in a text-url entity whose
+    #    visible label contains '원문'.
+    for ent in (msg.entities or []):
+        if isinstance(ent, MessageEntityTextUrl):
+            label = text[ent.offset:ent.offset + ent.length]
+            if "원문" in label:
+                u = ent.url.strip().rstrip(".,);")
+                if u.startswith("http"):
+                    return u
+    # 2) Visible URL after the 원문보기 marker.
+    m = _ORIGINAL_LINK_MARKER_RE.search(text)
+    if m:
+        um = _HTTP_URL_RE.search(text[m.end():])
+        if um:
+            return um.group(0).rstrip(".,);")
+    return None
+
+
+async def _relay_original_link(client: TelegramClient, msg, target,
+                               channel_name: str) -> None:
+    """Extract the 원문보기 source URL and relay it as a plain text
+    message so the bot's URL pipeline ingests the original article only.
+    The AI 요약/(In)sight body is never forwarded."""
+    url = _extract_original_link(msg)
+    if not url:
+        print(f"  drop {channel_name} msg {msg.id}: no 원문보기 link")
+        return
+    seen_key = f"origlink:{url}"
+    if _seen_check(seen_key):
+        print(f"  skip {url}: already sent (seen)")
+        return
+    last_err: str | None = None
+    for attempt in range(_RELAY_MAX_ATTEMPTS):
+        try:
+            await client.send_message(target, url, link_preview=False)
+            print(f"  원문 relay sent {url}"
+                  + (f" [retry {attempt}]" if attempt else ""))
+            _seen_mark(seen_key)
+            return
+        except FloodWaitError as e:
+            wait = max(e.seconds + 1, 1)
+            print(f"    flood wait {wait}s on {url} "
+                  f"(attempt {attempt + 1}/{_RELAY_MAX_ATTEMPTS})")
+            await asyncio.sleep(wait)
+            last_err = f"FloodWaitError({e.seconds}s)"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            print(f"    err {url}: {last_err}")
+            return
+    print(f"    ✗ DROP {url} after {_RELAY_MAX_ATTEMPTS} attempts"
+          + (f" (last: {last_err})" if last_err else ""))
+
 
 async def _relay_plain(client: TelegramClient, msg, target,
                        channel_name: str) -> None:
@@ -711,6 +786,11 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
             "digest mode: 📋 Telegram → expand · 📰 Substack → expand · "
             "other → drop"
         )
+        if _ORIGINAL_LINK_CHANNELS:
+            print(
+                f"original-link mode: {sorted(_ORIGINAL_LINK_CHANNELS)} — "
+                f"relay only the 원문보기 source URL (drop AI 요약/(In)sight)"
+            )
         if plain_channels:
             print(
                 f"plain-relay mode: {sorted(plain_channels)} — "
@@ -742,6 +822,12 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
             # known URL footers and re-send as text.
             if channel_name.lower() in plain_channels:
                 await _relay_plain(client, msg, target, channel_name)
+                return
+
+            # Original-link path: AI-요약 channels (e.g. getfeed) — relay
+            # ONLY the 원문보기 source URL, drop the AI body.
+            if channel_name.lower() in _ORIGINAL_LINK_CHANNELS:
+                await _relay_original_link(client, msg, target, channel_name)
                 return
 
             now = asyncio.get_event_loop().time()
