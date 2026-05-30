@@ -984,7 +984,12 @@ def _extract_urls(text: str) -> tuple[list[str], str]:
 
 
 _INTERNAL_TG_RE = re.compile(r"^https?://t\.me/", re.IGNORECASE)
-_MAX_URLS_PER_MSG = 5
+# Per-message URL cap. Raised 5→30 so hand-curated broker dailies (한투
+# 로보틱스 데일리 등 — typically 4~7 vo.la links) get every original
+# article ingested instead of tripping the forwarded-digest URL-drop
+# below. Genuine spam digests (Noah's auto-aggregator bundles 50+ URLs)
+# still exceed 30 and fall back to body-only.
+_MAX_URLS_PER_MSG = 30
 
 
 def _collect_message_urls(msg) -> tuple[list[str], str]:
@@ -1018,8 +1023,8 @@ def _collect_message_urls(msg) -> tuple[list[str], str]:
     )
     # Forwarded automation digest (e.g. Noahsummary) tends to bundle 50+
     # URLs per message — let those ride as plain text, the URLs survive
-    # inside the body string. Hand-curated forwards (broker reports
-    # with 1~4 links) keep their URL ingest path.
+    # inside the body string. Hand-curated forwards (broker dailies with
+    # ~4~7 links) stay under the 30 cap and keep their URL ingest path.
     if is_forward and len(urls) >= _MAX_URLS_PER_MSG:
         urls = []
     else:
