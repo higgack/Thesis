@@ -143,10 +143,11 @@ _DIGEST_SUBSTACK_RE = re.compile(r"📰[^\n]*Substack\s*요약")
 
 # '석학들의 마켓 (인)사이트' (t.me/getfeed) format marker. These posts
 # carry a 📝 AI 본문 요약 + ✨(In)sight commentary that we DON'T want,
-# wrapped around a 📜원문보기📜 link to the source article/news. For the
-# original-link channels we extract ONLY that source URL (see
-# _extract_original_link) and relay it so the bot ingests the original.
-_ORIGINAL_LINK_MARKER_RE = re.compile(r"원문\s*보기")
+# wrapped around either a 📜원문보기📜 link (blog/news/tg) or a
+# 📀영상보기📀 link (YouTube). For the original-link channels we
+# extract ONLY that source URL (see _extract_original_link) and route
+# it through _relay_original_link.
+_ORIGINAL_LINK_MARKER_RE = re.compile(r"(?:원문|영상)\s*보기")
 
 # Pull every t.me/<channel>/<msg_id> or t.me/c/<chat_id>/<msg_id> hit
 # from the digest body. Private-channel links use the numeric c/... form
@@ -530,24 +531,24 @@ _ORIGINAL_LINK_CHANNELS = {"getfeed"}
 
 
 def _extract_original_link(msg) -> str | None:
-    """Return ONLY the 원문보기 (original-source) URL from a
+    """Return ONLY the 원문보기/영상보기 source URL from a
     '석학들의 마켓 (인)사이트'-style post, skipping the 📝 AI 요약 and
     ✨(In)sight body. The link is either a text-url entity whose visible
-    label covers the 원문 marker (hyperlinked 원문보기), or a plain URL
-    printed right after the 원문보기 marker (e.g. '원문보기 (https://…)').
-    Returns None when no such link is present (→ the post is dropped)."""
+    label covers the 원문/영상 marker, or a plain URL printed right after
+    the 원문보기/영상보기 marker (e.g. '원문보기 (https://…)'). Returns
+    None when no such link is present (→ the post is dropped)."""
     from telethon.tl.types import MessageEntityTextUrl
     text = msg.message or ""
-    # 1) Hyperlinked 원문보기 — URL hidden in a text-url entity whose
-    #    visible label contains '원문'.
+    # 1) Hyperlinked 원문보기/영상보기 — URL hidden in a text-url
+    #    entity whose visible label contains '원문' or '영상'.
     for ent in (msg.entities or []):
         if isinstance(ent, MessageEntityTextUrl):
             label = text[ent.offset:ent.offset + ent.length]
-            if "원문" in label:
+            if "원문" in label or "영상" in label:
                 u = ent.url.strip().rstrip(".,);")
                 if u.startswith("http"):
                     return u
-    # 2) Visible URL after the 원문보기 marker.
+    # 2) Visible URL after the 원문보기/영상보기 marker.
     m = _ORIGINAL_LINK_MARKER_RE.search(text)
     if m:
         um = _HTTP_URL_RE.search(text[m.end():])
@@ -556,15 +557,118 @@ def _extract_original_link(msg) -> str | None:
     return None
 
 
+# Domain whitelist for auto-ingest from original-link channels. Anything
+# outside this list gets an owner notice so the user can decide manually.
+#   "tg"   → forward the original Telegram message via Telethon (t.me
+#            isn't an HTTP-fetchable page so plain URL relay fails)
+#   "blog" / "youtube" → relay as plain URL; bot's existing pipeline
+#            handles them well (Naver PostView rewrite for blog,
+#            transcript_api + nightly yt-dlp + Deno for YouTube).
+# Users can request additions when an unsupported-domain notice fires.
+def _classify_original_url(url: str) -> str | None:
+    from urllib.parse import urlparse
+    h = (urlparse(url).hostname or "").lower()
+    if h in ("t.me",):
+        return "tg"
+    if h in ("blog.naver.com", "m.blog.naver.com"):
+        return "blog"
+    if h in ("youtube.com", "www.youtube.com",
+             "m.youtube.com", "youtu.be"):
+        return "youtube"
+    return None
+
+
+async def _forward_tg_message(client: TelegramClient, target,
+                              url: str) -> None:
+    """Forward one t.me/<ch>/<msg_id> via Telethon (mirrors the inner
+    loop of _expand_telegram_digest for a single-link case). Skips
+    silently on seen/resolve/fetch failure; logs each outcome."""
+    m = _TG_URL_RE.search(url)
+    if not m:
+        print(f"    drop: malformed t.me URL: {url}")
+        return
+    ch, mid = m.group(1), int(m.group(2))
+    seen_key = f"{ch.lower()}/{mid}"
+    if _seen_check(seen_key):
+        print(f"    skip t.me/{ch}/{mid}: already forwarded (seen)")
+        return
+    peer = await _resolve_tg_channel(client, ch)
+    if peer is None:
+        return
+    try:
+        orig = await client.get_messages(peer, ids=mid)
+    except Exception as e:
+        print(f"    err get_messages {ch}/{mid}: {type(e).__name__}: {e}")
+        return
+    if not orig:
+        print(f"    skip {ch}/{mid}: message not found")
+        return
+    last_err: str | None = None
+    for attempt in range(_RELAY_MAX_ATTEMPTS):
+        try:
+            await orig.forward_to(target)
+            _seen_mark(seen_key)
+            print(f"    원문 fwd t.me/{ch}/{mid}"
+                  + (f" [retry {attempt}]" if attempt else ""))
+            return
+        except FloodWaitError as e:
+            wait = max(e.seconds + 1, 1)
+            print(f"    flood wait {wait}s on {ch}/{mid} "
+                  f"(attempt {attempt + 1}/{_RELAY_MAX_ATTEMPTS})")
+            await asyncio.sleep(wait)
+            last_err = f"FloodWaitError({e.seconds}s)"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            print(f"    err fwd {ch}/{mid}: {last_err}")
+            return
+    print(f"    ✗ DROP {ch}/{mid} after {_RELAY_MAX_ATTEMPTS} attempts"
+          + (f" (last: {last_err})" if last_err else ""))
+
+
+async def _notify_unsupported_origlink(client: TelegramClient, target,
+                                       channel_name: str, url: str) -> None:
+    """Tell the owner about an original-link URL that's outside the
+    auto-ingest whitelist so they can paste it back into the bot if
+    they want it learned. seen-dedup prevents repeat pings for the
+    same URL across listener restarts / backfills."""
+    seen_key = f"origlink-notify:{url}"
+    if _seen_check(seen_key):
+        return
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or "?").lower()
+    notice = (
+        f"⚠️ {channel_name}: 자동 ingest 미지원 도메인 ({host})\n"
+        f"원문: {url}\n"
+        f"학습하려면 위 URL을 봇에 그대로 보내세요. "
+        f"(도메인을 화이트리스트에 추가하려면 알려주세요.)"
+    )
+    try:
+        await client.send_message(target, notice, link_preview=False)
+        _seen_mark(seen_key)
+        print(f"  notify (unsupported domain {host}): {url}")
+    except Exception as e:
+        print(f"    notify err: {type(e).__name__}: {e}")
+
+
 async def _relay_original_link(client: TelegramClient, msg, target,
                                channel_name: str) -> None:
-    """Extract the 원문보기 source URL and relay it as a plain text
-    message so the bot's URL pipeline ingests the original article only.
+    """Route the post's 원문보기/영상보기 link based on its domain:
+    t.me → Telethon forward · blog/youtube → plain URL relay · other
+    → owner notice (let the user manually paste if worth keeping).
     The AI 요약/(In)sight body is never forwarded."""
     url = _extract_original_link(msg)
     if not url:
-        print(f"  drop {channel_name} msg {msg.id}: no 원문보기 link")
+        print(f"  drop {channel_name} msg {msg.id}: no 원문/영상보기 link")
         return
+    kind = _classify_original_url(url)
+    if kind == "tg":
+        await _forward_tg_message(client, target, url)
+        return
+    if kind is None:
+        await _notify_unsupported_origlink(client, target, channel_name, url)
+        return
+    # blog / youtube: plain URL relay so the bot's URL pipeline ingests
+    # the original article / video transcript.
     seen_key = f"origlink:{url}"
     if _seen_check(seen_key):
         print(f"  skip {url}: already sent (seen)")
@@ -573,7 +677,7 @@ async def _relay_original_link(client: TelegramClient, msg, target,
     for attempt in range(_RELAY_MAX_ATTEMPTS):
         try:
             await client.send_message(target, url, link_preview=False)
-            print(f"  원문 relay sent {url}"
+            print(f"  원문 relay sent {url} [{kind}]"
                   + (f" [retry {attempt}]" if attempt else ""))
             _seen_mark(seen_key)
             return
@@ -789,7 +893,9 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
         if _ORIGINAL_LINK_CHANNELS:
             print(
                 f"original-link mode: {sorted(_ORIGINAL_LINK_CHANNELS)} — "
-                f"relay only the 원문보기 source URL (drop AI 요약/(In)sight)"
+                f"원문/영상보기 routed by domain: "
+                f"t.me=Telethon forward · blog.naver/youtube=URL relay · "
+                f"other=owner notice (drop AI 요약/(In)sight body)"
             )
         if plain_channels:
             print(

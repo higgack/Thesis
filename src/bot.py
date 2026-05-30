@@ -1428,7 +1428,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 <b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
 [Noah 디지스트] 📋 TG 원문 fetch / 📰 Substack URL relay / 그 외 drop
 [PLAIN] 텍스트만: daju_dart·Fundeasyearnings / 전체(텍스트+URL+첨부): aicorporateanalysisdeepdive·benineb9
-[원문링크] AI요약 제거·원문보기 링크만: getfeed(석학들의 마켓 인사이트)
+[원문링크] getfeed: naver/youtube/t.me 자동, 그외=알림
 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
 
 <b>【7. 메타데이터】</b> Flash-Lite 요약+메타 1콜 · 🏢회사 🏷태그 📅YYYY.MM · 📊브로커리지·애널리스트(리포트 자동 추출, 회사 분석에 활용)
