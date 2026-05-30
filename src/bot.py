@@ -986,6 +986,15 @@ def _extract_urls(text: str) -> tuple[list[str], str]:
 _INTERNAL_TG_RE = re.compile(r"^https?://t\.me/", re.IGNORECASE)
 _MAX_URLS_PER_MSG = 5
 
+# AI-summary digest detector (getfeed-style): posts that wrap a 📝 본문
+# 요약 + ✨(In)sight commentary around a 원문보기/영상보기 source link.
+# When such a post is forwarded directly to the bot AND a URL is
+# present, the URL ingest already grabs the real source — saving the
+# wrapping commentary as a separate text doc just duplicates noise.
+# This pattern mirrors the listener's _ORIGINAL_LINK_MARKER_RE so both
+# sides agree on what counts as "AI digest with original-source link".
+_AI_DIGEST_MARKER_RE = re.compile(r"(?:원문|영상)\s*보기")
+
 
 def _collect_message_urls(msg) -> tuple[list[str], str]:
     """Plain text URLs + markdown links + Telegram text_link entities
@@ -10006,8 +10015,29 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
         url_results = await asyncio.gather(*[_do_url(u) for u in urls])
         results.extend(url_results)
 
+    # Suppress the text-body ingest when this looks like a getfeed-style
+    # AI-digest forward: forwarded + has URL(s) + 원문/영상보기 marker in
+    # the body. The URL ingest already pulls the real source, so saving
+    # the AI 요약/(In)sight wrapper as a separate 1-chunk text doc just
+    # pollutes search results. Listener-relayed posts arrive as
+    # URL-only (plain stays empty), so this guard mainly catches the
+    # case where the user manually forwards a getfeed post and would
+    # otherwise re-introduce the noise the listener strips.
+    is_forward = bool(
+        getattr(msg, "forward_origin", None)
+        or getattr(msg, "forward_from_chat", None)
+        or getattr(msg, "forward_from", None)
+    )
+    skip_ai_digest_body = (
+        is_forward and urls and _AI_DIGEST_MARKER_RE.search(text or "")
+    )
+    if skip_ai_digest_body:
+        log.info("skip text ingest: AI-digest body suppressed "
+                 "(forwarded + URL + 원문/영상보기 marker)")
+
     if (plain and not msg.document and not msg.photo
-            and not msg.voice and not msg.audio and len(plain) >= 80):
+            and not msg.voice and not msg.audio and len(plain) >= 80
+            and not skip_ai_digest_body):
         text_retry = {
             "kind": "text",
             "text": plain,
