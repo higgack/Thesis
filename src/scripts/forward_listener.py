@@ -275,20 +275,86 @@ def _extract_telegram_links(msg) -> list[tuple[str, int]]:
     return out
 
 
-def _extract_substack_links(msg) -> list[str]:
+def _extract_substack_links(msg) -> list[tuple[str, str | None]]:
+    """Return (url, label) pairs from the digest body — label is the
+    visible text of a [label](url) text_link entity (Noah's Substack
+    digests usually mark each article up that way so the label IS the
+    article title), or None for plain URLs. _expand_substack_digest
+    uses the label to prepend a 📌 {title} hint line to each relayed
+    URL so the target chat shows what each link is about at a glance."""
+    from telethon.tl.types import MessageEntityTextUrl
+    text = msg.message or ""
     seen: set[str] = set()
-    out: list[str] = []
-    for url in _all_message_urls(msg):
-        url = url.strip().rstrip(".,);")
-        if not url:
+    out: list[tuple[str, str | None]] = []
+    # 1) text_link entities first — label is the visible markup text.
+    for ent in (msg.entities or []):
+        if not isinstance(ent, MessageEntityTextUrl):
             continue
-        if "t.me/" in url:
+        u = (getattr(ent, "url", "") or "").strip().rstrip(".,);")
+        if not u or "t.me/" in u or u in seen:
             continue
-        if url in seen:
+        label = text[ent.offset:ent.offset + ent.length].strip()
+        # Skip a label that's literally the URL again ([url](url)) —
+        # no information gain over a bare relay.
+        if label.startswith(("http://", "https://")):
+            label = ""
+        seen.add(u)
+        out.append((u, label or None))
+    # 2) Plain URLs typed into the body — no label.
+    for raw in _all_message_urls(msg):
+        u = (raw or "").strip().rstrip(".,);")
+        if not u or "t.me/" in u or u in seen:
             continue
-        seen.add(url)
-        out.append(url)
+        seen.add(u)
+        out.append((u, None))
     return out
+
+
+async def _fetch_url_title(url: str) -> str | None:
+    """Best-effort og:title (or <title>) fetch — used as a fallback
+    prefix when a Substack digest URL has no markdown label, so plain
+    URLs in the relay chat still carry context. Capped 5s, single
+    request, no retries; any failure (timeout, 403, DNS, etc.) returns
+    None and the caller falls back to a bare URL relay. Only the first
+    64 KB of the response is scanned — page titles always sit in
+    <head>, so this avoids dragging multi-MB pages through the listener
+    for nothing. The 70-char cap matches the label cap so the prefix
+    line never trips the bot's 80-char text-ingest threshold."""
+    import httpx
+    import re as _re
+    try:
+        async with httpx.AsyncClient(
+            timeout=5.0, follow_redirects=True,
+            headers={"User-Agent":
+                     "Mozilla/5.0 (compatible; SecondBrain-listener/1.0)"},
+        ) as c:
+            r = await c.get(url)
+            r.raise_for_status()
+    except Exception as e:
+        print(f"    title-fetch err {url[:60]}: {type(e).__name__}: {e}")
+        return None
+    body = r.text[:65536]
+    # og:title — content attr can appear before or after the property
+    # attr, so try both orderings before falling back to <title>.
+    m = _re.search(
+        r'<meta[^>]+(?:property|name)=["\']og:title["\'][^>]+'
+        r'content=["\']([^"\']{1,200})["\']',
+        body, _re.IGNORECASE)
+    if not m:
+        m = _re.search(
+            r'<meta[^>]+content=["\']([^"\']{1,200})["\'][^>]+'
+            r'(?:property|name)=["\']og:title["\']',
+            body, _re.IGNORECASE)
+    if not m:
+        m = _re.search(r"<title[^>]*>([^<]{1,200})</title>",
+                       body, _re.IGNORECASE)
+    if not m:
+        return None
+    title = (m.group(1).strip()
+             .replace("&amp;", "&").replace("&#39;", "'")
+             .replace("&quot;", '"').replace("&lt;", "<")
+             .replace("&gt;", ">").replace("&nbsp;", " "))
+    return title[:70] if title else None
 
 
 async def _resolve_tg_channel(client: TelegramClient, ch: str):
@@ -381,23 +447,34 @@ async def _expand_telegram_digest(client: TelegramClient, msg,
 
 async def _expand_substack_digest(client: TelegramClient, msg,
                                    target) -> None:
-    urls = _extract_substack_links(msg)
+    pairs = _extract_substack_links(msg)
     parent_id = msg.id
-    print(f"  Substack digest msg {parent_id}: {len(urls)} URLs to relay")
+    print(f"  Substack digest msg {parent_id}: {len(pairs)} URLs to relay")
     sent = 0
-    for url in urls:
+    for url, label in pairs:
         seen_key = f"substack:{url}"
         if _seen_check(seen_key):
             print(f"    skip {url}: already sent (seen)")
             continue
+        # Markdown label preferred; if Noah's digest emitted only plain
+        # URLs (no [Article](url) markup), fall back to fetching og:title
+        # from the page so the relay row still carries context. Best-
+        # effort: returns None on any failure → bare URL.
+        if not label:
+            label = await _fetch_url_title(url)
+        # 70-char cap on the label keeps the relayed text body below
+        # the bot's 80-char text-ingest threshold, so the prefix never
+        # gets saved as a separate text doc — same constraint as
+        # _relay_url_only_post.
+        payload = f"📌 {label[:70]}\n{url}" if label else url
         delivered = False
         last_err: str | None = None
         for attempt in range(_RELAY_MAX_ATTEMPTS):
             try:
-                await client.send_message(target, url, link_preview=False)
+                await client.send_message(target, payload, link_preview=False)
                 sent += 1
                 print(
-                    f"    sent {url} ({sent}/{len(urls)})"
+                    f"    sent {url} ({sent}/{len(pairs)})"
                     + (f" [retry {attempt}]" if attempt else "")
                 )
                 delivered = True
@@ -421,7 +498,7 @@ async def _expand_substack_digest(client: TelegramClient, msg,
                 + (f" (last: {last_err})" if last_err else "")
             )
         await asyncio.sleep(_THROTTLE_SEC)
-    print(f"  Substack digest msg {parent_id}: done, relayed {sent}/{len(urls)}")
+    print(f"  Substack digest msg {parent_id}: done, relayed {sent}/{len(pairs)}")
 
 
 # ----------------- Plain-text channel relay -----------------
