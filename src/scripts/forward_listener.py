@@ -553,6 +553,28 @@ def _classify_original_url(url: str) -> str | None:
     return None
 
 
+def _post_title_hint(msg) -> str:
+    """First substantive body line of a URL-only-channel post, used as
+    a context prefix on the relayed URL so the reader of the target
+    chat can tell what each link is about at a glance (the bot's ✅
+    ingest reply only arrives a moment later, by which point a bare
+    URL has already scrolled past without context). Skips structural
+    markers (📝 본문 요약, ✨(In)sight, leading hashtags, 📜/📀 marker
+    icons) so the prefix lands on the actual title line, not on a
+    section header. Capped at 70 chars so the prefix never trips the
+    bot's 80-char `len(plain) >= 80` text-ingest threshold."""
+    text = (msg.message or "").strip()
+    if not text:
+        return ""
+    skip_prefixes = ("📝", "✨", "#", "📜", "📀")
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line or line.startswith(skip_prefixes):
+            continue
+        return line[:70]
+    return ""
+
+
 async def _forward_tg_message(client: TelegramClient, target,
                               url: str) -> None:
     """Forward one t.me/<ch>/<msg_id> via Telethon (mirrors the inner
@@ -665,6 +687,13 @@ async def _relay_url_only_post(client: TelegramClient, msg, target,
         print(f"  drop {channel_name} msg {msg.id}: no urls")
         return
 
+    # Per-post title hint, prepended to every blog/youtube relay so the
+    # reader of the target chat sees what each link is BEFORE the bot's
+    # ✅ ingest reply lands. t.me uses Telethon forward (full original
+    # already comes through) and unsupported uses a batched notice, so
+    # neither needs the prefix.
+    hint = _post_title_hint(msg)
+
     unsupported: list[str] = []
     routed = 0
     for url in urls:
@@ -677,11 +706,12 @@ async def _relay_url_only_post(client: TelegramClient, msg, target,
             if _seen_check(seen_key):
                 print(f"  skip {url}: already sent (seen)")
                 continue
+            payload = f"📌 {hint}\n{url}" if hint else url
             delivered = False
             last_err: str | None = None
             for attempt in range(_RELAY_MAX_ATTEMPTS):
                 try:
-                    await client.send_message(target, url, link_preview=False)
+                    await client.send_message(target, payload, link_preview=False)
                     print(f"  원문 relay sent {url} [{kind}]"
                           + (f" [retry {attempt}]" if attempt else ""))
                     _seen_mark(seen_key)
