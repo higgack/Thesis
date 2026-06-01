@@ -5298,6 +5298,7 @@ async def _youtube_restub_rescan_impl(update: Update, ctx: ContextTypes.DEFAULT_
         return
 
     if not confirm:
+        import html as _html
         preview = "\n".join(
             f"  • {_html.escape((s.get('title') or '')[:50])} — "
             f"{_html.escape((s.get('source') or '')[:60])}"

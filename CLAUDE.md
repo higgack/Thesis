@@ -81,6 +81,21 @@ strings, state files that don't persist and trigger infinite
 notification loops, scheduler scripts that fire every minute
 forever, etc. Each incident costs the user real time and trust.
 
+### Automated gate: `bash scripts/preflight.sh`
+
+Run this FIRST on every push — it automates the bulk of the checklist
+below (AST syntax on changed .py, ruff F821 undefined-name detection,
+`_HELP_TEXT` ≤4000 + guide-constant render, handler↔help cross-check).
+It exists because the same bug class kept shipping: a handler using a
+lazy alias (`_html`, `re`) without its `import` line → silent NameError
+PTB swallows (cost: /fix_placeholder_titles + /youtube_restub_rescan
+both shipped broken). `--all` scans every tracked .py. Exit 1 = a
+BLOCKING issue (syntax / help cap) — do NOT push. F821 + handler
+warnings are surfaced for a human glance (lazy-import / forward-ref
+`"ET.Element"` strings are expected false positives). Passing preflight
+does NOT replace the manual trace below for shell/cron/Telegram logic —
+preflight only covers Python-mechanical checks.
+
 Before EVERY git push, walk this checklist:
 
 ### 1. Shell scripts (cron / deploy / scheduler)
