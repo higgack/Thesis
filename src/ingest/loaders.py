@@ -590,10 +590,38 @@ OCR_DPI = int(_os.getenv("OCR_DPI", "100"))  # render DPI
 OCR_SPARSE_THRESHOLD = int(_os.getenv("OCR_SPARSE_THRESHOLD", "800"))  # chars/page
 
 
+# Generic app-default titles that get baked into PDF metadata when a
+# document is exported from PowerPoint / Word / Keynote / etc. without
+# an explicit title set. None of these tell you what the file is about,
+# so the filename ("7 Global partnering 전략.pdf") is always a better
+# choice — _looks_like_title rejects these so the filename wins.
+_PLACEHOLDER_TITLES = {
+    # PowerPoint / Keynote / Google Slides defaults
+    "powerpoint 프레젠테이션",
+    "powerpoint presentation",
+    "프레젠테이션",
+    "presentation",
+    "슬라이드 1",
+    "slide 1",
+    # Word / Pages defaults
+    "microsoft word - document",
+    "microsoft word document",
+    "document",
+    # Generic / iWork
+    "untitled",
+    "untitled document",
+    "제목 없음",
+    "제목없음",
+    "title",
+    "no title",
+}
+
+
 def _looks_like_title(s: str) -> bool:
     """Reject PDF metadata.title placeholders so the filename is used
     instead. Catches:
       - empty / pure-digit / pure-symbol strings
+      - app-default export titles ('PowerPoint 프레젠테이션', 'Untitled', …)
       - date-only stubs: '2013년 0월 0일'
       - internal report codes: '신한투자증권20230823f', 'KB증권20240115a',
         'samsung20230101' — company name + 6+ digits + optional letter
@@ -601,6 +629,9 @@ def _looks_like_title(s: str) -> bool:
     """
     s = (s or "").strip()
     if not re.search(r"[A-Za-z가-힣]{2,}", s):
+        return False
+    # App-default export titles — never informative, filename is better.
+    if s.lower() in _PLACEHOLDER_TITLES:
         return False
     # Internal report code pattern: word + 6+ digits + optional letter,
     # no spaces. Almost always less informative than the filename.
