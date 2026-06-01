@@ -247,15 +247,21 @@ def _all_message_urls(msg) -> list[str]:
     # Plain URLs typed inline in the body.
     for m in _HTTP_URL_RE.finditer(text):
         urls.append(m.group(0).rstrip(".,);"))
-    # Hidden URLs from text-link entities ([label](url) markdown form).
-    for ent in (msg.entities or []):
+    # Hidden URLs from text-link entities ([label](url) markdown form),
+    # plus auto-detected URLs whose visible text is the URL itself.
+    # Use Telethon's get_entities_text() so the visible-text slice
+    # respects UTF-16 offsets (a single 📰 in the body shifts every
+    # later entity by one Python char if we slice msg.message directly).
+    try:
+        ent_pairs = msg.get_entities_text()
+    except Exception:
+        ent_pairs = []
+    for ent, label in ent_pairs:
         if isinstance(ent, MessageEntityTextUrl):
-            urls.append(ent.url.strip().rstrip(".,);"))
+            urls.append((getattr(ent, "url", "") or "").strip().rstrip(".,);"))
         elif isinstance(ent, MessageEntityUrl):
-            # Auto-detected URL inside the body — we already caught
-            # this via _HTTP_URL_RE, but slice from offset to be safe
-            # for cases where the regex stopped early.
-            urls.append(text[ent.offset:ent.offset + ent.length])
+            # Auto-detected URL — label IS the URL.
+            urls.append((label or "").strip().rstrip(".,);"))
     return urls
 
 
@@ -281,19 +287,29 @@ def _extract_substack_links(msg) -> list[tuple[str, str | None]]:
     digests usually mark each article up that way so the label IS the
     article title), or None for plain URLs. _expand_substack_digest
     uses the label to prepend a 📌 {title} hint line to each relayed
-    URL so the target chat shows what each link is about at a glance."""
+    URL so the target chat shows what each link is about at a glance.
+
+    Label extraction uses Telethon's get_entities_text() helper, which
+    resolves entity offsets against the message text in UTF-16 code
+    units (Telegram's native convention). Slicing the Python string
+    directly with ent.offset/length is wrong: Python indices are code
+    points but Telegram offsets are UTF-16 units, so a single 📰
+    emoji (surrogate pair = 2 units, 1 code point) shifts every later
+    label by one character. That mismatch was what produced garbage
+    prefixes like '3.', '4. In', 'MTB M' on relays."""
     from telethon.tl.types import MessageEntityTextUrl
-    text = msg.message or ""
     seen: set[str] = set()
     out: list[tuple[str, str | None]] = []
     # 1) text_link entities first — label is the visible markup text.
-    for ent in (msg.entities or []):
-        if not isinstance(ent, MessageEntityTextUrl):
-            continue
+    try:
+        ent_pairs = msg.get_entities_text(MessageEntityTextUrl)
+    except Exception:
+        ent_pairs = []
+    for ent, label in ent_pairs:
         u = (getattr(ent, "url", "") or "").strip().rstrip(".,);")
         if not u or "t.me/" in u or u in seen:
             continue
-        label = text[ent.offset:ent.offset + ent.length].strip()
+        label = (label or "").strip()
         # Skip a label that's literally the URL again ([url](url)) —
         # no information gain over a bare relay.
         if label.startswith(("http://", "https://")):
