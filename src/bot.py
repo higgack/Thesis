@@ -1402,7 +1402,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /forget_qna · /forget_qna_search
   /dedupe · /dedupe_confirm · /cleanup · /cleanup_confirm
   /forget_forwards · /forget_forwards_confirm
-  /youtube_restub_rescan (stub YouTube 재학습 큐)
+  /youtube_restub_rescan · /fix_placeholder_titles
 
 🛠️ <b>도구</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
@@ -5134,6 +5134,86 @@ async def cmd_dedupe_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     ctx.args = ["confirm"]
     await cmd_dedupe(update, ctx)
+
+
+# Generic app-default PDF titles that should be replaced by the source
+# filename. Mirrors loaders._PLACEHOLDER_TITLES (kept in sync manually —
+# the listener-side fix prevents NEW occurrences; this command repairs
+# docs ingested before that fix). Matched case-insensitively against the
+# stored title.
+_REPAIR_PLACEHOLDER_TITLES = ("PowerPoint 프레젠테이션",)
+
+
+async def cmd_fix_placeholder_titles(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Repair docs saved with an app-default title (e.g. 'PowerPoint
+    프레젠테이션') by replacing the title with the source filename — in
+    place, so chunks/embeddings are untouched (no re-ingest needed, and
+    the original PDFs aren't on disk anyway). Only docs whose source
+    carries a usable filename are repaired; the rest are reported as
+    skipped so the user knows they need a manual /forget + re-send.
+
+    Two-step: bare /fix_placeholder_titles previews, `confirm` executes."""
+    if not _is_owner(update):
+        return
+    confirm = bool(ctx.args) and ctx.args[0].lower() == "confirm"
+
+    rows: list[dict] = []
+    for ph in _REPAIR_PLACEHOLDER_TITLES:
+        rows.extend(await asyncio.to_thread(meta.find_by_title_exact, ph, 1000))
+    if not rows:
+        await update.message.reply_text("📭 placeholder 제목 문서 없음.")
+        return
+
+    # Build (doc_id, new_title) repair plan; split out docs with no
+    # recoverable filename.
+    plan: list[tuple[str, str]] = []
+    no_filename: list[dict] = []
+    for r in rows:
+        fname = _filename_from_source(r.get("source") or "")
+        if not fname:
+            no_filename.append(r)
+            continue
+        # Strip extension for a cleaner title; keep the rest verbatim.
+        new_title = re.sub(r"\.(pdf|pptx?|docx?|xlsx?)$", "", fname,
+                           flags=re.IGNORECASE).strip()
+        if not new_title:
+            no_filename.append(r)
+            continue
+        plan.append((r["id"], new_title))
+
+    if not confirm:
+        preview = "\n".join(
+            f"  • {_html.escape(nt[:55])}" for _, nt in plan[:15]
+        )
+        more = f"\n... 외 {len(plan) - 15}건" if len(plan) > 15 else ""
+        msg = (
+            f"🔧 placeholder 제목 복구 대상 {len(plan)}건 "
+            f"(파일명으로 교체):\n{preview}{more}"
+        )
+        if no_filename:
+            msg += (f"\n\n⚠️ 파일명 없어 복구 불가 {len(no_filename)}건 "
+                    f"(tg-msg/사진/URL 등) — 필요시 /forget 후 재전송.")
+        msg += "\n\n실행: <code>/fix_placeholder_titles confirm</code>"
+        await update.message.reply_text(msg, parse_mode="HTML")
+        return
+
+    fixed = 0
+    for doc_id, new_title in plan:
+        if await asyncio.to_thread(meta.update_title, doc_id, new_title):
+            fixed += 1
+    # Dashboard reflects titles → regenerate off-loop.
+    try:
+        from .dashboard import regenerate as dashboard_regen
+        await asyncio.to_thread(dashboard_regen.regenerate)
+    except Exception:
+        log.exception("dashboard regen after title fix failed")
+
+    await update.message.reply_text(
+        f"✅ 제목 복구 {fixed}/{len(plan)}건 완료"
+        + (f"\n⚠️ 파일명 없어 건너뜀 {len(no_filename)}건"
+           if no_filename else "")
+        + "\n이제 /find 로 파일명 검색 가능."
+    )
 
 
 async def cmd_cleanup_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -11241,6 +11321,7 @@ def main():
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("cleanup_confirm", cmd_cleanup_confirm))
     app.add_handler(CommandHandler("youtube_restub_rescan", cmd_youtube_restub_rescan))
+    app.add_handler(CommandHandler("fix_placeholder_titles", cmd_fix_placeholder_titles))
     app.add_handler(CommandHandler("dedupe", cmd_dedupe))
     app.add_handler(CommandHandler("dedupe_confirm", cmd_dedupe_confirm))
     app.add_handler(CommandHandler("forget_forwards", cmd_forget_forwards))

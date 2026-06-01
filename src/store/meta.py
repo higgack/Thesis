@@ -680,3 +680,30 @@ def delete(doc_id: str) -> bool:
     with _conn() as c:
         cur = c.execute("DELETE FROM documents WHERE id=?", (doc_id,))
         return cur.rowcount > 0
+
+
+def update_title(doc_id: str, new_title: str) -> bool:
+    """Rewrite a doc's title in place (chunks/summary/embeddings keep
+    their doc_id, so search is unaffected). Used by the placeholder-
+    title repair command to swap app-default titles ('PowerPoint
+    프레젠테이션') for the source filename without re-ingesting."""
+    if not doc_id or not new_title:
+        return False
+    with _conn() as c:
+        cur = c.execute("UPDATE documents SET title=? WHERE id=?",
+                        (new_title, doc_id))
+        return cur.rowcount > 0
+
+
+def find_by_title_exact(title: str, limit: int = 1000) -> list[dict]:
+    """All docs whose title exactly equals `title` (case-insensitive).
+    Used to enumerate placeholder-title docs ('PowerPoint 프레젠테이션')
+    for bulk repair."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, source, type, title FROM documents "
+            "WHERE title = ? COLLATE NOCASE LIMIT ?",
+            (title, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
