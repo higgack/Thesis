@@ -197,6 +197,32 @@ header .sub { color: var(--muted); font-size: 13px; }
 .day-section .day-count { color: var(--muted); font-weight: 400; font-size: 12px; }
 .day-body { padding: 0 18px 14px; }
 
+/* Month wrapper around the per-day sections so the user can collapse
+   an entire month with one click. Slightly heavier border than the
+   day rows so the nesting reads at a glance. */
+.month-section {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 14px; margin-bottom: 16px; overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.month-section > summary {
+  cursor: pointer; list-style: none; padding: 16px 20px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-weight: 700; font-size: 15px;
+  background: var(--panel-alt);
+  border-bottom: 1px solid var(--border-soft);
+}
+.month-section > summary::-webkit-details-marker { display: none; }
+.month-section > summary::before {
+  content: "▸ "; color: var(--muted); margin-right: 4px; font-size: 12px;
+}
+.month-section[open] > summary::before { content: "▾ "; }
+.month-section .month-count { color: var(--muted); font-weight: 400; font-size: 13px; }
+.month-body { padding: 12px 14px 4px; }
+/* Inside a month wrapper the day-section already has a panel
+   background — drop its own border so the nested look stays clean. */
+.month-section .day-section { background: var(--panel-alt); }
+
 .qna-card {
   background: var(--panel-alt); border: 1px solid var(--border-soft);
   border-radius: 10px; padding: 14px 16px; margin-bottom: 8px;
@@ -259,7 +285,7 @@ header .sub { color: var(--muted); font-size: 13px; }
 }
 .source-link:hover { opacity: 1; }
 
-.qna-card.hidden, .day-section.hidden { display: none; }
+.qna-card.hidden, .day-section.hidden, .month-section.hidden { display: none; }
 
 .del-btn {
   /* Tactile button look like the NOAH dashboard — slate-tinted rounded
@@ -487,6 +513,7 @@ _INDEX_JS = r"""
   var chips = document.querySelectorAll('.chip');
   var cards = document.querySelectorAll('.qna-card');
   var sections = document.querySelectorAll('.day-section');
+  var months = document.querySelectorAll('.month-section');
   var counter = document.getElementById('count');
 
   var activeTools = new Set();
@@ -621,6 +648,12 @@ _INDEX_JS = r"""
     sections.forEach(function(s){
       var anyVisible = s.querySelectorAll('.qna-card:not(.hidden):not(.removed)').length > 0;
       s.classList.toggle('hidden', !anyVisible);
+    });
+    // Hide a month when every day inside is hidden — keeps the filter
+    // output compact instead of leaving empty month wrappers behind.
+    months.forEach(function(m){
+      var anyDay = m.querySelectorAll('.day-section:not(.hidden)').length > 0;
+      m.classList.toggle('hidden', !anyDay);
     });
     if (counter) counter.textContent = visible;
   }
@@ -817,56 +850,73 @@ def _render_index(rows: list[dict], stats: dict) -> str:
             "</div>"
         )
 
-    for day in days_sorted:
-        items = grouped[day]
+    # Group the per-day sections by KST year-month (YYYY-MM, sliced from
+    # the day key) so the dashboard can collapse a whole month with one
+    # click — useful once the archive crosses several months and the
+    # default-open day list grows unwieldy.
+    from itertools import groupby
+    def _month_of(day: str) -> str:
+        return day[:7] if len(day) >= 7 else day
+    months_iter = groupby(days_sorted, key=_month_of)
+    for month, day_iter in months_iter:
+        month_days = list(day_iter)
+        month_count = sum(len(grouped[d]) for d in month_days)
         parts.append(
-            f"<details class='day-section' open>"
-            f"<summary>📅 {_esc(day)}<span class='day-count'>{len(items)}건</span></summary>"
-            f"<div class='day-body'>"
+            f"<details class='month-section' open data-month='{_esc(month)}'>"
+            f"<summary>📅 {_esc(month)}<span class='month-count'>{month_count}건</span></summary>"
+            f"<div class='month-body'>"
         )
-        for it in items:
-            tools = it.get("tools") or []
-            tool_chips = "".join(
-                f"<span class='{_tool_class(t)}'>{_tool_emoji(t)} {_esc(t)}</span>"
-                for t in tools
-            )
-            warn = (
-                f"<div class='warning'>{_esc(it.get('warning'))}</div>"
-                if it.get("warning") else ""
-            )
-            sources_html = ""
-            srcs = it.get("sources") or []
-            if srcs:
-                lis = "".join(_source_li(s) for s in srcs)
-                sources_html = (
-                    f"<div class='sources'>📚 출처 {len(srcs)}개<ul>{lis}</ul></div>"
-                )
-            model_chip = (
-                f"<span style='margin-left:auto'>{_esc(it.get('model'))}</span>"
-                if it.get("model") else ""
-            )
-            data_text = _card_data_text(it)
-            data_tools = _card_data_tools(it)
-            del_btn = (
-                f"<button type='button' class='del-btn' "
-                f"data-id='{int(it['id'])}' title='이 Q&A 삭제'>🗑</button>"
-            )
+        for day in month_days:
+            items = grouped[day]
             parts.append(
-                f"<div class='qna-card' data-text=\"{data_text}\" data-tools=\"{data_tools}\">"
-                "<details><summary>"
-                "<div class='row1'>"
-                f"<span>{_esc(_kst_hhmm(it['ts']))}</span>"
-                f"{tool_chips}{model_chip}{del_btn}"
-                "</div>"
-                "<div class='question'>"
-                f"<a href='q-{int(it['id'])}.html'>Q. {_esc(it['question'])}</a>"
-                "</div></summary>"
-                f"{warn}"
-                f"<div class='answer'>{_esc(it['answer'])}</div>"
-                f"{sources_html}"
-                "</details></div>"
+                f"<details class='day-section' open>"
+                f"<summary>📅 {_esc(day)}<span class='day-count'>{len(items)}건</span></summary>"
+                f"<div class='day-body'>"
             )
-        parts.append("</div></details>")
+            for it in items:
+                tools = it.get("tools") or []
+                tool_chips = "".join(
+                    f"<span class='{_tool_class(t)}'>{_tool_emoji(t)} {_esc(t)}</span>"
+                    for t in tools
+                )
+                warn = (
+                    f"<div class='warning'>{_esc(it.get('warning'))}</div>"
+                    if it.get("warning") else ""
+                )
+                sources_html = ""
+                srcs = it.get("sources") or []
+                if srcs:
+                    lis = "".join(_source_li(s) for s in srcs)
+                    sources_html = (
+                        f"<div class='sources'>📚 출처 {len(srcs)}개<ul>{lis}</ul></div>"
+                    )
+                model_chip = (
+                    f"<span style='margin-left:auto'>{_esc(it.get('model'))}</span>"
+                    if it.get("model") else ""
+                )
+                data_text = _card_data_text(it)
+                data_tools = _card_data_tools(it)
+                del_btn = (
+                    f"<button type='button' class='del-btn' "
+                    f"data-id='{int(it['id'])}' title='이 Q&A 삭제'>🗑</button>"
+                )
+                parts.append(
+                    f"<div class='qna-card' data-text=\"{data_text}\" data-tools=\"{data_tools}\">"
+                    "<details><summary>"
+                    "<div class='row1'>"
+                    f"<span>{_esc(_kst_hhmm(it['ts']))}</span>"
+                    f"{tool_chips}{model_chip}{del_btn}"
+                    "</div>"
+                    "<div class='question'>"
+                    f"<a href='q-{int(it['id'])}.html'>Q. {_esc(it['question'])}</a>"
+                    "</div></summary>"
+                    f"{warn}"
+                    f"<div class='answer'>{_esc(it['answer'])}</div>"
+                    f"{sources_html}"
+                    "</details></div>"
+                )
+            parts.append("</div></details>")  # close day-section
+        parts.append("</div></details>")      # close month-section
 
     parts.append(
         f"<div class='footer'>생성: {stats['generated_at']} · "
