@@ -770,6 +770,12 @@ async def _relay_url_only_post(client: TelegramClient, msg, target,
     # already comes through) and unsupported uses a batched notice, so
     # neither needs the prefix.
     hint = _post_title_hint(msg)
+    # Reject hints that are themselves URLs — happens on link-scrap
+    # channels (benineb9) whose posts are sometimes a bare URL with
+    # no surrounding text. Echoing the URL as the prefix adds zero
+    # information; clear it so the og:title fallback kicks in below.
+    if hint and (hint.startswith("http://") or hint.startswith("https://")):
+        hint = ""
 
     unsupported: list[str] = []
     routed = 0
@@ -783,7 +789,12 @@ async def _relay_url_only_post(client: TelegramClient, msg, target,
             if _seen_check(seen_key):
                 print(f"  skip {url}: already sent (seen)")
                 continue
-            payload = f"📌 {hint}\n{url}" if hint else url
+            # Per-URL og:title fallback when the post body gave us
+            # nothing usable. Same best-effort path Substack expand
+            # uses (5s timeout, single GET, 64 KB scan, None on
+            # failure → bare URL).
+            title = hint or await _fetch_url_title(url)
+            payload = f"📌 {title[:70]}\n{url}" if title else url
             delivered = False
             last_err: str | None = None
             for attempt in range(_RELAY_MAX_ATTEMPTS):
