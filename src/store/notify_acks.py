@@ -89,7 +89,27 @@ def record_pending(notify_id: str, message: str,
     data = _load()
     existing = data.get(notify_id)
     if existing and not existing.get("acked"):
-        return False  # already pending, don't reset the clock
+        # Already pending. Normally skip (don't reset the resend clock).
+        # BUT if the message TEXT changed since it was first stored, the
+        # alert's wording was edited in code — refresh the stored body
+        # (and re-arm so the corrected text actually reaches the user)
+        # instead of resending the stale snapshot forever. This is what
+        # let an old yt-dlp alert keep echoing outdated "docker compose
+        # --build" guidance long after the code text was rewritten.
+        if existing.get("message") != message:
+            existing["message"] = message
+            existing["parse_mode"] = parse_mode
+            existing["acked"] = False
+            existing["ack_at"] = None
+            # Reset the clock so the new wording sends promptly on the
+            # next resend tick rather than waiting out the old 24h slot.
+            existing["last_sent_at"] = "1970-01-01T00:00:00"
+            try:
+                _atomic_write(data)
+            except Exception:
+                log.exception("notify_acks message-refresh persist failed")
+            return False
+        return False  # unchanged + already pending → leave as-is
     if len(data) >= _HARD_CAP:
         # Drop oldest acked entries first to make room
         acked = sorted(
