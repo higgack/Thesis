@@ -1,14 +1,21 @@
 """
 yt-dlp health tracker.
 
-Records each yt-dlp transcript-fetch attempt (success or failure)
-and computes a rolling failure rate over a 24-hour window. The bot
-fires an actionable alert when the rate crosses a threshold. The
-Dockerfile already best-effort upgrades to the latest yt-dlp nightly
-on every build (after `COPY src`, so each auto-deploy self-heals),
-so the usual remedy is just to push any commit and let auto_pull
-rebuild; the alert exists for the case where even nightly hasn't
-shipped the fix yet (wait a day) or the Deno/EJS runtime is unhealthy.
+Tracks ONE thing: can yt-dlp still extract from YouTube at all? A
+"failure" here means `extract_info` itself failed (broken extractor,
+dead Deno/EJS runtime, YouTube anti-bot change nightly hasn't caught up
+to). It does NOT mean "this video had no captions" — caption-less clips
+are a normal, expected miss recorded as SUCCESS, because yt-dlp did its
+job. (Conflating the two used to drive the 24h failure rate to 100%
+from a few subtitle-less videos and fire a false "yt-dlp 작동 이상"
+alert while yt-dlp was perfectly healthy.)
+
+Computes a rolling failure rate over a 24-hour window; the bot fires an
+actionable alert when it crosses the threshold. The Dockerfile best-
+effort upgrades to the latest yt-dlp nightly on every build (after
+`COPY src`, so each auto-deploy self-heals), so the usual remedy is to
+push any commit and let auto_pull rebuild; the alert is for when even
+nightly hasn't shipped the fix yet (wait a day) or Deno/EJS is broken.
 
 State file: data/yt_dlp_health.json
 Schema:

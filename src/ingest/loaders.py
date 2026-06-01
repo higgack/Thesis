@@ -382,16 +382,26 @@ async def _fetch_youtube_subs_yt_dlp(video_id: str) -> str:
             log.info("yt-dlp extract_info failed: %s", e)
             return None
 
-    # Health tracking — every yt-dlp call records success/failure
-    # into a 24h sliding window. The bot's hourly health-check job
-    # alerts the user (via the ack-button pattern) when failures
-    # cross threshold so they can rebuild with a fresher yt-dlp.
+    # Health tracking measures ONE thing: can yt-dlp still pull data
+    # from YouTube at all (i.e. is the extractor / Deno-EJS path alive)?
+    # That is decided by extract_info ALONE — NOT by whether this
+    # particular video happens to carry ko/en captions. A video with no
+    # subtitles is a normal, expected miss; counting it as a yt-dlp
+    # "failure" used to make the 24h failure-rate hit 100% from a
+    # handful of caption-less clips and fire a false "yt-dlp 작동 이상"
+    # alert even while yt-dlp was perfectly healthy. So: extract_info
+    # failure → unhealthy; extract_info success → healthy, regardless of
+    # caption availability.
     from ..store import yt_dlp_health
 
     info = await asyncio.to_thread(_extract)
     if not info:
+        # Real yt-dlp / extractor / runtime failure.
         yt_dlp_health.record_attempt(success=False)
         return ""
+    # extract_info worked → yt-dlp itself is healthy. Record success up
+    # front; caption availability below doesn't change this verdict.
+    yt_dlp_health.record_attempt(success=True)
 
     # Prefer manual subs (more accurate); fall back to auto.
     manual = info.get("subtitles") or {}
@@ -424,11 +434,16 @@ async def _fetch_youtube_subs_yt_dlp(video_id: str) -> str:
             if text.strip():
                 log.info("yt-dlp: %s/%s captions OK (%d chars)",
                          "manual" if source is manual else "auto", lang, len(text))
-                yt_dlp_health.record_attempt(success=True)
+                # Health already recorded as success after extract_info;
+                # captions are a bonus, not a separate health signal.
                 return text.strip()
 
-    # extract_info succeeded but no usable captions found
-    yt_dlp_health.record_attempt(success=False)
+    # extract_info succeeded but this video has no usable ko/en captions.
+    # That's a normal miss, NOT a yt-dlp failure — health was already
+    # recorded as success above. Return empty so the caller routes the
+    # URL to /failed (e528340) instead of saving a stub.
+    log.info("yt-dlp: no usable ko/en captions for %s (yt-dlp healthy)",
+             video_id)
     return ""
 
 
