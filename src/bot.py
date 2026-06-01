@@ -5182,6 +5182,7 @@ async def cmd_fix_placeholder_titles(update: Update, ctx: ContextTypes.DEFAULT_T
         plan.append((r["id"], new_title))
 
     if not confirm:
+        import html as _html
         preview = "\n".join(
             f"  • {_html.escape(nt[:55])}" for _, nt in plan[:15]
         )
