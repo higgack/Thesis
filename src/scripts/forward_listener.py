@@ -527,6 +527,56 @@ async def _expand_substack_digest(client: TelegramClient, msg,
     print(f"  Substack digest msg {parent_id}: done, relayed {sent}/{len(pairs)}")
 
 
+# Title-filter channels: forward each message ONLY when its body
+# matches the registered pattern; everything else is dropped silently.
+# Used for high-volume channels where a small fraction of posts carries
+# the format the user actually wants to learn (e.g. t.me/insidertracking
+# posts other content alongside the "미국 레딧 게시물 분석" report we
+# care about). Match is re.search over msg.message, so the pattern can
+# anchor on the post header line. Forward is Telethon forward_to so the
+# original message arrives in the target chat with text + attachments
+# intact, and the bot's on_channel_post ingests it through the normal
+# pipeline (text body / URLs / photo OCR / etc.).
+_TITLE_FILTER_CHANNELS: dict[str, "re.Pattern[str]"] = {
+    "insidertracking": re.compile(r"미국\s*레딧\s*게시물\s*분석"),
+}
+
+
+async def _forward_full_message(client: TelegramClient, msg, target,
+                                channel_name: str) -> None:
+    """Forward one matched message via Telethon, preserving attachments
+    and original-message context. Mirrors the single-link branch of
+    _expand_telegram_digest minus the per-message seen-set bookkeeping
+    (those used a cross-channel seen key — here we use a per-channel
+    one so the same source-channel id can't double-fire across listener
+    restarts/backfills)."""
+    seen_key = f"titlefilter:{channel_name.lower()}/{msg.id}"
+    if _seen_check(seen_key):
+        print(f"  skip {channel_name}/{msg.id}: already forwarded (seen)")
+        return
+    last_err: str | None = None
+    for attempt in range(_RELAY_MAX_ATTEMPTS):
+        try:
+            await msg.forward_to(target)
+            _seen_mark(seen_key)
+            print(f"  title-filter fwd {channel_name}/{msg.id}"
+                  + (f" [retry {attempt}]" if attempt else ""))
+            return
+        except FloodWaitError as e:
+            wait = max(e.seconds + 1, 1)
+            print(f"    flood wait {wait}s on {channel_name}/{msg.id} "
+                  f"(attempt {attempt + 1}/{_RELAY_MAX_ATTEMPTS})")
+            await asyncio.sleep(wait)
+            last_err = f"FloodWaitError({e.seconds}s)"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            print(f"    err fwd {channel_name}/{msg.id}: {last_err}")
+            return
+    print(f"    ✗ DROP {channel_name}/{msg.id} after "
+          f"{_RELAY_MAX_ATTEMPTS} attempts"
+          + (f" (last: {last_err})" if last_err else ""))
+
+
 # ----------------- Plain-text channel relay -----------------
 
 # Per-channel drop patterns. If a message body matches any of the
@@ -1058,6 +1108,13 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
                 f"(blog.naver/youtube=URL relay, t.me=Telethon forward, "
                 f"other=batched owner notice; body & attachments ignored)"
             )
+        if _TITLE_FILTER_CHANNELS:
+            print(
+                f"title-filter mode: {sorted(_TITLE_FILTER_CHANNELS)} — "
+                f"forward the original message (text + attachments intact) "
+                f"only when the body matches the registered pattern; drop "
+                f"everything else"
+            )
         if plain_channels:
             # URL-only channels short-circuit before plain in _dispatch,
             # so subtract them here so the operator log reflects what
@@ -1097,6 +1154,21 @@ async def _client_lifecycle(channels: list[str], plain_channels: set[str],
             # the bot.
             if channel_name.lower() in _URL_ONLY_CHANNELS:
                 await _relay_url_only_post(client, msg, target, channel_name)
+                return
+
+            # Title-filter path: only forward when the post body matches
+            # the channel's registered pattern (e.g. insidertracking →
+            # "미국 레딧 게시물 분석"). Everything else from a filtered
+            # channel is dropped silently — keeps high-volume channels
+            # from flooding the corpus with non-target content.
+            tf_pat = _TITLE_FILTER_CHANNELS.get(channel_name.lower())
+            if tf_pat is not None:
+                if tf_pat.search(text):
+                    await _forward_full_message(
+                        client, msg, target, channel_name)
+                else:
+                    print(f"  drop {channel_name} msg {msg.id}: "
+                          f"title filter not matched")
                 return
 
             # Plain-relay path: ignore digest detection, just strip
