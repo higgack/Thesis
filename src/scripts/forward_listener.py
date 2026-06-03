@@ -123,6 +123,16 @@ async def _resolve_channel(client: TelegramClient, channel: str):
             pass
         result = await client(ImportChatInviteRequest(invite_hash))
         return result.chats[0]
+    # Bot-API numeric form for channels/supergroups: -100<raw_id>.
+    # Telethon's get_entity(str) can't parse this style — wrap it as
+    # PeerChannel so a private channel referenced by its chat_id
+    # (recommended for privacy-flip / username-rename immunity) still
+    # resolves. Without this, a FORWARD_TARGET like "-1003515899076"
+    # errors with "Cannot find any entity corresponding to ..." and the
+    # forward loop spins forever.
+    if channel.startswith("-100") and channel[4:].isdigit():
+        from telethon.tl.types import PeerChannel
+        return await client.get_entity(PeerChannel(int(channel[4:])))
     return await client.get_entity(channel)
 
 
