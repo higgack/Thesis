@@ -11,11 +11,15 @@ from a few subtitle-less videos and fire a false "yt-dlp 작동 이상"
 alert while yt-dlp was perfectly healthy.)
 
 Computes a rolling failure rate over a 24-hour window; the bot fires an
-actionable alert when it crosses the threshold. The Dockerfile best-
-effort upgrades to the latest yt-dlp nightly on every build (after
-`COPY src`, so each auto-deploy self-heals), so the usual remedy is to
-push any commit and let auto_pull rebuild; the alert is for when even
-nightly hasn't shipped the fix yet (wait a day) or Deno/EJS is broken.
+actionable alert when it crosses the threshold. NOTE on the most
+common real-world cause: this VM runs on a GCP (datacenter) IP, and
+YouTube increasingly blocks datacenter IPs outright with "Sign in to
+confirm you're not a bot" — that is an IP-reputation failure, NOT a
+yt-dlp/Deno problem, and re-deploying does NOT fix it (it usually
+self-clears in hours to a day). The Dockerfile does best-effort pull
+the latest yt-dlp nightly on every build (after `COPY src`), which
+only helps the rarer case of a genuine extractor break. The alert text
+(bot._check_yt_dlp_health) explains how to tell the two apart.
 
 State file: data/yt_dlp_health.json
 Schema:
