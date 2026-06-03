@@ -9158,15 +9158,39 @@ async def on_link_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await asyncio.to_thread(pending_store.delete_links, row_id)
         await q.edit_message_text("✅ 이 목록의 링크는 모두 처리했어.")
         return
-    # Ingest the chosen targets. Don't replace the keyboard with a
-    # "학습 중…" message — keeping it alive lets concurrent taps target
-    # other links, and avoids leaving a stale "학습 중" once we finish.
+    # "전체 학습" with N>=2 used to feel broken because the loop below
+    # ran ingest sequentially — N links × ~1-5 min each = N minutes of
+    # apparent silence with no progress signal. Send a start bubble so
+    # the tap clearly registers, and run the ingests in a 4-wide gather
+    # below (still capped by _INGEST_SEM=8 globally) so the whole batch
+    # finishes in roughly one URL's time instead of N URLs'.
+    if sel == "all" and len(targets) >= 2:
+        try:
+            await ctx.bot.send_message(
+                chat_id,
+                f"⏳ 전체 학습 시작 — {len(targets)}개 URL 병렬 처리 중...",
+                disable_notification=True,
+            )
+        except Exception:
+            pass
+
+    # Ingest the chosen targets in parallel. Don't replace the keyboard
+    # with a "학습 중…" message — keeping it alive lets concurrent taps
+    # target other links, and avoids leaving a stale "학습 중" once we
+    # finish. 4-wide fan-out matches the URL loop in
+    # _ingest_message_locked; the global _INGEST_SEM still bounds total
+    # concurrent ingests across all messages.
+    _LINK_FANOUT = 4
+    _link_sem = asyncio.Semaphore(_LINK_FANOUT)
+    async def _do_one_link(idx: int):
+        async with _link_sem:
+            return await _ingest_one_url(
+                links[idx]["url"], chat_id, scan_links=False)
+    results = await asyncio.gather(*[_do_one_link(i) for i in targets])
     out_lines: list[str] = []
-    for idx in targets:
-        u = links[idx]["url"]
-        res = await _ingest_one_url(u, chat_id, scan_links=False)
+    for idx, res in zip(targets, results):
         line = _format_results([res]).strip()
-        out_lines.append(line or f"🚫 학습 안 함: {u[:60]}")
+        out_lines.append(line or f"🚫 학습 안 함: {links[idx]['url'][:60]}")
     # Race-safe done marking: re-read the row from SQLite so a
     # concurrent tap's done flag isn't clobbered by our write.
     fresh_rec = await asyncio.to_thread(pending_store.get_links, row_id)
