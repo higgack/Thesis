@@ -9738,10 +9738,35 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
                 if det:
                     final_text += f"\n   {det[:100]}"
         else:
-            final_text = f"(빈 결과: {label[:60]})"
+            # Empty result set: the message carried nothing ingestable
+            # (no URL, body under the 80-char text-ingest floor) — e.g.
+            # a short alert blurb that got forwarded into the channel
+            # ("💥 US 자동매매 크래시 / RuntimeError: boom"). Don't post a
+            # "(빈 결과: …)" bubble for these — it's pure noise between
+            # real ✅ learns. Quietly resolve the ⏳ status bubble (delete
+            # if possible, else leave it) and skip the result send.
+            final_text = ""
 
         sent_ok = False
-        if status_msg_id:
+        if not final_text.strip():
+            # Nothing meaningful to show — remove the ⏳ "학습 시작"
+            # bubble so it doesn't sit frozen, and send nothing new.
+            if status_msg_id:
+                try:
+                    await ctx.bot.delete_message(
+                        chat_id=notify_chat_id, message_id=status_msg_id)
+                except Exception:
+                    # Can't delete (too old / no rights) — edit to a
+                    # minimal marker instead of leaving "학습 시작".
+                    try:
+                        await ctx.bot.edit_message_text(
+                            chat_id=notify_chat_id, message_id=status_msg_id,
+                            text="(학습할 내용 없음 — skip)",
+                        )
+                    except Exception:
+                        pass
+            sent_ok = True  # intentionally suppress the result send
+        if status_msg_id and not sent_ok:
             try:
                 await ctx.bot.edit_message_text(
                     chat_id=notify_chat_id, message_id=status_msg_id,
