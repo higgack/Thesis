@@ -432,23 +432,22 @@ def _esc(s) -> str:
     return html.escape(str(s) if s is not None else "")
 
 
+# Title→URL map, populated once per regenerate() via meta.title_url_map()
+# so _source_li does a dict lookup instead of a per-source SQL LIKE.
+# The old per-call search_title() fan-out (N sources × full-table LIKE,
+# every 60 s) pegged a worker thread at ~100% CPU around the clock.
+_SOURCE_URL_CACHE: dict[str, str] = {}
+
+
 def _source_li(title: str) -> str:
-    """Render a single 출처 entry. Looks up the doc's original
-    source via meta.search_title — when the source is an http(s)
-    URL the title becomes a clickable link, otherwise it stays
-    plain text. Looking up at render time (vs persisting URL in
-    qna.db) lets historical Q&As pick up newly-known URLs without
-    a migration."""
+    """Render a single 출처 entry. Resolves the doc's source URL from
+    the per-regenerate _SOURCE_URL_CACHE (built once via
+    meta.title_url_map) — when the source is an http(s) URL the title
+    becomes a clickable link, otherwise plain text. Resolving at render
+    time lets historical Q&As pick up newly-known URLs without a
+    migration, but the lookup is now O(1) dict access, not a SQL scan."""
     safe_title = _esc(title)
-    url = ""
-    try:
-        matches = meta_store.search_title(title, limit=1)
-    except Exception:
-        matches = []
-    if matches:
-        src = matches[0].get("source") or ""
-        if src.startswith(("http://", "https://")):
-            url = src
+    url = _SOURCE_URL_CACHE.get((title or "").strip(), "")
     if not url:
         return f"<li>{safe_title}</li>"
     safe_url = _esc(url)
@@ -1017,6 +1016,17 @@ def regenerate() -> None:
         target = base / token
         target.mkdir(parents=True, exist_ok=True)
         (base / "index.html").write_text(_PUBLIC_INDEX, encoding="utf-8")
+        # Populate the source-URL cache ONCE per regenerate (single SQL
+        # scan) so _source_li resolves links by dict lookup instead of a
+        # per-source LIKE query. This is the fix for the worker thread
+        # that sat at ~100% CPU 24/7 (py-spy: regenerate → _source_li →
+        # meta.search_title on every card's every source, every 60 s).
+        global _SOURCE_URL_CACHE
+        try:
+            _SOURCE_URL_CACHE = meta_store.title_url_map()
+        except Exception:
+            log.exception("title_url_map failed; source links degraded")
+            _SOURCE_URL_CACHE = {}
         rows = qna.recent(limit=2000)
         today = cost.today_krw()
         mtd = cost.month_to_date_krw()

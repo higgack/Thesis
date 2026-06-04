@@ -537,6 +537,30 @@ def search_title(substring: str, limit: int = 20) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def title_url_map() -> dict[str, str]:
+    """One-shot {title: source_url} for every doc whose source is an
+    http(s) URL. Built in a SINGLE scan so the dashboard can resolve a
+    Q&A's source links by dict lookup instead of issuing one
+    search_title() LIKE query per source per card on every 60-second
+    regenerate — that per-source LIKE fan-out was pegging a worker
+    thread at ~100% CPU around the clock (127 Q&As × N sources ×
+    full-table LIKE, every minute). Newest doc wins on duplicate
+    titles (ORDER BY ingested_at)."""
+    out: dict[str, str] = {}
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT title, source FROM documents "
+            "WHERE source LIKE 'http%' "
+            "ORDER BY ingested_at ASC"
+        ).fetchall()
+    for r in rows:
+        title = (r["title"] or "").strip()
+        src = r["source"] or ""
+        if title and src.startswith(("http://", "https://")):
+            out[title] = src  # later (newer) row overwrites → newest wins
+    return out
+
+
 def search_broad(substring: str, limit: int = 30) -> list[dict]:
     """Wider net than search_title — also looks in summary and metadata
     JSON (which holds company name + tags + report_date).
