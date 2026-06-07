@@ -86,14 +86,15 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
 
     def _split_sources(raw: str) -> list[str]:
         """Split '[[A]], [[B]]' into ['A', 'B'].
-        Handles source titles containing ] or [ characters."""
+        Handles source titles containing ] or [ characters.
+        Also handles single-] delimiter: '], [['."""
         raw = raw.strip()
         if not raw:
             return []
-        parts = re.split(r"\]\]\s*,\s*\[\[", raw)
+        parts = re.split(r"\]\]?\s*,\s*\[\[", raw)
         if parts:
             parts[0] = re.sub(r"^\[\[", "", parts[0])
-            parts[-1] = re.sub(r"\]\]\s*$", "", parts[-1])
+            parts[-1] = re.sub(r"\]\]?\s*$", "", parts[-1])
         return [p.strip() for p in parts if p.strip()]
 
     def _inline(text: str) -> str:
@@ -116,8 +117,8 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
             t,
         )
         t = re.sub(
-            r"\]\]\s*,\s*\[\[",
-            "]], [[",
+            r"\[\[자료\s*\d+\]\s*(.+?)\]\]",
+            lambda m: _make_footnote(m.group(1)),
             t,
         )
         t = re.sub(
