@@ -337,6 +337,75 @@ def _wikied_doc_ids() -> set:
     return ids
 
 
+def decompose_merged_topic(topic: str) -> dict:
+    """Delete a merged multi-company page and re-enqueue its docs so they
+    get routed to individual company pages. Returns stats."""
+    from . import meta
+    idx = _load_json(_INDEX_PATH, {})
+    if not isinstance(idx, dict) or topic not in idx:
+        return {"error": f"토픽 '{topic}' 인덱스에 없음"}
+    rec = idx[topic]
+    doc_ids = rec.get("doc_ids") or []
+    if not doc_ids:
+        return {"error": "doc_ids 비어있음"}
+
+    q = _load_json(_QUEUE_PATH, [])
+    if not isinstance(q, list):
+        q = []
+    queued_keys = {
+        (it.get("doc_id"), it.get("topic"))
+        for it in q if isinstance(it, dict)
+    }
+    min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 600))
+    ts = datetime.utcnow().isoformat(timespec="seconds")
+    enqueued = 0
+    for doc_id in doc_ids:
+        try:
+            d = meta.get_doc(doc_id)
+        except Exception:
+            continue
+        if not d:
+            continue
+        summary = (d.get("summary") or "").strip()
+        if len(summary) < min_chars:
+            continue
+        md = d.get("metadata")
+        if isinstance(md, str):
+            try:
+                md = json.loads(md)
+            except Exception:
+                md = {}
+        for t in topics_for(md, d.get("title") or ""):
+            if t == topic:
+                continue
+            if (doc_id, t) in queued_keys:
+                continue
+            q.append({
+                "doc_id": doc_id,
+                "title": d.get("title") or "",
+                "summary": summary,
+                "doc_type": d.get("type") or "",
+                "source": d.get("source") or "",
+                "topic": t,
+                "ts": ts,
+            })
+            queued_keys.add((doc_id, t))
+            enqueued += 1
+    _atomic_write_json(_QUEUE_PATH, q)
+
+    p = _page_path(topic)
+    deleted_file = False
+    if p and p.exists():
+        p.unlink()
+        deleted_file = True
+
+    del idx[topic]
+    _atomic_write_json(_INDEX_PATH, idx)
+
+    return {"decomposed": topic, "docs": len(doc_ids),
+            "re_enqueued": enqueued, "file_deleted": deleted_file}
+
+
 def backfill(docs: list[dict]) -> dict:
     """Enqueue EXISTING corpus docs (from meta.docs_since) into the wiki
     queue so the nightly batch will synthesize them too — not just new

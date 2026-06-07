@@ -1408,7 +1408,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
 
-📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_drain · /wiki_backfill · /wiki_off · /wiki_on
+📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_drain · /wiki_split · /wiki_backfill · /wiki_off · /wiki_on
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
@@ -1908,6 +1908,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki</b> 목록 · <b>/wiki &lt;토픽&gt;</b> 열람 · <b>/wiki_today</b> 마지막 배치
 • <b>/wiki_status</b> 상태·오늘 ₩·한도·큐 · <b>/wiki_run</b> 수동 실행
 • <b>/wiki_drain [한도=20000]</b> 오늘만 임시 예산 올려서 큐 최대 소진(내일 자동 복귀 ₩2000)
+• <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
 • <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 야간 캡 내 분산 처리)
 • <b>/wiki_off · /wiki_on</b> 즉시 끄기/켜기(killswitch, 재배포 불필요)
 
@@ -11701,6 +11702,33 @@ async def cmd_wiki_drain(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_wiki_split(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_split <토픽> — 합쳐진 위키 페이지를 해체하고 개별 회사 페이지로
+    재분배. 해당 페이지 삭제 + doc들을 개별 토픽 큐에 재적재(₩0).
+    다음 배치에서 각각 머지."""
+    if not _is_owner(update):
+        return
+    topic = " ".join(ctx.args).strip() if ctx.args else ""
+    if not topic:
+        await update.message.reply_text("사용법: /wiki_split <토픽명>\n예) /wiki_split 삼성전자 SK하이닉스")
+        return
+    try:
+        res = wiki.decompose_merged_topic(topic)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ 분리 실패: {e}")
+        return
+    if res.get("error"):
+        await update.message.reply_text(f"⚠️ {res['error']}")
+        return
+    await update.message.reply_text(
+        f"✅ 「{topic}」 해체 완료\n"
+        f"• 원본 자료: {res['docs']}건\n"
+        f"• 개별 토픽으로 재적재: {res['re_enqueued']}건\n"
+        f"• 파일 삭제: {'예' if res['file_deleted'] else '아니오'}\n"
+        f"다음 배치(/wiki_run)에서 각 회사 페이지로 머지됩니다."
+    )
+
+
 async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_backfill [개월=6|all] — 기존 자료(meta.db)를 위키 큐에 적재.
     적재 자체는 ₩0; 실제 머지는 야간 배치가 일일 예산 캡 내에서 처리하므로
@@ -11924,6 +11952,7 @@ def main():
     app.add_handler(CommandHandler("wiki_off", cmd_wiki_off))
     app.add_handler(CommandHandler("wiki_on", cmd_wiki_on))
     app.add_handler(CommandHandler("wiki_drain", cmd_wiki_drain))
+    app.add_handler(CommandHandler("wiki_split", cmd_wiki_split))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
     app.add_handler(MessageHandler(
