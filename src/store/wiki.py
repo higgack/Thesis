@@ -239,22 +239,39 @@ def _slug(s: str) -> str:
     return s[:80] or "기타"
 
 
-def topic_for(metadata: dict | None, title: str) -> str:
-    """Pick the wiki page a doc belongs to, for free, from the metadata
-    Flash-Lite already extracted at ingest:
-      company (e.g. '삼성전자') → primary tag (e.g. 'HBM') → '기타'.
-    Deterministic + human-readable; embedding-based clustering is a
-    documented future upgrade, deliberately skipped in v1 for cost."""
+def _split_multi_topic(raw: str) -> list[str]:
+    """Split a multi-company/topic string into individual names.
+    Handles: '삼성전자, SK하이닉스' / '삼성전자 SK하이닉스' /
+    '넥스틴, 파크시스템스, 인텍플러스'."""
+    parts = re.split(r"[,;/·]|\s{2,}", raw)
+    if len(parts) == 1:
+        tokens = raw.split()
+        if len(tokens) >= 2 and all(len(t) >= 2 for t in tokens):
+            parts = tokens
+    return [p.strip() for p in parts if p.strip()]
+
+
+def topics_for(metadata: dict | None, title: str) -> list[str]:
+    """Return a LIST of wiki topics for a doc. Multi-company docs get
+    routed to multiple pages (one queue entry per company)."""
     md = metadata or {}
     company = (md.get("company") or "").strip()
     if company:
-        return company
+        split = _split_multi_topic(company)
+        if len(split) >= 2:
+            return split
+        return [company]
     tags = md.get("tags") or []
     if isinstance(tags, list):
         for t in tags:
             if isinstance(t, str) and t.strip():
-                return t.strip()
-    return "기타"
+                return [t.strip()]
+    return ["기타"]
+
+
+def topic_for(metadata: dict | None, title: str) -> str:
+    """Legacy single-topic API — returns first topic."""
+    return topics_for(metadata, title)[0]
 
 
 # ----------------------------------------------------------------------
@@ -273,23 +290,32 @@ def enqueue(*, doc_id: str, title: str, summary: str, doc_type: str,
             return
         min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 600))
         if len((summary or "").strip()) < min_chars:
-            return  # low-signal → archived as a note, but not wiki-merged
-        topic = topic_for(metadata, title)
+            return
+        tlist = topics_for(metadata, title)
         q = _load_json(_QUEUE_PATH, [])
         if not isinstance(q, list):
             q = []
-        if any(isinstance(it, dict) and it.get("doc_id") == doc_id for it in q):
-            return
-        q.append({
-            "doc_id": doc_id,
-            "title": title,
-            "summary": summary,
-            "doc_type": doc_type,
-            "source": source,
-            "topic": topic,
-            "ts": datetime.utcnow().isoformat(timespec="seconds"),
-        })
-        _atomic_write_json(_QUEUE_PATH, q)
+        queued_keys = {
+            (it.get("doc_id"), it.get("topic"))
+            for it in q if isinstance(it, dict)
+        }
+        ts = datetime.utcnow().isoformat(timespec="seconds")
+        added = False
+        for topic in tlist:
+            if (doc_id, topic) in queued_keys:
+                continue
+            q.append({
+                "doc_id": doc_id,
+                "title": title,
+                "summary": summary,
+                "doc_type": doc_type,
+                "source": source,
+                "topic": topic,
+                "ts": ts,
+            })
+            added = True
+        if added:
+            _atomic_write_json(_QUEUE_PATH, q)
     except Exception:
         log.exception("wiki enqueue failed (ignored — ingest unaffected)")
 
@@ -343,15 +369,18 @@ def backfill(docs: list[dict]) -> dict:
         if len(summary) < min_chars:
             res["skipped_gate"] += 1
             continue
-        q.append({
-            "doc_id": doc_id,
-            "title": d.get("title") or "",
-            "summary": summary,
-            "doc_type": d.get("type") or d.get("doc_type") or "",
-            "source": d.get("source") or "",
-            "topic": topic_for(d.get("metadata"), d.get("title") or ""),
-            "ts": datetime.utcnow().isoformat(timespec="seconds"),
-        })
+        tlist = topics_for(d.get("metadata"), d.get("title") or "")
+        ts = datetime.utcnow().isoformat(timespec="seconds")
+        for topic in tlist:
+            q.append({
+                "doc_id": doc_id,
+                "title": d.get("title") or "",
+                "summary": summary,
+                "doc_type": d.get("type") or d.get("doc_type") or "",
+                "source": d.get("source") or "",
+                "topic": topic,
+                "ts": ts,
+            })
         queued_ids.add(doc_id)
         res["enqueued"] += 1
     _atomic_write_json(_QUEUE_PATH, q)
