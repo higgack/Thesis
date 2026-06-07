@@ -130,10 +130,27 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
             if len(topic) < 2:
                 continue
             escaped = html.escape(topic)
-            if escaped in t:
-                link = (f'<a href="{_topic_filename(topic)}" '
-                        f'class="wiki-internal">{escaped}</a>')
-                t = t.replace(escaped, link, 1)
+            if escaped not in t:
+                continue
+            parts = re.split(r"(<[^>]+>)", t)
+            in_anchor = False
+            replaced = False
+            for i, part in enumerate(parts):
+                if replaced:
+                    break
+                if part.startswith("<"):
+                    if part.startswith("<a ") or part == "<a>":
+                        in_anchor = True
+                    elif part == "</a>":
+                        in_anchor = False
+                    continue
+                if not in_anchor and escaped in part:
+                    link = (f'<a href="{_topic_filename(topic)}" '
+                            f'class="wiki-internal">{escaped}</a>')
+                    parts[i] = part.replace(escaped, link, 1)
+                    replaced = True
+            if replaced:
+                t = "".join(parts)
         return t
 
     in_table = False

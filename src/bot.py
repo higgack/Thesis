@@ -1441,19 +1441,20 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【7. 메타데이터】</b> Flash-Lite 요약+메타 1콜 · 🏢회사 🏷태그 📅YYYY.MM · 📊브로커리지·애널리스트(리포트 자동 추출, 회사 분석에 활용)
 
-<b>【8. 대시보드】</b> http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html · Basic Auth(.env) · 60s 갱신·다크 19~07
+<b>【8. 대시보드】</b> Basic Auth(.env) · 60s 갱신·다크 19~07
+📊 <a href="http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html">Q&amp;A</a> · 📚 <a href="http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/index.html">Wiki</a>
 
 <b>【9. 답변 품질】</b> 시점 필수 · brain 재검색 · web [도메인]·인용 [N] · 숫자 audit · _verify
 
-<b>【10. 운영】</b> VM n2-std-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8 · concurrent+HTTPX 32 · 영속(retry/failed/history/qna/cost/캐시) · 메모리 5분(90/95%) · 60s call · 15분 ingest · 질문/명령＞학습
+<b>【10. 운영】</b> VM n2-std-4 bot 12GB · Sem 8+batch 8 · 영속(atomic+.bak) · 메모리 5분 · 질문＞학습
 
-<b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 · 요약/번역/Vision gemini-2.5-flash-lite (503→flash) · 답변 gemini-2.5-flash · /deep gemini-2.5-pro · ₩/1M Pro 1750/Flash 420/Lite 140/Embed 200 · 답변 캐시 1h(200건)
+<b>【10-1. 모델】</b> Embed gemini-embedding-001 · Lite flash-lite · 답변 flash · /deep pro · 캐시 1h
 
-<b>【10-2. 비용 절감】</b> 6단 dedup · 청크 1000 · Vision DPI 100 · OCR cap 0p · 청크/임베딩 캐시 · 메타 gating · 차단 도메인 · .txt/.md/.csv 제외
+<b>【10-2. 비용】</b> 6단 dedup · 청크 1000 · DPI 100 · OCR 0p · 캐시 · 메타 gating
 
-<b>【10-3. Retry/무손실 재개】</b> 자동1회→/failed(🔁수동,3회후폐기) · in_flight_ts→배포/OOM/SIGKILL 자동재개·atomic+.bak
+<b>【10-3. Retry】</b> 자동1회→/failed(🔁3회후폐기) · in_flight→자동재개
 
-<b>【11. 트러블슈팅】</b> 본문비어→차단 · 막힘→/queue_panic · BM25 30s · /reset
+<b>【11.】</b> 본문비어→차단 · 막힘→/queue_panic · /reset
 
 <b>【12. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS 14건 활용신청 + NTIS 5건 추가신청 승인 대기"""
 
