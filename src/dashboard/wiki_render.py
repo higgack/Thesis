@@ -56,7 +56,7 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
 
     def _make_footnote(title: str) -> str:
         """Register a source and return a superscript footnote link."""
-        key = title.strip()
+        key = html.unescape(title.strip())
         if key in _fn_seen:
             num = _fn_seen[key]
         else:
@@ -69,10 +69,11 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
 
     def _topic_link(name: str) -> str:
         """If name matches a wiki topic, return a link; else plain text."""
-        if name in _topics:
-            return (f'<a href="{_topic_filename(name)}" '
-                    f'class="wiki-internal">{html.escape(name)}</a>')
-        return html.escape(name)
+        clean = html.unescape(name)
+        if clean in _topics:
+            return (f'<a href="{_topic_filename(clean)}" '
+                    f'class="wiki-internal">{html.escape(clean)}</a>')
+        return html.escape(clean)
 
     def _inline(text: str) -> str:
         t = html.escape(text)
@@ -80,13 +81,19 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
         t = re.sub(r"\*(.+?)\*", r"<em>\1</em>", t)
         t = re.sub(r"`(.+?)`", r'<code class="wiki-code">\1</code>', t)
         t = re.sub(
-            r"\(출처:\s*\[\[(.+?)\]\]\)",
-            lambda m: _make_footnote(m.group(1)),
+            r"\(출처:\s*(.+?)\)",
+            lambda m: "".join(
+                _make_footnote(s)
+                for s in re.findall(r"\[\[(.+?)\]\]", m.group(1))
+            ) or m.group(0),
             t,
         )
         t = re.sub(
-            r"—\s*출처:\s*\[\[(.+?)\]\]",
-            lambda m: _make_footnote(m.group(1)),
+            r"—\s*출처:\s*(.+)",
+            lambda m: "".join(
+                _make_footnote(s)
+                for s in re.findall(r"\[\[(.+?)\]\]", m.group(1))
+            ) or m.group(0),
             t,
         )
         t = re.sub(
