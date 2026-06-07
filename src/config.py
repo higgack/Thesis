@@ -53,7 +53,7 @@ HINT_SUMMARY_MAX_CHARS = 2000
 WIKI_ENABLED = os.getenv("WIKI_ENABLED", "0") == "1"
 # Answer path (P2): lead Q&A with the synthesized page. Separate, stricter
 # gate so pages can be built + reviewed before they influence answers.
-WIKI_QUERY_FIRST = os.getenv("WIKI_QUERY_FIRST", "0") == "1"
+WIKI_QUERY_FIRST = os.getenv("WIKI_QUERY_FIRST", "1") == "1"
 # Merge model — flash by default (NOT pro). Every merge is tagged
 # purpose="wiki" so /usage + cost.db isolate the wiki's real spend.
 WIKI_MERGE_MODEL = os.getenv("WIKI_MERGE_MODEL", ANSWER_MODEL)
