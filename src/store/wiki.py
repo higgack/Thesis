@@ -928,6 +928,113 @@ def backfill(docs: list[dict]) -> dict:
     return res
 
 
+def rebuild_broken_refs() -> dict:
+    """Scan all wiki pages for `[[자료 N]]` patterns (broken source refs).
+    For affected topics: delete the page, clear doc_ids from the index, and
+    re-queue ALL their docs so the next batch rebuilds from scratch — the
+    post-processing in _merge_topic will resolve labels to real titles.
+    Spends ₩0 (enqueue only). Returns stats."""
+    from . import meta
+    d = _wiki_dir()
+    if not d or not d.exists():
+        return {"error": "wiki dir not found", "rebuilt": 0}
+    idx = _load_json(_INDEX_PATH, {})
+    if not isinstance(idx, dict):
+        idx = {}
+
+    _SAFE_RE = re.compile(r"[^\w가-힣\- ]+")
+    def _slug_of(s: str) -> str:
+        s = _SAFE_RE.sub(" ", s or "").strip()
+        s = re.sub(r"\s+", " ", s)
+        return s[:80] or "기타"
+
+    slug_to_topic: dict[str, str] = {}
+    for topic_name, rec in idx.items():
+        slug_to_topic[_slug_of(topic_name)] = topic_name
+        slug_to_topic[topic_name] = topic_name
+        if isinstance(rec, dict) and rec.get("file"):
+            stem = rec["file"].rsplit(".", 1)[0]
+            slug_to_topic[stem] = topic_name
+
+    broken_re = re.compile(r"\[\[자료\s*\d+\]\]")
+    affected: list[tuple[str, str, Path]] = []  # (idx_key, topic_slug, path)
+
+    for md_file in d.glob("*.md"):
+        try:
+            text = md_file.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        if not broken_re.search(text):
+            continue
+        slug = md_file.stem
+        idx_key = slug_to_topic.get(slug)
+        if idx_key and idx_key in idx:
+            affected.append((idx_key, slug, md_file))
+
+    if not affected:
+        return {"rebuilt": 0, "scanned": len(list(d.glob("*.md")))}
+
+    q = _load_json(_QUEUE_PATH, [])
+    if not isinstance(q, list):
+        q = []
+    queued_keys = {(it.get("doc_id"), it.get("topic"))
+                   for it in q if isinstance(it, dict)}
+    min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 800))
+    ts = datetime.utcnow().isoformat(timespec="seconds")
+    total_enqueued = 0
+    topics_rebuilt: list[str] = []
+
+    for idx_key, slug, md_path in affected:
+        rec = idx.get(idx_key, {})
+        doc_ids = rec.get("doc_ids") or []
+        if not doc_ids:
+            continue
+
+        enqueued = 0
+        for doc_id in doc_ids:
+            if (doc_id, idx_key) in queued_keys:
+                continue
+            try:
+                doc = meta.get_doc(doc_id)
+            except Exception:
+                continue
+            if not doc:
+                continue
+            summary = (doc.get("summary") or "").strip()
+            if len(summary) < min_chars:
+                continue
+            q.append({
+                "doc_id": doc_id,
+                "title": doc.get("title") or "",
+                "summary": summary,
+                "doc_type": doc.get("type") or "",
+                "source": doc.get("source") or "",
+                "topic": idx_key,
+                "ts": ts,
+            })
+            queued_keys.add((doc_id, idx_key))
+            enqueued += 1
+
+        if enqueued > 0:
+            rec["doc_ids"] = []
+            idx[idx_key] = rec
+            try:
+                md_path.unlink()
+            except Exception:
+                pass
+            total_enqueued += enqueued
+            topics_rebuilt.append(idx_key)
+
+    _atomic_write_json(_QUEUE_PATH, q)
+    _atomic_write_json(_INDEX_PATH, idx)
+    return {
+        "rebuilt": len(topics_rebuilt),
+        "topics": topics_rebuilt,
+        "docs_requeued": total_enqueued,
+        "scanned": len(list(d.glob("*.md"))),
+    }
+
+
 # ----------------------------------------------------------------------
 # Page read / list (FREE — for /wiki and wiki-first answering)
 # ----------------------------------------------------------------------
@@ -1075,7 +1182,10 @@ def _build_merge_user(topic: str, existing: str, docs: list[dict]) -> str:
         "1. 기존 페이지 내용을 보존하면서 새 자료의 사실/주장을 알맞은 "
         "섹션에 통합한다. 처음이면 깔끔한 새 페이지를 만든다.\n"
         "2. **출처 표기**: 같은 자료에서 온 내용은 섹션/문단 끝에 "
-        "`— 출처: [[자료제목]]` 한 번만. 매 문장 반복 금지.\n"
+        "`— 출처: [[자료의 실제 제목]]` 한 번만. "
+        "**`[[자료 1]]`, `[[자료 2]]` 같은 번호 라벨은 절대 쓰지 않는다** "
+        "— 반드시 `### [자료 N]` 뒤에 적힌 원래 제목을 사용한다. "
+        "매 문장 반복 금지.\n"
         "3. 새 자료가 기존 주장과 **모순**되면 기존 내용을 지우지 말고 "
         "`## ⚠️ 검토 필요` 섹션에 `- 기존: … / 신규: … (출처)` 형식으로 "
         "적는다.\n"
@@ -1130,6 +1240,16 @@ async def _merge_topic(topic: str, docs: list[dict]) -> dict:
         return {"topic": topic, "ok": False, "docs": len(docs),
                 "contradictions": 0, "error": str(e)[:120]}
     page, meta = _parse_merge(raw)
+    # Post-process: resolve "자료 N" labels → actual document titles.
+    # The LLM sometimes writes [[자료 2]] instead of the real title.
+    def _resolve_ref(m: re.Match) -> str:
+        n = int(m.group(1))
+        if 1 <= n <= len(docs):
+            t = (docs[n - 1].get("title") or "").strip()
+            if t:
+                return f"[[{t}]]"
+        return m.group(0)
+    page = re.sub(r"\[\[자료\s*(\d+)\]\]", _resolve_ref, page)
     if len(page.strip()) < 20:
         return {"topic": topic, "ok": False, "docs": len(docs),
                 "contradictions": 0, "error": "empty merge output"}

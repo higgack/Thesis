@@ -58,7 +58,7 @@ WIKI_QUERY_FIRST = os.getenv("WIKI_QUERY_FIRST", "0") == "1"
 # purpose="wiki" so /usage + cost.db isolate the wiki's real spend.
 WIKI_MERGE_MODEL = os.getenv("WIKI_MERGE_MODEL", ANSWER_MODEL)
 # Nightly batch hour (KST, 0–23). Off-peak so it never competes with ingest.
-WIKI_BATCH_HOUR = int(os.getenv("WIKI_BATCH_HOUR", "3"))
+WIKI_BATCH_HOUR = int(os.getenv("WIKI_BATCH_HOUR", "4"))
 # Importance gate: docs whose summary is shorter than this are archived as
 # notes but NOT wiki-merged (keeps low-signal forwards from spending tokens).
 WIKI_MIN_SUMMARY_CHARS = int(os.getenv("WIKI_MIN_SUMMARY_CHARS", "600"))
