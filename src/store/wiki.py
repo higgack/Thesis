@@ -255,6 +255,65 @@ def queue_size() -> int:
     return len(q) if isinstance(q, list) else 0
 
 
+def _wikied_doc_ids() -> set:
+    """All doc_ids already folded into a wiki page (from the index), so
+    backfill can skip them."""
+    idx = _load_json(_INDEX_PATH, {})
+    ids: set = set()
+    if isinstance(idx, dict):
+        for rec in idx.values():
+            if isinstance(rec, dict):
+                ids.update(rec.get("doc_ids") or [])
+    return ids
+
+
+def backfill(docs: list[dict]) -> dict:
+    """Enqueue EXISTING corpus docs (from meta.docs_since) into the wiki
+    queue so the nightly batch will synthesize them too — not just new
+    ingests. Skips docs already in a wiki page, already queued, or below
+    the importance gate. Spends ₩0 (enqueue only); the nightly batch does
+    the actual merging under the daily budget + per-run caps, so a huge
+    backfill simply drains over several capped nights. Returns counts."""
+    res = {"enqueued": 0, "skipped_wikied": 0, "skipped_gate": 0,
+           "skipped_queued": 0, "total": len(docs)}
+    if not enabled():
+        res["error"] = "wiki disabled"
+        return res
+    min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 600))
+    wikied = _wikied_doc_ids()
+    q = _load_json(_QUEUE_PATH, [])
+    if not isinstance(q, list):
+        q = []
+    queued_ids = {it.get("doc_id") for it in q if isinstance(it, dict)}
+    for d in docs:
+        doc_id = d.get("id") or d.get("doc_id")
+        if not doc_id:
+            continue
+        if doc_id in wikied:
+            res["skipped_wikied"] += 1
+            continue
+        if doc_id in queued_ids:
+            res["skipped_queued"] += 1
+            continue
+        summary = (d.get("summary") or "").strip()
+        if len(summary) < min_chars:
+            res["skipped_gate"] += 1
+            continue
+        q.append({
+            "doc_id": doc_id,
+            "title": d.get("title") or "",
+            "summary": summary,
+            "doc_type": d.get("type") or d.get("doc_type") or "",
+            "source": d.get("source") or "",
+            "topic": topic_for(d.get("metadata"), d.get("title") or ""),
+            "ts": datetime.utcnow().isoformat(timespec="seconds"),
+        })
+        queued_ids.add(doc_id)
+        res["enqueued"] += 1
+    _atomic_write_json(_QUEUE_PATH, q)
+    return res
+
+
 # ----------------------------------------------------------------------
 # Page read / list (FREE — for /wiki and wiki-first answering)
 # ----------------------------------------------------------------------

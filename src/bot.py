@@ -1408,7 +1408,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
 
-📚 <b>위키(LLM Wiki)</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_off · /wiki_on
+📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_backfill · /wiki_off · /wiki_on
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
@@ -1906,6 +1906,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 <b>명령어</b>
 • <b>/wiki</b> 목록 · <b>/wiki &lt;토픽&gt;</b> 열람 · <b>/wiki_today</b> 마지막 배치
 • <b>/wiki_status</b> 상태·오늘 ₩·한도·큐 · <b>/wiki_run</b> 수동 실행
+• <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 야간 캡 내 분산 처리)
 • <b>/wiki_off · /wiki_on</b> 즉시 끄기/켜기(killswitch, 재배포 불필요)
 
 <b>켜는 법(점진)</b>: ①WIKI_ENABLED=1 재배포 → 며칠 /wiki_status·/wiki_today
@@ -11525,6 +11526,49 @@ async def cmd_wiki_on(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"킬스위치 해제. 현재: {state}")
 
 
+async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_backfill [개월=6|all] — 기존 자료(meta.db)를 위키 큐에 적재.
+    적재 자체는 ₩0; 실제 머지는 야간 배치가 일일 예산 캡 내에서 처리하므로
+    큰 백필도 여러 밤에 걸쳐 안전하게 빠진다."""
+    if not _is_owner(update):
+        return
+    if not wiki.enabled():
+        await update.message.reply_text(
+            "위키가 꺼져 있어 백필 불가. .env WIKI_ENABLED=1 (+재배포) "
+            "또는 /wiki_on 후 사용."
+        )
+        return
+    arg = (ctx.args[0].strip().lower() if ctx.args else "6")
+    if arg in ("all", "전체"):
+        cutoff, scope = None, "전체"
+    else:
+        try:
+            months = max(1, min(120, int(arg)))
+        except ValueError:
+            await update.message.reply_text(
+                "사용법: /wiki_backfill [개월수|all]  예) /wiki_backfill 6"
+            )
+            return
+        cutoff = (datetime.utcnow() - timedelta(days=30 * months)).isoformat()
+        scope = f"최근 {months}개월"
+    async with _SustainedTyping(update, ctx):
+        docs = await asyncio.to_thread(meta.docs_since, cutoff)
+        res = await asyncio.to_thread(wiki.backfill, docs)
+    if res.get("error"):
+        await update.message.reply_text(f"백필 불가: {res['error']}")
+        return
+    budget = int(config.WIKI_DAILY_BUDGET_KRW)
+    await update.message.reply_text(
+        f"📚 백필({scope}) 큐 적재 완료\n"
+        f"• 적재: {res['enqueued']}건 (대상 {res['total']}건 중)\n"
+        f"• 건너뜀: 이미위키 {res['skipped_wikied']} · 큐중복 "
+        f"{res['skipped_queued']} · 짧음 {res['skipped_gate']}\n"
+        f"• 적재 비용 ₩0 — 야간 배치가 ₩{budget:,}/일 캡 내에서 며칠~몇 주에 "
+        f"걸쳐 처리(추정 일회성 ~₩{res['enqueued']:,}, 문서당 ~₩1).\n"
+        f"지금 한 묶음 바로 처리하려면 /wiki_run · 상태 /wiki_status"
+    )
+
+
 def main():
     if len(_HELP_TEXT) > _TG_MSG_LIMIT:
         log.warning(
@@ -11701,6 +11745,7 @@ def main():
     app.add_handler(CommandHandler("wiki_today", cmd_wiki_today))
     app.add_handler(CommandHandler("wiki_status", cmd_wiki_status))
     app.add_handler(CommandHandler("wiki_run", cmd_wiki_run))
+    app.add_handler(CommandHandler("wiki_backfill", cmd_wiki_backfill))
     app.add_handler(CommandHandler("wiki_off", cmd_wiki_off))
     app.add_handler(CommandHandler("wiki_on", cmd_wiki_on))
 

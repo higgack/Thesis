@@ -510,6 +510,39 @@ def recent(limit: int = 10) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def docs_since(cutoff_iso: str | None = None,
+               limit: int = 100000) -> list[dict]:
+    """Docs for the LLM-Wiki backfill: id, type, title, summary, source,
+    metadata (parsed to dict), ingested_at — newest first. `cutoff_iso`
+    (UTC ISO, matching the stored ingested_at) limits to recent docs;
+    None = the whole corpus."""
+    import json as _json
+    with _conn() as c:
+        if cutoff_iso:
+            rows = c.execute(
+                "SELECT id, type, title, summary, source, metadata, "
+                "ingested_at FROM documents WHERE ingested_at >= ? "
+                "ORDER BY ingested_at DESC LIMIT ?", (cutoff_iso, limit),
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT id, type, title, summary, source, metadata, "
+                "ingested_at FROM documents ORDER BY ingested_at DESC "
+                "LIMIT ?", (limit,),
+            ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        md = d.get("metadata")
+        if md:
+            try:
+                d["metadata"] = _json.loads(md)
+            except Exception:
+                d["metadata"] = None
+        out.append(d)
+    return out
+
+
 def last_ingested_at() -> str | None:
     """ISO timestamp of the most recently ingested doc, or None if empty.
     Used by import_channel --resume to pick up where a previous run left
