@@ -1443,7 +1443,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【7. 메타데이터】</b> Flash-Lite 요약+메타 1콜 · 🏢회사 🏷태그 📅YYYY.MM · 📊브로커리지·애널리스트(리포트 자동 추출, 회사 분석에 활용)
 
-<b>【8. 대시보드】</b> Basic Auth(.env) · 60s 갱신·다크 19~07 (아래 버튼)
+<b>【8. 대시보드】</b> Basic Auth(.env) · 60s 갱신·다크 19~07
+📊 <a href="http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html">Q&amp;A</a> · 📚 <a href="http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/index.html">Wiki</a>
 
 <b>【9. 답변 품질】</b> 시점 필수 · brain 재검색 · web [도메인]·인용 [N] · 숫자 audit · _verify
 
@@ -2168,17 +2169,10 @@ async def _send_pieces_with_throttle(
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
-    _dash_kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📊 Q&A", url="http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html"),
-        InlineKeyboardButton("📚 Wiki", url="http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/index.html"),
-    ]])
     async with _SustainedTyping(update, ctx):
-        chunks = _split_for_telegram(_HELP_TEXT)
-        for i, chunk in enumerate(chunks):
-            kb = _dash_kb if i == len(chunks) - 1 else None
+        for chunk in _split_for_telegram(_HELP_TEXT):
             await update.message.reply_text(
                 chunk, parse_mode="HTML", disable_web_page_preview=True,
-                reply_markup=kb,
             )
 
 
