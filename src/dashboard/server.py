@@ -92,7 +92,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(403, "forbidden")
             return
         try:
-            with sqlite3.connect(str(_QNA_DB)) as c:
+            with sqlite3.connect(str(_QNA_DB), timeout=30) as c:
                 cur = c.execute("DELETE FROM qna WHERE id = ?", (qid,))
                 n = cur.rowcount
             log.info("deleted qna #%d (rows=%d)", qid, n)

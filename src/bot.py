@@ -602,7 +602,8 @@ def _scan_orphan_files() -> list[Path]:
     import sqlite3
     db_path = config.DATA_DIR / "meta.db"
     try:
-        with sqlite3.connect(str(db_path)) as c:
+        with sqlite3.connect(str(db_path), timeout=30) as c:
+            c.execute("PRAGMA journal_mode=WAL")
             for (src,) in c.execute("SELECT source FROM documents"):
                 if not src:
                     continue
@@ -665,7 +666,8 @@ def _scan_orphan_files() -> list[Path]:
     # forever even though dedup short-circuits on every retry.
     import hashlib as _hashlib
     try:
-        with sqlite3.connect(str(db_path)) as c:
+        with sqlite3.connect(str(db_path), timeout=30) as c:
+            c.execute("PRAGMA journal_mode=WAL")
             rows = c.execute(
                 "SELECT file_hash FROM documents WHERE file_hash IS NOT NULL"
             ).fetchall()

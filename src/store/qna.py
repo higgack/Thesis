@@ -19,7 +19,8 @@ _DB_PATH = config.DATA_DIR / "qna.db"
 
 
 def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(str(_DB_PATH))
+    c = sqlite3.connect(str(_DB_PATH), timeout=30)
+    c.execute("PRAGMA journal_mode=WAL")
     c.execute("""
         CREATE TABLE IF NOT EXISTS qna (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
