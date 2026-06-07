@@ -884,6 +884,81 @@ def merge_all_duplicates() -> dict:
             "details": details}
 
 
+def rename_topic(old_name: str, new_name: str) -> dict:
+    """Rename a wiki topic: update index key, rename .md, remap queue, save alias."""
+    idx = _load_json(_INDEX_PATH, {})
+    if not isinstance(idx, dict):
+        return {"error": "인덱스 로드 실패"}
+    if old_name not in idx:
+        return {"error": f"토픽 '{old_name}' 인덱스에 없음"}
+    if new_name in idx:
+        return {"error": f"토픽 '{new_name}' 이미 존재 — /wiki_dedup merge 사용"}
+
+    rec = idx.pop(old_name)
+    new_file = f"{_slug(new_name)}.md"
+    old_path = _page_path(old_name)
+    rec["file"] = new_file
+    rec["title"] = new_name
+    idx[new_name] = rec
+    _atomic_write_json(_INDEX_PATH, idx)
+
+    renamed_file = False
+    d = _wiki_dir()
+    if d and old_path and old_path.exists():
+        try:
+            old_path.rename(d / new_file)
+            renamed_file = True
+        except Exception:
+            pass
+
+    q = _load_json(_QUEUE_PATH, [])
+    remapped = 0
+    if isinstance(q, list):
+        for it in q:
+            if isinstance(it, dict) and it.get("topic") == old_name:
+                it["topic"] = new_name
+                remapped += 1
+        if remapped:
+            _atomic_write_json(_QUEUE_PATH, q)
+
+    _save_alias(old_name, new_name)
+    return {"ok": True, "old": old_name, "new": new_name,
+            "renamed_file": renamed_file, "remapped_queue": remapped}
+
+
+def delete_topic(topic: str) -> dict:
+    """Delete a wiki topic entirely: index entry, .md file, queue entries."""
+    idx = _load_json(_INDEX_PATH, {})
+    if not isinstance(idx, dict):
+        idx = {}
+
+    rec = idx.pop(topic, None)
+    deleted_file = False
+    if rec:
+        p = _page_path(topic)
+        if p and p.exists():
+            try:
+                p.unlink()
+                deleted_file = True
+            except Exception:
+                pass
+        _atomic_write_json(_INDEX_PATH, idx)
+
+    q = _load_json(_QUEUE_PATH, [])
+    removed_queue = 0
+    if isinstance(q, list):
+        new_q = [it for it in q
+                 if not (isinstance(it, dict) and it.get("topic") == topic)]
+        removed_queue = len(q) - len(new_q)
+        if removed_queue:
+            _atomic_write_json(_QUEUE_PATH, new_q)
+
+    if not rec and removed_queue == 0:
+        return {"error": f"토픽 '{topic}' 인덱스/큐에 없음"}
+    return {"ok": True, "topic": topic, "deleted_file": deleted_file,
+            "removed_queue": removed_queue, "had_index": rec is not None}
+
+
 def backfill(docs: list[dict]) -> dict:
     """Enqueue EXISTING corpus docs (from meta.docs_since) into the wiki
     queue so the nightly batch will synthesize them too — not just new
