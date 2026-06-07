@@ -336,6 +336,8 @@ def enqueue(*, doc_id: str, title: str, summary: str, doc_type: str,
         ts = datetime.utcnow().isoformat(timespec="seconds")
         added = False
         for topic in tlist:
+            if topic == "기타":
+                continue
             if (doc_id, topic) in queued_keys:
                 continue
             q.append({
@@ -1192,7 +1194,9 @@ def _build_merge_user(topic: str, existing: str, docs: list[dict]) -> str:
         "4. 페이지 맨 위에 한 줄 요약(`> …`)을 유지/갱신한다.\n"
         "5. **일반 용어 해설 금지**: 업계 상식 수준의 용어 정의(ALD란, "
         "CMP란 등)는 적지 않는다. 이 회사/토픽에 고유한 정보만.\n"
-        "6. 출력은 **페이지 마크다운 전문**만. 맨 마지막 줄에 정확히 "
+        "6. **언어 규칙**: 출처 제목이든 본문이든, 한국어·영어 이외의 "
+        "언어(중국어·일본어 등)는 모두 **한국어로 번역**하여 표기한다.\n"
+        "7. 출력은 **페이지 마크다운 전문**만. 맨 마지막 줄에 정확히 "
         '`<!--WIKI_META {"contradictions": <정수>, "integrated": <정수>}-->` '
         "를 붙인다(통합한 자료 수, 새로 적은 모순 수).\n"
     )
@@ -1242,11 +1246,16 @@ async def _merge_topic(topic: str, docs: list[dict]) -> dict:
     page, meta = _parse_merge(raw)
     # Post-process: resolve "자료 N" labels → actual document titles.
     # The LLM sometimes writes [[자료 2]] instead of the real title.
+    # Skip substitution if the title contains non-Korean/English chars
+    # (CJK etc.) — the LLM was instructed to translate, so its organic
+    # citations are already in Korean; forcing the raw title would
+    # reintroduce the foreign text.
+    _NON_KOEN = re.compile(r"[^\x00-\x7F가-힣ㄱ-ㅎㅏ-ㅣ]")
     def _resolve_ref(m: re.Match) -> str:
         n = int(m.group(1))
         if 1 <= n <= len(docs):
             t = (docs[n - 1].get("title") or "").strip()
-            if t:
+            if t and not _NON_KOEN.search(t):
                 return f"[[{t}]]"
         return m.group(0)
     page = re.sub(r"\[\[자료\s*(\d+)\]\]", _resolve_ref, page)
@@ -1316,6 +1325,16 @@ async def run_batch() -> dict:
     max_docs = int(_flag("WIKI_MAX_DOCS_PER_TOPIC", 12))
     throttle = float(_flag("WIKI_BATCH_THROTTLE_SEC", 1.0))
 
+    processed_doc_ids: set[str] = set()
+
+    # Drop the catch-all "기타" bucket — unclassified docs have no
+    # coherent theme and produce an unreadable mega-page.  Mark their
+    # doc_ids as processed so they're removed from the queue file.
+    for d in by_topic.pop("기타", []):
+        did = d.get("doc_id")
+        if did:
+            processed_doc_ids.add(did)
+
     # Stable order: biggest topics first so a capped run does the most
     # impactful merges; remaining topics survive in the queue for next run.
     topics = sorted(by_topic.items(), key=lambda kv: len(kv[1]), reverse=True)
@@ -1324,7 +1343,6 @@ async def run_batch() -> dict:
     if not isinstance(idx, dict):
         idx = {}
 
-    processed_doc_ids: set[str] = set()
     results: list[dict] = []
     contradiction_topics: list[str] = []
     runs = 0
