@@ -798,7 +798,9 @@ def _render_index(rows: list[dict], stats: dict) -> str:
         "</head><body><div class='layout'>",
         "<header>",
         "<h1>🧠 Second Brain Archive</h1>",
-        "<div class='sub'>카드 클릭 시 답변 펼침 · 검색창에서 키워드 필터 · 칩으로 도구별 필터</div>",
+        "<div class='sub'>카드 클릭 시 전체 리포트 · "
+        f"<a href='/{token}/wiki/' style='color:var(--accent)'>📚 LLM Wiki</a>"
+        "</div>",
         "</header>",
 
         "<div class='stats'>",
@@ -1063,6 +1065,13 @@ def regenerate() -> None:
         if written:
             log.info("dashboard: wrote %d detail page(s)%s", written,
                      " (full rebuild)" if full else "")
+        try:
+            from .wiki_render import render_wiki
+            wiki_pages = render_wiki(token)
+            if wiki_pages:
+                log.info("dashboard: wrote %d wiki page(s)", wiki_pages)
+        except Exception:
+            log.exception("dashboard wiki render failed (non-fatal)")
     except Exception:
         log.exception("dashboard regenerate failed")
     finally:
