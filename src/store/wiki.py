@@ -79,6 +79,7 @@ def _flag(name: str, default):
 _QUEUE_PATH = config.DATA_DIR / "wiki_queue.json"
 _INDEX_PATH = config.DATA_DIR / "wiki_index.json"
 _LASTRUN_PATH = config.DATA_DIR / "wiki_last_run.json"
+_FAILED_PATH = config.DATA_DIR / "wiki_failed.json"
 _KILL_PATH = config.DATA_DIR / "wiki_disabled"
 
 
@@ -329,6 +330,115 @@ def enqueue(*, doc_id: str, title: str, summary: str, doc_type: str,
 def queue_size() -> int:
     q = _load_json(_QUEUE_PATH, [])
     return len(q) if isinstance(q, list) else 0
+
+
+def pending_list() -> list[dict]:
+    """Queue contents grouped by topic for /wiki_pending display."""
+    q = _load_json(_QUEUE_PATH, [])
+    if not isinstance(q, list):
+        return []
+    groups: dict[str, dict] = {}
+    for it in q:
+        if not isinstance(it, dict):
+            continue
+        topic = it.get("topic", "기타")
+        g = groups.setdefault(topic, {"topic": topic, "docs": 0, "titles": []})
+        g["docs"] += 1
+        title = it.get("title", "")
+        if title and len(g["titles"]) < 3:
+            g["titles"].append(title[:60])
+    return sorted(groups.values(), key=lambda x: x["docs"], reverse=True)
+
+
+_MAX_FAIL_CYCLES = 3
+
+
+def _load_failed() -> list[dict]:
+    return _load_json(_FAILED_PATH, [])
+
+
+def _save_failed(data: list[dict]) -> None:
+    _atomic_write_json(_FAILED_PATH, data)
+
+
+def record_failure(topic: str, docs: list[dict], error: str) -> None:
+    """Track a merge failure. After _MAX_FAIL_CYCLES consecutive failures
+    for the same topic, move its docs from queue to failed list."""
+    failed = _load_failed()
+    if not isinstance(failed, list):
+        failed = []
+    existing = next((f for f in failed if f.get("topic") == topic), None)
+    if existing:
+        existing["cycles"] = existing.get("cycles", 0) + 1
+        existing["last_error"] = error[:200]
+        existing["last_ts"] = _now_kst_iso()
+        return
+    failed.append({
+        "topic": topic,
+        "cycles": 1,
+        "first_ts": _now_kst_iso(),
+        "last_ts": _now_kst_iso(),
+        "last_error": error[:200],
+        "doc_count": len(docs),
+        "doc_titles": [d.get("title", "")[:60] for d in docs[:5]],
+    })
+    _save_failed(failed)
+
+
+def promote_to_failed(topic: str) -> bool:
+    """After _MAX_FAIL_CYCLES, move topic's docs from queue to failed."""
+    failed = _load_failed()
+    rec = next((f for f in failed if f.get("topic") == topic), None)
+    if not rec or rec.get("cycles", 0) < _MAX_FAIL_CYCLES:
+        return False
+    q = _load_json(_QUEUE_PATH, [])
+    if not isinstance(q, list):
+        return False
+    remaining = [it for it in q
+                 if not (isinstance(it, dict) and it.get("topic") == topic)]
+    removed = len(q) - len(remaining)
+    if removed > 0:
+        rec["doc_count"] = removed
+        rec["promoted"] = True
+        _atomic_write_json(_QUEUE_PATH, remaining)
+        _save_failed(failed)
+    return removed > 0
+
+
+def wiki_failed() -> list[dict]:
+    """Return list of failed wiki merge entries for /wiki_failed."""
+    return _load_failed()
+
+
+def wiki_failed_count() -> int:
+    return len(_load_failed())
+
+
+def wiki_failed_clear(topic: str | None = None) -> int:
+    """Clear failed entries. If topic is given, clear only that one.
+    Returns number of entries removed."""
+    failed = _load_failed()
+    if not isinstance(failed, list):
+        return 0
+    if topic is None:
+        count = len(failed)
+        _save_failed([])
+        return count
+    new = [f for f in failed if f.get("topic") != topic]
+    removed = len(failed) - len(new)
+    _save_failed(new)
+    return removed
+
+
+def wiki_failed_retry(topic: str) -> dict:
+    """Move a failed topic back to the queue for retry."""
+    failed = _load_failed()
+    rec = next((f for f in failed if f.get("topic") == topic), None)
+    if not rec:
+        return {"error": f"'{topic}' 실패 목록에 없음"}
+    new_failed = [f for f in failed if f.get("topic") != topic]
+    _save_failed(new_failed)
+    return {"retried": topic, "note": "큐에 남아있으면 다음 배치에서 재시도"}
 
 
 def _wikied_doc_ids() -> set:
@@ -835,6 +945,11 @@ async def run_batch() -> dict:
                          and it.get("doc_id") not in processed_doc_ids]
             _atomic_write_json(_QUEUE_PATH, remaining)
             _atomic_write_json(_INDEX_PATH, idx)
+        else:
+            record_failure(topic, use_docs, res.get("error", "unknown"))
+            if promote_to_failed(topic):
+                log.warning("wiki topic '%s' moved to failed after %d cycles",
+                            topic, _MAX_FAIL_CYCLES)
         if throttle > 0:
             await asyncio.sleep(throttle)
 

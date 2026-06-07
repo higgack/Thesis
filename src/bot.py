@@ -1410,7 +1410,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
 
-📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_drain · /wiki_split · /wiki_backfill · /wiki_off · /wiki_on
+📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_drain · /wiki_split · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
@@ -1912,6 +1912,8 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki_drain [한도=20000]</b> 오늘만 임시 예산 올려서 큐 최대 소진(내일 자동 복귀 ₩2000)
 • <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
 • <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 야간 캡 내 분산 처리)
+• <b>/wiki_pending</b> 큐 대기 현황(토픽별 문서 수)
+• <b>/wiki_failed [clear|retry 토픽]</b> 머지 실패 목록 — 3회 연속 실패 시 큐에서 분리, 재시도/삭제 가능
 • <b>/wiki_off · /wiki_on</b> 즉시 끄기/켜기(killswitch, 재배포 불필요)
 
 <b>켜는 법(점진)</b>: ①WIKI_ENABLED=1 재배포 → 며칠 /wiki_status·/wiki_today
@@ -11836,6 +11838,62 @@ async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_wiki_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_pending — 위키 큐 대기 현황 (토픽별 문서 수)."""
+    groups = wiki.pending_list()
+    if not groups:
+        await update.message.reply_text("✅ 위키 큐 비어있음")
+        return
+    total = sum(g["docs"] for g in groups)
+    lines = [f"📋 <b>위키 큐 대기: {total}건 ({len(groups)}개 토픽)</b>\n"]
+    for g in groups[:30]:
+        titles = ", ".join(g["titles"])
+        if titles:
+            titles = f" — {titles}"
+        lines.append(f"• <b>{g['topic']}</b>: {g['docs']}건{titles}")
+    if len(groups) > 30:
+        lines.append(f"\n…외 {len(groups) - 30}개 토픽")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+async def cmd_wiki_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_failed [clear|retry <토픽>] — 위키 머지 실패 목록 관리."""
+    args = (ctx.args or [])
+    if args and args[0].lower() == "clear":
+        topic = " ".join(args[1:]).strip() or None
+        removed = wiki.wiki_failed_clear(topic)
+        await update.message.reply_text(
+            f"🗑 {removed}건 삭제" if removed else "삭제할 항목 없음")
+        return
+    if args and args[0].lower() == "retry":
+        topic = " ".join(args[1:]).strip()
+        if not topic:
+            await update.message.reply_text("사용법: /wiki_failed retry <토픽명>")
+            return
+        res = wiki.wiki_failed_retry(topic)
+        if res.get("error"):
+            await update.message.reply_text(f"⚠️ {res['error']}")
+        else:
+            await update.message.reply_text(f"🔄 '{topic}' 재시도 대기열 복귀")
+        return
+
+    failed = wiki.wiki_failed()
+    if not failed:
+        await update.message.reply_text("✅ 위키 실패 목록 비어있음")
+        return
+    lines = [f"⚠️ <b>위키 머지 실패: {len(failed)}건</b>\n"]
+    for f in failed[:20]:
+        promoted = " 🚫큐제거" if f.get("promoted") else ""
+        lines.append(
+            f"• <b>{f['topic']}</b> ({f.get('cycles', 0)}회 실패{promoted})\n"
+            f"  오류: {f.get('last_error', '?')[:80]}\n"
+            f"  최근: {f.get('last_ts', '?')}")
+    lines.append(
+        "\n/wiki_failed clear — 전체 삭제"
+        "\n/wiki_failed retry <토픽> — 재시도")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
 def main():
     if len(_HELP_TEXT) > _TG_MSG_LIMIT:
         log.warning(
@@ -12013,6 +12071,8 @@ def main():
     app.add_handler(CommandHandler("wiki_status", cmd_wiki_status))
     app.add_handler(CommandHandler("wiki_run", cmd_wiki_run))
     app.add_handler(CommandHandler("wiki_backfill", cmd_wiki_backfill))
+    app.add_handler(CommandHandler("wiki_pending", cmd_wiki_pending))
+    app.add_handler(CommandHandler("wiki_failed", cmd_wiki_failed))
     app.add_handler(CommandHandler("wiki_off", cmd_wiki_off))
     app.add_handler(CommandHandler("wiki_on", cmd_wiki_on))
     app.add_handler(CommandHandler("wiki_drain", cmd_wiki_drain))
