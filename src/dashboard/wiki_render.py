@@ -649,6 +649,31 @@ _SEARCH_JS = """
 })();
 """
 
+# Preserve the left topic-list scroll position across full-page navigations.
+# Each topic is a plain <a href> → clicking reloads the page and the sidebar
+# resets to top. We stash scrollTop in sessionStorage on every scroll and
+# restore it on load, so clicking a topic keeps the list exactly where it was.
+# On the very first visit (no saved value) we center the active item instead.
+_SIDEBAR_SCROLL_JS = """
+(function(){
+  var sb = document.querySelector('.wiki-sidebar');
+  if (!sb) return;
+  var KEY = 'wiki-sidebar-scroll';
+  try {
+    var saved = sessionStorage.getItem(KEY);
+    if (saved !== null) {
+      sb.scrollTop = parseInt(saved, 10) || 0;
+    } else {
+      var active = sb.querySelector('.wiki-nav a.active');
+      if (active && active.scrollIntoView) active.scrollIntoView({block:'center'});
+    }
+    sb.addEventListener('scroll', function(){
+      sessionStorage.setItem(KEY, String(sb.scrollTop));
+    }, {passive:true});
+  } catch(e){}
+})();
+"""
+
 
 # ---------------------------------------------------------------------------
 # Page builders
@@ -791,6 +816,7 @@ def _render_topic_page(topic: str, page_md: str, meta: dict,
         f"{infobox}{toc_html}{body_html}{fn_html}"
         "</article></div></div>"
         f"<script>{_SEARCH_JS}</script>"
+        f"<script>{_SIDEBAR_SCROLL_JS}</script>"
         "</body></html>"
     )
 
@@ -924,10 +950,13 @@ def render_wiki(token: str) -> int:
     if not md_files:
         return 0
 
+    _SKIP_TOPICS = {"기타"}
+
     all_topics: list[str] = []
     topics_data: list[dict] = []
     pages_written = 0
 
+    md_files = [f for f in md_files if f.stem not in _SKIP_TOPICS]
     for md_file in md_files:
         topic = md_file.stem
         all_topics.append(topic)
