@@ -643,7 +643,7 @@ def _head(title: str, extra_css: str = "") -> str:
 def _topbar(token: str, current: str = "") -> str:
     return (
         '<div class="wiki-topbar">'
-        f'<a href="/{token}/wiki/" class="logo">Noah LLM Wiki</a>'
+        f'<a href="/{token}/wiki/" class="logo">LLM Wiki</a>'
         '<input type="text" id="wiki-search" class="wiki-search" '
         'placeholder="Search topics...">'
         f'<a href="/{token}/" class="nav-link">Q&A Archive</a>'
@@ -865,14 +865,22 @@ def render_wiki(token: str) -> int:
             pass
 
     # Build slug → original topic name reverse map for index lookup.
-    # Index keys are original names ("삼성전자"), file stems are slugs.
+    # Two strategies so we never miss:
+    #   1) Recompute slug from topic name (same logic as wiki.py _slug)
+    #   2) Use the "file" field stored in each index record
+    _SAFE_RE = re.compile(r"[^\w가-힣\- ]+")
+    def _slug_of(s: str) -> str:
+        s = _SAFE_RE.sub(" ", s or "").strip()
+        s = re.sub(r"\s+", " ", s)
+        return s[:80] or "기타"
+
     _slug_to_topic: dict[str, str] = {}
     for topic_name, rec in idx.items():
+        _slug_to_topic[_slug_of(topic_name)] = topic_name
+        _slug_to_topic[topic_name] = topic_name
         if isinstance(rec, dict) and rec.get("file"):
             stem = rec["file"].rsplit(".", 1)[0]
             _slug_to_topic[stem] = topic_name
-        else:
-            _slug_to_topic[topic_name] = topic_name
 
     source_url_map: dict[str, str] = {}
     source_date_map: dict[str, str] = {}
@@ -906,8 +914,13 @@ def render_wiki(token: str) -> int:
         except Exception:
             continue
 
-        idx_key = _slug_to_topic.get(topic, topic)
-        meta = idx.get(idx_key, {})
+        idx_key = _slug_to_topic.get(topic)
+        if idx_key is None:
+            # Fallback: try direct lookup (topic == index key)
+            idx_key = topic if topic in idx else None
+        if idx_key is None:
+            log.debug("wiki card: no index match for stem %r", topic)
+        meta = idx.get(idx_key or topic, {})
         if not isinstance(meta, dict):
             meta = {}
 
