@@ -11821,8 +11821,8 @@ def main():
         # every boot so an auto-deploy can't drift it into peak hours, and
         # it matches this block's run_repeating idiom (sidesteps
         # run_daily's tz-aware-time edge cases).
-        from datetime import timezone as _tz
-        _kst = _tz(timedelta(hours=9))
+        from datetime import timezone as _tz, timedelta as _td
+        _kst = _tz(_td(hours=9))
         try:
             _wiki_hour = max(0, min(23, int(config.WIKI_BATCH_HOUR)))
         except Exception:
@@ -11831,7 +11831,7 @@ def main():
         _next_wiki = _now_kst.replace(hour=_wiki_hour, minute=0,
                                       second=0, microsecond=0)
         if _next_wiki <= _now_kst:
-            _next_wiki += timedelta(days=1)
+            _next_wiki += _td(days=1)
         app.job_queue.run_repeating(
             _wiki_batch_job,
             interval=24 * 3600,
