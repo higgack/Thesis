@@ -11710,7 +11710,15 @@ async def cmd_wiki_split(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     topic = " ".join(ctx.args).strip() if ctx.args else ""
     if not topic:
-        await update.message.reply_text("사용법: /wiki_split <토픽명>\n예) /wiki_split 삼성전자 SK하이닉스")
+        candidates = wiki.list_mergeable_topics()
+        if candidates:
+            lines = "\n".join(f"  • {c}" for c in candidates[:30])
+            await update.message.reply_text(
+                f"분리 가능 토픽 {len(candidates)}개:\n{lines}\n\n"
+                "사용법: /wiki_split <토픽명>"
+            )
+        else:
+            await update.message.reply_text("분리 가능한 합쳐진 토픽이 없습니다.")
         return
     try:
         res = wiki.decompose_merged_topic(topic)

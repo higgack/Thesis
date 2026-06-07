@@ -337,13 +337,53 @@ def _wikied_doc_ids() -> set:
     return ids
 
 
+def list_mergeable_topics() -> list[str]:
+    """Return topic names that look like multi-company merges (contain
+    spaces with 2+ tokens of length ≥2)."""
+    idx = _load_json(_INDEX_PATH, {})
+    if not isinstance(idx, dict):
+        return []
+    out = []
+    for topic in idx:
+        tokens = topic.split()
+        if len(tokens) >= 2 and all(len(t) >= 2 for t in tokens):
+            out.append(topic)
+    d = _wiki_dir()
+    if d and d.exists():
+        idx_topics = set(idx.keys())
+        for p in d.glob("*.md"):
+            stem = p.stem
+            if stem not in idx_topics:
+                tokens = stem.split()
+                if len(tokens) >= 2 and all(len(t) >= 2 for t in tokens):
+                    out.append(stem)
+    return sorted(set(out))
+
+
 def decompose_merged_topic(topic: str) -> dict:
     """Delete a merged multi-company page and re-enqueue its docs so they
     get routed to individual company pages. Returns stats."""
     from . import meta
     idx = _load_json(_INDEX_PATH, {})
-    if not isinstance(idx, dict) or topic not in idx:
-        return {"error": f"토픽 '{topic}' 인덱스에 없음"}
+    if not isinstance(idx, dict):
+        idx = {}
+    actual_key = None
+    if topic in idx:
+        actual_key = topic
+    else:
+        slug_q = _slug(topic)
+        for k in idx:
+            if _slug(k) == slug_q:
+                actual_key = k
+                break
+    if not actual_key:
+        candidates = list_mergeable_topics()
+        hint = ""
+        if candidates:
+            hint = "\n\n분리 가능 토픽:\n" + "\n".join(
+                f"  • {c}" for c in candidates[:20])
+        return {"error": f"토픽 '{topic}' 인덱스에 없음{hint}"}
+    topic = actual_key
     rec = idx[topic]
     doc_ids = rec.get("doc_ids") or []
     if not doc_ids:
