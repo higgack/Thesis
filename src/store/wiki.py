@@ -81,6 +81,7 @@ _INDEX_PATH = config.DATA_DIR / "wiki_index.json"
 _LASTRUN_PATH = config.DATA_DIR / "wiki_last_run.json"
 _FAILED_PATH = config.DATA_DIR / "wiki_failed.json"
 _ALIASES_PATH = config.DATA_DIR / "wiki_aliases.json"
+_DELETED_TOPICS_PATH = config.DATA_DIR / "wiki_deleted_topics.json"
 _KILL_PATH = config.DATA_DIR / "wiki_disabled"
 
 
@@ -336,7 +337,7 @@ def enqueue(*, doc_id: str, title: str, summary: str, doc_type: str,
         ts = datetime.utcnow().isoformat(timespec="seconds")
         added = False
         for topic in tlist:
-            if topic == "기타":
+            if topic == "기타" or is_topic_deleted(topic):
                 continue
             if (doc_id, topic) in queued_keys:
                 continue
@@ -701,6 +702,21 @@ def _save_alias(alias: str, canonical: str) -> None:
     _atomic_write_json(_ALIASES_PATH, aliases)
 
 
+def _load_deleted_topics() -> set[str]:
+    d = _load_json(_DELETED_TOPICS_PATH, [])
+    return set(d) if isinstance(d, list) else set()
+
+
+def _mark_topic_deleted(topic: str) -> None:
+    deleted = _load_deleted_topics()
+    deleted.add(topic)
+    _atomic_write_json(_DELETED_TOPICS_PATH, sorted(deleted))
+
+
+def is_topic_deleted(topic: str) -> bool:
+    return topic in _load_deleted_topics()
+
+
 _CJK_RE = re.compile(r"[一-鿿㐀-䶿]")
 
 # Values MUST match the actual canonical topic names in wiki_index.json,
@@ -1016,6 +1032,7 @@ def delete_topic(topic: str) -> dict:
 
     if not rec and removed_queue == 0:
         return {"error": f"토픽 '{topic}' 인덱스/큐에 없음"}
+    _mark_topic_deleted(topic)
     return {"ok": True, "topic": topic, "deleted_file": deleted_file,
             "removed_queue": removed_queue, "had_index": rec is not None}
 
@@ -1057,7 +1074,7 @@ def backfill(docs: list[dict]) -> dict:
             res["skipped_gate"] += 1
             continue
         tlist = [t for t in topics_for(d.get("metadata"), d.get("title") or "")
-                 if t != "기타"]
+                 if t != "기타" and not is_topic_deleted(t)]
         if not tlist:
             res["skipped_gate"] += 1
             continue
@@ -1473,6 +1490,16 @@ async def run_batch() -> dict:
         if resolved != raw:
             it["topic"] = resolved
         by_topic.setdefault(resolved, []).append(it)
+
+    # Drop deleted topics from the batch and clean them out of the queue.
+    deleted = _load_deleted_topics()
+    dropped_deleted = {t for t in by_topic if t in deleted}
+    for t in dropped_deleted:
+        del by_topic[t]
+    if dropped_deleted:
+        q = [it for it in q
+             if not (isinstance(it, dict) and it.get("topic") in deleted)]
+        _atomic_write_json(_QUEUE_PATH, q)
 
     max_topics = int(_flag("WIKI_MAX_TOPICS_PER_RUN", 25))
     max_docs = int(_flag("WIKI_MAX_DOCS_PER_TOPIC", 12))
