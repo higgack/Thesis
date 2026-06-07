@@ -543,6 +543,7 @@ def decompose_merged_topic(topic: str) -> dict:
     q = _load_json(_QUEUE_PATH, [])
     if not isinstance(q, list):
         q = []
+    q = [it for it in q if not (isinstance(it, dict) and it.get("topic") == topic)]
     queued_keys = {
         (it.get("doc_id"), it.get("topic"))
         for it in q if isinstance(it, dict)
@@ -820,6 +821,9 @@ def merge_topics(keep: str, absorb: str) -> dict:
     q = _load_json(_QUEUE_PATH, [])
     if not isinstance(q, list):
         q = []
+    for it in q:
+        if isinstance(it, dict) and it.get("topic") == absorb:
+            it["topic"] = keep
     queued_keys = {(it.get("doc_id"), it.get("topic"))
                    for it in q if isinstance(it, dict)}
     from . import meta
