@@ -1912,7 +1912,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki_status</b> 상태·오늘 ₩·한도·큐 · <b>/wiki_run</b> 수동 실행
 • <b>/wiki_drain [한도=20000]</b> 오늘만 임시 예산 올려서 큐 최대 소진(내일 자동 복귀 ₩2000)
 • <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
-• <b>/wiki_dedup [merge 유지 :: 흡수]</b> 유사 중복 토픽 감지(Inc/Corp/주식회사 등 접미사·부분문자열 매칭) — 인자 없이 후보 목록, merge로 병합
+• <b>/wiki_dedup [merge A :: B | merge_all]</b> 유사 중복 토픽 감지(접미사 정규화·부분문자열) — 목록 확인 후 개별/전체 병합
 • <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 야간 캡 내 분산 처리)
 • <b>/wiki_pending</b> 큐 대기 현황(토픽별 문서 수)
 • <b>/wiki_failed [clear|retry 토픽]</b> 머지 실패 목록 — 3회 연속 실패 시 큐에서 분리, 재시도/삭제 가능
@@ -11897,10 +11897,19 @@ async def cmd_wiki_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/wiki_dedup [merge <유지> :: <흡수>] — 유사 토픽 감지 + 병합."""
+    """/wiki_dedup [merge A :: B | merge_all] — 유사 토픽 감지 + 병합."""
     if not _is_owner(update):
         return
     args_raw = " ".join(ctx.args or []).strip()
+
+    if args_raw.lower() == "merge_all":
+        await update.message.reply_text("🔄 전체 병합 시작...")
+        res = wiki.merge_all_duplicates()
+        await update.message.reply_text(
+            f"✅ 전체 병합 완료\n"
+            f"감지: {res['pairs']}쌍 · 병합: {res['merged']}건 · "
+            f"오류: {res['errors']}건")
+        return
 
     if args_raw.lower().startswith("merge "):
         parts = args_raw[6:].split("::")
@@ -11932,8 +11941,8 @@ async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for i, (a, b, da, db) in enumerate(pairs[:30], 1):
         lines.append(f"{i}. <b>{a}</b> ({da}건) ↔ <b>{b}</b> ({db}건)")
     lines.append(
-        "\n병합: /wiki_dedup merge 유지토픽 :: 흡수토픽"
-        "\n예: /wiki_dedup merge Broadcom :: Broadcom Inc")
+        "\n개별: /wiki_dedup merge A :: B"
+        "\n전체: /wiki_dedup merge_all")
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 

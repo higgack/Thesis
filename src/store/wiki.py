@@ -576,8 +576,8 @@ def decompose_merged_topic(topic: str) -> dict:
 # ----------------------------------------------------------------------
 
 _CORP_SUFFIXES = re.compile(
-    r"\s*\b(inc|corp|corporation|ltd|limited|co|company|llc|plc|ag|sa|se"
-    r"|group|holdings|주식회사|㈜)\b\.?\s*$",
+    r"\s*(?:\b(?:inc|corp|corporation|ltd|limited|co|company|llc|plc|ag|sa|se"
+    r"|group|holdings)\b\.?|주식회사|㈜)\s*$",
     re.IGNORECASE,
 )
 
@@ -587,6 +587,16 @@ def _dedup_key(name: str) -> str:
     k = _CORP_SUFFIXES.sub("", name).strip()
     k = re.sub(r"[\s_\-·]+", "", k).lower()
     return k
+
+
+def _is_substr_dup(short: str, long: str) -> bool:
+    """True only when *short* is a meaningful substring of *long*.
+    Guards: min 4 chars, ratio ≥ 0.7, must match at word boundary."""
+    if len(short) < 4 or short == long:
+        return False
+    if short not in long:
+        return False
+    return len(short) / len(long) >= 0.7
 
 
 def _load_aliases() -> dict[str, str]:
@@ -624,12 +634,13 @@ def resolve_topic(proposed: str) -> str:
                 return existing
             return proposed
 
-    # 3) Substring containment (proposed is part of existing or vice versa)
+    # 3) Substring containment (strict: ≥4 chars, ≥70% length ratio)
     for existing in idx:
         ek = _dedup_key(existing)
         if not ek:
             continue
-        if pk in ek or ek in pk:
+        shorter, longer = (pk, ek) if len(pk) <= len(ek) else (ek, pk)
+        if _is_substr_dup(shorter, longer):
             return existing
 
     return proposed
@@ -649,7 +660,7 @@ def find_duplicates() -> list[tuple[str, str, int, int]]:
             continue
         by_key.setdefault(key, []).append(topic)
 
-    # Also catch substring containment: "Broadcom" vs "Broadcom Semiconductors"
+    # Substring containment (strict: ≥4 chars, ≥70% length ratio)
     topics = list(idx.keys())
     for i, a in enumerate(topics):
         ka = _dedup_key(a)
@@ -661,8 +672,9 @@ def find_duplicates() -> list[tuple[str, str, int, int]]:
                 continue
             if ka == kb:
                 continue
-            if ka in kb or kb in ka:
-                merged_key = min(ka, kb)
+            shorter, longer = (ka, kb) if len(ka) <= len(kb) else (kb, ka)
+            if _is_substr_dup(shorter, longer):
+                merged_key = shorter
                 existing = by_key.get(merged_key, [])
                 for t in [a, b]:
                     if t not in existing:
@@ -775,6 +787,32 @@ def merge_topics(keep: str, absorb: str) -> dict:
         "new_enqueued": enqueued,
         "file_deleted": deleted_file,
     }
+
+
+def merge_all_duplicates() -> dict:
+    """Merge ALL detected duplicate pairs at once. The topic with more
+    docs absorbs the smaller one. Returns summary stats."""
+    pairs = find_duplicates()
+    if not pairs:
+        return {"merged": 0, "errors": 0, "pairs": 0}
+    merged = 0
+    errors = 0
+    details: list[str] = []
+    for keep, absorb, da, db in pairs:
+        # Reload index each time since merge_topics modifies it
+        idx = _load_json(_INDEX_PATH, {})
+        if not isinstance(idx, dict):
+            idx = {}
+        if keep not in idx or absorb not in idx:
+            continue
+        res = merge_topics(keep, absorb)
+        if res.get("error"):
+            errors += 1
+        else:
+            merged += 1
+            details.append(f"{absorb} → {keep}")
+    return {"merged": merged, "errors": errors, "pairs": len(pairs),
+            "details": details}
 
 
 def backfill(docs: list[dict]) -> dict:
