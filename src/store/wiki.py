@@ -1666,23 +1666,35 @@ async def drain_queue(on_progress=None) -> list[dict]:
     each batch summary — callers use it for live Telegram updates.
     Returns the list of all batch summaries produced."""
     results: list[dict] = []
-    while True:
-        summary = await run_batch()
-        results.append(summary)
-        if on_progress:
-            try:
-                await on_progress(summary)
-            except Exception:
-                log.exception("drain_queue progress callback failed")
-        if summary.get("budget_blocked"):
-            break
-        if summary.get("status") in ("disabled", "empty", "budget_blocked"):
-            break
-        if summary.get("remaining_in_queue", 0) == 0:
-            break
-        await asyncio.sleep(30)
-    # Drain turn finished — revert to the default cap right away.
-    clear_temp_budget()
+    cancelled = False
+    try:
+        while True:
+            summary = await run_batch()
+            results.append(summary)
+            if on_progress:
+                try:
+                    await on_progress(summary)
+                except Exception:
+                    log.exception("drain_queue progress callback failed")
+            if summary.get("budget_blocked"):
+                break
+            if summary.get("status") in ("disabled", "empty", "budget_blocked"):
+                break
+            if summary.get("remaining_in_queue", 0) == 0:
+                break
+            await asyncio.sleep(30)
+    except asyncio.CancelledError:
+        # Deploy/shutdown interrupted the drain — keep the temp budget so
+        # _wiki_drain_resume picks it back up on the next startup.
+        cancelled = True
+        raise
+    finally:
+        # Any non-cancellation exit — normal completion OR a run_batch
+        # error that can't make progress — reverts the cap so the override
+        # never lingers on disk past the drain turn (was: only cleared on
+        # the happy path, so one bad queued item froze the cap all day).
+        if not cancelled:
+            clear_temp_budget()
     return results
 
 
