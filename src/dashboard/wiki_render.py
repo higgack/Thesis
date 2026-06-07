@@ -385,8 +385,13 @@ a:hover { text-decoration: underline; }
 }
 .wiki-search:focus { border-color: var(--accent); }
 .wiki-topbar .nav-link {
-  font-size: 13px; color: var(--muted);
+  font-size: 14px; color: var(--text); font-weight: 500;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  padding: 5px 12px; border: 1px solid var(--border);
+  border-radius: 16px; text-decoration: none; white-space: nowrap;
+}
+.wiki-topbar .nav-link:hover {
+  background: var(--accent); color: #fff; border-color: var(--accent);
 }
 
 /* ── Article ──────────────────────────────── */
