@@ -478,6 +478,14 @@ pin: 2.7.3 (proven API). v3.x rewrite exists (3.5.0 current) — see
 Low-priority items parked here so they survive context compaction.
 None of these are authorised for work until the user explicitly asks.
 
+- **위키 기존 페이지 출처 수정 (`rebuild_broken_refs`)** — 기존
+  위키 페이지에 `[[자료 N]]` 라벨이 남아있어 날짜가 안 붙는 문제.
+  `wiki.rebuild_broken_refs()` 호출하면 해당 페이지를 큐에 재등록,
+  다음 배치에서 재생성하며 후처리로 실제 제목 치환. 비용: 토픽당
+  flash 1회, 일일 예산 내 분산. 리스크: 페이지 내용이 재구성될 수
+  있음. 봇 커맨드 미등록 — 실행 결정 시 커맨드 추가 필요.
+  **트리거**: 사용자가 명시적으로 실행 요청 시.
+
 - **CodeGraph 시범 적용** — when `src/bot.py` grows to ~15k lines
   (currently ~10.5k), trial `npx @colbymchenry/codegraph` (local
   semantic knowledge graph, zero config, no cloud/API key). Goal:

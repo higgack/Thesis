@@ -11797,6 +11797,67 @@ async def cmd_wiki_split(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines))
 
 
+_SPLIT_BATCH_TOPICS = [
+    "Coinbase Kalshi",
+    "Coinbase, Kalshi",
+    "LG에너지솔루션 삼성SDI 엘앤에프 더블유씨피 한중엔시스",
+    "LG에너지솔루션, 삼성SDI, 엘앤에프, 더블유씨피, 한중엔시스",
+    "NAVER 카카오 크래프톤 NC",
+    "NAVER, 카카오, 크래프톤, NC",
+    "OpenAI, Anthropic",
+    "POSCO홀딩스 포스코인터내셔널 고려아연 LS전선 LS에코에너지 LS MnM",
+    "SK이노베이션 S-Oil",
+    "SK이노베이션, S-Oil",
+    "SK하이닉스 삼성 마이크론",
+    "SK하이닉스,삼성,마이크론",
+    "Samsung Electronics SK hynix",
+    "Samsung SK hynix",
+    "TSMC 삼성전자 Intel",
+    "TSMC, 삼성전자, Intel",
+    "난야 TSMC 엔비디아 삼성 하이닉스 마이크론",
+    "난야, TSMC, 엔비디아, 삼성, 하이닉스, 마이크론",
+    "네이버, 카카오, 크래프톤, NC",
+    "방산 4사",
+    "삼성 LG",
+    "삼성, LG",
+]
+
+
+async def cmd_wiki_split_batch(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_split_batch — 사전 선별된 합쳐진 토픽 목록을 일괄 해체."""
+    if not _is_owner(update):
+        return
+    await update.message.reply_text(
+        f"⏳ {len(_SPLIT_BATCH_TOPICS)}개 토픽 일괄 해체 시작..."
+    )
+    ok: list[tuple[str, dict]] = []
+    skip: list[str] = []
+    fail: list[tuple[str, str]] = []
+    for topic in _SPLIT_BATCH_TOPICS:
+        try:
+            r = wiki.decompose_merged_topic(topic)
+        except Exception as e:
+            fail.append((topic, str(e)))
+            continue
+        if r.get("error"):
+            skip.append(topic)
+        else:
+            ok.append((topic, r))
+    parts = []
+    if ok:
+        lines_ok = "\n".join(
+            f"  • {t}: 자료 {r['docs']}건 → 재적재 {r['re_enqueued']}건"
+            for t, r in ok
+        )
+        parts.append(f"✅ {len(ok)}개 해체 완료\n{lines_ok}")
+    if skip:
+        parts.append(f"⏭ {len(skip)}개 스킵 (이미 해체됨/인덱스 없음)")
+    if fail:
+        parts.append(f"⚠️ {len(fail)}개 에러")
+    parts.append("\n/wiki_run 으로 각 회사 페이지 머지")
+    await update.message.reply_text("\n".join(parts))
+
+
 async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_backfill [개월=6|all] — 기존 자료(meta.db)를 위키 큐에 적재.
     적재 자체는 ₩0; 실제 머지는 야간 배치가 일일 예산 캡 내에서 처리하므로
@@ -12129,6 +12190,7 @@ def main():
     app.add_handler(CommandHandler("wiki_on", cmd_wiki_on))
     app.add_handler(CommandHandler("wiki_drain", cmd_wiki_drain))
     app.add_handler(CommandHandler("wiki_split", cmd_wiki_split))
+    app.add_handler(CommandHandler("wiki_split_batch", cmd_wiki_split_batch))
     app.add_handler(CommandHandler("wiki_dedup", cmd_wiki_dedup))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
