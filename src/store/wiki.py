@@ -392,15 +392,24 @@ def _save_failed(data: list[dict]) -> None:
 
 def record_failure(topic: str, docs: list[dict], error: str) -> None:
     """Track a merge failure. After _MAX_FAIL_CYCLES consecutive failures
-    for the same topic, move its docs from queue to failed list."""
+    for the same topic, move its docs from queue to failed list.
+    Persists on BOTH the new-entry and the increment path — otherwise the
+    cycle counter never reaches _MAX_FAIL_CYCLES and a permanently-failing
+    topic loops in the queue forever, re-spending tokens every batch."""
     failed = _load_failed()
     if not isinstance(failed, list):
         failed = []
+    doc_ids = [d.get("doc_id") for d in docs if d.get("doc_id")]
     existing = next((f for f in failed if f.get("topic") == topic), None)
     if existing:
         existing["cycles"] = existing.get("cycles", 0) + 1
         existing["last_error"] = error[:200]
         existing["last_ts"] = _now_kst_iso()
+        # Keep the doc_id set current so retry/backfill-skip stay accurate.
+        merged = set(existing.get("doc_ids") or []) | set(doc_ids)
+        existing["doc_ids"] = sorted(merged)
+        existing["doc_count"] = len(merged)
+        _save_failed(failed)
         return
     failed.append({
         "topic": topic,
@@ -409,9 +418,22 @@ def record_failure(topic: str, docs: list[dict], error: str) -> None:
         "last_ts": _now_kst_iso(),
         "last_error": error[:200],
         "doc_count": len(docs),
+        "doc_ids": doc_ids,
         "doc_titles": [d.get("title", "")[:60] for d in docs[:5]],
     })
     _save_failed(failed)
+
+
+def _failed_doc_ids() -> set:
+    """All doc_ids currently quarantined in the failed list, so backfill
+    doesn't resurrect a doc that merge has already given up on."""
+    failed = _load_failed()
+    ids: set = set()
+    if isinstance(failed, list):
+        for f in failed:
+            if isinstance(f, dict):
+                ids.update(f.get("doc_ids") or [])
+    return ids
 
 
 def promote_to_failed(topic: str) -> bool:
@@ -460,14 +482,48 @@ def wiki_failed_clear(topic: str | None = None) -> int:
 
 
 def wiki_failed_retry(topic: str) -> dict:
-    """Move a failed topic back to the queue for retry."""
+    """Move a failed topic back to the queue for retry. promote_to_failed
+    already removed its docs from the queue, so we must RE-ENQUEUE them
+    from meta (reading by stored doc_ids) — just clearing the failed entry
+    would lose the docs entirely."""
+    from . import meta
     failed = _load_failed()
     rec = next((f for f in failed if f.get("topic") == topic), None)
     if not rec:
         return {"error": f"'{topic}' 실패 목록에 없음"}
+    doc_ids = rec.get("doc_ids") or []
+    q = _load_json(_QUEUE_PATH, [])
+    if not isinstance(q, list):
+        q = []
+    queued_keys = {(it.get("doc_id"), it.get("topic"))
+                   for it in q if isinstance(it, dict)}
+    ts = datetime.utcnow().isoformat(timespec="seconds")
+    requeued = 0
+    for doc_id in doc_ids:
+        if (doc_id, topic) in queued_keys:
+            continue
+        try:
+            d = meta.get_doc(doc_id)
+        except Exception:
+            continue
+        if not d:
+            continue
+        q.append({
+            "doc_id": doc_id,
+            "title": d.get("title") or "",
+            "summary": (d.get("summary") or "").strip(),
+            "doc_type": d.get("type") or "",
+            "source": d.get("source") or "",
+            "topic": topic,
+            "ts": ts,
+        })
+        queued_keys.add((doc_id, topic))
+        requeued += 1
+    _atomic_write_json(_QUEUE_PATH, q)
     new_failed = [f for f in failed if f.get("topic") != topic]
     _save_failed(new_failed)
-    return {"retried": topic, "note": "큐에 남아있으면 다음 배치에서 재시도"}
+    return {"retried": topic, "requeued": requeued,
+            "note": f"{requeued}건 큐 복귀 — 다음 배치(/wiki_run)에서 재시도"}
 
 
 def _wikied_doc_ids() -> set:
@@ -967,12 +1023,13 @@ def backfill(docs: list[dict]) -> dict:
     the actual merging under the daily budget + per-run caps, so a huge
     backfill simply drains over several capped nights. Returns counts."""
     res = {"enqueued": 0, "skipped_wikied": 0, "skipped_gate": 0,
-           "skipped_queued": 0, "total": len(docs)}
+           "skipped_queued": 0, "skipped_failed": 0, "total": len(docs)}
     if not enabled():
         res["error"] = "wiki disabled"
         return res
     min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 800))
     wikied = _wikied_doc_ids()
+    failed_ids = _failed_doc_ids()
     q = _load_json(_QUEUE_PATH, [])
     if not isinstance(q, list):
         q = []
@@ -986,6 +1043,9 @@ def backfill(docs: list[dict]) -> dict:
             continue
         if doc_id in queued_ids:
             res["skipped_queued"] += 1
+            continue
+        if doc_id in failed_ids:
+            res["skipped_failed"] += 1
             continue
         summary = (d.get("summary") or "").strip()
         if len(summary) < min_chars:
