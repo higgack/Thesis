@@ -11359,9 +11359,86 @@ async def _wiki_batch_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
             log.exception("wiki contradiction alert failed")
 
 
+def _wiki_md_to_tg_html(md: str) -> str:
+    """Convert wiki markdown to Telegram-safe HTML with readability."""
+    import re as _re
+    lines = md.split("\n")
+    out: list[str] = []
+    for raw in lines:
+        line = raw.rstrip()
+        # Skip WIKI_META comment
+        if "<!--WIKI_META" in line or "<!--" in line and "WIKI_META" in line:
+            continue
+        # Headings → bold with spacing
+        hm = _re.match(r"^(#{1,4})\s+(.+)$", line)
+        if hm:
+            level = len(hm.group(1))
+            text = html.escape(hm.group(2).strip())
+            if level <= 2:
+                out.append(f"\n{'━' * 20}\n<b>{text}</b>\n")
+            else:
+                out.append(f"\n<b>▸ {text}</b>")
+            continue
+        # Blockquote
+        if line.startswith("> "):
+            text = html.escape(line[2:])
+            text = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+            text = _re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
+            out.append(f"  ▎ <i>{text}</i>")
+            continue
+        # Bullet
+        bm = _re.match(r"^(\s*)[-*]\s+(.+)$", line)
+        if bm:
+            indent = "  " * (len(bm.group(1)) // 2)
+            text = html.escape(bm.group(2))
+            text = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+            text = _re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
+            text = _re.sub(r"`(.+?)`", r"<code>\1</code>", text)
+            # Clean source refs: (출처: [[...]]) → small
+            text = _re.sub(
+                r"\(출처:\s*\[\[(.+?)\]\]\)",
+                r'<i>[📎 \1]</i>',
+                text,
+            )
+            # — 출처: [[...]] format
+            text = _re.sub(
+                r"—\s*출처:\s*\[\[(.+?)\]\]",
+                r'<i>[📎 \1]</i>',
+                text,
+            )
+            out.append(f"{indent}• {text}")
+            continue
+        # Horizontal rule → skip (already using ━ for headers)
+        if _re.match(r"^---+$|^\*\*\*+$", line.strip()):
+            continue
+        # Empty line
+        if not line.strip():
+            out.append("")
+            continue
+        # Normal paragraph
+        text = html.escape(line)
+        text = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+        text = _re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
+        text = _re.sub(r"`(.+?)`", r"<code>\1</code>", text)
+        text = _re.sub(
+            r"\(출처:\s*\[\[(.+?)\]\]\)",
+            r'<i>[📎 \1]</i>',
+            text,
+        )
+        text = _re.sub(
+            r"—\s*출처:\s*\[\[(.+?)\]\]",
+            r'<i>[📎 \1]</i>',
+            text,
+        )
+        out.append(text)
+    result = "\n".join(out)
+    # Collapse excessive blank lines
+    result = _re.sub(r"\n{4,}", "\n\n\n", result)
+    return result.strip()
+
+
 async def cmd_wiki(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/wiki [토픽] — 토픽 없으면 페이지 목록, 있으면 합성 위키 페이지
-    열람. 페이지는 마크다운이라 plain text로 전송."""
+    """/wiki [토픽] — 토픽 없으면 페이지 목록, 있으면 합성 위키 페이지."""
     if not _is_owner(update):
         return
     arg = " ".join(ctx.args).strip() if ctx.args else ""
@@ -11390,9 +11467,11 @@ async def cmd_wiki(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"📚 '{arg}' 페이지 없음. /wiki 로 목록 확인."
             )
             return
-        for chunk in _split_for_telegram(page):
+        tg_html = _wiki_md_to_tg_html(page)
+        for chunk in _split_for_telegram(tg_html):
             await update.message.reply_text(
-                chunk, disable_web_page_preview=True,
+                chunk, parse_mode="HTML",
+                disable_web_page_preview=True,
             )
 
 

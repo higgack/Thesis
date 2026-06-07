@@ -22,12 +22,19 @@ log = logging.getLogger(__name__)
 # Lightweight markdown → HTML (handles what wiki merge pages actually use)
 # ---------------------------------------------------------------------------
 
-def _md_to_html(md: str) -> tuple[str, list[dict]]:
-    """Convert wiki markdown to HTML. Returns (html_str, toc_entries).
-    toc_entries: [{level, id, text}, ...] for building the TOC sidebar."""
+def _md_to_html(md: str, topic_set: set[str] | None = None,
+                source_url_map: dict[str, str] | None = None,
+                ) -> tuple[str, list[dict], list[dict]]:
+    """Convert wiki markdown to HTML. Returns (html_str, toc_entries, footnotes).
+    toc_entries: [{level, id, text}, ...] for TOC sidebar.
+    footnotes: [{id, title, url}, ...] for source footnotes."""
     lines = (md or "").split("\n")
     out: list[str] = []
     toc: list[dict] = []
+    _topics = topic_set or set()
+    _urls = source_url_map or {}
+    _footnotes: list[dict] = []
+    _fn_seen: dict[str, int] = {}
     in_list = False
     in_code = False
     in_blockquote = False
@@ -47,16 +54,54 @@ def _md_to_html(md: str) -> tuple[str, list[dict]]:
             out.append("</ul>")
             in_list = False
 
+    def _make_footnote(title: str) -> str:
+        """Register a source and return a superscript footnote link."""
+        key = title.strip()
+        if key in _fn_seen:
+            num = _fn_seen[key]
+        else:
+            num = len(_footnotes) + 1
+            _fn_seen[key] = num
+            url = _urls.get(key, "")
+            _footnotes.append({"id": num, "title": key, "url": url})
+        return (f'<sup class="wiki-fn"><a href="#fn-{num}" '
+                f'title="{html.escape(key)}">[{num}]</a></sup>')
+
+    def _topic_link(name: str) -> str:
+        """If name matches a wiki topic, return a link; else plain text."""
+        if name in _topics:
+            return (f'<a href="{_topic_filename(name)}" '
+                    f'class="wiki-internal">{html.escape(name)}</a>')
+        return html.escape(name)
+
     def _inline(text: str) -> str:
         t = html.escape(text)
         t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
         t = re.sub(r"\*(.+?)\*", r"<em>\1</em>", t)
         t = re.sub(r"`(.+?)`", r'<code class="wiki-code">\1</code>', t)
         t = re.sub(
-            r"\[\[(.+?)\]\]",
-            lambda m: f'<span class="wiki-ref">{m.group(1)}</span>',
+            r"\(출처:\s*\[\[(.+?)\]\]\)",
+            lambda m: _make_footnote(m.group(1)),
             t,
         )
+        t = re.sub(
+            r"—\s*출처:\s*\[\[(.+?)\]\]",
+            lambda m: _make_footnote(m.group(1)),
+            t,
+        )
+        t = re.sub(
+            r"\[\[(.+?)\]\]",
+            lambda m: _topic_link(m.group(1)),
+            t,
+        )
+        for topic in sorted(_topics, key=len, reverse=True):
+            if len(topic) < 2:
+                continue
+            escaped = html.escape(topic)
+            if escaped in t:
+                link = (f'<a href="{_topic_filename(topic)}" '
+                        f'class="wiki-internal">{escaped}</a>')
+                t = t.replace(escaped, link, 1)
         return t
 
     for raw in lines:
@@ -127,7 +172,7 @@ def _md_to_html(md: str) -> tuple[str, list[dict]]:
     _flush_list()
     if in_code:
         out.append("</code></pre>")
-    return "\n".join(out), toc
+    return "\n".join(out), toc, _footnotes
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +300,26 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
   background: var(--highlight); padding: 0 3px;
   border-radius: 2px; font-size: 13px;
 }
+.wiki-internal {
+  color: var(--link); border-bottom: 1px dotted var(--link);
+}
+.wiki-internal:hover { border-bottom-style: solid; }
+.wiki-fn a {
+  color: var(--accent); font-size: 11px; font-weight: 600;
+  text-decoration: none; vertical-align: super;
+}
+.wiki-fn a:hover { text-decoration: underline; }
+.wiki-footnotes {
+  margin-top: 32px; padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.wiki-footnotes ol {
+  margin: 8px 0 0 20px; padding: 0;
+  font-size: 13px; line-height: 1.7;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.wiki-footnotes li { margin: 4px 0; }
+.wiki-footnotes li:target { background: var(--highlight); }
 .wiki-spacer { height: 8px; }
 .wiki-article p { margin: 6px 0; }
 
@@ -457,11 +522,37 @@ def _build_infobox(topic: str, meta: dict) -> str:
     )
 
 
+def _build_footnotes_html(footnotes: list[dict]) -> str:
+    if not footnotes:
+        return ""
+    items = []
+    for fn in footnotes:
+        title = html.escape(fn["title"])
+        url = fn.get("url", "")
+        if url:
+            link = f'<a href="{html.escape(url)}" target="_blank">{title}</a>'
+        else:
+            link = title
+        items.append(f'<li id="fn-{fn["id"]}">{link}</li>')
+    return (
+        '<div class="wiki-footnotes">'
+        '<h3 class="wiki-h">Sources</h3>'
+        f'<ol>{"".join(items)}</ol>'
+        "</div>"
+    )
+
+
 def _render_topic_page(topic: str, page_md: str, meta: dict,
-                       token: str, all_topics: list[str]) -> str:
-    body_html, toc = _md_to_html(page_md)
+                       token: str, all_topics: list[str],
+                       source_url_map: dict[str, str] | None = None,
+                       ) -> str:
+    topic_set = set(all_topics) - {topic}
+    body_html, toc, footnotes = _md_to_html(
+        page_md, topic_set=topic_set, source_url_map=source_url_map,
+    )
     toc_html = _build_toc_html(toc)
     infobox = _build_infobox(topic, meta)
+    fn_html = _build_footnotes_html(footnotes)
 
     nav_items = []
     for t in sorted(all_topics):
@@ -480,7 +571,7 @@ def _render_topic_page(topic: str, page_md: str, meta: dict,
         '<div class="wiki-main">'
         f'<article class="wiki-article">'
         f"<h1>{html.escape(topic)}</h1>"
-        f"{infobox}{toc_html}{body_html}"
+        f"{infobox}{toc_html}{body_html}{fn_html}"
         "</article></div></div>"
         f"<script>{_SEARCH_JS}</script>"
         "</body></html>"
@@ -573,6 +664,13 @@ def render_wiki(token: str) -> int:
         except Exception:
             pass
 
+    source_url_map: dict[str, str] = {}
+    try:
+        from ..store import meta as meta_store
+        source_url_map = meta_store.title_url_map()
+    except Exception:
+        log.debug("title_url_map unavailable; source links degraded")
+
     target = Path(config.DATA_DIR) / "dashboard" / token / "wiki"
     target.mkdir(parents=True, exist_ok=True)
 
@@ -624,7 +722,10 @@ def render_wiki(token: str) -> int:
             "excerpt": excerpt,
         })
 
-        page_html = _render_topic_page(topic, page_md, meta, token, all_topics)
+        page_html = _render_topic_page(
+            topic, page_md, meta, token, all_topics,
+            source_url_map=source_url_map,
+        )
         fname = target / _topic_filename(topic)
         fname.write_text(page_html, encoding="utf-8")
         pages_written += 1
