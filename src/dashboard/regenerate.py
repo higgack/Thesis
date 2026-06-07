@@ -111,6 +111,15 @@ header h1 {
   display: flex; align-items: center; gap: 8px;
 }
 header .sub { color: var(--muted); font-size: 13px; }
+.nav-shortcut {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 10px; border-radius: 12px;
+  background: var(--accent); color: #fff !important;
+  font-weight: 600; font-size: 13px;
+  text-decoration: none !important;
+  transition: opacity 0.15s;
+}
+.nav-shortcut:hover { opacity: 0.85; }
 
 .stats {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(170px,1fr));
@@ -799,7 +808,7 @@ def _render_index(rows: list[dict], stats: dict) -> str:
         "<header>",
         "<h1>🧠 Second Brain Archive</h1>",
         "<div class='sub'>카드 클릭 시 전체 리포트 · "
-        f"<a href='/{token}/wiki/' style='color:var(--accent)'>📚 LLM Wiki</a>"
+        f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a>"
         "</div>",
         "</header>",
 
