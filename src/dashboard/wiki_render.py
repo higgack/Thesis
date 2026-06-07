@@ -35,25 +35,46 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
     _topics = topic_set or set()
     _urls = source_url_map or {}
     _dates = source_date_map or {}
+    _NORM_KEY = re.compile(r"[\W_]+")
+    def _nk(s: str) -> str:
+        return _NORM_KEY.sub("", s).lower()
+
     _norm_url_idx: dict[str, str] = {}
     _norm_date_idx: dict[str, str] = {}
     for k in _urls:
-        _norm_url_idx[re.sub(r"[\s_\-]+", "", k).lower()] = k
+        _norm_url_idx[_nk(k)] = k
     for k in _dates:
-        _norm_date_idx[re.sub(r"[\s_\-]+", "", k).lower()] = k
+        _norm_date_idx[_nk(k)] = k
+
+    def _prefix_search(nk: str, norm_idx: dict[str, str]) -> str | None:
+        if len(nk) < 8:
+            return None
+        for nk_title, orig_title in norm_idx.items():
+            if len(nk_title) < 8:
+                continue
+            short, long = (nk, nk_title) if len(nk) <= len(nk_title) else (nk_title, nk)
+            if long.startswith(short) and len(short) / len(long) >= 0.7:
+                return orig_title
+        return None
 
     def _fuzzy_get_url(key: str) -> str:
         if key in _urls:
             return _urls[key]
-        nk = re.sub(r"[\s_\-]+", "", key).lower()
+        nk = _nk(key)
         orig = _norm_url_idx.get(nk)
+        if orig:
+            return _urls[orig]
+        orig = _prefix_search(nk, _norm_url_idx)
         return _urls[orig] if orig else ""
 
     def _fuzzy_get_date(key: str) -> dict:
         if key in _dates:
             return _dates[key]
-        nk = re.sub(r"[\s_\-]+", "", key).lower()
+        nk = _nk(key)
         orig = _norm_date_idx.get(nk)
+        if orig:
+            return _dates[orig]
+        orig = _prefix_search(nk, _norm_date_idx)
         return _dates[orig] if orig else {}
 
     _footnotes: list[dict] = []
@@ -952,6 +973,7 @@ def render_wiki(token: str) -> int:
             "docs": doc_count,
             "updated": meta.get("updated", ""),
             "excerpt": excerpt,
+            "mtime": md_file.stat().st_mtime,
         })
 
         page_html = _render_topic_page(
@@ -963,7 +985,7 @@ def render_wiki(token: str) -> int:
         fname.write_text(page_html, encoding="utf-8")
         pages_written += 1
 
-    topics_data.sort(key=lambda x: x.get("updated", ""), reverse=True)
+    topics_data.sort(key=lambda x: x.get("mtime", 0), reverse=True)
 
     queue_size = 0
     queue_path = config.DATA_DIR / "wiki_queue.json"

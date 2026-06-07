@@ -247,16 +247,40 @@ def _slug(s: str) -> str:
     return s[:80] or "기타"
 
 
+_CORP_TOKENS = frozenset({
+    "inc", "corp", "corporation", "ltd", "limited", "co", "company",
+    "llc", "plc", "ag", "sa", "se", "group", "holdings", "pbc", "nv",
+    "association", "institute", "foundation",
+})
+
+
 def _split_multi_topic(raw: str) -> list[str]:
     """Split a multi-company/topic string into individual names.
     Handles: '삼성전자, SK하이닉스' / '삼성전자 SK하이닉스' /
-    '넥스틴, 파크시스템스, 인텍플러스'."""
+    '넥스틴, 파크시스템스, 인텍플러스'.
+    Corporate suffixes (Inc, Corp, Ltd, …) are merged back with the
+    preceding token so 'Broadcom Inc' stays as one entity."""
     parts = re.split(r"[,;/·]|\s{2,}", raw)
     if len(parts) == 1:
         tokens = raw.split()
         if len(tokens) >= 2 and all(len(t) >= 2 for t in tokens):
-            parts = tokens
-    return [p.strip() for p in parts if p.strip()]
+            merged: list[str] = []
+            for t in tokens:
+                if merged and t.lower().rstrip(".") in _CORP_TOKENS:
+                    merged[-1] += " " + t
+                else:
+                    merged.append(t)
+            parts = merged if len(merged) >= 2 else [raw]
+    final: list[str] = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        if final and p.lower().rstrip(".") in _CORP_TOKENS:
+            final[-1] += ", " + p
+        else:
+            final.append(p)
+    return [p.strip() for p in final if p.strip()]
 
 
 def topics_for(metadata: dict | None, title: str) -> list[str]:
@@ -577,7 +601,7 @@ def decompose_merged_topic(topic: str) -> dict:
 
 _CORP_SUFFIXES = re.compile(
     r"\s*(?:\b(?:inc|corp|corporation|ltd|limited|co|company|llc|plc|ag|sa|se"
-    r"|group|holdings)\b\.?|주식회사|㈜)\s*$",
+    r"|group|holdings|pbc)\b\.?|주식회사|㈜)\s*$",
     re.IGNORECASE,
 )
 
@@ -590,13 +614,19 @@ def _dedup_key(name: str) -> str:
 
 
 def _is_substr_dup(short: str, long: str) -> bool:
-    """True only when *short* is a meaningful substring of *long*.
-    Guards: min 4 chars, ratio ≥ 0.7, must match at word boundary."""
+    """True only when *short* is a meaningful prefix of *long*.
+    Guards: min 4 chars, ratio ≥ 0.8, must start at position 0.
+    Suffix/infix matches are almost always false positives
+    (Intel↔Mintel, 디스플레이↔LG디스플레이)."""
     if len(short) < 4 or short == long:
         return False
     if short not in long:
         return False
-    return len(short) / len(long) >= 0.7
+    if len(short) / len(long) < 0.8:
+        return False
+    if long.find(short) != 0:
+        return False
+    return True
 
 
 def _load_aliases() -> dict[str, str]:
@@ -612,14 +642,47 @@ def _save_alias(alias: str, canonical: str) -> None:
     _atomic_write_json(_ALIASES_PATH, aliases)
 
 
+_CJK_RE = re.compile(r"[一-鿿㐀-䶿]")
+
+_CJK_TRANSLATE: dict[str, str] = {
+    "三一重工": "삼일중공업",
+    "中材科技": "시노마사이언스",
+    "乘联会": "중국승용차협회",
+    "分析": "분석",
+    "南亞科": "난야테크놀로지",
+    "博通": "Broadcom",
+    "台光電": "타이광전자",
+    "台燿": "타이야오",
+    "台积电": "TSMC", "台積": "TSMC", "台積電": "TSMC",
+    "廣達": "콴타컴퓨터",
+    "神達": "미탁",
+    "慧榮科技": "실리콘모션",
+    "緯穎": "위영",
+    "美银证券": "뱅크오브아메리카증권",
+    "群聯": "파이슨",
+    "聯發科": "미디어텍",
+    "華邦電": "윈본드",
+    "輝達": "NVIDIA",
+    "金居开发": "금거개발",
+    "锂": "리튬",
+}
+
+
 def resolve_topic(proposed: str) -> str:
     """Map a proposed topic name to an existing canonical topic.
     Checked at ingest time so duplicates are prevented, not just detected.
-    Order: exact alias → dedup-key match → substring match → passthrough."""
+    Order: exact alias → CJK translate → dedup-key → substring → passthrough."""
     # 1) Exact alias hit (covers Korean↔English pairs set by merge)
     aliases = _load_aliases()
     if proposed in aliases:
         return aliases[proposed]
+
+    # 1b) CJK (Chinese/Japanese) → Korean/English translation
+    if _CJK_RE.search(proposed):
+        translated = _CJK_TRANSLATE.get(proposed.strip())
+        if translated:
+            _save_alias(proposed, translated)
+            return resolve_topic(translated)
 
     # 2) Dedup-key match against existing index topics
     idx = _load_json(_INDEX_PATH, {})
@@ -1147,63 +1210,76 @@ async def run_batch() -> dict:
     runs = 0
     budget_hit = False
 
+    # Phase 1: pre-filter and build task list
+    task_list: list[tuple[str, list[dict]]] = []
     for topic, docs in topics:
-        if runs >= max_topics:
+        if len(task_list) >= max_topics:
             break
-        if budget > 0 and today_cost_krw() >= budget:
-            budget_hit = True
-            log.warning("wiki batch budget hit mid-run at ₩%.0f/%.0f — "
-                        "stopping (%d topics left queued)",
-                        today_cost_krw(), budget, len(topics) - runs)
-            break
-        # Pre-filter: skip docs already merged into this topic's page
         existing_ids = set((idx.get(topic) or {}).get("doc_ids") or [])
         new_docs = [d for d in docs
                     if d.get("doc_id") not in existing_ids]
         if not new_docs:
-            # All docs already in page — remove from queue silently
             processed_doc_ids.update(d.get("doc_id") for d in docs)
             log.info("wiki skip %s: all %d docs already merged", topic, len(docs))
             continue
-        runs += 1
-        use_docs = new_docs[:max_docs]
-        res = await _merge_topic(topic, use_docs)
-        results.append(res)
-        if res.get("ok"):
-            merged_ids = [d["doc_id"] for d in use_docs]
-            processed_doc_ids.update(merged_ids)
-            rec = idx.get(topic) or {"doc_ids": []}
-            seen = set(rec.get("doc_ids") or [])
-            seen.update(merged_ids)
-            rec.update({
-                "file": f"{_slug(topic)}.md",
-                "title": topic,
-                "doc_ids": sorted(seen),
-                "updated": _now_kst_iso(),
-                "claims": rec.get("claims", 0) + res.get("docs", 0),
-            })
-            idx[topic] = rec
-            if res.get("contradictions", 0) > 0:
-                contradiction_topics.append(topic)
-            # Persist progress after each topic (resume-safety): drop the
-            # processed docs from the queue and save the index now, so a
-            # crash mid-run never re-merges or loses work. Re-load the
-            # queue from disk first (not the start-of-run snapshot) so docs
-            # ingested *during* the batch — the merge awaits yield the loop,
-            # letting enqueue() run — survive instead of being clobbered.
-            cur = _load_json(_QUEUE_PATH, [])
-            if not isinstance(cur, list):
-                cur = []
-            remaining = [it for it in cur
-                         if isinstance(it, dict)
-                         and it.get("doc_id") not in processed_doc_ids]
-            _atomic_write_json(_QUEUE_PATH, remaining)
-            _atomic_write_json(_INDEX_PATH, idx)
-        else:
-            record_failure(topic, use_docs, res.get("error", "unknown"))
-            if promote_to_failed(topic):
-                log.warning("wiki topic '%s' moved to failed after %d cycles",
-                            topic, _MAX_FAIL_CYCLES)
+        task_list.append((topic, new_docs[:max_docs]))
+
+    # Phase 2: process in parallel chunks (resume-safe per chunk)
+    parallel = int(_flag("WIKI_PARALLEL", 3))
+    for chunk_start in range(0, len(task_list), parallel):
+        if budget > 0 and today_cost_krw() >= budget:
+            budget_hit = True
+            log.warning("wiki batch budget hit at ₩%.0f/%.0f — "
+                        "%d topics left queued",
+                        today_cost_krw(), budget,
+                        len(task_list) - chunk_start)
+            break
+
+        chunk = task_list[chunk_start:chunk_start + parallel]
+        merge_results = await asyncio.gather(
+            *[_merge_topic(t, d) for t, d in chunk],
+            return_exceptions=True,
+        )
+
+        for (topic, use_docs), res in zip(chunk, merge_results):
+            runs += 1
+            if isinstance(res, BaseException):
+                log.warning("wiki merge exception for %s: %s", topic, res)
+                res = {"topic": topic, "ok": False, "docs": len(use_docs),
+                       "contradictions": 0, "error": str(res)[:120]}
+            results.append(res)
+            if res.get("ok"):
+                merged_ids = [d["doc_id"] for d in use_docs]
+                processed_doc_ids.update(merged_ids)
+                rec = idx.get(topic) or {"doc_ids": []}
+                seen = set(rec.get("doc_ids") or [])
+                seen.update(merged_ids)
+                rec.update({
+                    "file": f"{_slug(topic)}.md",
+                    "title": topic,
+                    "doc_ids": sorted(seen),
+                    "updated": _now_kst_iso(),
+                    "claims": rec.get("claims", 0) + res.get("docs", 0),
+                })
+                idx[topic] = rec
+                if res.get("contradictions", 0) > 0:
+                    contradiction_topics.append(topic)
+            else:
+                record_failure(topic, use_docs, res.get("error", "unknown"))
+                if promote_to_failed(topic):
+                    log.warning("wiki topic '%s' moved to failed after %d cycles",
+                                topic, _MAX_FAIL_CYCLES)
+
+        # Persist after each chunk (resume-safety)
+        cur = _load_json(_QUEUE_PATH, [])
+        if not isinstance(cur, list):
+            cur = []
+        remaining = [it for it in cur
+                     if isinstance(it, dict)
+                     and it.get("doc_id") not in processed_doc_ids]
+        _atomic_write_json(_QUEUE_PATH, remaining)
+        _atomic_write_json(_INDEX_PATH, idx)
+
         if throttle > 0:
             await asyncio.sleep(throttle)
 
