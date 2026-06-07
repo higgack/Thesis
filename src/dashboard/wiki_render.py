@@ -81,6 +81,7 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
         """Register a source and return a superscript footnote link."""
         key = html.unescape(title.strip())
         key = re.sub(r"^자료\s*\d+\]\s*", "", key)
+        key = key.strip("[]")
         is_first = key not in _fn_seen
         if is_first:
             num = len(_footnotes) + 1
@@ -106,16 +107,15 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
         return html.escape(clean)
 
     def _split_sources(raw: str) -> list[str]:
-        """Split '[[A]], [[B]]' into ['A', 'B'].
-        Handles source titles containing ] or [ characters.
-        Also handles single-] delimiter: '], [['."""
+        """Split '[[A]], [[B]]' or '[[A]] (1회차), [[B]] (2회차)' into
+        individual source titles. Strips [[ ]] and trailing annotations."""
         raw = raw.strip()
         if not raw:
             return []
-        parts = re.split(r"\]\]?\s*,\s*\[\[", raw)
-        if parts:
-            parts[0] = re.sub(r"^\[\[", "", parts[0])
-            parts[-1] = re.sub(r"\]\]?\s*$", "", parts[-1])
+        refs = re.findall(r"\[\[(.+?)\]\]", raw)
+        if refs:
+            return [r.strip().strip("[]") for r in refs if r.strip()]
+        parts = [raw.strip("[] ")]
         return [p.strip() for p in parts if p.strip()]
 
     def _inline(text: str) -> str:
@@ -708,7 +708,7 @@ def _build_footnotes_html(footnotes: list[dict]) -> str:
     items = []
     for fn in footnotes:
         num = fn["id"]
-        title = html.escape(fn["title"])
+        title = html.escape(fn["title"].strip("[]"))
         url = fn.get("url", "")
         date = fn.get("date", "")
         if url:

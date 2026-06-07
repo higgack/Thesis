@@ -11305,6 +11305,31 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
              (r or {}).get("status", "unknown"), title[:80])
 
 
+async def _wiki_drain_resume(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """On startup, if a temp budget is active and the queue is non-empty,
+    silently resume the drain that was interrupted by the deploy."""
+    if not wiki.enabled():
+        return
+    temp = wiki._read_temp_budget()
+    if temp is None or temp <= 0:
+        return
+    qs = wiki.queue_size()
+    if qs <= 0:
+        return
+    log.info("wiki drain resume: temp budget ₩%.0f, queue %d — resuming", temp, qs)
+    try:
+        owner_id = int(os.environ.get("TELEGRAM_OWNER_ID", "0"))
+        if owner_id:
+            await ctx.bot.send_message(
+                owner_id,
+                f"🔄 위키 드레인 자동 재개 (배포 후 복구)\n"
+                f"임시 한도 ₩{temp:,.0f}, 큐 {qs}건",
+            )
+        await wiki.drain_queue()
+    except Exception:
+        log.exception("wiki drain resume failed")
+
+
 async def _wiki_batch_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Nightly LLM-Wiki synthesis (P1) + 'what it learned' digest (P4) +
     contradiction ack-alert (P3) + daily-budget block alert. No-op unless
@@ -12082,6 +12107,9 @@ def main():
             first=(_next_wiki - _now_kst).total_seconds(),
             name="wiki_batch",
         )
+        # Resume wiki drain if temp budget survives a restart
+        app.job_queue.run_once(_wiki_drain_resume, when=30,
+                               name="wiki_drain_resume")
         # Hourly: check yt-dlp health (24h rolling failure rate). If
         # rate ≥ 70% over ≥ 5 attempts, fire an actionable alert.
         # Stable notify_id "yt_dlp_health" — re-arms after 7 days of
