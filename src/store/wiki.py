@@ -295,7 +295,7 @@ def enqueue(*, doc_id: str, title: str, summary: str, doc_type: str,
     try:
         if not enabled():
             return
-        min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 600))
+        min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 800))
         if len((summary or "").strip()) < min_chars:
             return
         tlist = topics_for(metadata, title)
@@ -518,7 +518,7 @@ def decompose_merged_topic(topic: str) -> dict:
         (it.get("doc_id"), it.get("topic"))
         for it in q if isinstance(it, dict)
     }
-    min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 600))
+    min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 800))
     ts = datetime.utcnow().isoformat(timespec="seconds")
     enqueued = 0
     for doc_id in doc_ids:
@@ -580,7 +580,7 @@ def backfill(docs: list[dict]) -> dict:
     if not enabled():
         res["error"] = "wiki disabled"
         return res
-    min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 600))
+    min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 800))
     wikied = _wikied_doc_ids()
     q = _load_json(_QUEUE_PATH, [])
     if not isinstance(q, list):
