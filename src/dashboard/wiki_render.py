@@ -67,6 +67,10 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
             url = _urls.get(key, "")
             date = _dates.get(key, "")
             _footnotes.append({"id": num, "title": key, "url": url, "date": date})
+        src_url = _urls.get(key, "")
+        if src_url:
+            return (f'<sup class="wiki-fn"><a href="{html.escape(src_url)}" '
+                    f'target="_blank" title="{html.escape(key)}">[{num}]</a></sup>')
         return (f'<sup class="wiki-fn"><a href="#fn-{num}" '
                 f'title="{html.escape(key)}">[{num}]</a></sup>')
 
