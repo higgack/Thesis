@@ -991,7 +991,11 @@ def backfill(docs: list[dict]) -> dict:
         if len(summary) < min_chars:
             res["skipped_gate"] += 1
             continue
-        tlist = topics_for(d.get("metadata"), d.get("title") or "")
+        tlist = [t for t in topics_for(d.get("metadata"), d.get("title") or "")
+                 if t != "기타"]
+        if not tlist:
+            res["skipped_gate"] += 1
+            continue
         ts = datetime.utcnow().isoformat(timespec="seconds")
         for topic in tlist:
             q.append({
