@@ -114,8 +114,41 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
                 t = t.replace(escaped, link, 1)
         return t
 
+    in_table = False
+    table_rows: list[list[str]] = []
+    table_has_header = False
+
+    def _flush_table():
+        nonlocal in_table, table_has_header
+        if not table_rows:
+            in_table = False
+            return
+        out.append('<table class="wiki-table">')
+        for i, cells in enumerate(table_rows):
+            tag = "th" if i == 0 and table_has_header else "td"
+            out.append("<tr>" + "".join(
+                f"<{tag}>{_inline(c)}</{tag}>" for c in cells
+            ) + "</tr>")
+        out.append("</table>")
+        table_rows.clear()
+        table_has_header = False
+        in_table = False
+
     for raw in lines:
         line = raw.rstrip()
+
+        if line.strip().startswith("|") and "|" in line.strip()[1:]:
+            _flush_bq()
+            _flush_list()
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if all(re.match(r"^[-:]+$", c) for c in cells):
+                table_has_header = True
+            else:
+                table_rows.append(cells)
+            in_table = True
+            continue
+        elif in_table:
+            _flush_table()
 
         if line.startswith("```"):
             if in_code:
@@ -180,6 +213,7 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
 
     _flush_bq()
     _flush_list()
+    _flush_table()
     if in_code:
         out.append("</code></pre>")
     return "\n".join(out), toc, _footnotes
@@ -331,7 +365,27 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
 .wiki-footnotes li { margin: 4px 0; }
 .wiki-footnotes li:target { background: var(--highlight); }
 .fn-date { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.fn-orig {
+  display: inline-block; font-size: 11px; font-weight: 600;
+  padding: 1px 8px; margin-left: 6px; border-radius: 10px;
+  background: var(--accent); color: #fff !important;
+  text-decoration: none !important; white-space: nowrap;
+}
+.fn-orig:hover { opacity: 0.85; }
 .wiki-spacer { height: 8px; }
+.wiki-table {
+  width: 100%; border-collapse: collapse; margin: 12px 0;
+  font-size: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.wiki-table th, .wiki-table td {
+  padding: 6px 12px; border: 1px solid var(--border-light);
+  text-align: left;
+}
+.wiki-table th {
+  background: var(--panel-alt); font-weight: 600;
+}
+.wiki-table tr:hover td { background: var(--highlight); }
 .wiki-article p { margin: 6px 0; }
 
 /* ── Table of Contents ────────────────────── */
@@ -542,7 +596,9 @@ def _build_footnotes_html(footnotes: list[dict]) -> str:
         url = fn.get("url", "")
         date = fn.get("date", "")
         if url:
-            link = f'<a href="{html.escape(url)}" target="_blank">{title}</a>'
+            link = (f'{title} '
+                    f'<a href="{html.escape(url)}" target="_blank" '
+                    f'class="fn-orig">원본 →</a>')
         else:
             link = title
         if date:
