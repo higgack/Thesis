@@ -11858,6 +11858,29 @@ async def cmd_wiki_split_batch(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(parts))
 
 
+async def cmd_wiki_rebuild_refs(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_rebuild_refs — [[자료 N]] 라벨이 남은 페이지를 재빌드 큐에 적재."""
+    if not _is_owner(update):
+        return
+    res = wiki.rebuild_broken_refs()
+    if res.get("error"):
+        await update.message.reply_text(f"⚠️ {res['error']}")
+        return
+    rebuilt = res.get("rebuilt", 0)
+    if rebuilt == 0:
+        await update.message.reply_text(
+            f"✅ 스캔 완료 ({res.get('scanned', 0)}개 페이지) — 깨진 참조 없음"
+        )
+        return
+    topics = res.get("topics", [])
+    lines = "\n".join(f"  • {t}" for t in topics[:30])
+    await update.message.reply_text(
+        f"✅ {rebuilt}개 토픽 재빌드 큐 적재 (자료 {res.get('docs_requeued', 0)}건)\n"
+        f"{lines}\n\n"
+        f"다음 배치(/wiki_run)에서 실제 제목으로 재생성됩니다."
+    )
+
+
 async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_backfill [개월=6|all] — 기존 자료(meta.db)를 위키 큐에 적재.
     적재 자체는 ₩0; 실제 머지는 야간 배치가 일일 예산 캡 내에서 처리하므로
@@ -12191,6 +12214,7 @@ def main():
     app.add_handler(CommandHandler("wiki_drain", cmd_wiki_drain))
     app.add_handler(CommandHandler("wiki_split", cmd_wiki_split))
     app.add_handler(CommandHandler("wiki_split_batch", cmd_wiki_split_batch))
+    app.add_handler(CommandHandler("wiki_rebuild_refs", cmd_wiki_rebuild_refs))
     app.add_handler(CommandHandler("wiki_dedup", cmd_wiki_dedup))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
