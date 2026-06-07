@@ -73,4 +73,4 @@ WIKI_PARALLEL = int(os.getenv("WIKI_PARALLEL", "3"))
 # Daily spend circuit breaker (KST). When today's wiki cost reaches this
 # many ₩, the batch BLOCKS for the rest of the KST day and fires an
 # actionable alert; queued docs resume next day. 0 = no cap.
-WIKI_DAILY_BUDGET_KRW = float(os.getenv("WIKI_DAILY_BUDGET_KRW", "2000"))
+WIKI_DAILY_BUDGET_KRW = float(os.getenv("WIKI_DAILY_BUDGET_KRW", "1000"))

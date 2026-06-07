@@ -1897,7 +1897,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 정리한 내용 위에서 답하게 함. <b>RAG 대체가 아니라 그 위에 얹는 층</b>이고
 <b>기본 OFF</b>(WIKI_ENABLED=0) — 켜기 전엔 기존 동작 그대로.
 
-<b>⛔ 일일 비용 상한(가장 중요)</b>: WIKI_DAILY_BUDGET_KRW(기본 ₩2000, KST).
+<b>⛔ 일일 비용 상한(가장 중요)</b>: WIKI_DAILY_BUDGET_KRW(기본 ₩1000, KST).
 오늘 위키 비용이 도달하면 <b>그날 머지 즉시 중단 + ack 알람</b>, 자료는 큐
 보존·다음날 0시 자동 재개. 0=무제한.
 
@@ -1910,7 +1910,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 <b>명령어</b>
 • <b>/wiki</b> 목록 · <b>/wiki &lt;토픽&gt;</b> 열람 · <b>/wiki_today</b> 마지막 배치
 • <b>/wiki_status</b> 상태·오늘 ₩·한도·큐 · <b>/wiki_run</b> 수동 실행
-• <b>/wiki_drain [한도=20000]</b> 오늘만 임시 예산 올려서 큐 최대 소진(내일 자동 복귀 ₩2000)
+• <b>/wiki_drain [한도=20000]</b> 오늘만 임시 예산 올려서 큐 최대 소진(내일 자동 복귀 ₩1000)
 • <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
 • <b>/wiki_dedup [merge A :: B | merge_all]</b> 유사 중복 토픽 감지(접미사 정규화·부분문자열) — 목록 확인 후 개별/전체 병합
 • <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 야간 캡 내 분산 처리)
@@ -1921,7 +1921,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 <b>켜는 법(점진)</b>: ①WIKI_ENABLED=1 재배포 → 며칠 /wiki_status·/wiki_today
 관찰 → ②신뢰되면 WIKI_QUERY_FIRST=1(답변에 합성 페이지 우선, 토큰↓).
 
-<b>비용/안전</b>: 추가 임베딩 0(라우팅 무료) · 머지만 과금하되 일일 ₩2000 상한 +
+<b>비용/안전</b>: 추가 임베딩 0(라우팅 무료) · 머지만 과금하되 일일 ₩1000 상한 +
 25토픽/run 캡으로 이중 차단 · 비용 ↑이면 캡↓/게이트↑ · 원복: /wiki_off 또는
 WIKI_ENABLED=0(Chroma/meta.db 안 건드려 끄면 기존 RAG 그대로) · 상세 docs/WIKI.md
 """
@@ -11659,7 +11659,7 @@ async def cmd_wiki_on(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_wiki_drain(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_drain [한도=20000] — 오늘만 임시 예산 올려서 큐를 최대한 소진.
-    내일 KST 0시에 자동으로 기본 한도(₩2000)로 복귀."""
+    내일 KST 0시에 자동으로 기본 한도(₩1000)로 복귀."""
     if not _is_owner(update):
         return
     if not wiki.enabled():
@@ -11728,7 +11728,7 @@ async def cmd_wiki_drain(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"큐 잔여: {final_rem}건\n"
             f"오늘 비용: ₩{final_cost:,.0f}"
             + (" ⛔예산도달" if budget_hit else "")
-            + "\n내일부터 기본 한도(₩2,000)로 자동 복귀."
+            + "\n내일부터 기본 한도(₩1,000)로 자동 복귀."
         ),
     )
 
@@ -11795,90 +11795,6 @@ async def cmd_wiki_split(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     else:
         lines.append("다음 배치(/wiki_run)에서 각 회사 페이지로 머지됩니다.")
     await update.message.reply_text("\n".join(lines))
-
-
-_SPLIT_BATCH_TOPICS = [
-    "Coinbase Kalshi",
-    "Coinbase, Kalshi",
-    "LG에너지솔루션 삼성SDI 엘앤에프 더블유씨피 한중엔시스",
-    "LG에너지솔루션, 삼성SDI, 엘앤에프, 더블유씨피, 한중엔시스",
-    "NAVER 카카오 크래프톤 NC",
-    "NAVER, 카카오, 크래프톤, NC",
-    "OpenAI, Anthropic",
-    "POSCO홀딩스 포스코인터내셔널 고려아연 LS전선 LS에코에너지 LS MnM",
-    "SK이노베이션 S-Oil",
-    "SK이노베이션, S-Oil",
-    "SK하이닉스 삼성 마이크론",
-    "SK하이닉스,삼성,마이크론",
-    "Samsung Electronics SK hynix",
-    "Samsung SK hynix",
-    "TSMC 삼성전자 Intel",
-    "TSMC, 삼성전자, Intel",
-    "난야 TSMC 엔비디아 삼성 하이닉스 마이크론",
-    "난야, TSMC, 엔비디아, 삼성, 하이닉스, 마이크론",
-    "네이버, 카카오, 크래프톤, NC",
-    "방산 4사",
-    "삼성 LG",
-    "삼성, LG",
-]
-
-
-async def cmd_wiki_split_batch(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/wiki_split_batch — 사전 선별된 합쳐진 토픽 목록을 일괄 해체."""
-    if not _is_owner(update):
-        return
-    await update.message.reply_text(
-        f"⏳ {len(_SPLIT_BATCH_TOPICS)}개 토픽 일괄 해체 시작..."
-    )
-    ok: list[tuple[str, dict]] = []
-    skip: list[str] = []
-    fail: list[tuple[str, str]] = []
-    for topic in _SPLIT_BATCH_TOPICS:
-        try:
-            r = wiki.decompose_merged_topic(topic)
-        except Exception as e:
-            fail.append((topic, str(e)))
-            continue
-        if r.get("error"):
-            skip.append(topic)
-        else:
-            ok.append((topic, r))
-    parts = []
-    if ok:
-        lines_ok = "\n".join(
-            f"  • {t}: 자료 {r['docs']}건 → 재적재 {r['re_enqueued']}건"
-            for t, r in ok
-        )
-        parts.append(f"✅ {len(ok)}개 해체 완료\n{lines_ok}")
-    if skip:
-        parts.append(f"⏭ {len(skip)}개 스킵 (이미 해체됨/인덱스 없음)")
-    if fail:
-        parts.append(f"⚠️ {len(fail)}개 에러")
-    parts.append("\n/wiki_run 으로 각 회사 페이지 머지")
-    await update.message.reply_text("\n".join(parts))
-
-
-async def cmd_wiki_rebuild_refs(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/wiki_rebuild_refs — [[자료 N]] 라벨이 남은 페이지를 재빌드 큐에 적재."""
-    if not _is_owner(update):
-        return
-    res = wiki.rebuild_broken_refs()
-    if res.get("error"):
-        await update.message.reply_text(f"⚠️ {res['error']}")
-        return
-    rebuilt = res.get("rebuilt", 0)
-    if rebuilt == 0:
-        await update.message.reply_text(
-            f"✅ 스캔 완료 ({res.get('scanned', 0)}개 페이지) — 깨진 참조 없음"
-        )
-        return
-    topics = res.get("topics", [])
-    lines = "\n".join(f"  • {t}" for t in topics[:30])
-    await update.message.reply_text(
-        f"✅ {rebuilt}개 토픽 재빌드 큐 적재 (자료 {res.get('docs_requeued', 0)}건)\n"
-        f"{lines}\n\n"
-        f"다음 배치(/wiki_run)에서 실제 제목으로 재생성됩니다."
-    )
 
 
 async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -12213,8 +12129,6 @@ def main():
     app.add_handler(CommandHandler("wiki_on", cmd_wiki_on))
     app.add_handler(CommandHandler("wiki_drain", cmd_wiki_drain))
     app.add_handler(CommandHandler("wiki_split", cmd_wiki_split))
-    app.add_handler(CommandHandler("wiki_split_batch", cmd_wiki_split_batch))
-    app.add_handler(CommandHandler("wiki_rebuild_refs", cmd_wiki_rebuild_refs))
     app.add_handler(CommandHandler("wiki_dedup", cmd_wiki_dedup))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
