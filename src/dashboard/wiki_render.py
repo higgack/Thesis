@@ -674,7 +674,17 @@ def _build_toc_html(toc: list[dict]) -> str:
 def _format_ts(ts: str) -> str:
     if not ts:
         return ""
-    return ts[:16].replace("T", " ")
+    from datetime import datetime, timedelta, timezone
+    _KST = timezone(timedelta(hours=9))
+    if "T" in ts:
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(_KST).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+    return ts[:16]
 
 
 def _build_infobox(topic: str, meta: dict) -> str:
