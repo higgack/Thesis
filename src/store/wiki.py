@@ -196,6 +196,17 @@ def set_temp_budget(amount: float) -> None:
                        {"budget": amount, "date": today})
 
 
+def clear_temp_budget() -> None:
+    """Drop the temp-budget override so the daily cap reverts to the
+    config default immediately (not at KST midnight). Called when a drain
+    turn finishes — if the bot is killed mid-drain this never runs, so the
+    file survives and _wiki_drain_resume picks the drain back up."""
+    try:
+        (config.DATA_DIR / "wiki_budget_temp.json").unlink(missing_ok=True)
+    except Exception:
+        log.exception("clear_temp_budget failed")
+
+
 def budget_exceeded() -> bool:
     """True when today's (KST) wiki spend has reached the daily cap.
     0 disables the cap."""
@@ -1670,6 +1681,8 @@ async def drain_queue(on_progress=None) -> list[dict]:
         if summary.get("remaining_in_queue", 0) == 0:
             break
         await asyncio.sleep(30)
+    # Drain turn finished — revert to the default cap right away.
+    clear_temp_budget()
     return results
 
 
