@@ -394,8 +394,8 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
 }
 .fn-orig:hover { opacity: 0.85; }
 .fn-back {
-  font-size: 13px; color: var(--accent); text-decoration: none;
-  margin-right: 4px; font-weight: 700;
+  font-size: 11px; color: var(--accent); text-decoration: none;
+  font-weight: 600;
 }
 .fn-back:hover { text-decoration: underline; }
 .wiki-spacer { height: 8px; }
@@ -630,21 +630,22 @@ def _build_footnotes_html(footnotes: list[dict]) -> str:
         return ""
     items = []
     for fn in footnotes:
+        num = fn["id"]
         title = html.escape(fn["title"])
         url = fn.get("url", "")
         date = fn.get("date", "")
-        back = (f'<a href="#ref-{fn["id"]}" class="fn-back" '
-                f'title="본문으로 돌아가기">↑</a> ')
         if url:
-            link = (f'{back}{title} '
+            link = (f'{title} '
                     f'<a href="{html.escape(url)}" target="_blank" '
                     f'class="fn-orig">원본 →</a>')
         else:
-            link = f'{back}{title}'
+            link = title
         if date:
             date_kind = fn.get("date_kind", "학습")
             link += f' <span class="fn-date">({html.escape(date)} {date_kind})</span>'
-        items.append(f'<li id="fn-{fn["id"]}">{link}</li>')
+        link += (f' <sup class="wiki-fn"><a href="#ref-{num}" '
+                 f'class="fn-back" title="본문으로 돌아가기">[{num}]</a></sup>')
+        items.append(f'<li id="fn-{num}">{link}</li>')
     return (
         '<div class="wiki-footnotes">'
         '<h3 class="wiki-h">Sources</h3>'
