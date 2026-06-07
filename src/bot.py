@@ -1912,7 +1912,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 <b>명령어</b>
 • <b>/wiki</b> 목록 · <b>/wiki &lt;토픽&gt;</b> 열람 · <b>/wiki_today</b> 마지막 배치
 • <b>/wiki_status</b> 상태·오늘 ₩·한도·큐 · <b>/wiki_run</b> 수동 실행
-• <b>/wiki_drain [한도=20000]</b> 오늘만 임시 예산 올려서 큐 최대 소진(내일 자동 복귀 ₩1000)
+• <b>/wiki_drain [한도=20000]</b> 임시 예산 올려서 큐 최대 소진(끝나면 즉시 ₩1000 복귀)
 • <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
 • <b>/wiki_dedup [merge A :: B | merge_all]</b> 유사 중복 토픽 감지(접미사 정규화·부분문자열) — 목록 확인 후 개별/전체 병합
 • <b>/wiki_rename &lt;옛이름&gt; :: &lt;새이름&gt;</b> 토픽명 변경(인덱스+파일+큐+alias 일괄)
@@ -11329,6 +11329,10 @@ async def _wiki_drain_resume(ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
     qs = wiki.queue_size()
     if qs <= 0:
+        # Drain already finished but the temp-budget override lingered on
+        # disk (completed in a prior turn / older build). Clear it so the
+        # cap reverts to the default now instead of waiting for midnight.
+        wiki.clear_temp_budget()
         return
     log.info("wiki drain resume: temp budget ₩%.0f, queue %d — resuming", temp, qs)
     try:
@@ -11668,8 +11672,8 @@ async def cmd_wiki_on(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_wiki_drain(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/wiki_drain [한도=20000] — 오늘만 임시 예산 올려서 큐를 최대한 소진.
-    내일 KST 0시에 자동으로 기본 한도(₩1000)로 복귀."""
+    """/wiki_drain [한도=20000] — 임시 예산 올려서 큐를 최대한 소진.
+    드레인이 끝나면 곧바로 기본 한도(₩1000)로 복귀(자정까지 안 기다림)."""
     if not _is_owner(update):
         return
     if not wiki.enabled():
@@ -11738,7 +11742,7 @@ async def cmd_wiki_drain(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"큐 잔여: {final_rem}건\n"
             f"오늘 비용: ₩{final_cost:,.0f}"
             + (" ⛔예산도달" if budget_hit else "")
-            + "\n내일부터 기본 한도(₩1,000)로 자동 복귀."
+            + "\n기본 한도(₩1,000)로 즉시 복귀 완료."
         ),
     )
 
