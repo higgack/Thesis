@@ -156,7 +156,35 @@ def total_cost_krw() -> float:
 
 
 def budget_krw() -> float:
+    override = _read_temp_budget()
+    if override is not None:
+        return override
     return float(_flag("WIKI_DAILY_BUDGET_KRW", 2000))
+
+
+def _read_temp_budget() -> float | None:
+    path = config.DATA_DIR / "wiki_budget_temp.json"
+    if not path.exists():
+        return None
+    try:
+        from datetime import datetime as _dt, timedelta, timezone
+        kst = timezone(timedelta(hours=9))
+        today = _dt.now(kst).strftime("%Y-%m-%d")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("date") == today:
+            return float(data["budget"])
+        path.unlink(missing_ok=True)
+        return None
+    except Exception:
+        return None
+
+
+def set_temp_budget(amount: float) -> None:
+    from datetime import datetime as _dt, timedelta, timezone
+    kst = timezone(timedelta(hours=9))
+    today = _dt.now(kst).strftime("%Y-%m-%d")
+    _atomic_write_json(config.DATA_DIR / "wiki_budget_temp.json",
+                       {"budget": amount, "date": today})
 
 
 def budget_exceeded() -> bool:
@@ -694,6 +722,30 @@ async def run_batch() -> dict:
              summary["remaining_in_queue"], summary["today_cost"], budget,
              " BUDGET-BLOCKED" if budget_hit else "")
     return summary
+
+
+async def drain_queue(on_progress=None) -> list[dict]:
+    """Loop run_batch() until the daily budget is exhausted or the queue
+    is empty. ``on_progress`` is an optional async callback receiving
+    each batch summary — callers use it for live Telegram updates.
+    Returns the list of all batch summaries produced."""
+    results: list[dict] = []
+    while True:
+        summary = await run_batch()
+        results.append(summary)
+        if on_progress:
+            try:
+                await on_progress(summary)
+            except Exception:
+                log.exception("drain_queue progress callback failed")
+        if summary.get("budget_blocked"):
+            break
+        if summary.get("status") in ("disabled", "empty", "budget_blocked"):
+            break
+        if summary.get("remaining_in_queue", 0) == 0:
+            break
+        await asyncio.sleep(30)
+    return results
 
 
 def last_run() -> dict | None:

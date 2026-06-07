@@ -1408,7 +1408,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
 
-📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_backfill · /wiki_off · /wiki_on
+📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_drain · /wiki_backfill · /wiki_off · /wiki_on
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
@@ -1443,7 +1443,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【8. 대시보드】</b> http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html · Basic Auth(.env) · 60s 갱신·다크 19~07
 
-<b>【9. 답변 품질】</b> 자료 시점 필수 · brain 재검색 의무 · web [도메인]·인용 [N] · 숫자 자동 audit · _verify (₩1/회)
+<b>【9. 답변 품질】</b> 시점 필수 · brain 재검색 · web [도메인]·인용 [N] · 숫자 audit · _verify
 
 <b>【10. 운영】</b> VM n2-std-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8 · concurrent+HTTPX 32 · 영속(retry/failed/history/qna/cost/캐시) · 메모리 5분(90/95%) · 60s call · 15분 ingest · 질문/명령＞학습
 
@@ -1906,6 +1906,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 <b>명령어</b>
 • <b>/wiki</b> 목록 · <b>/wiki &lt;토픽&gt;</b> 열람 · <b>/wiki_today</b> 마지막 배치
 • <b>/wiki_status</b> 상태·오늘 ₩·한도·큐 · <b>/wiki_run</b> 수동 실행
+• <b>/wiki_drain [한도=20000]</b> 오늘만 임시 예산 올려서 큐 최대 소진(내일 자동 복귀 ₩2000)
 • <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 야간 캡 내 분산 처리)
 • <b>/wiki_off · /wiki_on</b> 즉시 끄기/켜기(killswitch, 재배포 불필요)
 
@@ -11623,6 +11624,82 @@ async def cmd_wiki_on(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"킬스위치 해제. 현재: {state}")
 
 
+async def cmd_wiki_drain(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_drain [한도=20000] — 오늘만 임시 예산 올려서 큐를 최대한 소진.
+    내일 KST 0시에 자동으로 기본 한도(₩2000)로 복귀."""
+    if not _is_owner(update):
+        return
+    if not wiki.enabled():
+        await update.message.reply_text(
+            "위키가 꺼져 있습니다. /wiki_on 또는 .env WIKI_ENABLED=1 후 사용."
+        )
+        return
+    try:
+        limit = int(ctx.args[0]) if ctx.args else 20000
+    except ValueError:
+        limit = 20000
+    wiki.set_temp_budget(limit)
+    remaining = wiki.queue_size()
+    status_msg = await update.message.reply_text(
+        f"🔄 위키 드레인 시작 (임시 한도 ₩{limit:,}, 큐 {remaining}건)\n"
+        f"예산 소진 또는 큐 완료까지 반복 실행합니다…"
+    )
+    chat_id = update.effective_chat.id
+
+    batch_num = 0
+
+    async def _on_progress(summary: dict) -> None:
+        nonlocal batch_num
+        batch_num += 1
+        pages = summary.get("pages", 0)
+        docs = summary.get("docs", 0)
+        rem = summary.get("remaining_in_queue", 0)
+        cost = summary.get("today_cost", 0)
+        budget = summary.get("budget", limit)
+        blocked = " ⛔예산도달" if summary.get("budget_blocked") else ""
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=status_msg.message_id,
+                text=(
+                    f"🔄 위키 드레인 진행 중… (배치 #{batch_num})\n"
+                    f"이번 배치: 페이지 {pages} · 자료 {docs}\n"
+                    f"큐 잔여: {rem}건\n"
+                    f"오늘 비용: ₩{cost:,.0f} / ₩{budget:,.0f}{blocked}"
+                ),
+            )
+        except Exception:
+            pass
+
+    try:
+        results = await wiki.drain_queue(on_progress=_on_progress)
+    except Exception as e:
+        await ctx.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=status_msg.message_id,
+            text=f"⚠️ 드레인 실패: {type(e).__name__}: {e}",
+        )
+        return
+
+    total_pages = sum(r.get("pages", 0) for r in results)
+    total_docs = sum(r.get("docs", 0) for r in results)
+    final_cost = results[-1].get("today_cost", 0) if results else 0
+    final_rem = results[-1].get("remaining_in_queue", 0) if results else 0
+    budget_hit = any(r.get("budget_blocked") for r in results)
+    await ctx.bot.edit_message_text(
+        chat_id=chat_id,
+        message_id=status_msg.message_id,
+        text=(
+            f"✅ 위키 드레인 완료 ({len(results)}회 배치)\n"
+            f"총 페이지: {total_pages} · 자료: {total_docs}\n"
+            f"큐 잔여: {final_rem}건\n"
+            f"오늘 비용: ₩{final_cost:,.0f}"
+            + (" ⛔예산도달" if budget_hit else "")
+            + "\n내일부터 기본 한도(₩2,000)로 자동 복귀."
+        ),
+    )
+
+
 async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_backfill [개월=6|all] — 기존 자료(meta.db)를 위키 큐에 적재.
     적재 자체는 ₩0; 실제 머지는 야간 배치가 일일 예산 캡 내에서 처리하므로
@@ -11845,6 +11922,7 @@ def main():
     app.add_handler(CommandHandler("wiki_backfill", cmd_wiki_backfill))
     app.add_handler(CommandHandler("wiki_off", cmd_wiki_off))
     app.add_handler(CommandHandler("wiki_on", cmd_wiki_on))
+    app.add_handler(CommandHandler("wiki_drain", cmd_wiki_drain))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
     app.add_handler(MessageHandler(
