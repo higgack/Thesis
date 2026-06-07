@@ -59,19 +59,17 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
     def _make_footnote(title: str) -> str:
         """Register a source and return a superscript footnote link."""
         key = html.unescape(title.strip())
-        if key in _fn_seen:
-            num = _fn_seen[key]
-        else:
+        is_first = key not in _fn_seen
+        if is_first:
             num = len(_footnotes) + 1
             _fn_seen[key] = num
             url = _urls.get(key, "")
             date = _dates.get(key, "")
             _footnotes.append({"id": num, "title": key, "url": url, "date": date})
-        src_url = _urls.get(key, "")
-        if src_url:
-            return (f'<sup class="wiki-fn"><a href="{html.escape(src_url)}" '
-                    f'target="_blank" title="{html.escape(key)}">[{num}]</a></sup>')
-        return (f'<sup class="wiki-fn"><a href="#fn-{num}" '
+        else:
+            num = _fn_seen[key]
+        ref_id = f' id="ref-{num}"' if is_first else ""
+        return (f'<sup class="wiki-fn"{ref_id}><a href="#fn-{num}" '
                 f'title="{html.escape(key)}">[{num}]</a></sup>')
 
     def _topic_link(name: str) -> str:
@@ -376,6 +374,11 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
   text-decoration: none !important; white-space: nowrap;
 }
 .fn-orig:hover { opacity: 0.85; }
+.fn-back {
+  font-size: 13px; color: var(--accent); text-decoration: none;
+  margin-right: 4px; font-weight: 700;
+}
+.fn-back:hover { text-decoration: underline; }
 .wiki-spacer { height: 8px; }
 .wiki-table {
   width: 100%; border-collapse: collapse; margin: 12px 0;
@@ -576,9 +579,21 @@ def _build_toc_html(toc: list[dict]) -> str:
     )
 
 
+def _utc_to_kst(ts: str) -> str:
+    if not ts:
+        return ""
+    try:
+        from datetime import datetime, timedelta, timezone
+        kst = timezone(timedelta(hours=9))
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return dt.astimezone(kst).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return ts[:16].replace("T", " ")
+
+
 def _build_infobox(topic: str, meta: dict) -> str:
     doc_count = len(meta.get("doc_ids") or [])
-    updated = (meta.get("updated") or "")[:16].replace("T", " ")
+    updated = _utc_to_kst(meta.get("updated") or "")
     claims = meta.get("claims", 0)
     return (
         '<div class="wiki-infobox">'
@@ -599,12 +614,14 @@ def _build_footnotes_html(footnotes: list[dict]) -> str:
         title = html.escape(fn["title"])
         url = fn.get("url", "")
         date = fn.get("date", "")
+        back = (f'<a href="#ref-{fn["id"]}" class="fn-back" '
+                f'title="본문으로 돌아가기">↑</a> ')
         if url:
-            link = (f'{title} '
+            link = (f'{back}{title} '
                     f'<a href="{html.escape(url)}" target="_blank" '
                     f'class="fn-orig">원본 →</a>')
         else:
-            link = title
+            link = f'{back}{title}'
         if date:
             link += f' <span class="fn-date">({html.escape(date)})</span>'
         items.append(f'<li id="fn-{fn["id"]}">{link}</li>')
