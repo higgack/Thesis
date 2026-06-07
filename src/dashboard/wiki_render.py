@@ -1,4 +1,4 @@
-"""Wikipedia / Namuwiki-style static HTML renderer for LLM Wiki pages.
+"""Wikipedia / Namuwiki-style static HTML renderer for Noah LLM Wiki pages.
 
 Reads wiki markdown pages from the Obsidian vault and wiki_index.json,
 renders them into clean static HTML under data/dashboard/<token>/wiki/.
@@ -633,7 +633,7 @@ def _head(title: str, extra_css: str = "") -> str:
         '<!DOCTYPE html><html lang="ko"><head>'
         '<meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"<title>{html.escape(title)} — LLM Wiki</title>"
+        f"<title>{html.escape(title)} — Noah LLM Wiki</title>"
         f"<style>{_WIKI_CSS}{extra_css}</style>"
         f"<script>{_THEME_JS}</script>"
         "</head>"
@@ -643,7 +643,7 @@ def _head(title: str, extra_css: str = "") -> str:
 def _topbar(token: str, current: str = "") -> str:
     return (
         '<div class="wiki-topbar">'
-        f'<a href="/{token}/wiki/" class="logo">LLM Wiki</a>'
+        f'<a href="/{token}/wiki/" class="logo">Noah LLM Wiki</a>'
         '<input type="text" id="wiki-search" class="wiki-search" '
         'placeholder="Search topics...">'
         f'<a href="/{token}/" class="nav-link">Q&A Archive</a>'
@@ -805,13 +805,14 @@ def _render_index_page(topics_data: list[dict], token: str,
     cards = []
     for td in topics_data:
         topic = td["topic"]
+        display = td.get("title") or topic
         excerpt = html.escape(td.get("excerpt", "")[:200])
         doc_count = td.get("docs", 0)
         updated = (td.get("updated") or "")[:10]
         cards.append(
             '<div class="wiki-card">'
             f'<h3><a href="{_topic_filename(topic)}">'
-            f"{html.escape(topic)}</a></h3>"
+            f"{html.escape(display)}</a></h3>"
             f'<div class="card-meta">'
             f"{doc_count} sources · {updated}</div>"
             f'<div class="card-excerpt">{excerpt}</div>'
@@ -819,11 +820,11 @@ def _render_index_page(topics_data: list[dict], token: str,
         )
 
     return (
-        f'{_head("LLM Wiki")}<body>'
+        f'{_head("Noah LLM Wiki")}<body>'
         f"{_topbar(token)}"
         '<div style="max-width:1200px;margin:0 auto;padding:24px 16px 80px">'
         "<h1 style=\"font:700 28px/1.3 -apple-system,sans-serif;"
-        "margin:0 0 20px\">LLM Wiki</h1>"
+        "margin:0 0 20px\">Noah LLM Wiki</h1>"
         f"{stats_html}"
         f'<div class="wiki-grid">{"".join(cards)}</div>'
         "</div>"
@@ -863,6 +864,16 @@ def render_wiki(token: str) -> int:
         except Exception:
             pass
 
+    # Build slug → original topic name reverse map for index lookup.
+    # Index keys are original names ("삼성전자"), file stems are slugs.
+    _slug_to_topic: dict[str, str] = {}
+    for topic_name, rec in idx.items():
+        if isinstance(rec, dict) and rec.get("file"):
+            stem = rec["file"].rsplit(".", 1)[0]
+            _slug_to_topic[stem] = topic_name
+        else:
+            _slug_to_topic[topic_name] = topic_name
+
     source_url_map: dict[str, str] = {}
     source_date_map: dict[str, str] = {}
     try:
@@ -895,7 +906,8 @@ def render_wiki(token: str) -> int:
         except Exception:
             continue
 
-        meta = idx.get(topic, {})
+        idx_key = _slug_to_topic.get(topic, topic)
+        meta = idx.get(idx_key, {})
         if not isinstance(meta, dict):
             meta = {}
 
@@ -918,6 +930,7 @@ def render_wiki(token: str) -> int:
 
         topics_data.append({
             "topic": topic,
+            "title": meta.get("title") or topic,
             "docs": doc_count,
             "updated": meta.get("updated", ""),
             "excerpt": excerpt,
