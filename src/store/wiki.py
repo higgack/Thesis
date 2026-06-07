@@ -703,26 +703,31 @@ def _save_alias(alias: str, canonical: str) -> None:
 
 _CJK_RE = re.compile(r"[一-鿿㐀-䶿]")
 
+# Values MUST match the actual canonical topic names in wiki_index.json,
+# otherwise a re-incoming CJK doc spawns a NEW page instead of routing to
+# the existing topic. (resolve_topic recurses on the value, so an alias
+# could mask a mismatch — but pinning the exact topic name here is the
+# robust guard and survives an alias-file wipe.)
 _CJK_TRANSLATE: dict[str, str] = {
-    "三一重工": "삼일중공업",
-    "中材科技": "시노마사이언스",
+    "三一重工": "싼이중공업",
+    "中材科技": "중재과기",
     "乘联会": "중국승용차협회",
     "分析": "분석",
     "南亞科": "난야테크놀로지",
-    "博通": "Broadcom",
+    "博通": "브로드컴",
     "台光電": "타이광전자",
     "台燿": "타이야오",
     "台积电": "TSMC", "台積": "TSMC", "台積電": "TSMC",
-    "廣達": "콴타컴퓨터",
+    "廣達": "콴타",
     "神達": "미탁",
     "慧榮科技": "실리콘모션",
     "緯穎": "위영",
-    "美银证券": "뱅크오브아메리카증권",
-    "群聯": "파이슨",
+    "美银证券": "BofA Securities",
+    "群聯": "Phison",
     "聯發科": "미디어텍",
     "華邦電": "윈본드",
-    "輝達": "NVIDIA",
-    "金居开发": "금거개발",
+    "輝達": "엔비디아",
+    "金居开发": "진쥐개발",
     "锂": "리튬",
 }
 
