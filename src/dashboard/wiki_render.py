@@ -24,15 +24,17 @@ log = logging.getLogger(__name__)
 
 def _md_to_html(md: str, topic_set: set[str] | None = None,
                 source_url_map: dict[str, str] | None = None,
+                source_date_map: dict[str, str] | None = None,
                 ) -> tuple[str, list[dict], list[dict]]:
     """Convert wiki markdown to HTML. Returns (html_str, toc_entries, footnotes).
     toc_entries: [{level, id, text}, ...] for TOC sidebar.
-    footnotes: [{id, title, url}, ...] for source footnotes."""
+    footnotes: [{id, title, url, date}, ...] for source footnotes."""
     lines = (md or "").split("\n")
     out: list[str] = []
     toc: list[dict] = []
     _topics = topic_set or set()
     _urls = source_url_map or {}
+    _dates = source_date_map or {}
     _footnotes: list[dict] = []
     _fn_seen: dict[str, int] = {}
     in_list = False
@@ -63,7 +65,8 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
             num = len(_footnotes) + 1
             _fn_seen[key] = num
             url = _urls.get(key, "")
-            _footnotes.append({"id": num, "title": key, "url": url})
+            date = _dates.get(key, "")
+            _footnotes.append({"id": num, "title": key, "url": url, "date": date})
         return (f'<sup class="wiki-fn"><a href="#fn-{num}" '
                 f'title="{html.escape(key)}">[{num}]</a></sup>')
 
@@ -327,6 +330,7 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
 }
 .wiki-footnotes li { margin: 4px 0; }
 .wiki-footnotes li:target { background: var(--highlight); }
+.fn-date { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .wiki-spacer { height: 8px; }
 .wiki-article p { margin: 6px 0; }
 
@@ -536,10 +540,13 @@ def _build_footnotes_html(footnotes: list[dict]) -> str:
     for fn in footnotes:
         title = html.escape(fn["title"])
         url = fn.get("url", "")
+        date = fn.get("date", "")
         if url:
             link = f'<a href="{html.escape(url)}" target="_blank">{title}</a>'
         else:
             link = title
+        if date:
+            link += f' <span class="fn-date">({html.escape(date)})</span>'
         items.append(f'<li id="fn-{fn["id"]}">{link}</li>')
     return (
         '<div class="wiki-footnotes">'
@@ -552,10 +559,12 @@ def _build_footnotes_html(footnotes: list[dict]) -> str:
 def _render_topic_page(topic: str, page_md: str, meta: dict,
                        token: str, all_topics: list[str],
                        source_url_map: dict[str, str] | None = None,
+                       source_date_map: dict[str, str] | None = None,
                        ) -> str:
     topic_set = set(all_topics) - {topic}
     body_html, toc, footnotes = _md_to_html(
         page_md, topic_set=topic_set, source_url_map=source_url_map,
+        source_date_map=source_date_map,
     )
     toc_html = _build_toc_html(toc)
     infobox = _build_infobox(topic, meta)
@@ -672,11 +681,13 @@ def render_wiki(token: str) -> int:
             pass
 
     source_url_map: dict[str, str] = {}
+    source_date_map: dict[str, str] = {}
     try:
         from ..store import meta as meta_store
         source_url_map = meta_store.title_url_map()
+        source_date_map = meta_store.title_date_map()
     except Exception:
-        log.debug("title_url_map unavailable; source links degraded")
+        log.debug("title_url_map/title_date_map unavailable; source links/dates degraded")
 
     target = Path(config.DATA_DIR) / "dashboard" / token / "wiki"
     target.mkdir(parents=True, exist_ok=True)
@@ -732,6 +743,7 @@ def render_wiki(token: str) -> int:
         page_html = _render_topic_page(
             topic, page_md, meta, token, all_topics,
             source_url_map=source_url_map,
+            source_date_map=source_date_map,
         )
         fname = target / _topic_filename(topic)
         fname.write_text(page_html, encoding="utf-8")

@@ -594,6 +594,34 @@ def title_url_map() -> dict[str, str]:
     return out
 
 
+def title_date_map() -> dict[str, str]:
+    """One-shot {title: date_str} for every document.
+    Prefers report_date from metadata JSON; falls back to ingested_at."""
+    import json as _json
+    out: dict[str, str] = {}
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT title, ingested_at, metadata FROM documents "
+            "ORDER BY ingested_at ASC"
+        ).fetchall()
+    for r in rows:
+        title = (r["title"] or "").strip()
+        if not title:
+            continue
+        date_str = ""
+        meta_raw = r["metadata"]
+        if meta_raw:
+            try:
+                md = _json.loads(meta_raw) if isinstance(meta_raw, str) else meta_raw
+                date_str = (md.get("report_date") or "").strip()
+            except Exception:
+                pass
+        if not date_str:
+            date_str = (r["ingested_at"] or "")[:10]
+        out[title] = date_str
+    return out
+
+
 def search_broad(substring: str, limit: int = 30) -> list[dict]:
     """Wider net than search_title — also looks in summary and metadata
     JSON (which holds company name + tags + report_date).
