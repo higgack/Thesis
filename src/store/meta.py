@@ -596,8 +596,10 @@ def title_url_map() -> dict[str, str]:
 
 def title_date_map() -> dict[str, dict]:
     """One-shot {title: {"date": str, "kind": "원본"|"학습"}} for every doc.
-    Prefers report_date (원본); falls back to ingested_at (학습)."""
+    Prefers report_date (원본); falls back to ingested_at (학습, KST)."""
     import json as _json
+    from datetime import timedelta
+    _KST = timedelta(hours=9)
     out: dict[str, dict] = {}
     with _conn() as c:
         rows = c.execute(
@@ -621,7 +623,12 @@ def title_date_map() -> dict[str, dict]:
             except Exception:
                 pass
         if not date_str:
-            date_str = (r["ingested_at"] or "")[:10]
+            raw_ts = r["ingested_at"] or ""
+            try:
+                utc_dt = datetime.fromisoformat(raw_ts)
+                date_str = (utc_dt + _KST).strftime("%Y-%m-%d")
+            except Exception:
+                date_str = raw_ts[:10]
         out[title] = {"date": date_str, "kind": kind}
     return out
 

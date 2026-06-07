@@ -35,6 +35,27 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
     _topics = topic_set or set()
     _urls = source_url_map or {}
     _dates = source_date_map or {}
+    _norm_url_idx: dict[str, str] = {}
+    _norm_date_idx: dict[str, str] = {}
+    for k in _urls:
+        _norm_url_idx[re.sub(r"[\s_\-]+", "", k).lower()] = k
+    for k in _dates:
+        _norm_date_idx[re.sub(r"[\s_\-]+", "", k).lower()] = k
+
+    def _fuzzy_get_url(key: str) -> str:
+        if key in _urls:
+            return _urls[key]
+        nk = re.sub(r"[\s_\-]+", "", key).lower()
+        orig = _norm_url_idx.get(nk)
+        return _urls[orig] if orig else ""
+
+    def _fuzzy_get_date(key: str) -> dict:
+        if key in _dates:
+            return _dates[key]
+        nk = re.sub(r"[\s_\-]+", "", key).lower()
+        orig = _norm_date_idx.get(nk)
+        return _dates[orig] if orig else {}
+
     _footnotes: list[dict] = []
     _fn_seen: dict[str, int] = {}
     in_list = False
@@ -64,8 +85,8 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
         if is_first:
             num = len(_footnotes) + 1
             _fn_seen[key] = num
-            url = _urls.get(key, "")
-            di = _dates.get(key, {})
+            url = _fuzzy_get_url(key)
+            di = _fuzzy_get_date(key)
             date = di.get("date", "") if isinstance(di, dict) else str(di)
             date_kind = di.get("kind", "학습") if isinstance(di, dict) else "학습"
             _footnotes.append({"id": num, "title": key, "url": url,
@@ -121,11 +142,16 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
             lambda m: _make_footnote(m.group(1)),
             t,
         )
-        t = re.sub(
-            r"\[\[(.+?)\]\]",
-            lambda m: _topic_link(m.group(1)),
-            t,
-        )
+        def _link_or_fn(m):
+            name = m.group(1)
+            clean = html.unescape(name)
+            if clean in _topics:
+                return _topic_link(clean)
+            nk = re.sub(r"[\s_\-]+", "", clean).lower()
+            if nk in _norm_date_idx or nk in _norm_url_idx:
+                return _make_footnote(clean)
+            return _topic_link(clean)
+        t = re.sub(r"\[\[(.+?)\]\]", _link_or_fn, t)
         _KO = re.compile(r"[가-힣]")
         _ALNUM = re.compile(r"[a-zA-Z0-9]")
         for topic in sorted(_topics, key=len, reverse=True):
