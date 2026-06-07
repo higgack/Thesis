@@ -63,7 +63,9 @@ def init() -> None:
 
 
 def _conn() -> sqlite3.Connection:
-    return sqlite3.connect(str(_DB_PATH))
+    c = sqlite3.connect(str(_DB_PATH), timeout=30)
+    c.execute("PRAGMA journal_mode=WAL")
+    return c
 
 
 def add_ocr(chat_id: int, doc_id: str, title: str, pdf_path: str,
