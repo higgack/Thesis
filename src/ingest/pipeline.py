@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .. import config
-from ..store import meta, vector, obsidian
+from ..store import meta, vector, obsidian, wiki
 from .chunker import split
 from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async, load_xlsx_async, ocr_image_async, transcribe_audio_async
 from .summarize import summarize, summarize_and_extract
@@ -655,6 +655,18 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
                     metadata=metadata or None, file_hash=file_hash,
                     body_hash=body_hash or None,
                     body_signature=body_signature or None)
+
+    # LLM Wiki (additive, dormant unless WIKI_ENABLED=1): queue this doc
+    # for the nightly synthesis batch. No LLM / network here — a cheap
+    # local append that self-guards on enabled() + swallows all errors,
+    # so it can NEVER slow or break ingest. See src/store/wiki.py.
+    try:
+        wiki.enqueue(doc_id=doc_id, title=title, summary=summary,
+                     doc_type=doc_type, source=source,
+                     metadata=metadata or None)
+    except Exception:
+        log.exception("wiki enqueue hook failed (ignored)")
+
     return {
         "status": "ok",
         "doc_id": doc_id,

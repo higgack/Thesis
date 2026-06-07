@@ -155,3 +155,39 @@ def _commit_push(relpath: str, title: str) -> None:
         _PUSH_DISABLED_UNTIL = time.time() + _PUSH_BACKOFF_SEC
         log.warning("git push failed (%s); pausing pushes %ds",
                     str(e)[:120], _PUSH_BACKOFF_SEC)
+
+
+async def commit_subtree(subdir: str, message: str) -> None:
+    """Commit (and push, if a remote is configured) everything under
+    <vault>/<subdir> in ONE commit with a custom message. Used by the LLM
+    Wiki nightly batch to version its pages — git gives the wiki free
+    version history + a one-command rollback. Reuses the same git lock and
+    push circuit-breaker as note writes, so a hung/unreachable remote can
+    never block the batch (the commit lands locally; a later push ships
+    the backlog)."""
+    if not enabled() or not (_VAULT / ".git").exists():
+        return
+    async with _GIT_LOCK:
+        await asyncio.to_thread(_commit_subtree_sync, subdir, message)
+
+
+def _commit_subtree_sync(subdir: str, message: str) -> None:
+    try:
+        _git("add", subdir)
+        _git("commit", "-m", message)
+    except subprocess.CalledProcessError as e:
+        # Most common path: nothing changed under the subtree → no commit.
+        log.debug("wiki subtree: nothing to commit (%s)", e.stderr)
+        return
+    except subprocess.TimeoutExpired:
+        log.warning("wiki subtree commit timed out")
+        return
+    global _PUSH_DISABLED_UNTIL
+    if not _REMOTE or time.time() < _PUSH_DISABLED_UNTIL:
+        return  # no remote, or push circuit-broken — commit stays local
+    try:
+        _git("push", "origin", "HEAD", timeout=20)
+    except Exception as e:
+        _PUSH_DISABLED_UNTIL = time.time() + _PUSH_BACKOFF_SEC
+        log.warning("wiki subtree push failed (%s); pausing pushes %ds",
+                    str(e)[:120], _PUSH_BACKOFF_SEC)

@@ -18,7 +18,7 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 
 from . import config
-from .store import meta, vector, obsidian, cost, qna, pending as pending_store
+from .store import meta, vector, obsidian, cost, qna, wiki, pending as pending_store
 from .store import pending_url_decisions
 from .ingest import pipeline
 from .agent import agent
@@ -1408,6 +1408,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
 
+📚 <b>위키(LLM Wiki)</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_off · /wiki_on
+
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
           /kipris_{search,pub,reg,inventor,status,family,claims,priority}
@@ -1443,15 +1445,15 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【9. 답변 품질】</b> 자료 시점 필수 · brain 재검색 의무 · web [도메인]·인용 [N] · 숫자 자동 audit · _verify (₩1/회)
 
-<b>【10. 운영】</b> VM n2-standard-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8 · concurrent_updates+HTTPX 32 · 영속(retry/failed/history/qna/cost/ocr_cache/chunk_cache/bubbles) · 메모리 5분(90%즉시 95%거부) · 60s call · 15분 ingest · 질문/명령＞학습 우선(ingest 양보)
+<b>【10. 운영】</b> VM n2-std-4(4vCPU/16GB) bot 12GB · Sem 8+batch 8 · concurrent+HTTPX 32 · 영속(retry/failed/history/qna/cost/캐시) · 메모리 5분(90/95%) · 60s call · 15분 ingest · 질문/명령＞학습
 
 <b>【10-1. 모델·단가】</b> 임베딩 gemini-embedding-001 · 요약/번역/Vision gemini-2.5-flash-lite (503→flash) · 답변 gemini-2.5-flash · /deep gemini-2.5-pro · ₩/1M Pro 1750/Flash 420/Lite 140/Embed 200 · 답변 캐시 1h(200건)
 
-<b>【10-2. 비용 절감】</b> 6단 dedup · 청크 1000 · Vision DPI 100 · OCR cap 0p · 청크/임베딩 캐시 · 메타 gating · 차단 도메인 · .txt/.md/.csv 제외 · failed URL skip
+<b>【10-2. 비용 절감】</b> 6단 dedup · 청크 1000 · Vision DPI 100 · OCR cap 0p · 청크/임베딩 캐시 · 메타 gating · 차단 도메인 · .txt/.md/.csv 제외
 
-<b>【10-3. Retry/무손실 재개】</b> 자동 1회→/failed(🔁수동·3회후 폐기) · in_flight_ts 디스크 → 배포/OOM/SIGKILL 자동 재개·atomic JSON+.bak
+<b>【10-3. Retry/무손실 재개】</b> 자동1회→/failed(🔁수동,3회후폐기) · in_flight_ts→배포/OOM/SIGKILL 자동재개·atomic+.bak
 
-<b>【11. 트러블슈팅】</b> 본문비어→차단 · 막힘→/queue_panic · BM25 30s · /reset · 비용→audio/Pro
+<b>【11. 트러블슈팅】</b> 본문비어→차단 · 막힘→/queue_panic · BM25 30s · /reset
 
 <b>【12. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS 14건 활용신청 + NTIS 5건 추가신청 승인 대기"""
 
@@ -1881,6 +1883,37 @@ NTIS 이슈로보는R&amp;D — 정부R&amp;D 한정 트렌드. ⏳ 승인 대�
 • Vision: flash-lite, DPI 100, OCR_AUTO_CAP=0
 • 답변 1h 캐시 (200건 LRU) · 번역 30k+ 자동 배치
 • 자동 dedup 6단 (source/URL/file_hash/text_hash/body_hash/title 정규화) → ₩0
+
+═══════════════════════════════════════
+<b>📚 13. LLM Wiki (지식 누적)</b>
+═══════════════════════════════════════
+
+RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wiki는 수집한
+자료를 <b>마크다운 위키 페이지로 통합·누적</b>해서, 같은 주제 질문에 어제
+정리한 내용 위에서 답하게 함. <b>RAG 대체가 아니라 그 위에 얹는 층</b>이고
+<b>기본 OFF</b>(WIKI_ENABLED=0) — 켜기 전엔 기존 동작 그대로.
+
+<b>⛔ 일일 비용 상한(가장 중요)</b>: WIKI_DAILY_BUDGET_KRW(기본 ₩2000, KST).
+오늘 위키 비용이 도달하면 <b>그날 머지 즉시 중단 + ack 알람</b>, 자료는 큐
+보존·다음날 0시 자동 재개. 0=무제한.
+
+<b>동작</b>
+• 수집 때: 큐에 적재만(LLM 0, 비용 0). 요약 600자(기본) 미만은 위키 제외.
+• 매일 새벽(기본 3시, KST) 야간 배치: 큐를 토픽별로 묶어 flash 1회 머지
+  → SecondBrain/Wiki/&lt;토픽&gt;.md → vault git 커밋. 머지마다 예산 체크.
+• 토픽 = 수집 때 추출된 회사/태그(무료). 모순은 <b>## ⚠️ 검토 필요</b> + 알람.
+
+<b>명령어</b>
+• <b>/wiki</b> 목록 · <b>/wiki &lt;토픽&gt;</b> 열람 · <b>/wiki_today</b> 마지막 배치
+• <b>/wiki_status</b> 상태·오늘 ₩·한도·큐 · <b>/wiki_run</b> 수동 실행
+• <b>/wiki_off · /wiki_on</b> 즉시 끄기/켜기(killswitch, 재배포 불필요)
+
+<b>켜는 법(점진)</b>: ①WIKI_ENABLED=1 재배포 → 며칠 /wiki_status·/wiki_today
+관찰 → ②신뢰되면 WIKI_QUERY_FIRST=1(답변에 합성 페이지 우선, 토큰↓).
+
+<b>비용/안전</b>: 추가 임베딩 0(라우팅 무료) · 머지만 과금하되 일일 ₩2000 상한 +
+25토픽/run 캡으로 이중 차단 · 비용 ↑이면 캡↓/게이트↑ · 원복: /wiki_off 또는
+WIKI_ENABLED=0(Chroma/meta.db 안 건드려 끄면 기존 RAG 그대로) · 상세 docs/WIKI.md
 """
 
 
@@ -11248,6 +11281,250 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
              (r or {}).get("status", "unknown"), title[:80])
 
 
+async def _wiki_batch_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Nightly LLM-Wiki synthesis (P1) + 'what it learned' digest (P4) +
+    contradiction ack-alert (P3) + daily-budget block alert. No-op unless
+    WIKI_ENABLED=1, so it's safe to register unconditionally. Fully
+    wrapped — a batch error can never crash the JobQueue loop or touch
+    the RAG corpus."""
+    if not wiki.enabled():
+        return
+    try:
+        summary = await wiki.run_batch()
+    except Exception:
+        log.exception("wiki batch job failed")
+        return
+    # Daily-budget breaker hit → actionable alert (fires regardless of
+    # whether any pages were produced this run). Stable notify_id dedups
+    # within the ack window and re-arms later (per notify_acks).
+    if summary.get("budget_blocked"):
+        try:
+            await _send_actionable_alert(
+                ctx, notify_id="wiki_daily_budget",
+                message=(
+                    f"⛔ <b>위키 일일 예산 초과</b>\n"
+                    f"오늘 위키 비용 ₩{summary.get('today_cost', 0):,.0f} ≥ "
+                    f"한도 ₩{summary.get('budget', 0):,.0f}\n"
+                    "오늘은 위키 머지를 중단했습니다(자료는 큐에 보존, 내일 "
+                    "KST 0시 자동 재개). 한도 조정: .env WIKI_DAILY_BUDGET_KRW "
+                    "· 상태 /wiki_status"))
+        except Exception:
+            log.exception("wiki budget alert failed")
+    if summary.get("status") != "ok" or not summary.get("pages"):
+        return
+    pages = summary.get("pages", 0)
+    docs = summary.get("docs", 0)
+    contradictions = summary.get("contradictions", 0)
+    remaining = summary.get("remaining_in_queue", 0)
+    updated = summary.get("updated_topics") or []
+    topics_line = ", ".join(html.escape(t) for t in updated[:12]) + (
+        "…" if len(updated) > 12 else "")
+    blocked_note = "\n⛔ (오늘 예산 도달로 일부 중단)" if summary.get("budget_blocked") else ""
+    digest = (
+        "📚 <b>위키 업데이트 (야간 배치)</b>\n"
+        f"• 갱신 페이지: {pages}개\n"
+        f"• 통합 자료: {docs}건\n"
+        f"• ⚠️ 모순 표시: {contradictions}건\n"
+        f"• 큐 잔여: {remaining}건"
+        f"{blocked_note}"
+        + (f"\n\n갱신: {topics_line}" if topics_line else "")
+        + "\n\n/wiki_today 자세히 · /wiki &lt;토픽&gt; 열람"
+    )
+    try:
+        await ctx.bot.send_message(
+            config.TELEGRAM_OWNER_ID, digest, parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    except Exception:
+        log.exception("wiki digest send failed")
+    # Contradictions warrant a deliberate look → actionable ack alert.
+    # notify_id is a CONTENT hash of the conflicting topic set (NOT a
+    # date — per the ack-store rule), so the same conflict set dedups
+    # while a new one re-fires.
+    ctopics = summary.get("contradiction_topics") or []
+    if contradictions > 0 and ctopics:
+        import hashlib
+        nid = "wiki_conflict_" + hashlib.sha1(
+            ",".join(sorted(ctopics)).encode()).hexdigest()[:10]
+        first = html.escape(ctopics[0])
+        msg = (
+            f"⚠️ <b>위키 모순 {contradictions}건</b> — 검토 필요\n"
+            f"토픽: {html.escape(', '.join(ctopics[:10]))}\n"
+            f"각 페이지의 <b>## ⚠️ 검토 필요</b> 섹션 확인. 예: <code>/wiki {first}</code>"
+        )
+        try:
+            await _send_actionable_alert(ctx, notify_id=nid, message=msg)
+        except Exception:
+            log.exception("wiki contradiction alert failed")
+
+
+async def cmd_wiki(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki [토픽] — 토픽 없으면 페이지 목록, 있으면 합성 위키 페이지
+    열람. 페이지는 마크다운이라 plain text로 전송."""
+    if not _is_owner(update):
+        return
+    arg = " ".join(ctx.args).strip() if ctx.args else ""
+    async with _SustainedTyping(update, ctx):
+        if not arg:
+            topics = wiki.list_topics()
+            if not topics:
+                await update.message.reply_text(
+                    "📚 위키 페이지가 아직 없습니다.\n"
+                    f"WIKI_ENABLED=1 로 켜고 자료가 쌓이면 매일 {config.WIKI_BATCH_HOUR}시"
+                    "(KST) 자동 생성됩니다. 지금 만들려면 /wiki_run."
+                )
+                return
+            lines = [f"📚 <b>위키 페이지 {len(topics)}개</b>  (/wiki &lt;토픽&gt;)"]
+            for t in topics[:60]:
+                upd = f", {t['updated'][:10]}" if t.get("updated") else ""
+                lines.append(f"• {html.escape(t['topic'])}  ({t['docs']}건{upd})")
+            await update.message.reply_text(
+                "\n".join(lines), parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            return
+        page = wiki.read_page(arg)
+        if not page:
+            await update.message.reply_text(
+                f"📚 '{arg}' 페이지 없음. /wiki 로 목록 확인."
+            )
+            return
+        for chunk in _split_for_telegram(page):
+            await update.message.reply_text(
+                chunk, disable_web_page_preview=True,
+            )
+
+
+async def cmd_wiki_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_today — 마지막 위키 배치 결과 요약."""
+    if not _is_owner(update):
+        return
+    lr = wiki.last_run()
+    if not lr:
+        await update.message.reply_text(
+            "아직 위키 배치 기록이 없습니다. /wiki_run 으로 수동 실행 가능."
+        )
+        return
+    if lr.get("status") == "budget_blocked" and not lr.get("pages"):
+        await update.message.reply_text(
+            f"⛔ 마지막 배치({(lr.get('started') or '')[:16]}): 일일 예산 "
+            f"₩{lr.get('budget', 0):,.0f} 초과로 시작 전 차단(오늘 ₩"
+            f"{lr.get('today_cost', 0):,.0f}). 내일 KST 0시 재개."
+        )
+        return
+    if lr.get("status") == "empty":
+        await update.message.reply_text(
+            f"마지막 배치({(lr.get('started') or '')[:16]}): "
+            "통합할 자료 없음(큐 비어있음)."
+        )
+        return
+    updated = lr.get("updated_topics") or []
+    errs = lr.get("errors") or []
+    blocked = "\n⛔ 오늘 예산 도달로 일부 중단" if lr.get("budget_blocked") else ""
+    body = (
+        "📚 <b>마지막 위키 배치</b>\n"
+        f"• 시각: {(lr.get('started') or '')[:16]}\n"
+        f"• 갱신 페이지: {lr.get('pages', 0)}개\n"
+        f"• 통합 자료: {lr.get('docs', 0)}건\n"
+        f"• ⚠️ 모순: {lr.get('contradictions', 0)}건\n"
+        f"• 큐 잔여: {lr.get('remaining_in_queue', 0)}건"
+        f"{blocked}"
+        + (f"\n\n갱신: {', '.join(html.escape(t) for t in updated[:15])}"
+           if updated else "")
+        + (f"\n\n⚠️ 실패 {len(errs)}건:\n"
+           + "\n".join(html.escape(e) for e in errs[:5]) if errs else "")
+    )
+    await update.message.reply_text(
+        body, parse_mode="HTML", disable_web_page_preview=True,
+    )
+
+
+async def cmd_wiki_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_status — 동작 상태 + 대기 큐 + 페이지 수 + 오늘/이번달 위키 비용."""
+    if not _is_owner(update):
+        return
+    on = wiki.enabled()
+    killed = wiki.is_disabled()
+    qn = wiki.queue_size()
+    pages = len(wiki.list_topics())
+    today_w = wiki.today_cost_krw()
+    budget = config.WIKI_DAILY_BUDGET_KRW
+    over = budget > 0 and today_w >= budget
+    mtd = cost.month_to_date_krw()
+    w = mtd.get("by_purpose", {}).get("wiki", {})
+    body = (
+        "📚 <b>LLM Wiki 상태</b>\n"
+        f"• 동작: {'🟢 ON' if on else '⚪️ OFF'}  "
+        f"(WIKI_ENABLED={'1' if config.WIKI_ENABLED else '0'}"
+        f", 질의우선={'1' if config.WIKI_QUERY_FIRST else '0'}"
+        f"{', ⛔킬스위치' if killed else ''})\n"
+        f"• 머지 모델: {html.escape(config.WIKI_MERGE_MODEL)}\n"
+        f"• 대기 큐: {qn}건 · 위키 페이지: {pages}개\n"
+        f"• 오늘 위키 비용: ₩{today_w:,.0f} / 한도 ₩{budget:,.0f}"
+        f"{' ⛔초과·오늘 중단' if over else ''}\n"
+        f"• 이번달 위키 비용: ₩{w.get('cost', 0.0):,.1f}  ({w.get('calls', 0)}콜)\n"
+        f"• 배치: 매일 {config.WIKI_BATCH_HOUR}시(KST) · 캡 "
+        f"{config.WIKI_MAX_TOPICS_PER_RUN}토픽×{config.WIKI_MAX_DOCS_PER_TOPIC}건\n"
+        "\n/wiki_run 지금 실행 · /wiki_off 끄기 · /wiki_on 켜기"
+    )
+    await update.message.reply_text(
+        body, parse_mode="HTML", disable_web_page_preview=True,
+    )
+
+
+async def cmd_wiki_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_run — 야간 배치를 지금 수동 실행(테스트/즉시 반영용)."""
+    if not _is_owner(update):
+        return
+    if not wiki.enabled():
+        await update.message.reply_text(
+            "위키가 꺼져 있습니다. .env WIKI_ENABLED=1 (+재배포) 후 사용하거나, "
+            "killswitch 상태면 /wiki_on. (지금은 자료가 큐에만 쌓입니다.)"
+        )
+        return
+    async with _SustainedTyping(update, ctx):
+        await update.message.reply_text("📚 위키 배치 실행 중…")
+        try:
+            summary = await wiki.run_batch()
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ 배치 실패: {type(e).__name__}: {e}")
+            return
+    if summary.get("status") == "budget_blocked" and not summary.get("pages"):
+        await update.message.reply_text(
+            f"⛔ 오늘 위키 비용 ₩{summary.get('today_cost', 0):,.0f} ≥ 한도 "
+            f"₩{summary.get('budget', 0):,.0f} — 차단됨. 내일 재개 또는 "
+            ".env WIKI_DAILY_BUDGET_KRW 조정."
+        )
+        return
+    note = " ⛔예산도달로 일부중단" if summary.get("budget_blocked") else ""
+    await update.message.reply_text(
+        f"완료 · 페이지 {summary.get('pages', 0)} · 자료 {summary.get('docs', 0)} · "
+        f"모순 {summary.get('contradictions', 0)} · 큐잔여 "
+        f"{summary.get('remaining_in_queue', 0)}{note}\n/wiki_today 자세히"
+    )
+
+
+async def cmd_wiki_off(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_off — 런타임 킬스위치(재배포 없이 즉시 중지). 큐 적재·야간
+    배치·질의우선 전부 멈춤. 기존 페이지/코퍼스는 그대로. /wiki_on 해제."""
+    if not _is_owner(update):
+        return
+    wiki.set_disabled(True)
+    await update.message.reply_text(
+        "⛔ 위키 즉시 중지(killswitch). 큐 적재·야간 배치·질의우선 모두 정지. "
+        "기존 위키 페이지와 RAG 코퍼스는 그대로. 해제: /wiki_on"
+    )
+
+
+async def cmd_wiki_on(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_on — 킬스위치 해제(WIKI_ENABLED=1 일 때만 실제 동작)."""
+    if not _is_owner(update):
+        return
+    wiki.set_disabled(False)
+    state = "🟢 동작" if wiki.enabled() else "⚪️ 여전히 OFF (WIKI_ENABLED=0)"
+    await update.message.reply_text(f"킬스위치 해제. 현재: {state}")
+
+
 def main():
     if len(_HELP_TEXT) > _TG_MSG_LIMIT:
         log.warning(
@@ -11258,6 +11535,7 @@ def main():
         )
     meta.init()
     obsidian.init()
+    wiki.init()
     pending_store.init()
     # Larger pool + parallel update processing so /status, /queue, etc.
     # never queue behind a slow ingest's ⏳ edit. concurrent_updates=True
@@ -11419,6 +11697,12 @@ def main():
     app.add_handler(CommandHandler("web_search", cmd_web_search))
     app.add_handler(CommandHandler("ingest_url", cmd_ingest_url))
     app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("wiki", cmd_wiki))
+    app.add_handler(CommandHandler("wiki_today", cmd_wiki_today))
+    app.add_handler(CommandHandler("wiki_status", cmd_wiki_status))
+    app.add_handler(CommandHandler("wiki_run", cmd_wiki_run))
+    app.add_handler(CommandHandler("wiki_off", cmd_wiki_off))
+    app.add_handler(CommandHandler("wiki_on", cmd_wiki_on))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
     app.add_handler(MessageHandler(
@@ -11484,6 +11768,30 @@ def main():
             interval=3600,
             first=600,
             name="resend_unacked_alerts",
+        )
+        # Daily LLM-Wiki synthesis batch (P1/P3/P4). Registered always;
+        # the callback no-ops unless WIKI_ENABLED=1, so toggling the env
+        # never requires re-wiring jobs. Uses run_repeating(24h) with
+        # `first` anchored to the next WIKI_BATCH_HOUR KST — recomputed on
+        # every boot so an auto-deploy can't drift it into peak hours, and
+        # it matches this block's run_repeating idiom (sidesteps
+        # run_daily's tz-aware-time edge cases).
+        from datetime import timezone as _tz
+        _kst = _tz(timedelta(hours=9))
+        try:
+            _wiki_hour = max(0, min(23, int(config.WIKI_BATCH_HOUR)))
+        except Exception:
+            _wiki_hour = 3
+        _now_kst = datetime.now(_kst)
+        _next_wiki = _now_kst.replace(hour=_wiki_hour, minute=0,
+                                      second=0, microsecond=0)
+        if _next_wiki <= _now_kst:
+            _next_wiki += timedelta(days=1)
+        app.job_queue.run_repeating(
+            _wiki_batch_job,
+            interval=24 * 3600,
+            first=(_next_wiki - _now_kst).total_seconds(),
+            name="wiki_batch",
         )
         # Hourly: check yt-dlp health (24h rolling failure rate). If
         # rate ≥ 70% over ≥ 5 attempts, fire an actionable alert.

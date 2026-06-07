@@ -158,6 +158,28 @@ async def search_my_brain(query: str, k: int = 10) -> dict:
         }
         item.update(_analyst_meta(doc))
         out.append(item)
+
+    # P2 (wiki-first): when the LLM-Wiki has a synthesized page that
+    # confidently matches this query, lead with it so the agent answers
+    # from accumulated, cross-referenced knowledge instead of only
+    # re-retrieved chunks (the whole point of the wiki pattern). This is
+    # purely ADDITIVE — wiki_context() returns None unless WIKI_QUERY_FIRST
+    # is on AND a page name matches, so retrieval recall is never reduced;
+    # at worst nothing changes. Self-guarded so it can't break a query.
+    try:
+        from ..store import wiki
+        wctx = wiki.wiki_context(query, max_chars=2500)
+        if wctx:
+            out.insert(0, {
+                "doc_id": f"wiki:{wctx['topic']}",
+                "title": f"📚 종합 위키: {wctx['topic']}",
+                "type": "wiki",
+                "kind": "wiki",
+                "snippet": wctx["text"],
+            })
+            out = out[:k]
+    except Exception:
+        pass
     return {"hits": out, "count": len(out), "variants": variants}
 
 

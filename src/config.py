@@ -44,3 +44,32 @@ TOP_K = 10
 SUMMARY_MAX_TOKENS = 1000
 HINT_SUMMARY_MIN_CHARS = 200
 HINT_SUMMARY_MAX_CHARS = 2000
+
+# ── LLM Wiki (P1–P5): additive synthesis/accumulation layer ──────────
+# DORMANT BY DEFAULT. With WIKI_ENABLED=0 the wiki layer is completely
+# inert — no enqueue, no nightly merge, no query-first — so the system
+# behaves byte-for-byte as before. See docs/WIKI.md for the cost model,
+# risk table, rollback runbook, and usage guide.
+WIKI_ENABLED = os.getenv("WIKI_ENABLED", "0") == "1"
+# Answer path (P2): lead Q&A with the synthesized page. Separate, stricter
+# gate so pages can be built + reviewed before they influence answers.
+WIKI_QUERY_FIRST = os.getenv("WIKI_QUERY_FIRST", "0") == "1"
+# Merge model — flash by default (NOT pro). Every merge is tagged
+# purpose="wiki" so /usage + cost.db isolate the wiki's real spend.
+WIKI_MERGE_MODEL = os.getenv("WIKI_MERGE_MODEL", ANSWER_MODEL)
+# Nightly batch hour (KST, 0–23). Off-peak so it never competes with ingest.
+WIKI_BATCH_HOUR = int(os.getenv("WIKI_BATCH_HOUR", "3"))
+# Importance gate: docs whose summary is shorter than this are archived as
+# notes but NOT wiki-merged (keeps low-signal forwards from spending tokens).
+WIKI_MIN_SUMMARY_CHARS = int(os.getenv("WIKI_MIN_SUMMARY_CHARS", "600"))
+# Per-run cost caps.
+WIKI_MAX_TOPICS_PER_RUN = int(os.getenv("WIKI_MAX_TOPICS_PER_RUN", "25"))
+WIKI_MAX_DOCS_PER_TOPIC = int(os.getenv("WIKI_MAX_DOCS_PER_TOPIC", "6"))
+WIKI_MAX_PAGE_CHARS = int(os.getenv("WIKI_MAX_PAGE_CHARS", "6000"))
+WIKI_DOC_SUMMARY_CHARS = int(os.getenv("WIKI_DOC_SUMMARY_CHARS", "1200"))
+WIKI_MERGE_MAX_TOKENS = int(os.getenv("WIKI_MERGE_MAX_TOKENS", "3000"))
+WIKI_BATCH_THROTTLE_SEC = float(os.getenv("WIKI_BATCH_THROTTLE_SEC", "1.0"))
+# Daily spend circuit breaker (KST). When today's wiki cost reaches this
+# many ₩, the batch BLOCKS for the rest of the KST day and fires an
+# actionable alert; queued docs resume next day. 0 = no cap.
+WIKI_DAILY_BUDGET_KRW = float(os.getenv("WIKI_DAILY_BUDGET_KRW", "2000"))
