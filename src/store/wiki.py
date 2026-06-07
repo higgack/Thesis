@@ -1318,12 +1318,17 @@ async def run_batch() -> dict:
         _atomic_write_json(_LASTRUN_PATH, summary)
         return summary
 
-    # Group queued docs by topic.
+    # Group queued docs by topic (resolve aliases so merged/renamed
+    # topics land under the canonical name, not as orphan duplicates).
     by_topic: dict[str, list[dict]] = {}
     for it in q:
         if not isinstance(it, dict):
             continue
-        by_topic.setdefault(it.get("topic") or "기타", []).append(it)
+        raw = it.get("topic") or "기타"
+        resolved = resolve_topic(raw) if raw != "기타" else raw
+        if resolved != raw:
+            it["topic"] = resolved
+        by_topic.setdefault(resolved, []).append(it)
 
     max_topics = int(_flag("WIKI_MAX_TOPICS_PER_RUN", 25))
     max_docs = int(_flag("WIKI_MAX_DOCS_PER_TOPIC", 12))
@@ -1425,8 +1430,17 @@ async def run_batch() -> dict:
         if throttle > 0:
             await asyncio.sleep(throttle)
 
-    # Commit the updated wiki subtree to the vault git repo (versioning +
-    # one-command rollback). Reuses obsidian's lock + push circuit-breaker.
+    # Final queue cleanup: pre-filter may mark doc_ids as processed
+    # (already-merged / 기타) without entering the chunk loop.
+    if processed_doc_ids:
+        final_q = _load_json(_QUEUE_PATH, [])
+        if isinstance(final_q, list):
+            remaining = [it for it in final_q
+                         if isinstance(it, dict)
+                         and it.get("doc_id") not in processed_doc_ids]
+            if len(remaining) < len(final_q):
+                _atomic_write_json(_QUEUE_PATH, remaining)
+
     pages_ok = sum(1 for r in results if r.get("ok"))
     if pages_ok:
         try:
