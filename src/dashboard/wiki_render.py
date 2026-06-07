@@ -248,6 +248,19 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
             out.append('<div class="wiki-spacer"></div>')
             continue
 
+        if len(stripped) > 300:
+            sentences = re.split(r"(?<=다)\.\s+", stripped)
+            if len(sentences) <= 1:
+                sentences = re.split(r"(?<=\.)\s+", stripped)
+            if len(sentences) > 1:
+                for s in sentences:
+                    s = s.strip()
+                    if s:
+                        if not s.endswith(".") and not s.endswith("다"):
+                            s += "."
+                        out.append(f"<p>{_inline(s)}</p>")
+                continue
+
         out.append(f"<p>{_inline(stripped)}</p>")
 
     _flush_bq()
