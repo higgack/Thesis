@@ -836,7 +836,7 @@ def _render_index_page(topics_data: list[dict], token: str,
     total_docs = wiki_stats.get("docs", 0)
     queue = wiki_stats.get("queue", 0)
     today_cost = wiki_stats.get("today_cost", 0)
-    budget = wiki_stats.get("budget", 2000)
+    budget = wiki_stats.get("budget", 1000)
     month_cost = wiki_stats.get("month_cost", 0)
     total_cost = wiki_stats.get("total_cost", 0)
 
@@ -1035,7 +1035,7 @@ def render_wiki(token: str) -> int:
             pass
 
     today_cost = 0.0
-    budget = 2000.0
+    budget = 1000.0
     month_cost = 0.0
     total_cost = 0.0
     try:

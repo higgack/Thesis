@@ -167,7 +167,7 @@ def budget_krw() -> float:
     override = _read_temp_budget()
     if override is not None:
         return override
-    return float(_flag("WIKI_DAILY_BUDGET_KRW", 2000))
+    return float(_flag("WIKI_DAILY_BUDGET_KRW", 1000))
 
 
 def _read_temp_budget() -> float | None:
