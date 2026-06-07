@@ -11752,13 +11752,18 @@ async def cmd_wiki_split(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if res.get("error"):
         await update.message.reply_text(f"⚠️ {res['error']}")
         return
-    await update.message.reply_text(
-        f"✅ 「{topic}」 해체 완료\n"
-        f"• 원본 자료: {res['docs']}건\n"
-        f"• 개별 토픽으로 재적재: {res['re_enqueued']}건\n"
-        f"• 파일 삭제: {'예' if res['file_deleted'] else '아니오'}\n"
-        f"다음 배치(/wiki_run)에서 각 회사 페이지로 머지됩니다."
-    )
+    note = res.get("note")
+    lines = [
+        f"✅ 「{topic}」 해체 완료",
+        f"• 원본 자료: {res['docs']}건",
+        f"• 개별 토픽으로 재적재: {res['re_enqueued']}건",
+        f"• 파일 삭제: {'예' if res['file_deleted'] else '아니오'}",
+    ]
+    if note:
+        lines.append(f"ℹ️ {note}")
+    else:
+        lines.append("다음 배치(/wiki_run)에서 각 회사 페이지로 머지됩니다.")
+    await update.message.reply_text("\n".join(lines))
 
 
 async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):

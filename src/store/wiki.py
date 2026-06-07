@@ -377,6 +377,12 @@ def decompose_merged_topic(topic: str) -> dict:
                 actual_key = k
                 break
     if not actual_key:
+        p = _page_path(topic)
+        if p and p.exists():
+            p.unlink()
+            return {"decomposed": topic, "docs": 0,
+                    "re_enqueued": 0, "file_deleted": True,
+                    "note": "인덱스 없음 — 파일만 삭제됨 (재큐잉 불가)"}
         candidates = list_mergeable_topics()
         hint = ""
         if candidates:
