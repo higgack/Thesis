@@ -80,6 +80,7 @@ _QUEUE_PATH = config.DATA_DIR / "wiki_queue.json"
 _INDEX_PATH = config.DATA_DIR / "wiki_index.json"
 _LASTRUN_PATH = config.DATA_DIR / "wiki_last_run.json"
 _FAILED_PATH = config.DATA_DIR / "wiki_failed.json"
+_ALIASES_PATH = config.DATA_DIR / "wiki_aliases.json"
 _KILL_PATH = config.DATA_DIR / "wiki_disabled"
 
 
@@ -260,19 +261,21 @@ def _split_multi_topic(raw: str) -> list[str]:
 
 def topics_for(metadata: dict | None, title: str) -> list[str]:
     """Return a LIST of wiki topics for a doc. Multi-company docs get
-    routed to multiple pages (one queue entry per company)."""
+    routed to multiple pages (one queue entry per company).
+    Each topic is resolved against existing index + aliases so
+    'Broadcom Inc' → 'Broadcom', 'Samsung Electronics' → '삼성전자' etc."""
     md = metadata or {}
     company = (md.get("company") or "").strip()
     if company:
         split = _split_multi_topic(company)
         if len(split) >= 2:
-            return split
-        return [company]
+            return [resolve_topic(t) for t in split]
+        return [resolve_topic(company)]
     tags = md.get("tags") or []
     if isinstance(tags, list):
         for t in tags:
             if isinstance(t, str) and t.strip():
-                return [t.strip()]
+                return [resolve_topic(t.strip())]
     return ["기타"]
 
 
@@ -566,6 +569,212 @@ def decompose_merged_topic(topic: str) -> dict:
 
     return {"decomposed": topic, "docs": len(doc_ids),
             "re_enqueued": enqueued, "file_deleted": deleted_file}
+
+
+# ----------------------------------------------------------------------
+# Dedup — alias system + detect & merge near-duplicate topics
+# ----------------------------------------------------------------------
+
+_CORP_SUFFIXES = re.compile(
+    r"\s*\b(inc|corp|corporation|ltd|limited|co|company|llc|plc|ag|sa|se"
+    r"|group|holdings|주식회사|㈜)\b\.?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _dedup_key(name: str) -> str:
+    """Normalize a topic name for duplicate detection."""
+    k = _CORP_SUFFIXES.sub("", name).strip()
+    k = re.sub(r"[\s_\-·]+", "", k).lower()
+    return k
+
+
+def _load_aliases() -> dict[str, str]:
+    """Load alias map: {alias_name → canonical_topic}."""
+    d = _load_json(_ALIASES_PATH, {})
+    return d if isinstance(d, dict) else {}
+
+
+def _save_alias(alias: str, canonical: str) -> None:
+    """Record an alias so future ingests auto-route."""
+    aliases = _load_aliases()
+    aliases[alias] = canonical
+    _atomic_write_json(_ALIASES_PATH, aliases)
+
+
+def resolve_topic(proposed: str) -> str:
+    """Map a proposed topic name to an existing canonical topic.
+    Checked at ingest time so duplicates are prevented, not just detected.
+    Order: exact alias → dedup-key match → substring match → passthrough."""
+    # 1) Exact alias hit (covers Korean↔English pairs set by merge)
+    aliases = _load_aliases()
+    if proposed in aliases:
+        return aliases[proposed]
+
+    # 2) Dedup-key match against existing index topics
+    idx = _load_json(_INDEX_PATH, {})
+    if not isinstance(idx, dict):
+        return proposed
+    pk = _dedup_key(proposed)
+    if not pk:
+        return proposed
+    for existing in idx:
+        if _dedup_key(existing) == pk:
+            if existing != proposed:
+                return existing
+            return proposed
+
+    # 3) Substring containment (proposed is part of existing or vice versa)
+    for existing in idx:
+        ek = _dedup_key(existing)
+        if not ek:
+            continue
+        if pk in ek or ek in pk:
+            return existing
+
+    return proposed
+
+
+def find_duplicates() -> list[tuple[str, str, int, int]]:
+    """Return pairs of topics that look like duplicates.
+    Each tuple: (topic_a, topic_b, docs_a, docs_b).
+    Sorted by total doc count descending (most impactful first)."""
+    idx = _load_json(_INDEX_PATH, {})
+    if not isinstance(idx, dict):
+        return []
+    by_key: dict[str, list[str]] = {}
+    for topic in idx:
+        key = _dedup_key(topic)
+        if not key:
+            continue
+        by_key.setdefault(key, []).append(topic)
+
+    # Also catch substring containment: "Broadcom" vs "Broadcom Semiconductors"
+    topics = list(idx.keys())
+    for i, a in enumerate(topics):
+        ka = _dedup_key(a)
+        if not ka:
+            continue
+        for b in topics[i + 1:]:
+            kb = _dedup_key(b)
+            if not kb:
+                continue
+            if ka == kb:
+                continue
+            if ka in kb or kb in ka:
+                merged_key = min(ka, kb)
+                existing = by_key.get(merged_key, [])
+                for t in [a, b]:
+                    if t not in existing:
+                        existing.append(t)
+                by_key[merged_key] = existing
+
+    # Also surface alias-linked topics that both still exist in index
+    aliases = _load_aliases()
+    for alias, canonical in aliases.items():
+        if alias in idx and canonical in idx and alias != canonical:
+            pair_key_str = min(alias, canonical)
+            existing = by_key.get(pair_key_str, [])
+            for t in [canonical, alias]:
+                if t not in existing:
+                    existing.append(t)
+            by_key[pair_key_str] = existing
+
+    pairs: list[tuple[str, str, int, int]] = []
+    seen: set[tuple[str, str]] = set()
+    for group in by_key.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda t: len((idx.get(t) or {}).get("doc_ids") or []),
+                   reverse=True)
+        primary = group[0]
+        for other in group[1:]:
+            pair_key = tuple(sorted([primary, other]))
+            if pair_key in seen:
+                continue
+            seen.add(pair_key)
+            da = len((idx.get(primary) or {}).get("doc_ids") or [])
+            db = len((idx.get(other) or {}).get("doc_ids") or [])
+            pairs.append((primary, other, da, db))
+
+    pairs.sort(key=lambda x: x[2] + x[3], reverse=True)
+    return pairs
+
+
+def merge_topics(keep: str, absorb: str) -> dict:
+    """Merge topic *absorb* into *keep*: combine doc_ids, re-enqueue
+    absorbed docs for re-synthesis, delete absorbed page & index entry,
+    and record an alias so future ingests auto-route to *keep*."""
+    idx = _load_json(_INDEX_PATH, {})
+    if not isinstance(idx, dict):
+        idx = {}
+    if keep not in idx:
+        return {"error": f"토픽 '{keep}' 인덱스에 없음"}
+    if absorb not in idx:
+        return {"error": f"토픽 '{absorb}' 인덱스에 없음"}
+
+    rec_keep = idx[keep]
+    rec_absorb = idx[absorb]
+
+    keep_ids = set(rec_keep.get("doc_ids") or [])
+    absorb_ids = set(rec_absorb.get("doc_ids") or [])
+    new_ids = absorb_ids - keep_ids
+
+    merged_ids = sorted(keep_ids | absorb_ids)
+    rec_keep["doc_ids"] = merged_ids
+    rec_keep["updated"] = _now_kst_iso()
+    rec_keep["claims"] = (rec_keep.get("claims") or 0) + (rec_absorb.get("claims") or 0)
+
+    del idx[absorb]
+    _atomic_write_json(_INDEX_PATH, idx)
+
+    # Record alias so future ingests auto-route (한영 쌍 포함)
+    _save_alias(absorb, keep)
+
+    p = _page_path(absorb)
+    deleted_file = False
+    if p and p.exists():
+        try:
+            p.unlink()
+            deleted_file = True
+        except Exception:
+            pass
+
+    q = _load_json(_QUEUE_PATH, [])
+    if not isinstance(q, list):
+        q = []
+    queued_keys = {(it.get("doc_id"), it.get("topic"))
+                   for it in q if isinstance(it, dict)}
+    from . import meta
+    enqueued = 0
+    for doc_id in new_ids:
+        if (doc_id, keep) in queued_keys:
+            continue
+        try:
+            d = meta.get_doc(doc_id)
+        except Exception:
+            continue
+        if not d:
+            continue
+        summary = (d.get("summary") or "").strip()
+        q.append({
+            "doc_id": doc_id,
+            "title": d.get("title") or "",
+            "summary": summary,
+            "doc_type": d.get("type") or "",
+            "source": d.get("source") or "",
+            "topic": keep,
+            "ts": _now_kst_iso(),
+        })
+        enqueued += 1
+    _atomic_write_json(_QUEUE_PATH, q)
+
+    return {
+        "keep": keep, "absorbed": absorb,
+        "docs_merged": len(merged_ids),
+        "new_enqueued": enqueued,
+        "file_deleted": deleted_file,
+    }
 
 
 def backfill(docs: list[dict]) -> dict:

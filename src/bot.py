@@ -1410,7 +1410,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
 
-📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_drain · /wiki_split · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on
+📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
@@ -1912,6 +1912,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki_status</b> 상태·오늘 ₩·한도·큐 · <b>/wiki_run</b> 수동 실행
 • <b>/wiki_drain [한도=20000]</b> 오늘만 임시 예산 올려서 큐 최대 소진(내일 자동 복귀 ₩2000)
 • <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
+• <b>/wiki_dedup [merge 유지 :: 흡수]</b> 유사 중복 토픽 감지(Inc/Corp/주식회사 등 접미사·부분문자열 매칭) — 인자 없이 후보 목록, merge로 병합
 • <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 야간 캡 내 분산 처리)
 • <b>/wiki_pending</b> 큐 대기 현황(토픽별 문서 수)
 • <b>/wiki_failed [clear|retry 토픽]</b> 머지 실패 목록 — 3회 연속 실패 시 큐에서 분리, 재시도/삭제 가능
@@ -11895,6 +11896,47 @@ async def cmd_wiki_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
+async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_dedup [merge <유지> :: <흡수>] — 유사 토픽 감지 + 병합."""
+    if not _is_owner(update):
+        return
+    args_raw = " ".join(ctx.args or []).strip()
+
+    if args_raw.lower().startswith("merge "):
+        parts = args_raw[6:].split("::")
+        if len(parts) != 2:
+            await update.message.reply_text(
+                "사용법: /wiki_dedup merge <유지할 토픽> :: <흡수할 토픽>")
+            return
+        keep, absorb = parts[0].strip(), parts[1].strip()
+        if not keep or not absorb:
+            await update.message.reply_text(
+                "사용법: /wiki_dedup merge <유지할 토픽> :: <흡수할 토픽>")
+            return
+        res = wiki.merge_topics(keep, absorb)
+        if res.get("error"):
+            await update.message.reply_text(f"⚠️ {res['error']}")
+        else:
+            await update.message.reply_text(
+                f"✅ '{res['absorbed']}' → '{res['keep']}' 병합 완료\n"
+                f"총 문서: {res['docs_merged']}개 · "
+                f"재큐잉: {res['new_enqueued']}건 · "
+                f"파일삭제: {'✓' if res['file_deleted'] else '✗'}")
+        return
+
+    pairs = wiki.find_duplicates()
+    if not pairs:
+        await update.message.reply_text("✅ 유사 중복 토픽 없음")
+        return
+    lines = [f"🔍 <b>유사 중복 토픽 후보: {len(pairs)}쌍</b>\n"]
+    for i, (a, b, da, db) in enumerate(pairs[:30], 1):
+        lines.append(f"{i}. <b>{a}</b> ({da}건) ↔ <b>{b}</b> ({db}건)")
+    lines.append(
+        "\n병합: /wiki_dedup merge 유지토픽 :: 흡수토픽"
+        "\n예: /wiki_dedup merge Broadcom :: Broadcom Inc")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
 def main():
     if len(_HELP_TEXT) > _TG_MSG_LIMIT:
         log.warning(
@@ -12078,6 +12120,7 @@ def main():
     app.add_handler(CommandHandler("wiki_on", cmd_wiki_on))
     app.add_handler(CommandHandler("wiki_drain", cmd_wiki_drain))
     app.add_handler(CommandHandler("wiki_split", cmd_wiki_split))
+    app.add_handler(CommandHandler("wiki_dedup", cmd_wiki_dedup))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
     app.add_handler(MessageHandler(
