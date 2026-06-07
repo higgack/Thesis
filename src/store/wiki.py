@@ -883,7 +883,7 @@ async def run_batch() -> dict:
         by_topic.setdefault(it.get("topic") or "기타", []).append(it)
 
     max_topics = int(_flag("WIKI_MAX_TOPICS_PER_RUN", 25))
-    max_docs = int(_flag("WIKI_MAX_DOCS_PER_TOPIC", 6))
+    max_docs = int(_flag("WIKI_MAX_DOCS_PER_TOPIC", 12))
     throttle = float(_flag("WIKI_BATCH_THROTTLE_SEC", 1.0))
 
     # Stable order: biggest topics first so a capped run does the most
@@ -903,16 +903,23 @@ async def run_batch() -> dict:
     for topic, docs in topics:
         if runs >= max_topics:
             break
-        # Spend accrues during the run — stop the moment we cross the daily
-        # cap so we never blow far past it (overshoot ≤ one merge, ~₩13).
         if budget > 0 and today_cost_krw() >= budget:
             budget_hit = True
             log.warning("wiki batch budget hit mid-run at ₩%.0f/%.0f — "
                         "stopping (%d topics left queued)",
                         today_cost_krw(), budget, len(topics) - runs)
             break
+        # Pre-filter: skip docs already merged into this topic's page
+        existing_ids = set((idx.get(topic) or {}).get("doc_ids") or [])
+        new_docs = [d for d in docs
+                    if d.get("doc_id") not in existing_ids]
+        if not new_docs:
+            # All docs already in page — remove from queue silently
+            processed_doc_ids.update(d.get("doc_id") for d in docs)
+            log.info("wiki skip %s: all %d docs already merged", topic, len(docs))
+            continue
         runs += 1
-        use_docs = docs[:max_docs]
+        use_docs = new_docs[:max_docs]
         res = await _merge_topic(topic, use_docs)
         results.append(res)
         if res.get("ok"):
