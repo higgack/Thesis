@@ -9785,6 +9785,12 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
             )
         elif results:
             final_text = _format_results(results)
+            # Channel auto-forwards that are purely duplicates: suppress
+            # the "♻️ 이미 있음" notification silently (delete the bubble).
+            if (final_text.strip()
+                    and notify_chat_id != msg.chat_id
+                    and all(r.get("status") == "duplicate" for r in results)):
+                final_text = ""
             if not final_text.strip():
                 # All results were silently handled (blocked host /
                 # skipped format) → _format_results returns "". Editing
