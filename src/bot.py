@@ -6,7 +6,9 @@ import os
 import re
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+_KST = timezone(timedelta(hours=9))
 from pathlib import Path
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -4883,7 +4885,7 @@ def _retry_item_to_failed_entry(item: dict, reason: str) -> dict:
         "status": "error",
         "title": title,
         "detail": reason[:200],
-        "ts": datetime.utcnow().isoformat(),
+        "ts": datetime.now(_KST).strftime("%Y-%m-%d %H:%M:%S"),
         "failed_cycles": 1,
         "file_size": file_size,
         "retry": payload,
@@ -10260,7 +10262,7 @@ def _record_failure(status: str, title: str, detail: str = "",
         "status": status,
         "title": (title or "(unknown)")[:140],
         "detail": (detail or "")[:200],
-        "ts": datetime.utcnow().isoformat(),
+        "ts": datetime.now(_KST).strftime("%Y-%m-%d %H:%M:%S"),
         "failed_cycles": new_cycles,
     }
     # Record file size if available so /failed can sort smallest-first.

@@ -593,8 +593,8 @@ def _system_for_today() -> str:
     the model anchor on an old report (2024-ish) and produce charts
     with 2023A as the base year even when the actual current year
     was 2026, defeating the whole windowing logic."""
-    from datetime import datetime
-    now = datetime.utcnow()
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone(timedelta(hours=9)))
     year = now.year
     quarter = (now.month - 1) // 3 + 1
     header = (
