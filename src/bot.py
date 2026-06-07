@@ -11715,10 +11715,34 @@ async def cmd_wiki_split(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             lines = "\n".join(f"  • {c}" for c in candidates[:30])
             await update.message.reply_text(
                 f"분리 가능 토픽 {len(candidates)}개:\n{lines}\n\n"
-                "사용법: /wiki_split <토픽명>"
+                "/wiki_split <토픽명> 또는 /wiki_split all"
             )
         else:
             await update.message.reply_text("분리 가능한 합쳐진 토픽이 없습니다.")
+        return
+    if topic.lower() in ("all", "전체"):
+        candidates = wiki.list_mergeable_topics()
+        if not candidates:
+            await update.message.reply_text("분리 가능한 합쳐진 토픽이 없습니다.")
+            return
+        results = []
+        for c in candidates:
+            try:
+                r = wiki.decompose_merged_topic(c)
+                results.append((c, r))
+            except Exception as e:
+                results.append((c, {"error": str(e)}))
+        ok = [(t, r) for t, r in results if not r.get("error")]
+        fail = [(t, r) for t, r in results if r.get("error")]
+        msg = f"✅ {len(ok)}개 해체 완료"
+        if ok:
+            msg += "\n" + "\n".join(
+                f"  • {t}: 자료 {r['docs']}건 → 재적재 {r['re_enqueued']}건"
+                for t, r in ok)
+        if fail:
+            msg += f"\n⚠️ {len(fail)}개 실패"
+        msg += "\n\n/wiki_run 으로 각 회사 페이지 머지"
+        await update.message.reply_text(msg)
         return
     try:
         res = wiki.decompose_merged_topic(topic)
