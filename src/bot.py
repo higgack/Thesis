@@ -2385,6 +2385,10 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"\n⏱ 마지막 응답: {last_str}"
             + mem_line + cleanup_line
         )
+        if wiki.enabled():
+            wiki_q = wiki.queue_size()
+            wiki_blocked = " ⛔예산초과" if wiki.budget_exceeded() else ""
+            out += f"\n📚 위키: 큐 {wiki_q:,}건{wiki_blocked}"
         await update.message.reply_text(out)
 
 
@@ -2419,7 +2423,7 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         by_purpose = today.get("by_purpose", {})
         purpose_lines = []
         for tag, label in (("ingest", "📥 ingest"), ("query", "💬 query"),
-                           ("unknown", "❓ unknown")):
+                           ("wiki", "📚 wiki"), ("unknown", "❓ unknown")):
             if tag in by_purpose:
                 d = by_purpose[tag]
                 purpose_lines.append(
@@ -2483,6 +2487,19 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"\n\n🔁 retry 큐: {queue_len}건"
             f"\n❌ failed 누적: {failed_len}건"
         )
+        # Wiki status snippet
+        if wiki.enabled():
+            wiki_today = wiki.today_cost_krw()
+            wiki_budget = wiki.budget_krw()
+            wiki_q = wiki.queue_size()
+            wiki_pages = len(wiki.list_topics())
+            out += (
+                f"\n\n📚 위키"
+                f"\n  페이지: {wiki_pages}개 · 큐: {wiki_q:,}건"
+                f"\n  오늘 비용: ₩{wiki_today:,.0f} / ₩{wiki_budget:,.0f}"
+            )
+            if wiki.budget_exceeded():
+                out += " ⛔초과"
         await update.message.reply_text(out)
 
 
@@ -2516,6 +2533,7 @@ async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         purpose_lines = []
         for label, key in (("ingest 학습", "ingest"),
                            ("query 답변", "query"),
+                           ("wiki 합성", "wiki"),
                            ("기타", "unknown")):
             info = by_purpose.get(key) or {}
             krw = info.get("cost") or 0.0
