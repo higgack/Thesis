@@ -678,6 +678,8 @@ def _render_index_page(topics_data: list[dict], token: str,
     queue = wiki_stats.get("queue", 0)
     today_cost = wiki_stats.get("today_cost", 0)
     budget = wiki_stats.get("budget", 2000)
+    month_cost = wiki_stats.get("month_cost", 0)
+    total_cost = wiki_stats.get("total_cost", 0)
 
     stats_html = (
         '<div class="wiki-stats">'
@@ -693,6 +695,12 @@ def _render_index_page(topics_data: list[dict], token: str,
         '<div class="wiki-stat-item">'
         f'<div class="stat-value">{today_cost:,.0f}/{budget:,.0f}</div>'
         '<div class="stat-label">Today (KRW)</div></div>'
+        '<div class="wiki-stat-item">'
+        f'<div class="stat-value">₩{month_cost:,.0f}</div>'
+        '<div class="stat-label">This Month</div></div>'
+        '<div class="wiki-stat-item">'
+        f'<div class="stat-value">₩{total_cost:,.0f}</div>'
+        '<div class="stat-label">Total</div></div>'
         "</div>"
     )
 
@@ -839,10 +847,14 @@ def render_wiki(token: str) -> int:
 
     today_cost = 0.0
     budget = 2000.0
+    month_cost = 0.0
+    total_cost = 0.0
     try:
         from ..store import wiki as wiki_store
         today_cost = wiki_store.today_cost_krw()
         budget = wiki_store.budget_krw()
+        month_cost = wiki_store.month_cost_krw()
+        total_cost = wiki_store.total_cost_krw()
     except Exception:
         pass
 
@@ -852,6 +864,8 @@ def render_wiki(token: str) -> int:
         "queue": queue_size,
         "today_cost": today_cost,
         "budget": budget,
+        "month_cost": month_cost,
+        "total_cost": total_cost,
     }
 
     index_html = _render_index_page(topics_data, token, wiki_stats)

@@ -216,6 +216,11 @@ def month_to_date_krw() -> dict:
     return out
 
 
+def all_time_krw() -> dict:
+    """All-time cumulative cost breakdown."""
+    return _since("2000-01-01T00:00:00")
+
+
 def daily_breakdown(days: int = 7) -> list[dict]:
     """Per-day KRW totals for the last `days` KST days (newest first).
 

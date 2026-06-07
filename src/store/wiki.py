@@ -139,6 +139,22 @@ def today_cost_krw() -> float:
         return 0.0
 
 
+def month_cost_krw() -> float:
+    try:
+        return float(cost.month_to_date_krw().get("by_purpose", {})
+                     .get("wiki", {}).get("cost", 0.0))
+    except Exception:
+        return 0.0
+
+
+def total_cost_krw() -> float:
+    try:
+        return float(cost.all_time_krw().get("by_purpose", {})
+                     .get("wiki", {}).get("cost", 0.0))
+    except Exception:
+        return 0.0
+
+
 def budget_krw() -> float:
     return float(_flag("WIKI_DAILY_BUDGET_KRW", 2000))
 
