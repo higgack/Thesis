@@ -786,7 +786,7 @@ def _kst_hhmm(ts_iso: str) -> str:
         return ts_iso[11:16]
 
 
-def _render_index(rows: list[dict], stats: dict) -> str:
+def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
     grouped: dict[str, list[dict]] = {}
     for r in rows:
         day = _kst_day(r.get("ts") or "")
@@ -1059,7 +1059,7 @@ def regenerate() -> None:
         # half-written page.
         idx = target / "index.html"
         tmp = target / "index.html.tmp"
-        tmp.write_text(_render_index(rows, stats), encoding="utf-8")
+        tmp.write_text(_render_index(rows, stats, token=token), encoding="utf-8")
         os.replace(tmp, idx)
         # Detail pages: full rebuild only on first run after (re)start;
         # afterwards just the ids whose file is missing (new Q&As).
