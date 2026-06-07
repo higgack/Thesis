@@ -628,7 +628,7 @@ _FENCE_RE = re.compile(r"^\s*```(?:markdown)?\s*\n(.*)\n```\s*$", re.DOTALL)
 
 
 def _build_merge_user(topic: str, existing: str, docs: list[dict]) -> str:
-    max_page_chars = int(_flag("WIKI_MAX_PAGE_CHARS", 6000))
+    max_page_chars = int(_flag("WIKI_MAX_PAGE_CHARS", 20000))
     existing_block = (existing or "").strip()
     if len(existing_block) > max_page_chars:
         existing_block = existing_block[:max_page_chars] + "\n…(이하 생략)"
@@ -689,7 +689,7 @@ async def _merge_topic(topic: str, docs: list[dict]) -> dict:
     existing = read_page(topic) or ""
     user = _build_merge_user(topic, existing, docs)
     model = _flag("WIKI_MERGE_MODEL", None) or config.ANSWER_MODEL
-    max_tokens = int(_flag("WIKI_MERGE_MAX_TOKENS", 3000))
+    max_tokens = int(_flag("WIKI_MERGE_MAX_TOKENS", 8000))
     try:
         raw = await complete(
             model=model,
