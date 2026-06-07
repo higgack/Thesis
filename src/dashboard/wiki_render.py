@@ -24,11 +24,11 @@ log = logging.getLogger(__name__)
 
 def _md_to_html(md: str, topic_set: set[str] | None = None,
                 source_url_map: dict[str, str] | None = None,
-                source_date_map: dict[str, str] | None = None,
+                source_date_map: dict[str, dict] | None = None,
                 ) -> tuple[str, list[dict], list[dict]]:
     """Convert wiki markdown to HTML. Returns (html_str, toc_entries, footnotes).
     toc_entries: [{level, id, text}, ...] for TOC sidebar.
-    footnotes: [{id, title, url, date}, ...] for source footnotes."""
+    footnotes: [{id, title, url, date, date_kind}, ...] for source footnotes."""
     lines = (md or "").split("\n")
     out: list[str] = []
     toc: list[dict] = []
@@ -59,13 +59,17 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
     def _make_footnote(title: str) -> str:
         """Register a source and return a superscript footnote link."""
         key = html.unescape(title.strip())
+        key = re.sub(r"^자료\s*\d+\]\s*", "", key)
         is_first = key not in _fn_seen
         if is_first:
             num = len(_footnotes) + 1
             _fn_seen[key] = num
             url = _urls.get(key, "")
-            date = _dates.get(key, "")
-            _footnotes.append({"id": num, "title": key, "url": url, "date": date})
+            di = _dates.get(key, {})
+            date = di.get("date", "") if isinstance(di, dict) else str(di)
+            date_kind = di.get("kind", "학습") if isinstance(di, dict) else "학습"
+            _footnotes.append({"id": num, "title": key, "url": url,
+                               "date": date, "date_kind": date_kind})
         else:
             num = _fn_seen[key]
         ref_id = f' id="ref-{num}"' if is_first else ""
@@ -80,6 +84,18 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
                     f'class="wiki-internal">{html.escape(clean)}</a>')
         return html.escape(clean)
 
+    def _split_sources(raw: str) -> list[str]:
+        """Split '[[A]], [[B]]' into ['A', 'B'].
+        Handles source titles containing ] or [ characters."""
+        raw = raw.strip()
+        if not raw:
+            return []
+        parts = re.split(r"\]\]\s*,\s*\[\[", raw)
+        if parts:
+            parts[0] = re.sub(r"^\[\[", "", parts[0])
+            parts[-1] = re.sub(r"\]\]\s*$", "", parts[-1])
+        return [p.strip() for p in parts if p.strip()]
+
     def _inline(text: str) -> str:
         t = html.escape(text)
         t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
@@ -88,17 +104,20 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
         t = re.sub(
             r"\(출처:\s*(.+?)\)",
             lambda m: "".join(
-                _make_footnote(s)
-                for s in re.findall(r"\[\[(.+?)\]\]", m.group(1))
+                _make_footnote(s) for s in _split_sources(m.group(1))
             ) or m.group(0),
             t,
         )
         t = re.sub(
             r"—\s*출처:\s*(.+)",
             lambda m: "".join(
-                _make_footnote(s)
-                for s in re.findall(r"\[\[(.+?)\]\]", m.group(1))
+                _make_footnote(s) for s in _split_sources(m.group(1))
             ) or m.group(0),
+            t,
+        )
+        t = re.sub(
+            r"\]\]\s*,\s*\[\[",
+            "]], [[",
             t,
         )
         t = re.sub(
@@ -623,7 +642,8 @@ def _build_footnotes_html(footnotes: list[dict]) -> str:
         else:
             link = f'{back}{title}'
         if date:
-            link += f' <span class="fn-date">({html.escape(date)})</span>'
+            date_kind = fn.get("date_kind", "학습")
+            link += f' <span class="fn-date">({html.escape(date)} {date_kind})</span>'
         items.append(f'<li id="fn-{fn["id"]}">{link}</li>')
     return (
         '<div class="wiki-footnotes">'

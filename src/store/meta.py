@@ -594,11 +594,11 @@ def title_url_map() -> dict[str, str]:
     return out
 
 
-def title_date_map() -> dict[str, str]:
-    """One-shot {title: date_str} for every document.
-    Prefers report_date from metadata JSON; falls back to ingested_at."""
+def title_date_map() -> dict[str, dict]:
+    """One-shot {title: {"date": str, "kind": "원본"|"학습"}} for every doc.
+    Prefers report_date (원본); falls back to ingested_at (학습)."""
     import json as _json
-    out: dict[str, str] = {}
+    out: dict[str, dict] = {}
     with _conn() as c:
         rows = c.execute(
             "SELECT title, ingested_at, metadata FROM documents "
@@ -609,16 +609,20 @@ def title_date_map() -> dict[str, str]:
         if not title:
             continue
         date_str = ""
+        kind = "학습"
         meta_raw = r["metadata"]
         if meta_raw:
             try:
                 md = _json.loads(meta_raw) if isinstance(meta_raw, str) else meta_raw
-                date_str = (md.get("report_date") or "").strip()
+                rd = (md.get("report_date") or "").strip()
+                if rd:
+                    date_str = rd
+                    kind = "원본"
             except Exception:
                 pass
         if not date_str:
             date_str = (r["ingested_at"] or "")[:10]
-        out[title] = date_str
+        out[title] = {"date": date_str, "kind": kind}
     return out
 
 
