@@ -337,32 +337,26 @@ def _wikied_doc_ids() -> set:
     return ids
 
 
-def _looks_merged(topic: str) -> bool:
-    """Heuristic: does this topic look like multiple entities jammed into
-    one? True: '삼성전자 SK하이닉스'. False: 'Applied Materials'."""
-    _ko_re = re.compile(r"[가-힣]")
-    parts = _split_multi_topic(topic)
-    if len(parts) < 2:
-        return False
-    ko_parts = [p for p in parts if _ko_re.search(p)]
-    return len(ko_parts) >= 2
-
-
 def list_mergeable_topics() -> list[str]:
-    """Return topic names that look like multi-company merges."""
+    """Return topic names that look like multi-company merges.
+    Cross-checks against the index: a topic is 'merged' only when ≥2
+    of its split parts already exist as standalone topics."""
     idx = _load_json(_INDEX_PATH, {})
     if not isinstance(idx, dict):
         idx = {}
-    candidates: set[str] = set()
-    for topic in idx:
-        if _looks_merged(topic):
-            candidates.add(topic)
+    all_topics = set(idx.keys())
     d = _wiki_dir()
     if d and d.exists():
         for p in d.glob("*.md"):
-            stem = p.stem
-            if stem not in idx and _looks_merged(stem):
-                candidates.add(stem)
+            all_topics.add(p.stem)
+    candidates: set[str] = set()
+    for topic in all_topics:
+        parts = _split_multi_topic(topic)
+        if len(parts) < 2:
+            continue
+        hits = sum(1 for p in parts if p in all_topics and p != topic)
+        if hits >= 2:
+            candidates.add(topic)
     return sorted(candidates)
 
 
