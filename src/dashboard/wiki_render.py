@@ -49,13 +49,22 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
     def _prefix_search(nk: str, norm_idx: dict[str, str]) -> str | None:
         if len(nk) < 8:
             return None
+        best: tuple[int, str] | None = None
         for nk_title, orig_title in norm_idx.items():
             if len(nk_title) < 8:
                 continue
             short, long = (nk, nk_title) if len(nk) <= len(nk_title) else (nk_title, nk)
-            if long.startswith(short) and len(short) / len(long) >= 0.7:
-                return orig_title
-        return None
+            # Prefix match with relaxed ratio
+            if long.startswith(short) and len(short) / len(long) >= 0.3:
+                score = len(short)
+                if best is None or score > best[0]:
+                    best = (score, orig_title)
+            # Contains match: footnote title is a substring of a doc title
+            elif len(nk) >= 10 and nk in nk_title:
+                score = len(nk)
+                if best is None or score > best[0]:
+                    best = (score, orig_title)
+        return best[1] if best else None
 
     def _fuzzy_get_url(key: str) -> str:
         if key in _urls:
