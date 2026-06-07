@@ -261,15 +261,15 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
             out.append('<div class="wiki-spacer"></div>')
             continue
 
-        if len(stripped) > 300:
-            sentences = re.split(r"(?<=다)\.\s+", stripped)
+        if len(stripped) > 200:
+            sentences = re.split(r"(?<=[다됨음임])\.(?:\s+|(?=[A-Z가-힣]))", stripped)
             if len(sentences) <= 1:
                 sentences = re.split(r"(?<=\.)\s+", stripped)
             if len(sentences) > 1:
                 for s in sentences:
                     s = s.strip()
                     if s:
-                        if not s.endswith(".") and not s.endswith("다"):
+                        if not re.search(r"[.다됨음임]$", s):
                             s += "."
                         out.append(f"<p>{_inline(s)}</p>")
                 continue
@@ -302,15 +302,15 @@ _WIKI_CSS = """
   --header-border: #a2a9b1;
 }
 [data-theme="dark"] {
-  --bg: #101418; --panel: #1a1e24; --panel-alt: #22272e;
-  --border: #444c56; --border-light: #30363d;
-  --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
-  --link: #58a6ff; --link-visited: #a5d6ff;
-  --toc-bg: #161b22; --toc-border: #30363d;
-  --bq-bg: #161b22; --bq-border: #58a6ff;
-  --code-bg: #161b22;
-  --highlight: #2d333b;
-  --shadow: 0 1px 3px rgba(0,0,0,0.4);
+  --bg: #0d1117; --panel: #161b22; --panel-alt: #1c2128;
+  --border: #3d444d; --border-light: #2d333b;
+  --text: #f0f3f6; --muted: #9da5b0; --accent: #6cb6ff;
+  --link: #6cb6ff; --link-visited: #b8d4f0;
+  --toc-bg: #131920; --toc-border: #2d333b;
+  --bq-bg: #131920; --bq-border: #6cb6ff;
+  --code-bg: #131920;
+  --highlight: #263040;
+  --shadow: 0 1px 4px rgba(0,0,0,0.5);
 }
 * { box-sizing: border-box; }
 body {
@@ -456,7 +456,7 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
   background: var(--panel-alt); font-weight: 600;
 }
 .wiki-table tr:hover td { background: var(--highlight); }
-.wiki-article p { margin: 6px 0; }
+.wiki-article p { margin: 8px 0; line-height: 1.8; }
 
 /* ── Table of Contents ────────────────────── */
 .wiki-toc {
@@ -510,6 +510,9 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
 .wiki-card:hover {
   border-color: var(--accent);
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+[data-theme="dark"] .wiki-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
 }
 .wiki-card h3 { margin: 0 0 6px 0; font-size: 17px; }
 .wiki-card h3 a { color: var(--text); }
