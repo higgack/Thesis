@@ -11880,7 +11880,8 @@ async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"📚 백필({scope}) 큐 적재 완료\n"
         f"• 적재: {res['enqueued']}건 (대상 {res['total']}건 중)\n"
         f"• 건너뜀: 이미위키 {res['skipped_wikied']} · 큐중복 "
-        f"{res['skipped_queued']} · 짧음 {res['skipped_gate']}\n"
+        f"{res['skipped_queued']} · 짧음/기타 {res['skipped_gate']} · "
+        f"실패제외 {res.get('skipped_failed', 0)}\n"
         f"• 적재 비용 ₩0 — 야간 배치가 ₩{budget:,}/일 캡 내에서 며칠~몇 주에 "
         f"걸쳐 처리(추정 일회성 ~₩{res['enqueued']:,}, 문서당 ~₩1).\n"
         f"지금 한 묶음 바로 처리하려면 /wiki_run · 상태 /wiki_status"
@@ -11923,7 +11924,9 @@ async def cmd_wiki_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if res.get("error"):
             await update.message.reply_text(f"⚠️ {res['error']}")
         else:
-            await update.message.reply_text(f"🔄 '{topic}' 재시도 대기열 복귀")
+            await update.message.reply_text(
+                f"🔄 '{topic}' {res.get('requeued', 0)}건 큐 복귀 — "
+                f"다음 배치(/wiki_run)에서 재시도")
         return
 
     failed = wiki.wiki_failed()
