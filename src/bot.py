@@ -1410,7 +1410,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
 
-📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on
+📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
@@ -1913,6 +1913,8 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki_drain [한도=20000]</b> 오늘만 임시 예산 올려서 큐 최대 소진(내일 자동 복귀 ₩1000)
 • <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
 • <b>/wiki_dedup [merge A :: B | merge_all]</b> 유사 중복 토픽 감지(접미사 정규화·부분문자열) — 목록 확인 후 개별/전체 병합
+• <b>/wiki_rename &lt;옛이름&gt; :: &lt;새이름&gt;</b> 토픽명 변경(인덱스+파일+큐+alias 일괄)
+• <b>/wiki_delete &lt;토픽&gt;</b> 토픽 완전 삭제(인덱스+페이지+큐)
 • <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 야간 캡 내 분산 처리)
 • <b>/wiki_pending</b> 큐 대기 현황(토픽별 문서 수)
 • <b>/wiki_failed [clear|retry 토픽]</b> 머지 실패 목록 — 3회 연속 실패 시 큐에서 분리, 재시도/삭제 가능
@@ -11797,6 +11799,51 @@ async def cmd_wiki_split(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines))
 
 
+async def cmd_wiki_rename(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_rename <옛이름> :: <새이름> — 위키 토픽 이름 변경 + alias 저장."""
+    if not _is_owner(update):
+        return
+    text = " ".join(ctx.args).strip() if ctx.args else ""
+    if "::" not in text:
+        await update.message.reply_text("사용법: /wiki_rename <옛이름> :: <새이름>")
+        return
+    old, new = [s.strip() for s in text.split("::", 1)]
+    if not old or not new:
+        await update.message.reply_text("사용법: /wiki_rename <옛이름> :: <새이름>")
+        return
+    res = wiki.rename_topic(old, new)
+    if res.get("error"):
+        await update.message.reply_text(f"⚠️ {res['error']}")
+        return
+    await update.message.reply_text(
+        f"✅ '{old}' → '{new}'\n"
+        f"큐 재매핑: {res.get('remapped_queue', 0)}건\n"
+        f"alias 저장 (향후 '{old}' → '{new}' 자동 라우팅)"
+    )
+
+
+async def cmd_wiki_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_delete <토픽> — 위키 토픽 완전 삭제 (인덱스+페이지+큐)."""
+    if not _is_owner(update):
+        return
+    topic = " ".join(ctx.args).strip() if ctx.args else ""
+    if not topic:
+        await update.message.reply_text("사용법: /wiki_delete <토픽명>")
+        return
+    res = wiki.delete_topic(topic)
+    if res.get("error"):
+        await update.message.reply_text(f"⚠️ {res['error']}")
+        return
+    parts = [f"🗑 '{topic}' 삭제 완료"]
+    if res.get("deleted_file"):
+        parts.append("  • .md 파일 삭제")
+    if res.get("had_index"):
+        parts.append("  • 인덱스 제거")
+    if res.get("removed_queue", 0):
+        parts.append(f"  • 큐 {res['removed_queue']}건 제거")
+    await update.message.reply_text("\n".join(parts))
+
+
 async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_backfill [개월=6|all] — 기존 자료(meta.db)를 위키 큐에 적재.
     적재 자체는 ₩0; 실제 머지는 야간 배치가 일일 예산 캡 내에서 처리하므로
@@ -12129,6 +12176,8 @@ def main():
     app.add_handler(CommandHandler("wiki_on", cmd_wiki_on))
     app.add_handler(CommandHandler("wiki_drain", cmd_wiki_drain))
     app.add_handler(CommandHandler("wiki_split", cmd_wiki_split))
+    app.add_handler(CommandHandler("wiki_rename", cmd_wiki_rename))
+    app.add_handler(CommandHandler("wiki_delete", cmd_wiki_delete))
     app.add_handler(CommandHandler("wiki_dedup", cmd_wiki_dedup))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
