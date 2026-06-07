@@ -126,6 +126,8 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
             lambda m: _topic_link(m.group(1)),
             t,
         )
+        _KO = re.compile(r"[가-힣]")
+        _ALNUM = re.compile(r"[a-zA-Z0-9]")
         for topic in sorted(_topics, key=len, reverse=True):
             if len(topic) < 2:
                 continue
@@ -144,11 +146,22 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
                     elif part == "</a>":
                         in_anchor = False
                     continue
-                if not in_anchor and escaped in part:
-                    link = (f'<a href="{_topic_filename(topic)}" '
-                            f'class="wiki-internal">{escaped}</a>')
-                    parts[i] = part.replace(escaped, link, 1)
-                    replaced = True
+                if in_anchor:
+                    continue
+                idx = part.find(escaped)
+                if idx < 0:
+                    continue
+                before = part[idx - 1] if idx > 0 else ""
+                after_idx = idx + len(escaped)
+                after = part[after_idx] if after_idx < len(part) else ""
+                if _KO.match(before):
+                    continue
+                if _ALNUM.match(before) or _ALNUM.match(after):
+                    continue
+                link = (f'<a href="{_topic_filename(topic)}" '
+                        f'class="wiki-internal">{escaped}</a>')
+                parts[i] = part[:idx] + link + part[after_idx:]
+                replaced = True
             if replaced:
                 t = "".join(parts)
         return t
