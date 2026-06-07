@@ -11898,9 +11898,8 @@ def main():
         # phone notification, otherwise the call fails silently and
         # the user just doesn't get the alarm. Safe to leave in code
         # — the run_date check below auto-skips when already past.
-        from datetime import datetime, timezone, timedelta
-        ban_release_at = datetime(2026, 5, 14, 7, 40, 0, tzinfo=timezone.utc)
-        if ban_release_at > datetime.now(timezone.utc):
+        ban_release_at = datetime(2026, 5, 14, 7, 40, 0, tzinfo=_tz.utc)
+        if ban_release_at > datetime.now(_tz.utc):
             async def _ban_release_notify(_ctx):
                 try:
                     await app.bot.send_message(
