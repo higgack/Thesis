@@ -671,21 +671,15 @@ def _build_toc_html(toc: list[dict]) -> str:
     )
 
 
-def _utc_to_kst(ts: str) -> str:
+def _format_ts(ts: str) -> str:
     if not ts:
         return ""
-    try:
-        from datetime import datetime, timedelta, timezone
-        kst = timezone(timedelta(hours=9))
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        return dt.astimezone(kst).strftime("%Y-%m-%d %H:%M")
-    except Exception:
-        return ts[:16].replace("T", " ")
+    return ts[:16].replace("T", " ")
 
 
 def _build_infobox(topic: str, meta: dict) -> str:
     doc_count = len(meta.get("doc_ids") or [])
-    updated = _utc_to_kst(meta.get("updated") or "")
+    updated = _format_ts(meta.get("updated") or "")
     claims = meta.get("claims", 0)
     return (
         '<div class="wiki-infobox">'

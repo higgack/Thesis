@@ -53,10 +53,16 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .. import config
+
+_KST = timezone(timedelta(hours=9))
+
+
+def _now_kst_iso() -> str:
+    return datetime.now(_KST).strftime("%Y-%m-%d %H:%M:%S")
 from . import cost, obsidian
 
 log = logging.getLogger(__name__)
@@ -731,7 +737,7 @@ async def run_batch() -> dict:
     safe (the queue is rewritten after every topic, so a crash — or a
     budget block — leaves only unprocessed topics behind). Returns a
     summary used for the Telegram digest + contradiction/budget alerts."""
-    started = datetime.utcnow().isoformat(timespec="seconds")
+    started = _now_kst_iso()
     if not enabled():
         return {"status": "disabled", "started": started}
 
@@ -809,7 +815,7 @@ async def run_batch() -> dict:
                 "file": f"{_slug(topic)}.md",
                 "title": topic,
                 "doc_ids": sorted(seen),
-                "updated": datetime.utcnow().isoformat(timespec="seconds"),
+                "updated": _now_kst_iso(),
                 "claims": rec.get("claims", 0) + res.get("docs", 0),
             })
             idx[topic] = rec
@@ -840,7 +846,7 @@ async def run_batch() -> dict:
             await obsidian.commit_subtree(
                 "SecondBrain/Wiki",
                 f"wiki: {pages_ok} pages, {len(processed_doc_ids)} docs "
-                f"({datetime.utcnow().date().isoformat()})",
+                f"({datetime.now(_KST).strftime('%Y-%m-%d')})",
             )
         except Exception:
             log.exception("wiki git commit failed (pages still saved locally)")
@@ -848,7 +854,7 @@ async def run_batch() -> dict:
     summary = {
         "status": "ok",
         "started": started,
-        "finished": datetime.utcnow().isoformat(timespec="seconds"),
+        "finished": _now_kst_iso(),
         "topics": runs,
         "pages": pages_ok,
         "docs": len(processed_doc_ids),
