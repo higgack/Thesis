@@ -1018,27 +1018,28 @@ def rename_topic(old_name: str, new_name: str) -> dict:
     idx = _load_json(_INDEX_PATH, {})
     if not isinstance(idx, dict):
         return {"error": "인덱스 로드 실패"}
-    if old_name not in idx:
-        return {"error": f"토픽 '{old_name}' 인덱스에 없음"}
-    if new_name in idx:
+
+    in_index = old_name in idx
+    if in_index and new_name in idx:
         return {"error": f"토픽 '{new_name}' 이미 존재 — /wiki_dedup merge 사용"}
 
-    rec = idx.pop(old_name)
-    new_file = f"{_slug(new_name)}.md"
-    old_path = _page_path(old_name)
-    rec["file"] = new_file
-    rec["title"] = new_name
-    idx[new_name] = rec
-    _atomic_write_json(_INDEX_PATH, idx)
-
     renamed_file = False
-    d = _wiki_dir()
-    if d and old_path and old_path.exists():
-        try:
-            old_path.rename(d / new_file)
-            renamed_file = True
-        except Exception:
-            pass
+    if in_index:
+        rec = idx.pop(old_name)
+        new_file = f"{_slug(new_name)}.md"
+        old_path = _page_path(old_name)
+        rec["file"] = new_file
+        rec["title"] = new_name
+        idx[new_name] = rec
+        _atomic_write_json(_INDEX_PATH, idx)
+
+        d = _wiki_dir()
+        if d and old_path and old_path.exists():
+            try:
+                old_path.rename(d / new_file)
+                renamed_file = True
+            except Exception:
+                pass
 
     q = _load_json(_QUEUE_PATH, [])
     remapped = 0
@@ -1049,6 +1050,9 @@ def rename_topic(old_name: str, new_name: str) -> dict:
                 remapped += 1
         if remapped:
             _atomic_write_json(_QUEUE_PATH, q)
+
+    if not in_index and remapped == 0:
+        return {"error": f"토픽 '{old_name}' 인덱스·큐 어디에도 없음"}
 
     _save_alias(old_name, new_name)
     return {"ok": True, "old": old_name, "new": new_name,
