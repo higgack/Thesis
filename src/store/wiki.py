@@ -1439,14 +1439,52 @@ def _parse_merge(raw: str) -> tuple[str, dict]:
     return text + "\n", meta
 
 
-async def _merge_topic(topic: str, docs: list[dict]) -> dict:
-    """One LLM merge for one topic. Returns a result row; never raises
-    (a single bad topic must not abort the run)."""
+def _append_docs(topic: str, existing: str, docs: list[dict]) -> dict:
+    """Append new docs as dated sections — NO LLM call, ₩0 cost.
+    Used when the page is below CONSOLIDATION_CHARS. The page grows
+    freely; a later consolidation pass reorganises it thematically."""
+    date_str = datetime.now(_KST).strftime("%Y-%m-%d")
+    per_doc_chars = int(_flag("WIKI_DOC_SUMMARY_CHARS", 1200))
+    parts: list[str] = []
+    for d in docs:
+        title = (d.get("title") or "(제목없음)").strip()
+        summary = (d.get("summary") or "").strip()[:per_doc_chars]
+        if not summary:
+            continue
+        parts.append(f"### {title}\n{summary}\n\n— 출처: [[{title}]]")
+    if not parts:
+        return {"topic": topic, "ok": False, "docs": len(docs),
+                "contradictions": 0, "error": "no summaries to append"}
+    section = f"\n\n---\n\n## 📌 {date_str} 업데이트\n\n" + "\n\n".join(parts) + "\n"
+    page = (existing.rstrip() + section) if existing.strip() else (
+        f"> {topic} 위키 페이지\n\n# {topic}\n" + section)
+    p = _page_path(topic)
+    if p is None:
+        return {"topic": topic, "ok": False, "docs": len(docs),
+                "contradictions": 0, "error": "no vault"}
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(page, encoding="utf-8")
+    except Exception as e:
+        log.exception("wiki append write failed for %s", topic)
+        return {"topic": topic, "ok": False, "docs": len(docs),
+                "contradictions": 0, "error": str(e)[:120]}
+    log.info("wiki append %s: %d docs, page now %d chars (no LLM)",
+             topic, len(docs), len(page))
+    return {
+        "topic": topic, "ok": True, "docs": len(docs),
+        "contradictions": 0, "mode": "append",
+        "rel": p.relative_to(Path(config.OBSIDIAN_VAULT_PATH).resolve()).as_posix(),
+    }
+
+
+async def _consolidate_topic(topic: str, existing: str, docs: list[dict]) -> dict:
+    """LLM consolidation — rewrites the page thematically. Runs only
+    when the page exceeds CONSOLIDATION_CHARS or on first creation."""
     from ..llm.gemini import complete
-    existing = read_page(topic) or ""
     user = _build_merge_user(topic, existing, docs)
     model = _flag("WIKI_MERGE_MODEL", None) or config.ANSWER_MODEL
-    max_tokens = int(_flag("WIKI_MERGE_MAX_TOKENS", 8000))
+    max_tokens = int(_flag("WIKI_MERGE_MAX_TOKENS", 12000))
     try:
         raw = await complete(
             model=model,
@@ -1454,19 +1492,13 @@ async def _merge_topic(topic: str, docs: list[dict]) -> dict:
             user=user,
             max_tokens=max_tokens,
             temperature=0.2,
-            purpose="wiki",          # ← cost.db tags wiki spend separately
+            purpose="wiki",
         )
     except Exception as e:
-        log.warning("wiki merge LLM failed for %s: %s", topic, e)
+        log.warning("wiki consolidate LLM failed for %s: %s", topic, e)
         return {"topic": topic, "ok": False, "docs": len(docs),
                 "contradictions": 0, "error": str(e)[:120]}
     page, meta = _parse_merge(raw)
-    # Post-process: resolve "자료 N" labels → actual document titles.
-    # The LLM sometimes writes [[자료 2]] instead of the real title.
-    # Skip substitution if the title contains non-Korean/English chars
-    # (CJK etc.) — the LLM was instructed to translate, so its organic
-    # citations are already in Korean; forcing the raw title would
-    # reintroduce the foreign text.
     _NON_KOEN = re.compile(r"[^\x00-\x7F가-힣ㄱ-ㅎㅏ-ㅣ]")
     def _resolve_ref(m: re.Match) -> str:
         n = int(m.group(1))
@@ -1478,7 +1510,7 @@ async def _merge_topic(topic: str, docs: list[dict]) -> dict:
     page = re.sub(r"\[\[자료\s*(\d+)\]\]", _resolve_ref, page)
     if len(page.strip()) < 20:
         return {"topic": topic, "ok": False, "docs": len(docs),
-                "contradictions": 0, "error": "empty merge output"}
+                "contradictions": 0, "error": "empty consolidation output"}
     p = _page_path(topic)
     if p is None:
         return {"topic": topic, "ok": False, "docs": len(docs),
@@ -1487,14 +1519,29 @@ async def _merge_topic(topic: str, docs: list[dict]) -> dict:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(page, encoding="utf-8")
     except Exception as e:
-        log.exception("wiki page write failed for %s", topic)
+        log.exception("wiki consolidate write failed for %s", topic)
         return {"topic": topic, "ok": False, "docs": len(docs),
                 "contradictions": 0, "error": str(e)[:120]}
+    log.info("wiki consolidate %s: %d docs, page %d→%d chars (LLM)",
+             topic, len(docs), len(existing), len(page))
     return {
         "topic": topic, "ok": True, "docs": len(docs),
         "contradictions": int(meta.get("contradictions", 0)),
+        "mode": "consolidate",
         "rel": p.relative_to(Path(config.OBSIDIAN_VAULT_PATH).resolve()).as_posix(),
     }
+
+
+async def _merge_topic(topic: str, docs: list[dict]) -> dict:
+    """Route to append (free) or LLM consolidation based on page size.
+    New/empty pages always get an LLM merge for a clean initial structure."""
+    existing = read_page(topic) or ""
+    threshold = int(_flag("WIKI_CONSOLIDATION_CHARS", 30000))
+    if not existing.strip():
+        return await _consolidate_topic(topic, existing, docs)
+    if len(existing) >= threshold:
+        return await _consolidate_topic(topic, existing, docs)
+    return _append_docs(topic, existing, docs)
 
 
 async def run_batch() -> dict:

@@ -460,6 +460,21 @@ pending 이나 대기로 남지 않고 꼭 명심해").
   qna.db, pending.db, dashboard server) use `timeout=30` and
   `PRAGMA journal_mode=WAL` to prevent "database is locked" under
   concurrent access from bot + dashboard + ingest.
+- **Merge strategy: append-only + periodic consolidation**.
+  `_merge_topic` routes by page size:
+    • **New/empty page** → LLM consolidation (initial structure)
+    • **Page < 30K chars** → append dated sections (₩0, no LLM)
+    • **Page ≥ 30K chars** → LLM consolidation (thematic rewrite)
+  Config: `CONSOLIDATION_CHARS=30000`, `MAX_PAGE_CHARS=25000`,
+  `MERGE_MAX_TOKENS=12000`. Consolidation costs ~₩55 but fires
+  only every 1–2 weeks per topic; daily spend stays well under
+  ₩1,000. Do NOT revert to full-rewrite-every-merge — that
+  caused serial lossy compression (236-source "AI" page lost
+  all early information).
+- **Topic split gate**: `_split_multi_topic` only splits on
+  single spaces when ALL fragments are already known topics
+  (index or alias). Prevents 'Applied Materials' → junk.
+  Explicit delimiters (`,;/·`) always split regardless.
 
 ## OCR backend — dormant local worker is pre-built but disabled
 
@@ -506,6 +521,14 @@ pin: 2.7.3 (proven API). v3.x rewrite exists (3.5.0 current) — see
 
 Low-priority items parked here so they survive context compaction.
 None of these are authorised for work until the user explicitly asks.
+
+- **Wiki 팩트 테이블 (Phase 2)** — 현재 append+consolidation 방식의
+  다음 단계. 인제스트 시 원자적 사실을 `wiki_facts` SQLite 테이블로
+  추출 `(topic, claim_text, source_doc_id, date, confidence)`. 위키
+  페이지가 팩트 테이블의 렌더링 뷰가 되면 정보 손실 완전 해결 +
+  모순 감지가 DB 쿼리로 가능. 추출 비용: Flash-Lite 문서당 ~₩2.
+  현재 append 방식이 충분히 동작하면 보류; 정보 보존이 부족하다고
+  느껴지면 착수.
 
 - **CodeGraph 시범 적용** — when `src/bot.py` grows to ~15k lines
   (currently ~10.5k), trial `npx @colbymchenry/codegraph` (local

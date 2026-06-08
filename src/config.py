@@ -65,9 +65,10 @@ WIKI_MIN_SUMMARY_CHARS = int(os.getenv("WIKI_MIN_SUMMARY_CHARS", "600"))
 # Per-run cost caps.
 WIKI_MAX_TOPICS_PER_RUN = int(os.getenv("WIKI_MAX_TOPICS_PER_RUN", "25"))
 WIKI_MAX_DOCS_PER_TOPIC = int(os.getenv("WIKI_MAX_DOCS_PER_TOPIC", "6"))
-WIKI_MAX_PAGE_CHARS = int(os.getenv("WIKI_MAX_PAGE_CHARS", "10000"))
+WIKI_MAX_PAGE_CHARS = int(os.getenv("WIKI_MAX_PAGE_CHARS", "25000"))
 WIKI_DOC_SUMMARY_CHARS = int(os.getenv("WIKI_DOC_SUMMARY_CHARS", "1200"))
-WIKI_MERGE_MAX_TOKENS = int(os.getenv("WIKI_MERGE_MAX_TOKENS", "5000"))
+WIKI_MERGE_MAX_TOKENS = int(os.getenv("WIKI_MERGE_MAX_TOKENS", "12000"))
+WIKI_CONSOLIDATION_CHARS = int(os.getenv("WIKI_CONSOLIDATION_CHARS", "30000"))
 WIKI_BATCH_THROTTLE_SEC = float(os.getenv("WIKI_BATCH_THROTTLE_SEC", "0.5"))
 WIKI_PARALLEL = int(os.getenv("WIKI_PARALLEL", "3"))
 # Daily spend circuit breaker (KST). When today's wiki cost reaches this
