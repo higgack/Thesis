@@ -288,9 +288,15 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
     else:
         log.info("bm25 index cold — dense-only retrieval this turn")
 
-    # Cache per-doc score modifiers (recency × depth_bonus) so we look
-    # up each parent doc at most once even when several of its chunks
-    # are candidates.
+    # Batch-fetch parent doc metadata in one query (offloaded to thread
+    # so we never block the event loop on SQLite).
+    needed_ids = list({
+        h["metadata"].get("doc_id")
+        for _, (_, h) in dense.items()
+        if h["metadata"].get("doc_id")
+    })
+    docs_map = await asyncio.to_thread(meta.get_docs_batch, needed_ids)
+
     mod_cache: dict[str, float] = {}
     for cid in list(dense.keys()):
         s, h = dense[cid]
@@ -298,7 +304,7 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
         if not doc_id:
             continue
         if doc_id not in mod_cache:
-            d = meta.get_doc(doc_id) or {}
+            d = docs_map.get(doc_id) or {}
             recency = (
                 _recency_factor(d["ingested_at"])
                 if d.get("ingested_at") else 1.0
