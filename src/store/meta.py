@@ -376,6 +376,19 @@ def get_doc(doc_id: str) -> dict | None:
         return dict(row) if row else None
 
 
+def get_docs_batch(doc_ids: list[str]) -> dict[str, dict]:
+    """Fetch multiple docs in one query. Returns {doc_id: row_dict}."""
+    if not doc_ids:
+        return {}
+    with _conn() as c:
+        placeholders = ",".join("?" * len(doc_ids))
+        rows = c.execute(
+            f"SELECT * FROM documents WHERE id IN ({placeholders})",
+            doc_ids,
+        ).fetchall()
+        return {dict(r)["id"]: dict(r) for r in rows}
+
+
 def find_by_source(source: str) -> dict | None:
     with _conn() as c:
         row = c.execute("SELECT * FROM documents WHERE source=?", (source,)).fetchone()
