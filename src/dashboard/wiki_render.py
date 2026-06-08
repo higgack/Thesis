@@ -926,7 +926,7 @@ def _render_index_page(topics_data: list[dict], token: str,
         updated_iso = td.get("updated") or ""
         badge = ""
         if created_iso and created_iso >= _7d_ago:
-            badge = ' <span class="wiki-badge new">NEW</span>'
+            badge = ' <span class="wiki-badge new">New</span>'
         elif updated_iso and updated_iso >= _7d_ago:
             badge = ' <span class="wiki-badge recent">Recent</span>'
         cards.append(
