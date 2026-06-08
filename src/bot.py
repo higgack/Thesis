@@ -2388,7 +2388,7 @@ DB 엔진(LSM Tree), 이벤트 소싱, 위키피디아 편집 모델 등에서 �
 ━━━━━━━━━━━━━━━━━━━━━━
 
 • <code>WIKI_CONSOLIDATION_CHARS=30000</code> — 이 이상이면 LLM 정리 발동
-• <code>WIKI_MAX_PAGE_CHARS=25000</code> — 정리 시 LLM 입력 상한
+• <code>WIKI_MAX_PAGE_CHARS=30000</code> — 정리 시 LLM 입력 상한 (=CONSOLIDATION과 동일, 잘림 방지)
 • <code>WIKI_MERGE_MAX_TOKENS=12000</code> — 정리 출력 상한 (~18K 한국어 자)
 • <code>WIKI_MAX_DOCS_PER_TOPIC=6</code> — 1회 배치 토픽당 최대 문서
 • <code>WIKI_DAILY_BUDGET_KRW=1000</code> — 일일 예산 (KST)

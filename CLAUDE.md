@@ -467,7 +467,7 @@ pending 이나 대기로 남지 않고 꼭 명심해").
     • **New/empty page** → LLM consolidation (initial structure)
     • **Page < 30K chars** → append dated sections (₩0, no LLM)
     • **Page ≥ 30K chars** → LLM consolidation (thematic rewrite)
-  Config: `CONSOLIDATION_CHARS=30000`, `MAX_PAGE_CHARS=25000`,
+  Config: `CONSOLIDATION_CHARS=30000`, `MAX_PAGE_CHARS=30000`,
   `MERGE_MAX_TOKENS=12000`. Consolidation costs ~₩55 but fires
   only every 1–2 weeks per topic; daily spend stays well under
   ₩1,000. Do NOT revert to full-rewrite-every-merge — that
