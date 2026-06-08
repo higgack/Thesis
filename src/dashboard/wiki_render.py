@@ -557,17 +557,22 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
   font-size: 11px; color: var(--muted); margin-left: 4px;
 }
 
-/* ── Filter bar ──────────────────────────── */
-.wiki-filters {
-  display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;
+/* ── Title row + filter bar ───────────────── */
+.wiki-title-row {
+  display: flex; align-items: center; gap: 16px;
+  margin: 0 0 20px; flex-wrap: wrap;
 }
+.wiki-title-row h1 {
+  font: 700 28px/1.3 -apple-system, sans-serif; margin: 0;
+}
+.wiki-filters { display: flex; gap: 6px; }
 .wiki-filter {
-  padding: 6px 16px; border-radius: 20px; border: 1px solid var(--border-light);
-  background: var(--panel); color: var(--text); cursor: pointer;
-  font: 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
-  transition: background 0.15s, border-color 0.15s;
+  padding: 4px 14px; border-radius: 14px; border: 1px solid var(--border-light);
+  background: var(--panel); color: var(--muted); cursor: pointer;
+  font: 600 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.wiki-filter:hover { border-color: var(--accent); }
+.wiki-filter:hover { border-color: var(--accent); color: var(--text); }
 .wiki-filter.active {
   background: var(--accent); color: #fff; border-color: var(--accent);
 }
@@ -692,11 +697,15 @@ _FILTER_JS = """
   var cutoff = new Date(Date.now() - 7*24*60*60*1000).toISOString();
   btns.forEach(function(btn){
     btn.addEventListener('click', function(){
+      var wasActive = btn.classList.contains('active');
       btns.forEach(function(b){ b.classList.remove('active'); });
+      if (wasActive) {
+        cards.forEach(function(c){ c.style.display = ''; });
+        return;
+      }
       btn.classList.add('active');
       var f = btn.getAttribute('data-filter');
       cards.forEach(function(c){
-        if (f === 'all') { c.style.display = ''; return; }
         var ts = f === 'new' ? c.getAttribute('data-created')
                              : c.getAttribute('data-updated');
         c.style.display = (ts && ts >= cutoff) ? '' : 'none';
@@ -940,22 +949,17 @@ def _render_index_page(topics_data: list[dict], token: str,
             "</div>"
         )
 
-    filter_bar = (
-        '<div class="wiki-filters">'
-        '<button class="wiki-filter active" data-filter="all">All</button>'
-        '<button class="wiki-filter" data-filter="new">✨ New</button>'
-        '<button class="wiki-filter" data-filter="recent">🆕 Recent</button>'
-        '</div>'
-    )
-
     return (
         f'{_head("Noah LLM Wiki")}<body>'
         f"{_topbar(token)}"
         '<div style="max-width:1200px;margin:0 auto;padding:24px 16px 80px">'
-        "<h1 style=\"font:700 28px/1.3 -apple-system,sans-serif;"
-        "margin:0 0 20px\">Noah LLM Wiki</h1>"
+        '<div class="wiki-title-row">'
+        "<h1>Noah LLM Wiki</h1>"
+        '<div class="wiki-filters">'
+        '<button class="wiki-filter" data-filter="new">New</button>'
+        '<button class="wiki-filter" data-filter="recent">Recent</button>'
+        '</div></div>'
         f"{stats_html}"
-        f"{filter_bar}"
         f'<div class="wiki-grid">{"".join(cards)}</div>'
         "</div>"
         f"<script>{_SEARCH_JS}</script>"
