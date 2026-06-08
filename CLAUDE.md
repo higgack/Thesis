@@ -432,6 +432,35 @@ pending 이나 대기로 남지 않고 꼭 명심해").
 - OCR: `OCR_DPI=100`, `OCR_AUTO_CAP=7`, `OCR_SPARSE_THRESHOLD=800`,
   `OCR_PROBE_PAGES=3`, `OCR_PROBE_MIN_TEXT=300`
 
+## Wiki system — established behaviors (do not regress)
+
+- **Daily budget**: ₩1,000 KRW (`config.WIKI_DAILY_BUDGET_KRW`,
+  default 1000). Single source of truth — do not hardcode fallbacks
+  elsewhere. VM `.env` override was removed; if it reappears the
+  dashboard will show the wrong number.
+- **Batch hour**: 04:00 KST (`config.WIKI_BATCH_HOUR`, default 4).
+  Fallback in scheduler setup is `_wiki_hour = 4`.
+- **Deleted topics are permanent**: `data/wiki_deleted_topics.json`
+  is a sorted list of topic names. `wiki.is_topic_deleted(t)` is
+  checked at ALL three entry points — `enqueue()`, `backfill()`,
+  `run_batch()`. A deleted topic never re-enters the system via
+  any path. Only manual JSON edit + restart can revive.
+- **Drain temp budget clears immediately**: `drain_queue()` wraps
+  its loop in `try/finally` with `clear_temp_budget()` in the
+  finally-block (skipped only on `asyncio.CancelledError`). After
+  drain finishes, the user's budget reverts to ₩1,000 instantly —
+  NOT at midnight.
+- **Query-first mode** (`WIKI_QUERY_FIRST=1`, default on): Q&A
+  answers include relevant wiki knowledge before vector-only RAG.
+- **Channel duplicate suppression**: when all results from a
+  channel-forwarded ingest are `status=duplicate`, the bot sends
+  no "♻️ 이미 있음" notification. Suppression only fires when
+  `notify_chat_id != msg.chat_id` (i.e. channel-originated).
+- **SQLite hardening**: ALL connection sites (cost.db, meta.db,
+  qna.db, pending.db, dashboard server) use `timeout=30` and
+  `PRAGMA journal_mode=WAL` to prevent "database is locked" under
+  concurrent access from bot + dashboard + ingest.
+
 ## OCR backend — dormant local worker is pre-built but disabled
 
 `src/ingest/ocr_client.py` routes Vision OCR through `OCR_BACKEND`
