@@ -557,6 +557,32 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
   font-size: 11px; color: var(--muted); margin-left: 4px;
 }
 
+/* ── Filter bar ──────────────────────────── */
+.wiki-filters {
+  display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.wiki-filter {
+  padding: 6px 16px; border-radius: 20px; border: 1px solid var(--border-light);
+  background: var(--panel); color: var(--text); cursor: pointer;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  transition: background 0.15s, border-color 0.15s;
+}
+.wiki-filter:hover { border-color: var(--accent); }
+.wiki-filter.active {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+/* ── Badges ──────────────────────────────── */
+.wiki-badge {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 8px; vertical-align: middle;
+  margin-left: 6px; letter-spacing: 0.3px;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.wiki-badge.new { background: #2da44e; color: #fff; }
+.wiki-badge.recent { background: #bf8700; color: #fff; }
+[data-theme="dark"] .wiki-badge.new { background: #238636; }
+[data-theme="dark"] .wiki-badge.recent { background: #9e6a00; }
+
 /* ── Index page grid ──────────────────────── */
 .wiki-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -653,6 +679,28 @@ _SEARCH_JS = """
     cards.forEach(function(c){
       var text = c.textContent.toLowerCase();
       c.style.display = (!q || text.indexOf(q) >= 0) ? '' : 'none';
+    });
+  });
+})();
+"""
+
+_FILTER_JS = """
+(function(){
+  var btns = document.querySelectorAll('.wiki-filter');
+  var cards = document.querySelectorAll('.wiki-card');
+  if (!btns.length) return;
+  var cutoff = new Date(Date.now() - 7*24*60*60*1000).toISOString();
+  btns.forEach(function(btn){
+    btn.addEventListener('click', function(){
+      btns.forEach(function(b){ b.classList.remove('active'); });
+      btn.classList.add('active');
+      var f = btn.getAttribute('data-filter');
+      cards.forEach(function(c){
+        if (f === 'all') { c.style.display = ''; return; }
+        var ts = f === 'new' ? c.getAttribute('data-created')
+                             : c.getAttribute('data-updated');
+        c.style.display = (ts && ts >= cutoff) ? '' : 'none';
+      });
     });
   });
 })();
@@ -863,6 +911,10 @@ def _render_index_page(topics_data: list[dict], token: str,
         "</div>"
     )
 
+    from datetime import datetime, timedelta, timezone
+    _kst = timezone(timedelta(hours=9))
+    _7d_ago = (datetime.now(_kst) - timedelta(days=7)).isoformat()
+
     cards = []
     for td in topics_data:
         topic = td["topic"]
@@ -870,15 +922,31 @@ def _render_index_page(topics_data: list[dict], token: str,
         excerpt = html.escape(td.get("excerpt", "")[:200])
         doc_count = td.get("docs", 0)
         updated = (td.get("updated") or "")[:10]
+        created_iso = td.get("created") or ""
+        updated_iso = td.get("updated") or ""
+        badge = ""
+        if created_iso and created_iso >= _7d_ago:
+            badge = ' <span class="wiki-badge new">NEW</span>'
+        elif updated_iso and updated_iso >= _7d_ago:
+            badge = ' <span class="wiki-badge recent">Recent</span>'
         cards.append(
-            '<div class="wiki-card">'
+            f'<div class="wiki-card" data-created="{html.escape(created_iso)}"'
+            f' data-updated="{html.escape(updated_iso)}">'
             f'<h3><a href="{_topic_filename(topic)}">'
-            f"{html.escape(display)}</a></h3>"
+            f"{html.escape(display)}</a>{badge}</h3>"
             f'<div class="card-meta">'
             f"{doc_count} sources · {updated}</div>"
             f'<div class="card-excerpt">{excerpt}</div>'
             "</div>"
         )
+
+    filter_bar = (
+        '<div class="wiki-filters">'
+        '<button class="wiki-filter active" data-filter="all">All</button>'
+        '<button class="wiki-filter" data-filter="new">✨ New</button>'
+        '<button class="wiki-filter" data-filter="recent">🆕 Recent</button>'
+        '</div>'
+    )
 
     return (
         f'{_head("Noah LLM Wiki")}<body>'
@@ -887,9 +955,11 @@ def _render_index_page(topics_data: list[dict], token: str,
         "<h1 style=\"font:700 28px/1.3 -apple-system,sans-serif;"
         "margin:0 0 20px\">Noah LLM Wiki</h1>"
         f"{stats_html}"
+        f"{filter_bar}"
         f'<div class="wiki-grid">{"".join(cards)}</div>'
         "</div>"
         f"<script>{_SEARCH_JS}</script>"
+        f"<script>{_FILTER_JS}</script>"
         "</body></html>"
     )
 
@@ -1010,6 +1080,7 @@ def render_wiki(token: str) -> int:
             "title": meta.get("title") or topic,
             "docs": doc_count,
             "updated": meta.get("updated", ""),
+            "created": meta.get("created", ""),
             "excerpt": excerpt,
             "mtime": md_file.stat().st_mtime,
         })
