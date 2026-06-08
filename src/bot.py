@@ -1412,7 +1412,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
 
-📚 <b>위키</b>: /wiki · /wiki_today · /wiki_recent · /wiki_status · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
+📚 <b>위키</b>: /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_status · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
@@ -1876,7 +1876,7 @@ NTIS 이슈로보는R&amp;D — 정부R&amp;D 한정 트렌드. ⏳ 승인 대�
 ❌ /pending* · /ocr_extend
 ❌ /forget* · /dedupe · /cleanup
 ❌ /search_my_brain · /compare_papers · /web_search · /ingest_url
-❌ /help · /guide_lookup · /patents_guide · /papers_guide · /wiki_guide · /wiki_recent
+❌ /help · /guide_lookup · /patents_guide · /papers_guide · /wiki_guide · /wiki_recent · /wiki_new
 
 ═══════════════════════════════════════
 <b>💰 비용 모델 요약</b>
@@ -1916,6 +1916,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 <b>명령어</b>
 • <b>/wiki</b> 목록(🆕=7일내 업데이트) · <b>/wiki &lt;토픽&gt;</b> 열람 · <b>/wiki_today</b> 마지막 배치
 • <b>/wiki_recent [일수]</b> 최근 N일(기본7) 업데이트 토픽만 시간순
+• <b>/wiki_new [일수]</b> 최근 N일(기본7) 신규 생성 토픽만
 • <b>/wiki_status</b> 상태·오늘 ₩·한도·큐 · <b>/wiki_run</b> 수동 실행
 • <b>/wiki_drain [한도=20000]</b> 임시 예산 올려서 큐 최대 소진(끝나면 즉시 ₩1000 복귀)
 • <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
@@ -11736,6 +11737,48 @@ async def cmd_wiki_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_wiki_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_new [일수] — 최근 N일(기본 7) 새로 생성된 위키 토픽."""
+    if not _is_owner(update):
+        return
+    days = 7
+    if ctx.args:
+        try:
+            days = max(1, int(ctx.args[0]))
+        except ValueError:
+            pass
+    from datetime import datetime, timedelta, timezone
+    _kst = timezone(timedelta(hours=9))
+    cutoff = datetime.now(_kst) - timedelta(days=days)
+    topics = wiki.list_topics()
+    new_topics = []
+    for t in topics:
+        cr_str = t.get("created") or ""
+        if not cr_str:
+            continue
+        try:
+            cr_dt = datetime.fromisoformat(cr_str)
+            if cr_dt >= cutoff:
+                new_topics.append((cr_dt, t))
+        except ValueError:
+            continue
+    if not new_topics:
+        await update.message.reply_text(f"최근 {days}일 내 새로 생성된 위키 페이지 없음.")
+        return
+    new_topics.sort(key=lambda x: x[0], reverse=True)
+    lines = [f"✨ <b>최근 {days}일 신규 위키 토픽 ({len(new_topics)}개)</b>"]
+    for cr_dt, t in new_topics[:60]:
+        ago = (datetime.now(_kst) - cr_dt).days
+        ago_str = "오늘" if ago == 0 else f"{ago}일 전"
+        lines.append(
+            f"• {html.escape(t['topic'])}  ({t['docs']}건, {ago_str})"
+        )
+    await update.message.reply_text(
+        "\n".join(lines), parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+
 async def cmd_wiki_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_status — 동작 상태 + 대기 큐 + 페이지 수 + 오늘/이번달 위키 비용."""
     if not _is_owner(update):
@@ -12335,6 +12378,7 @@ def main():
     app.add_handler(CommandHandler("wiki", cmd_wiki))
     app.add_handler(CommandHandler("wiki_today", cmd_wiki_today))
     app.add_handler(CommandHandler("wiki_recent", cmd_wiki_recent))
+    app.add_handler(CommandHandler("wiki_new", cmd_wiki_new))
     app.add_handler(CommandHandler("wiki_status", cmd_wiki_status))
     app.add_handler(CommandHandler("wiki_run", cmd_wiki_run))
     app.add_handler(CommandHandler("wiki_backfill", cmd_wiki_backfill))

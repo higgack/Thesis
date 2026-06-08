@@ -1292,6 +1292,7 @@ def list_topics() -> list[dict]:
                 "topic": topic,
                 "docs": len(rec.get("doc_ids") or []),
                 "updated": rec.get("updated") or "",
+                "created": rec.get("created") or "",
             })
         out.sort(key=lambda r: r["updated"], reverse=True)
         return out
@@ -1675,13 +1676,16 @@ async def run_batch() -> dict:
                 rec = idx.get(topic) or {"doc_ids": []}
                 seen = set(rec.get("doc_ids") or [])
                 seen.update(merged_ids)
+                now = _now_kst_iso()
                 rec.update({
                     "file": f"{_slug(topic)}.md",
                     "title": topic,
                     "doc_ids": sorted(seen),
-                    "updated": _now_kst_iso(),
+                    "updated": now,
                     "claims": rec.get("claims", 0) + res.get("docs", 0),
                 })
+                if "created" not in rec:
+                    rec["created"] = now
                 idx[topic] = rec
                 if res.get("contradictions", 0) > 0:
                     contradiction_topics.append(topic)
