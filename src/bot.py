@@ -1905,7 +1905,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 
 <b>동작</b>
 • 수집 때: 큐에 적재만(LLM 0, 비용 0). 요약 600자(기본) 미만은 위키 제외.
-• 매일 새벽(기본 3시, KST) 야간 배치: 큐를 토픽별로 묶어 flash 1회 머지
+• 매일 새벽(기본 4시, KST) 야간 배치: 큐를 토픽별로 묶어 flash 1회 머지
   → SecondBrain/Wiki/&lt;토픽&gt;.md → vault git 커밋. 머지마다 예산 체크.
 • 토픽 = 수집 때 추출된 회사/태그(무료). 모순은 <b>## ⚠️ 검토 필요</b> + 알람.
 
@@ -1916,7 +1916,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
 • <b>/wiki_dedup [merge A :: B | merge_all]</b> 유사 중복 토픽 감지(접미사 정규화·부분문자열) — 목록 확인 후 개별/전체 병합
 • <b>/wiki_rename &lt;옛이름&gt; :: &lt;새이름&gt;</b> 토픽명 변경(인덱스+파일+큐+alias 일괄)
-• <b>/wiki_delete &lt;토픽&gt;</b> 토픽 완전 삭제(인덱스+페이지+큐)
+• <b>/wiki_delete &lt;토픽&gt;</b> 토픽 완전 삭제(인덱스+페이지+큐). 삭제 후 backfill·재인제스트로 안 돌아옴(영구)
 • <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 야간 캡 내 분산 처리)
 • <b>/wiki_pending</b> 큐 대기 현황(토픽별 문서 수)
 • <b>/wiki_failed [clear|retry 토픽]</b> 머지 실패 목록 — 3회 연속 실패 시 큐에서 분리, 재시도/삭제 가능
@@ -12272,7 +12272,7 @@ def main():
         try:
             _wiki_hour = max(0, min(23, int(config.WIKI_BATCH_HOUR)))
         except Exception:
-            _wiki_hour = 3
+            _wiki_hour = 4
         _now_kst = datetime.now(_kst)
         _next_wiki = _now_kst.replace(hour=_wiki_hour, minute=0,
                                       second=0, microsecond=0)
