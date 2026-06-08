@@ -266,12 +266,37 @@ _CORP_TOKENS = frozenset({
 })
 
 
+def _is_known_topic(name: str) -> bool:
+    """True if `name` already exists as a wiki topic (index or alias),
+    matched loosely via dedup-key. Used to gate single-space splitting:
+    we only break 'A B' into ['A','B'] when BOTH halves are already
+    topics, so '삼성전자 SK하이닉스' splits but 'Applied Materials' (no
+    'Applied'/'Materials' topic) stays whole."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    if name in _load_aliases():
+        return True
+    idx = _load_json(_INDEX_PATH, {})
+    if not isinstance(idx, dict) or not idx:
+        return False
+    if name in idx:
+        return True
+    k = _dedup_key(name)
+    if not k:
+        return False
+    return any(_dedup_key(e) == k for e in idx)
+
+
 def _split_multi_topic(raw: str) -> list[str]:
     """Split a multi-company/topic string into individual names.
     Handles: '삼성전자, SK하이닉스' / '삼성전자 SK하이닉스' /
     '넥스틴, 파크시스템스, 인텍플러스'.
     Corporate suffixes (Inc, Corp, Ltd, …) are merged back with the
-    preceding token so 'Broadcom Inc' stays as one entity."""
+    preceding token so 'Broadcom Inc' stays as one entity.
+    Single-space splitting only fires when every fragment is ALREADY a
+    known topic — otherwise multi-word single names ('Applied Materials',
+    '어플라이드 머티리얼즈') wrongly fragment into junk topics."""
     parts = re.split(r"[,;/·]|\s{2,}", raw)
     if len(parts) == 1:
         tokens = raw.split()
@@ -282,7 +307,15 @@ def _split_multi_topic(raw: str) -> list[str]:
                     merged[-1] += " " + t
                 else:
                     merged.append(t)
-            parts = merged if len(merged) >= 2 else [raw]
+            # Gate the ambiguous single-space split: only multi-company
+            # when each fragment independently resolves to an existing
+            # topic. Under-splitting is recoverable (/wiki_split); the
+            # old over-split silently created junk topics the user had to
+            # delete one by one.
+            if len(merged) >= 2 and all(_is_known_topic(t) for t in merged):
+                parts = merged
+            else:
+                parts = [raw]
     final: list[str] = []
     for p in parts:
         p = p.strip()
@@ -449,7 +482,10 @@ def _failed_doc_ids() -> set:
 
 
 def promote_to_failed(topic: str) -> bool:
-    """After _MAX_FAIL_CYCLES, move topic's docs from queue to failed."""
+    """After _MAX_FAIL_CYCLES, move topic's docs from queue to failed.
+    Collects ALL doc_ids being removed from the queue (not just the
+    subset that was attempted in the last merge) so wiki_failed_retry
+    can recover them all."""
     failed = _load_failed()
     rec = next((f for f in failed if f.get("topic") == topic), None)
     if not rec or rec.get("cycles", 0) < _MAX_FAIL_CYCLES:
@@ -457,15 +493,20 @@ def promote_to_failed(topic: str) -> bool:
     q = _load_json(_QUEUE_PATH, [])
     if not isinstance(q, list):
         return False
+    evicted = [it for it in q
+               if isinstance(it, dict) and it.get("topic") == topic]
     remaining = [it for it in q
                  if not (isinstance(it, dict) and it.get("topic") == topic)]
-    removed = len(q) - len(remaining)
-    if removed > 0:
-        rec["doc_count"] = removed
-        rec["promoted"] = True
-        _atomic_write_json(_QUEUE_PATH, remaining)
-        _save_failed(failed)
-    return removed > 0
+    if not evicted:
+        return False
+    all_ids = set(rec.get("doc_ids") or [])
+    all_ids.update(it.get("doc_id") for it in evicted if it.get("doc_id"))
+    rec["doc_ids"] = sorted(all_ids)
+    rec["doc_count"] = len(all_ids)
+    rec["promoted"] = True
+    _atomic_write_json(_QUEUE_PATH, remaining)
+    _save_failed(failed)
+    return True
 
 
 def wiki_failed() -> list[dict]:
