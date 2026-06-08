@@ -1412,7 +1412,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
 
-📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on
+📚 <b>위키</b>: /wiki · /wiki_today · /wiki_status · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
@@ -1421,7 +1421,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   NTIS: /kr_rnd_projects · /kr_related
         /kr_outcomes · /kr_govt_reports · /kr_agency_rnd · /kr_rnd_issues
 
-ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup · /patents_guide · /papers_guide
+ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup · /wiki_guide · /patents_guide · /papers_guide
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
@@ -1876,7 +1876,7 @@ NTIS 이슈로보는R&amp;D — 정부R&amp;D 한정 트렌드. ⏳ 승인 대�
 ❌ /pending* · /ocr_extend
 ❌ /forget* · /dedupe · /cleanup
 ❌ /search_my_brain · /compare_papers · /web_search · /ingest_url
-❌ /help · /guide_lookup · /patents_guide · /papers_guide
+❌ /help · /guide_lookup · /patents_guide · /papers_guide · /wiki_guide
 
 ═══════════════════════════════════════
 <b>💰 비용 모델 요약</b>
@@ -1903,11 +1903,15 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 오늘 위키 비용이 도달하면 <b>그날 머지 즉시 중단 + ack 알람</b>, 자료는 큐
 보존·다음날 0시 자동 재개. 0=무제한.
 
-<b>동작</b>
+<b>동작 (append-only + periodic consolidation)</b>
 • 수집 때: 큐에 적재만(LLM 0, 비용 0). 요약 600자(기본) 미만은 위키 제외.
-• 매일 새벽(기본 4시, KST) 야간 배치: 큐를 토픽별로 묶어 flash 1회 머지
-  → SecondBrain/Wiki/&lt;토픽&gt;.md → vault git 커밋. 머지마다 예산 체크.
+• 매일 새벽(기본 4시, KST) 야간 배치: 큐를 토픽별로 묶어 위키 페이지 갱신.
+• <b>핵심 — 2단계 머지 전략:</b>
+  ① 페이지 &lt; 30K자 → <b>append</b> (날짜별 섹션 이어붙이기, LLM 0, ₩0)
+  ② 페이지 ≥ 30K자 → <b>LLM consolidation</b> (테마별 재구성, ~₩55)
+  → 정보 손실 없이 페이지가 자유롭게 성장, 주기적으로 정리·압축.
 • 토픽 = 수집 때 추출된 회사/태그(무료). 모순은 <b>## ⚠️ 검토 필요</b> + 알람.
+• 상세 메커니즘 설명: <b>/wiki_guide</b>
 
 <b>명령어</b>
 • <b>/wiki</b> 목록 · <b>/wiki &lt;토픽&gt;</b> 열람 · <b>/wiki_today</b> 마지막 배치
@@ -2314,6 +2318,99 @@ async def cmd_patents_guide(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     async with _SustainedTyping(update, ctx):
         for chunk in _split_for_telegram(_PATENTS_GUIDE_TEXT):
+            await update.message.reply_text(
+                chunk, parse_mode="HTML", disable_web_page_preview=True,
+            )
+
+
+_WIKI_GUIDE_TEXT = """<b>📘 위키 머지 시스템 상세 가이드 (/wiki_guide)</b>
+
+이 봇의 위키는 <b>append-only + periodic consolidation</b> 방식으로 동작합니다.
+DB 엔진(LSM Tree), 이벤트 소싱, 위키피디아 편집 모델 등에서 검증된 패턴입니다.
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>🔄 머지 전략 (2단계)</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>1단계: Append (대부분의 배치)</b>
+• 조건: 기존 페이지 &lt; 30,000자
+• 동작: 새 문서를 <b>날짜별 섹션으로 이어붙이기</b>
+• 비용: <b>₩0</b> (LLM 호출 없음)
+• 효과: 정보 손실 0 — 모든 사실이 원문 그대로 페이지에 남음
+
+<code>## 📌 2026-06-08 업데이트
+### 삼성전자 2Q26 실적 프리뷰
+[요약 내용]
+— 출처: [[삼성전자 2Q26 실적 프리뷰]]</code>
+
+<b>2단계: LLM Consolidation (주기적 정리)</b>
+• 조건: 기존 페이지 ≥ 30,000자
+• 동작: LLM(Flash)이 전체 페이지를 <b>테마별로 재구성·압축</b>
+• 비용: ~₩55 (토픽당 1~2주에 1회)
+• 효과: 시계열 압축, 섹션 재정렬, 중복 제거, 모순 감지
+
+<b>특수 케이스: 신규 토픽</b>
+• 조건: 아직 위키 페이지가 없을 때
+• 동작: LLM이 처음부터 구조화된 초기 페이지 생성
+• 이후: append 모드로 전환
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>📊 왜 이 방식인가?</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>이전 방식 (매번 전체 재작성)의 문제:</b>
+• 매 배치마다 기존 페이지를 LLM이 전체 재작성 → <b>연쇄 손실 압축</b>
+• 236개 소스가 지나간 토픽에서 초기 정보가 완전 소실
+• 10K자 페이지에 갇혀 정보가 절대 축적되지 않음
+
+<b>현재 방식의 장점:</b>
+• 페이지가 30K자까지 <b>자유 성장</b> → 정보 보존 극대화
+• 대부분 배치가 <b>₩0</b> → 예산을 정리 품질에 집중
+• 정리 시 <b>12,000 토큰 출력</b> (~18K자) → 풍성한 정리 결과
+• git 이력에 정리 전 버전 보존 → 복구 가능
+
+이 패턴은 LSM Tree(LevelDB/RocksDB/Cassandra), Event Sourcing(CQRS),
+위키피디아 편집 모델에서 동일한 원리로 사용됩니다.
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>💰 비용 구조</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+• <b>Append</b>: ₩0 (문자열 이어붙이기, LLM 없음)
+• <b>Consolidation</b>: ~₩55/회 (입력 25K자 + 출력 12K 토큰)
+• <b>신규 토픽 초기화</b>: ~₩25/회
+• 일일 예산: <b>₩1,000</b> (초과 시 중단, 자료는 큐 보존, 다음날 재개)
+
+예시: 하루 12토픽 배치 중 10개 append(₩0) + 2개 consolidation(₩110) = <b>₩110/일</b>
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>⚙️ 설정 값</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+• <code>WIKI_CONSOLIDATION_CHARS=30000</code> — 이 이상이면 LLM 정리 발동
+• <code>WIKI_MAX_PAGE_CHARS=25000</code> — 정리 시 LLM 입력 상한
+• <code>WIKI_MERGE_MAX_TOKENS=12000</code> — 정리 출력 상한 (~18K 한국어 자)
+• <code>WIKI_MAX_DOCS_PER_TOPIC=6</code> — 1회 배치 토픽당 최대 문서
+• <code>WIKI_DAILY_BUDGET_KRW=1000</code> — 일일 예산 (KST)
+• <code>WIKI_BATCH_HOUR=4</code> — 야간 배치 시각 (KST)
+• <code>WIKI_MIN_SUMMARY_CHARS=600</code> — 이하 요약은 위키 제외
+
+━━━━━━━━━━━━━━━━━━━━━━
+<b>🔮 로드맵</b>
+━━━━━━━━━━━━━━━━━━━━━━
+
+<b>Phase 2 (미정):</b> 팩트 테이블 — 인제스트 시 원자적 사실을 SQLite로 추출.
+위키 페이지가 팩트 DB의 렌더링 뷰가 되면 정보 손실 완전 해결 + 모순 감지가
+DB 쿼리로 가능. 현재 append 방식이 충분하면 보류.
+"""
+
+
+async def cmd_wiki_guide(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_guide — 위키 머지 시스템의 핵심 메커니즘, 비용 구조, 설정 값 상세."""
+    if not _is_owner(update):
+        return
+    async with _SustainedTyping(update, ctx):
+        for chunk in _split_for_telegram(_WIKI_GUIDE_TEXT):
             await update.message.reply_text(
                 chunk, parse_mode="HTML", disable_web_page_preview=True,
             )
@@ -12057,6 +12154,7 @@ def main():
     app.add_handler(CommandHandler("guide_lookup", cmd_guide_lookup))
     app.add_handler(CommandHandler("patents_guide", cmd_patents_guide))
     app.add_handler(CommandHandler("papers_guide", cmd_papers_guide))
+    app.add_handler(CommandHandler("wiki_guide", cmd_wiki_guide))
     app.add_handler(CommandHandler(
         "search_papers_advanced", cmd_search_papers_advanced))
     app.add_handler(CommandHandler("paper_stats", cmd_paper_stats))

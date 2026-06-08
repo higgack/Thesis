@@ -366,19 +366,21 @@ explicit permission. PR #1 already exists for this branch.
   upgrade Pro/Flash/Lite/Embed versions, update the help line at the
   same commit — don't leave stale model tags users can see.
 - **Help AND every guide constant must move together on any command /
-  feature / policy change.** Four guide surfaces today:
+  feature / policy change.** Five guide surfaces today:
     • `_HELP_TEXT`            — one-line summary, 4000-char cap
     • `_LOOKUP_GUIDE_TEXT`    — `/guide_lookup`, all commands detail,
                                 no cap (auto-splits)
     • `_PATENTS_GUIDE_TEXT`   — `/patents_guide`, patent features only
     • `_PAPERS_GUIDE_TEXT`    — `/papers_guide`, paper features only
+    • `_WIKI_GUIDE_TEXT`      — `/wiki_guide`, merge mechanism + cost
   Workflow:
     1. Change behaviour / add a command / bump a model.
     2. Update `_HELP_TEXT` (one-line entry under right category).
     3. Update `_LOOKUP_GUIDE_TEXT` (full prose section).
     4. If it's a patent change → also `_PATENTS_GUIDE_TEXT`.
        If it's a paper change → also `_PAPERS_GUIDE_TEXT`.
-       (Both if it spans both, e.g. a new shared filter.)
+       If it's a wiki change → also `_WIKI_GUIDE_TEXT`.
+       (Both/all if it spans multiple, e.g. a new shared filter.)
   Skipping any of these is a regression — users discover commands
   through these surfaces. CI gate: the pre-push checklist's syntax
   pass already runs `len(_HELP_TEXT) ≤ 4000`; add the same render
