@@ -258,16 +258,14 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
     3. Ask Gemini Flash-Lite to rerank by query relevance, return top k.
     """
     over = max(k * 4, 25)
-    summary_hits = await vector.query(query, k=over, kind="summary")
-    chunk_hits = await vector.query(query, k=over, kind="chunk")
+    summary_hits, chunk_hits = await asyncio.gather(
+        vector.query(query, k=over, kind="summary"),
+        vector.query(query, k=over, kind="chunk"),
+    )
 
     dense = {h["id"]: (1.0 - h["distance"], h) for h in summary_hits + chunk_hits}
 
-    # BM25 augmentary signal. The index is built+cached off the event
-    # loop (_ensure_bm25); a cold start falls back to dense-only this
-    # turn. Scoring (still O(corpus)) is offloaded so it can't block the
-    # loop. ids/docs/metas come from the index's own aligned snapshot.
-    bundle = _ensure_bm25()
+    bundle = await asyncio.to_thread(_ensure_bm25)
     if bundle is not None and bundle["index"] is not None:
         index = bundle["index"]
         ids = bundle["ids"]
