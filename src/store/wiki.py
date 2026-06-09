@@ -381,7 +381,7 @@ def enqueue(*, doc_id: str, title: str, summary: str, doc_type: str,
         ts = datetime.utcnow().isoformat(timespec="seconds")
         added = False
         for topic in tlist:
-            if topic == "기타" or is_topic_deleted(topic):
+            if topic == "기타" or is_topic_deleted(topic) or is_topic_blocked(topic):
                 continue
             if (doc_id, topic) in queued_keys:
                 continue
@@ -816,7 +816,31 @@ _CJK_TRANSLATE: dict[str, str] = {
     "輝達": "엔비디아",
     "金居开发": "진쥐개발",
     "锂": "리튬",
+    "宇树科技股份有限公司": "유니트리",
+    "宇树科技": "유니트리",
+    "宇树": "유니트리",
 }
+
+
+# Seed aliases: canonical English vendor names that should always route to
+# their established Korean topic page. Unlike CJK_TRANSLATE (script-based),
+# these are exact English↔Korean pairs so a fresh ingest naming the company
+# in English doesn't spawn a parallel page. Values MUST match the canonical
+# topic names in wiki_index.json.
+_SEED_ALIASES: dict[str, str] = {
+    "NVIDIA Corporation": "엔비디아",
+    "Samsung SDI": "삼성SDI",
+}
+
+
+# Topics permanently blocked from the wiki — generic, contentless labels
+# that an LLM occasionally proposes (e.g. a bare "report"). Checked at every
+# entry point so they never spawn or revive a page. Lower-cased compare.
+_BLOCKED_TOPICS = frozenset({"report"})
+
+
+def is_topic_blocked(topic: str) -> bool:
+    return (topic or "").strip().lower() in _BLOCKED_TOPICS
 
 
 def resolve_topic(proposed: str) -> str:
@@ -827,6 +851,13 @@ def resolve_topic(proposed: str) -> str:
     aliases = _load_aliases()
     if proposed in aliases:
         return aliases[proposed]
+
+    # 1a) Seed alias (canonical English vendor name → Korean topic). Persist
+    # it to the alias file so future lookups short-circuit at step 1.
+    seed = _SEED_ALIASES.get(proposed.strip())
+    if seed:
+        _save_alias(proposed, seed)
+        return resolve_topic(seed)
 
     # 1b) CJK (Chinese/Japanese) → Korean/English translation
     if _CJK_RE.search(proposed):
@@ -1149,7 +1180,8 @@ def backfill(docs: list[dict]) -> dict:
             res["skipped_gate"] += 1
             continue
         tlist = [t for t in topics_for(d.get("metadata"), d.get("title") or "")
-                 if t != "기타" and not is_topic_deleted(t)]
+                 if t != "기타" and not is_topic_deleted(t)
+                 and not is_topic_blocked(t)]
         if not tlist:
             res["skipped_gate"] += 1
             continue
@@ -1658,14 +1690,16 @@ async def run_batch() -> dict:
             it["topic"] = resolved
         by_topic.setdefault(resolved, []).append(it)
 
-    # Drop deleted topics from the batch and clean them out of the queue.
+    # Drop deleted + blocked topics from the batch and clean them out of
+    # the queue (blocked = generic labels like "report" that must never page).
     deleted = _load_deleted_topics()
-    dropped_deleted = {t for t in by_topic if t in deleted}
+    dropped_deleted = {t for t in by_topic
+                       if t in deleted or is_topic_blocked(t)}
     for t in dropped_deleted:
         del by_topic[t]
     if dropped_deleted:
         q = [it for it in q
-             if not (isinstance(it, dict) and it.get("topic") in deleted)]
+             if not (isinstance(it, dict) and it.get("topic") in dropped_deleted)]
         _atomic_write_json(_QUEUE_PATH, q)
 
     max_topics = int(_flag("WIKI_MAX_TOPICS_PER_RUN", 25))
