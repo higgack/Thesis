@@ -1549,35 +1549,49 @@ async def _merge_topic(topic: str, docs: list[dict]) -> dict:
     return _append_docs(topic, existing, docs)
 
 
+_SECTION_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})", re.MULTILINE)
+
+
 def _heal_backstamped_created(idx: dict) -> int:
     """Strip retro-stamped `created` timestamps from the index, in place.
 
-    The `created` field was introduced after many topics already existed.
-    Those legacy records had no `created`, so the batch's
-    `if "created" not in rec: rec["created"] = now` stamped them with the
-    current date on their NEXT merge — falsely flagging long-standing pages
-    (테슬라, 앤트로픽 …) as New on /wiki + the dashboard.
+    Two heuristics, broadest first:
+      1. created==updated AND doc_ids > batch cap  → more sources than one
+         batch can mint; definitely a legacy topic.
+      2. created==updated AND the wiki .md file contains a YYYY-MM-DD date
+         that predates the stamp → the page had content from an earlier
+         merge; the append strategy writes '## 📌 YYYY-MM-DD 업데이트'
+         headers, so any date before the stamp proves the topic pre-existed.
 
-    Back-stamp signature, with no practical false positives:
-      created == updated  → both written in one run, AND
-      len(doc_ids) > WIKI_MAX_DOCS_PER_TOPIC → more sources than a single
-      batch can mint. A genuinely new topic is capped at that many docs per
-      batch, so exceeding it requires ≥2 merges — which bump `updated` past
-      `created`. Hence cr==up AND len>cap can only be a legacy topic that
-      was merged once after the field landed.
-
-    Idempotent: once `created` is cleared a record stops matching. Returns
-    the count healed (caller persists)."""
+    Idempotent: once `created` is cleared a record stops matching."""
     cap = int(_flag("WIKI_MAX_DOCS_PER_TOPIC", 6))
+    d = _wiki_dir()
     healed = 0
-    for rec in idx.values():
+    for topic, rec in idx.items():
         if not isinstance(rec, dict):
             continue
         cr = rec.get("created") or ""
-        if cr and cr == (rec.get("updated") or "") \
-                and len(rec.get("doc_ids") or []) > cap:
+        if not cr or cr != (rec.get("updated") or ""):
+            continue
+        # Heuristic 1: source count exceeds single-batch capacity
+        if len(rec.get("doc_ids") or []) > cap:
             rec.pop("created", None)
             healed += 1
+            continue
+        # Heuristic 2: page content has dates older than the stamp
+        if d:
+            fname = rec.get("file") or f"{_slug(topic)}.md"
+            try:
+                md_path = d / fname
+                if md_path.is_file():
+                    text = md_path.read_text(encoding="utf-8")
+                    cr_date = cr[:10]
+                    if any(m.group(1) < cr_date
+                           for m in _SECTION_DATE_RE.finditer(text)):
+                        rec.pop("created", None)
+                        healed += 1
+            except Exception:
+                pass
     return healed
 
 
