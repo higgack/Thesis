@@ -383,6 +383,9 @@ header .sub { color: var(--muted); font-size: 13px; }
 }
 .dash-cmd-link:hover { opacity: 0.8; }
 
+.ans-bl { white-space: normal; margin: 6px 0; padding-left: 1.5em; list-style: disc; }
+.ans-bl li { margin: 3px 0; }
+
 .footer {
   margin-top: 32px; padding: 16px 0; text-align: center;
   font-size: 11px; color: var(--muted);
@@ -486,6 +489,9 @@ h1 {
   font-family: monospace; font-weight: 600;
 }
 .dash-cmd-link:hover { opacity: 0.8; }
+
+.ans-bl { white-space: normal; margin: 6px 0; padding-left: 1.5em; list-style: disc; }
+.ans-bl li { margin: 3px 0; }
 """
 
 
@@ -802,7 +808,19 @@ _INDEX_JS = r"""
     var h = askEsc(s);
     h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
     h = h.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
-    return h;
+    var lines = h.split('\n'), out = [], inUl = false;
+    for (var i = 0; i < lines.length; i++){
+      var t = lines[i].replace(/^\s+/, '');
+      if (/^[•·] /.test(t)){
+        if (!inUl){ out.push('<ul class="ans-bl">'); inUl = true; }
+        out.push('<li>' + t.substring(2) + '</li>');
+      } else {
+        if (inUl){ out.push('</ul>'); inUl = false; }
+        out.push(lines[i]);
+      }
+    }
+    if (inUl) out.push('</ul>');
+    return out.join('\n');
   }
   function askClose(){
     if (askPoll){ clearInterval(askPoll); askPoll = null; }
@@ -1007,6 +1025,29 @@ _LINKIFY_JS = r"""
 """
 
 
+def _format_bullets(escaped: str) -> str:
+    """Convert •/· bullet lines in HTML-escaped text to <ul> for
+    proper hanging indentation on the dashboard."""
+    lines = escaped.split('\n')
+    out: list[str] = []
+    in_ul = False
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith('• ') or stripped.startswith('· '):
+            if not in_ul:
+                out.append('<ul class="ans-bl">')
+                in_ul = True
+            out.append(f'<li>{stripped[2:]}</li>')
+        else:
+            if in_ul:
+                out.append('</ul>')
+                in_ul = False
+            out.append(line)
+    if in_ul:
+        out.append('</ul>')
+    return '\n'.join(out)
+
+
 def _card_data_text(it: dict) -> str:
     """Searchable haystack for the JS filter — lowercased, ascii-safe.
     Intentionally limited to question + answer only. Including tool
@@ -1197,7 +1238,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
                     f"<a href='q-{int(it['id'])}.html'>Q. {_esc(it['question'])}</a>"
                     "</div></summary>"
                     f"{warn}"
-                    f"<div class='answer'>{_esc(it['answer'])}</div>"
+                    f"<div class='answer'>{_format_bullets(_esc(it['answer']))}</div>"
                     f"{sources_html}"
                     "</details></div>"
                 )
@@ -1250,7 +1291,7 @@ def _render_detail(item: dict, token_dir: str) -> str:
         "</div>",
         f"<h1>{_esc(item['question'])}</h1>",
         warn,
-        f"<div class='answer'>{_esc(item['answer'])}</div>",
+        f"<div class='answer'>{_format_bullets(_esc(item['answer']))}</div>",
         sources_html,
         "</main>",
         f"<script>{_DETAIL_JS}</script>",
@@ -1356,6 +1397,12 @@ header .sub { color: var(--muted); font-size: 13px; }
   background: rgba(16,185,129,0.12); color: var(--primary);
   border: 1px solid rgba(16,185,129,0.25);
 }
+.cmd-try-link {
+  color: var(--primary); text-decoration: none;
+  border-bottom: 1px dashed currentColor;
+  padding-bottom: 1px;
+}
+.cmd-try-link:hover { opacity: 0.75; text-decoration: none; }
 .footer {
   margin-top: 32px; padding: 16px 0; text-align: center;
   font-size: 11px; color: var(--muted);
@@ -1390,12 +1437,19 @@ def _render_commands_page(token: str, lookup_guide: str,
         while j < len(cmd_parts) - 1:
             cmd_sig = cmd_parts[j].strip()
             desc = cmd_parts[j + 1].strip()
+            desc = _re.sub(r'\s*·\s*$', '', desc)
+            desc = _re.sub(r'\n\s*•\s*$', '', desc)
+            desc = _re.sub(r'^\s*•\s*', '', desc)
+            desc = desc.strip()
             first_tok = cmd_sig.split()[0]
             cmd_base = first_tok.lstrip("/").split("&")[0]
             if (_re.search(r'[가-힣]', cmd_sig)
                     and '&lt;' not in cmd_sig
                     and '[' not in cmd_sig
                     and '·' not in cmd_sig):
+                j += 2
+                continue
+            if not desc:
                 j += 2
                 continue
             is_paid = cmd_base in paid_commands
@@ -1481,9 +1535,15 @@ def _render_commands_page(token: str, lookup_guide: str,
                 badge = "<span class='cmd-badge mutation'>⚠️ 변경</span>"
             else:
                 badge = "<span class='cmd-badge free'>무료</span>"
+            sig = entry['signature']
+            ftok = sig.split()[0]
+            rest_sig = sig[len(ftok):]
+            cmd_href = f"/{_esc(token)}/?cmd={ftok}"
             parts.append(
                 f"<div class='cmd-entry'>"
-                f"<div class='cmd-name'>{entry['signature']}{badge}</div>"
+                f"<div class='cmd-name'>"
+                f"<a href='{cmd_href}' class='cmd-try-link' title='실행해보기'>{ftok}</a>"
+                f"{rest_sig}{badge}</div>"
                 f"<div class='cmd-desc'>{entry['description']}</div>"
                 f"</div>"
             )

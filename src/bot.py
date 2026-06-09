@@ -12284,8 +12284,8 @@ async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # Paid search (search_*, kr_*, kipris_*, deep, compare_*, web_search) is
 # intentionally excluded — use the natural-language box for those.
 _DASH_PAID_COMMANDS = frozenset({
-    "deep", "search_papers", "search_papers_advanced",
-    "search_patents", "search_patents_advanced",
+    "deep", "search_papers", "search_papers_advanced", "paper_stats",
+    "search_patents", "search_patents_advanced", "patent_stats",
     "web_search", "search_my_brain", "compare_papers",
     "company_patents", "patent_detail", "citing_patents",
     "kipris_search", "kipris_pub", "kipris_reg", "kipris_inventor",
