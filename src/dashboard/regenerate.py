@@ -800,6 +800,7 @@ _INDEX_JS = r"""
   var askPanel = document.getElementById('ask-panel');
   var askPoll = null;
   var askDeadline = 0;
+  var askHistory = [];
 
   function askEsc(s){
     return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -826,6 +827,7 @@ _INDEX_JS = r"""
     if (askPoll){ clearInterval(askPoll); askPoll = null; }
     askPanel.classList.add('hidden');
     askPanel.innerHTML = '';
+    askHistory.length = 0;
   }
   function askHeader(qText, kindChip){
     return "<div class='ask-q'><span>💬 " + askEsc(qText) + "</span>" +
@@ -871,6 +873,9 @@ _INDEX_JS = r"""
   }
   function askSubmit(q){
     if (askPoll){ clearInterval(askPoll); askPoll = null; }
+    if (!askPanel.classList.contains('hidden') && askPanel.innerHTML.trim()){
+      askHistory.push(askPanel.innerHTML);
+    }
     askSpinner(q, q.charAt(0) === '/');
     fetch('/' + token + '/ask', {
       method: 'POST',
@@ -915,6 +920,15 @@ _INDEX_JS = r"""
     });
   }
   window._dashAskSubmit = askSubmit;
+  window._dashAskBack = function(){
+    if (askHistory.length > 0){
+      askPanel.innerHTML = askHistory.pop();
+      askPanel.classList.remove('hidden');
+      askWire();
+    } else {
+      askClose();
+    }
+  };
 
   // Auto-run command from URL param: ?cmd=/show_xxx
   var params = new URLSearchParams(location.search);
@@ -982,7 +996,12 @@ _LINKIFY_JS = r"""
       var frag = document.createDocumentFragment();
       if (idx > 0) frag.appendChild(document.createTextNode(text.slice(0, idx)));
       var a = document.createElement('a');
-      a.href = '/' + token + '/';
+      if (!isDetail && !isCommands){
+        a.href = '#';
+        a.dataset.back = '1';
+      } else {
+        a.href = '/' + token + '/';
+      }
       a.className = 'dash-cmd-link';
       a.textContent = '처음으로';
       frag.appendChild(a);
@@ -997,7 +1016,13 @@ _LINKIFY_JS = r"""
 
   document.addEventListener('click', function(e){
     var link = e.target.closest('.dash-cmd-link');
-    if (!link || !link.dataset.cmd) return;
+    if (!link) return;
+    if (link.dataset.back){
+      e.preventDefault();
+      if (window._dashAskBack) window._dashAskBack();
+      return;
+    }
+    if (!link.dataset.cmd) return;
     e.preventDefault();
     var cmd = link.dataset.cmd;
     if (!isDetail && !isCommands && window._dashAskSubmit){
@@ -1120,8 +1145,8 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "<header>",
         "<h1>🧠 Second Brain Archive</h1>",
         "<div class='sub'>카드 클릭 시 전체 리포트 · "
-        f"<a href='/{token}/commands/' class='nav-shortcut'>📋 Commands</a> "
-        f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a>"
+        f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a> "
+        f"<a href='/{token}/commands/' class='nav-shortcut'>📋 Commands</a>"
         "</div>",
         "</header>",
 
@@ -1492,8 +1517,8 @@ def _render_commands_page(token: str, lookup_guide: str,
         "<header>",
         "<h1>📋 명령어 레퍼런스</h1>",
         "<div class='sub'>전체 명령어 상세 가이드 · "
-        f"<a href='/{token}/' class='nav-shortcut'>🧠 Archive</a> "
-        f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a>"
+        f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a> "
+        f"<a href='/{token}/' class='nav-shortcut'>🧠 Archive</a>"
         "</div>",
         "</header>",
         "<div class='toc'>",
