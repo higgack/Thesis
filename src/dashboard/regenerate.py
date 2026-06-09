@@ -1469,17 +1469,27 @@ def regenerate() -> None:
         except Exception:
             log.exception("dashboard wiki render failed (non-fatal)")
         try:
-            from ..bot import (_LOOKUP_GUIDE_TEXT,
-                               _DASH_PAID_COMMANDS, _DASH_MUTATION_COMMANDS)
-            cmd_dir = target / "commands"
-            cmd_dir.mkdir(parents=True, exist_ok=True)
-            cmd_html = _render_commands_page(
-                token, _LOOKUP_GUIDE_TEXT,
-                _DASH_PAID_COMMANDS, _DASH_MUTATION_COMMANDS)
-            cmd_tmp = cmd_dir / "index.html.tmp"
-            cmd_idx = cmd_dir / "index.html"
-            cmd_tmp.write_text(cmd_html, encoding="utf-8")
-            os.replace(cmd_tmp, cmd_idx)
+            import sys
+            bot_mod = sys.modules.get("src.bot")
+            if bot_mod is None:
+                try:
+                    from .. import bot as bot_mod
+                except Exception:
+                    bot_mod = None
+            if bot_mod and hasattr(bot_mod, "_LOOKUP_GUIDE_TEXT"):
+                guide = getattr(bot_mod, "_LOOKUP_GUIDE_TEXT", "")
+                paid = getattr(bot_mod, "_DASH_PAID_COMMANDS", frozenset())
+                mutation = getattr(bot_mod, "_DASH_MUTATION_COMMANDS", frozenset())
+                cmd_dir = target / "commands"
+                cmd_dir.mkdir(parents=True, exist_ok=True)
+                cmd_html = _render_commands_page(
+                    token, guide, paid, mutation)
+                cmd_tmp = cmd_dir / "index.html.tmp"
+                cmd_idx = cmd_dir / "index.html"
+                cmd_tmp.write_text(cmd_html, encoding="utf-8")
+                os.replace(cmd_tmp, cmd_idx)
+            else:
+                log.warning("commands page: bot module not available yet")
         except Exception:
             log.exception("dashboard commands page render failed (non-fatal)")
     except Exception:
