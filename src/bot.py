@@ -11617,7 +11617,7 @@ async def cmd_wiki(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             _kst = timezone(timedelta(hours=9))
             _7d_ago = datetime.now(_kst) - timedelta(days=7)
             lines = [f"📚 <b>위키 페이지 {len(topics)}개</b>  (/wiki &lt;토픽&gt;)"]
-            for t in topics[:60]:
+            for t in topics:
                 upd_str = t.get("updated") or ""
                 badge = ""
                 if upd_str:
@@ -11630,10 +11630,11 @@ async def cmd_wiki(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         pass
                 date_part = f", {upd_str[:10]}" if upd_str else ""
                 lines.append(f"• {html.escape(t['topic'])}  ({t['docs']}건{date_part}){badge}")
-            await update.message.reply_text(
-                "\n".join(lines), parse_mode="HTML",
-                disable_web_page_preview=True,
-            )
+            for chunk in _split_for_telegram("\n".join(lines)):
+                await update.message.reply_text(
+                    chunk, parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
             return
         page = wiki.read_page(arg)
         if not page:
@@ -11739,16 +11740,17 @@ async def cmd_wiki_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     recent.sort(key=lambda x: x[0], reverse=True)
     lines = [f"🆕 <b>최근 {days}일 위키 업데이트 ({len(recent)}개)</b>"]
-    for upd_dt, t in recent[:60]:
+    for upd_dt, t in recent:
         ago = (datetime.now(_kst) - upd_dt).days
         ago_str = "오늘" if ago == 0 else f"{ago}일 전"
         lines.append(
             f"• {html.escape(t['topic'])}  ({t['docs']}건, {ago_str})"
         )
-    await update.message.reply_text(
-        "\n".join(lines), parse_mode="HTML",
-        disable_web_page_preview=True,
-    )
+    for chunk in _split_for_telegram("\n".join(lines)):
+        await update.message.reply_text(
+            chunk, parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
 
 
 async def cmd_wiki_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -11783,16 +11785,17 @@ async def cmd_wiki_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     new_topics.sort(key=lambda x: x[0], reverse=True)
     lines = [f"✨ <b>최근 {days}일 신규 위키 토픽 ({len(new_topics)}개)</b>"]
-    for cr_dt, t in new_topics[:60]:
+    for cr_dt, t in new_topics:
         ago = (datetime.now(_kst) - cr_dt).days
         ago_str = "오늘" if ago == 0 else f"{ago}일 전"
         lines.append(
             f"• {html.escape(t['topic'])}  ({t['docs']}건, {ago_str})"
         )
-    await update.message.reply_text(
-        "\n".join(lines), parse_mode="HTML",
-        disable_web_page_preview=True,
-    )
+    for chunk in _split_for_telegram("\n".join(lines)):
+        await update.message.reply_text(
+            chunk, parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
 
 
 async def cmd_wiki_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
