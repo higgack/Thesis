@@ -771,8 +771,8 @@ def _topbar(token: str, current: str = "") -> str:
         f'<a href="/{token}/wiki/" class="logo">LLM Wiki</a>'
         '<input type="text" id="wiki-search" class="wiki-search" '
         'placeholder="Search topics...">'
-        f'<a href="/{token}/commands/" class="nav-link">Commands</a>'
         f'<a href="/{token}/" class="nav-link">Q&A Archive</a>'
+        f'<a href="/{token}/commands/" class="nav-link">Commands</a>'
         "</div>"
     )
 
