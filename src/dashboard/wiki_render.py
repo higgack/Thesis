@@ -706,9 +706,17 @@ _FILTER_JS = """
       btn.classList.add('active');
       var f = btn.getAttribute('data-filter');
       cards.forEach(function(c){
-        var ts = f === 'new' ? c.getAttribute('data-created')
-                             : c.getAttribute('data-updated');
-        c.style.display = (ts && ts >= cutoff) ? '' : 'none';
+        var cr = c.getAttribute('data-created');
+        var up = c.getAttribute('data-updated');
+        var show;
+        if (f === 'new') {
+          show = cr && cr >= cutoff;
+        } else {
+          // Recent excludes still-New topics (created within the window)
+          // so New and Recent never overlap.
+          show = up && up >= cutoff && !(cr && cr >= cutoff);
+        }
+        c.style.display = show ? '' : 'none';
       });
     });
   });

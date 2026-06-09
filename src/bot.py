@@ -11715,6 +11715,15 @@ async def cmd_wiki_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         upd_str = t.get("updated") or ""
         if not upd_str:
             continue
+        # New(생성 N일 이내)인 토픽은 Recent에서 제외 — 두 목록을 배타적으로.
+        # New 기간이 끝난(생성 N일 지난) 뒤에야 Recent로 잡힌다.
+        cr_str = t.get("created") or ""
+        if cr_str:
+            try:
+                if datetime.fromisoformat(cr_str) >= cutoff:
+                    continue
+            except ValueError:
+                pass
         try:
             upd_dt = datetime.fromisoformat(upd_str)
             if upd_dt >= cutoff:
@@ -11722,7 +11731,9 @@ async def cmd_wiki_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             continue
     if not recent:
-        await update.message.reply_text(f"최근 {days}일 내 업데이트된 위키 페이지 없음.")
+        await update.message.reply_text(
+            f"최근 {days}일 내 업데이트된 위키 페이지 없음 (신규 토픽은 /wiki_new)."
+        )
         return
     recent.sort(key=lambda x: x[0], reverse=True)
     lines = [f"🆕 <b>최근 {days}일 위키 업데이트 ({len(recent)}개)</b>"]
