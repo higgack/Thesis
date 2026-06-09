@@ -1422,7 +1422,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   NTIS: /kr_rnd_projects · /kr_related
         /kr_outcomes · /kr_govt_reports · /kr_agency_rnd · /kr_rnd_issues
 
-ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup · /wiki_guide · /patents_guide · /papers_guide
+ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup · /wiki_guide
 
 <b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
@@ -1851,12 +1851,6 @@ NTIS 이슈로보는R&amp;D — 정부R&amp;D 한정 트렌드. ⏳ 승인 대�
 
 <b>/guide_lookup</b>
 이 화면 (전체 명령어 상세 가이드).
-
-<b>/patents_guide</b>
-특허 신기능 상세 — /search_patents · _advanced · _stats + KIPRIS 외 5종.
-
-<b>/papers_guide</b>
-논문 신기능 상세 — /search_papers · _advanced · _stats + OpenAlex 8개 필터.
 
 ═══════════════════════════════════════
 <b>📊 대시보드 기록 정책</b>
