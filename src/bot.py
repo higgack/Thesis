@@ -1924,9 +1924,6 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki_failed [clear|retry 토픽|retry_all]</b> 머지 실패 목록 — 3회 연속 실패 시 큐에서 분리, 재시도/삭제 가능
 • <b>/wiki_off · /wiki_on</b> 즉시 끄기/켜기(killswitch, 재배포 불필요)
 
-<b>켜는 법(점진)</b>: ①WIKI_ENABLED=1 재배포 → 며칠 /wiki_status·/wiki_today
-관찰 → ②신뢰되면 WIKI_QUERY_FIRST=1(답변에 합성 페이지 우선, 토큰↓).
-
 <b>비용/안전</b>: 추가 임베딩 0(라우팅 무료) · 머지만 과금하되 일일 ₩1000 상한 +
 25토픽/run 캡으로 이중 차단 · 비용 ↑이면 캡↓/게이트↑ · 원복: /wiki_off 또는
 WIKI_ENABLED=0(Chroma/meta.db 안 건드려 끄면 기존 RAG 그대로) · 상세 docs/WIKI.md
