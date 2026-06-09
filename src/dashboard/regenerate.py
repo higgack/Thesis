@@ -1428,6 +1428,21 @@ header .sub { color: var(--muted); font-size: 13px; }
   padding-bottom: 1px;
 }
 .cmd-try-link:hover { opacity: 0.75; text-decoration: none; }
+.guide-expand { margin-top: 10px; }
+.guide-expand > summary {
+  cursor: pointer; color: var(--accent); font-size: 13px; font-weight: 600;
+  list-style: none;
+}
+.guide-expand > summary::-webkit-details-marker { display: none; }
+.guide-expand > summary::after { content: " ▸"; font-size: 11px; }
+.guide-expand[open] > summary::after { content: " ▾"; }
+.guide-content {
+  margin-top: 10px; padding: 16px 18px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; font-size: 13px; line-height: 1.7;
+  white-space: pre-wrap; word-break: break-word;
+}
+.guide-content .cmd-try-link { font-size: 13px; }
 .footer {
   margin-top: 32px; padding: 16px 0; text-align: center;
   font-size: 11px; color: var(--muted);
@@ -1436,15 +1451,47 @@ header .sub { color: var(--muted); font-size: 13px; }
 """
 
 
+def _linkify_guide_cmds(guide_html: str, token: str) -> str:
+    """Make <b>/command args</b> patterns in guide Telegram HTML clickable.
+    The first token becomes an <a> link to the ask bridge; args stay bold."""
+    import re as _re
+    def _repl(m):
+        sig = m.group(1)
+        parts = sig.split(None, 1)
+        cmd = parts[0]
+        rest = parts[1] if len(parts) > 1 else ""
+        link = (f"<a href='/{html.escape(token)}/?cmd={cmd}' "
+                f"class='cmd-try-link'>{cmd}</a>")
+        return f"<b>{link} {rest}</b>" if rest else f"<b>{link}</b>"
+    return _re.sub(r'<b>(/\w[\w_]*(?:\s+[^<]*)?)</b>', _repl, guide_html)
+
+
+_COST_HINTS: dict[str, str] = {
+    "deep": "~₩50",
+    "compare_papers": "~₩20",
+    "web_search": "~₩10",
+    "search_my_brain": "~₩10",
+    "ingest_url": "~₩10-50",
+    "eval": "~₩50+",
+    "eval_seed": "~₩50+",
+    "wiki_run": "~₩55/토픽",
+    "wiki_drain": "~₩55/토픽",
+    "wiki_backfill": "₩0 적재",
+}
+_COST_DEFAULT = "~₩5"
+
+
 def _render_commands_page(token: str, lookup_guide: str,
                           paid_commands: frozenset,
-                          mutation_commands: frozenset) -> str:
+                          mutation_commands: frozenset,
+                          guides: dict[str, str] | None = None) -> str:
     """Render the command reference HTML page from _LOOKUP_GUIDE_TEXT.
 
     The guide text is Telegram HTML (safe subset: <b>, <code>, <i>, <a>
     plus &lt; &gt; &amp; entities). Descriptions pass through as-is
     since the tag set is already safe for browser rendering."""
     import re as _re
+    guides = guides or {}
 
     section_re = _re.compile(r'═+\s*\n<b>(.+?)</b>\s*\n═+')
     cmd_re = _re.compile(r'<b>(/\w[\w_]*(?:\s+[^<]*)?)</b>')
@@ -1550,12 +1597,14 @@ def _render_commands_page(token: str, lookup_guide: str,
                 f"{sec['preamble']}</div>"
             )
         for entry in sec["entries"]:
+            cb = entry["cmd_base"]
+            cost = _COST_HINTS.get(cb, _COST_DEFAULT)
             badge = ""
             if entry["is_paid"] and entry["is_mutation"]:
-                badge = ("<span class='cmd-badge paid'>💰 유료</span>"
+                badge = (f"<span class='cmd-badge paid'>💰 {cost}</span>"
                          "<span class='cmd-badge mutation'>⚠️ 변경</span>")
             elif entry["is_paid"]:
-                badge = "<span class='cmd-badge paid'>💰 유료</span>"
+                badge = f"<span class='cmd-badge paid'>💰 {cost}</span>"
             elif entry["is_mutation"]:
                 badge = "<span class='cmd-badge mutation'>⚠️ 변경</span>"
             else:
@@ -1563,15 +1612,32 @@ def _render_commands_page(token: str, lookup_guide: str,
             sig = entry['signature']
             ftok = sig.split()[0]
             rest_sig = sig[len(ftok):]
-            cmd_href = f"/{_esc(token)}/?cmd={ftok}"
-            parts.append(
-                f"<div class='cmd-entry'>"
-                f"<div class='cmd-name'>"
-                f"<a href='{cmd_href}' class='cmd-try-link' title='실행해보기'>{ftok}</a>"
-                f"{rest_sig}{badge}</div>"
-                f"<div class='cmd-desc'>{entry['description']}</div>"
-                f"</div>"
-            )
+            guide_key = cb
+            guide_html = guides.get(guide_key, "")
+            if guide_html:
+                linked_guide = _linkify_guide_cmds(guide_html, token)
+                parts.append(
+                    f"<div class='cmd-entry'>"
+                    f"<div class='cmd-name'>"
+                    f"<span class='cmd-try-link'>{ftok}</span>"
+                    f"{rest_sig}{badge}</div>"
+                    f"<div class='cmd-desc'>{entry['description']}</div>"
+                    f"<details class='guide-expand'>"
+                    f"<summary>📖 가이드 보기</summary>"
+                    f"<div class='guide-content'>{linked_guide}</div>"
+                    f"</details>"
+                    f"</div>"
+                )
+            else:
+                cmd_href = f"/{_esc(token)}/?cmd={ftok}"
+                parts.append(
+                    f"<div class='cmd-entry'>"
+                    f"<div class='cmd-name'>"
+                    f"<a href='{cmd_href}' class='cmd-try-link' title='실행해보기'>{ftok}</a>"
+                    f"{rest_sig}{badge}</div>"
+                    f"<div class='cmd-desc'>{entry['description']}</div>"
+                    f"</div>"
+                )
         parts.append("</div></details>")
 
     from datetime import datetime as _dt, timezone as _tz, timedelta as _td
@@ -1687,10 +1753,19 @@ def regenerate() -> None:
                 guide = getattr(bot_mod, "_LOOKUP_GUIDE_TEXT", "")
                 paid = getattr(bot_mod, "_DASH_PAID_COMMANDS", frozenset())
                 mutation = getattr(bot_mod, "_DASH_MUTATION_COMMANDS", frozenset())
+                guide_texts = {}
+                for attr, key in (
+                    ("_PATENTS_GUIDE_TEXT", "patents_guide"),
+                    ("_PAPERS_GUIDE_TEXT", "papers_guide"),
+                    ("_WIKI_GUIDE_TEXT", "wiki_guide"),
+                ):
+                    txt = getattr(bot_mod, attr, "")
+                    if txt:
+                        guide_texts[key] = txt
                 cmd_dir = target / "commands"
                 cmd_dir.mkdir(parents=True, exist_ok=True)
                 cmd_html = _render_commands_page(
-                    token, guide, paid, mutation)
+                    token, guide, paid, mutation, guides=guide_texts)
                 cmd_tmp = cmd_dir / "index.html.tmp"
                 cmd_idx = cmd_dir / "index.html"
                 cmd_tmp.write_text(cmd_html, encoding="utf-8")
