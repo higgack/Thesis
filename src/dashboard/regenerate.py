@@ -1428,16 +1428,16 @@ header .sub { color: var(--muted); font-size: 13px; }
   padding-bottom: 1px;
 }
 .cmd-try-link:hover { opacity: 0.75; text-decoration: none; }
-.guide-expand { margin-top: 10px; }
-.guide-expand > summary {
-  cursor: pointer; color: var(--accent); font-size: 13px; font-weight: 600;
-  list-style: none;
+.guide-entry > summary {
+  cursor: pointer; list-style: none;
 }
-.guide-expand > summary::-webkit-details-marker { display: none; }
-.guide-expand > summary::after { content: " ▸"; font-size: 11px; }
-.guide-expand[open] > summary::after { content: " ▾"; }
+.guide-entry > summary::-webkit-details-marker { display: none; }
+.guide-hint {
+  color: var(--accent); font-size: 12px; font-weight: 600; margin-top: 8px;
+}
+.guide-entry[open] .guide-hint { display: none; }
 .guide-content {
-  margin-top: 10px; padding: 16px 18px;
+  margin-top: 12px; padding: 16px 18px;
   background: var(--panel); border: 1px solid var(--border);
   border-radius: 8px; font-size: 13px; line-height: 1.7;
   white-space: pre-wrap; word-break: break-word;
@@ -1617,15 +1617,21 @@ def _render_commands_page(token: str, lookup_guide: str,
             if guide_html:
                 linked_guide = _linkify_guide_cmds(guide_html, token)
                 parts.append(
-                    f"<div class='cmd-entry'>"
-                    f"<div class='cmd-name'>"
-                    f"<span class='cmd-try-link'>{ftok}</span>"
-                    f"{rest_sig}{badge}</div>"
+                    f"<details class='cmd-entry guide-entry'>"
+                    f"<summary>"
+                    f"<div class='cmd-name'>{ftok}{rest_sig}{badge}</div>"
                     f"<div class='cmd-desc'>{entry['description']}</div>"
-                    f"<details class='guide-expand'>"
-                    f"<summary>📖 가이드 보기</summary>"
+                    f"<div class='guide-hint'>📖 클릭하여 가이드 펼치기</div>"
+                    f"</summary>"
                     f"<div class='guide-content'>{linked_guide}</div>"
                     f"</details>"
+                )
+            elif cb == "guide_lookup":
+                parts.append(
+                    f"<div class='cmd-entry'>"
+                    f"<div class='cmd-name'>{ftok}{rest_sig}{badge}</div>"
+                    f"<div class='cmd-desc'>{entry['description']} "
+                    f"(이 페이지)</div>"
                     f"</div>"
                 )
             else:
