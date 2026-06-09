@@ -1459,25 +1459,33 @@ header .sub { color: var(--muted); font-size: 13px; }
 
 def _linkify_guide_cmds(guide_html: str, token: str,
                         paid_commands: frozenset | None = None) -> str:
-    """Make <b>/command args</b> patterns in guide Telegram HTML clickable.
-    The first token becomes an <a> link to the ask bridge; args stay bold.
-    When paid_commands is provided, paid commands get an inline cost badge."""
+    """Make /command patterns in guide Telegram HTML clickable.
+
+    Handles both plain ``<b>/cmd args</b>`` and numbered
+    ``<b>N) /cmd args · /cmd2 args</b>``.  Paid commands get an inline
+    cost badge when *paid_commands* is provided."""
     import re as _re
     paid = paid_commands or frozenset()
-    def _repl(m):
-        sig = m.group(1)
-        parts = sig.split(None, 1)
-        cmd = parts[0]
-        rest = parts[1] if len(parts) > 1 else ""
-        link = (f"<a href='/{html.escape(token)}/?cmd={cmd}' "
-                f"class='cmd-try-link'>{cmd}</a>")
-        bold = f"<b>{link} {rest}</b>" if rest else f"<b>{link}</b>"
-        cmd_base = cmd.lstrip("/").split("&")[0]
-        if cmd_base in paid:
-            c = _COST_HINTS.get(cmd_base, _COST_DEFAULT)
-            bold += f" <span class='cmd-badge paid'>{c}</span>"
-        return bold
-    return _re.sub(r'<b>(/\w[\w_]*(?:\s+[^<]*)?)</b>', _repl, guide_html)
+
+    def _cmd_badge(cmd: str) -> str:
+        cb = cmd.lstrip("/")
+        if cb in paid:
+            c = _COST_HINTS.get(cb, _COST_DEFAULT)
+            return f" <span class='cmd-badge paid'>{c}</span>"
+        return ""
+
+    def _repl_bold(m):
+        inner = m.group(1)
+        def _repl_cmd(cm):
+            raw = cm.group(0)
+            if raw.endswith("*"):
+                return raw
+            link = (f"<a href='/{html.escape(token)}/?cmd={raw}' "
+                    f"class='cmd-try-link'>{raw}</a>")
+            return link + _cmd_badge(raw)
+        return "<b>" + _re.sub(r'/[a-z]\w+\*?', _repl_cmd, inner) + "</b>"
+
+    return _re.sub(r'<b>([^<]*/[a-z]\w+[^<]*)</b>', _repl_bold, guide_html)
 
 
 _COST_HINTS: dict[str, str] = {
