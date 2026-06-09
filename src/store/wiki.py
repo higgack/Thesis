@@ -579,6 +579,25 @@ def wiki_failed_retry(topic: str) -> dict:
             "note": f"{requeued}건 큐 복귀 — 다음 배치(/wiki_run)에서 재시도"}
 
 
+def wiki_failed_retry_all() -> dict:
+    """Retry ALL failed topics at once. Returns aggregate stats."""
+    failed = _load_failed()
+    if not failed:
+        return {"retried": 0, "requeued": 0, "topics": []}
+    total_requeued = 0
+    topics_retried: list[str] = []
+    for rec in list(failed):
+        topic = rec.get("topic", "")
+        if not topic:
+            continue
+        res = wiki_failed_retry(topic)
+        if not res.get("error"):
+            topics_retried.append(topic)
+            total_requeued += res.get("requeued", 0)
+    return {"retried": len(topics_retried), "requeued": total_requeued,
+            "topics": topics_retried}
+
+
 def _wikied_doc_ids() -> set:
     """All doc_ids already folded into a wiki page (from the index), so
     backfill can skip them."""
