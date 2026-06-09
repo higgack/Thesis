@@ -959,6 +959,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "<header>",
         "<h1>🧠 Second Brain Archive</h1>",
         "<div class='sub'>카드 클릭 시 전체 리포트 · "
+        f"<a href='/{token}/commands/' class='nav-shortcut'>📋 Commands</a> "
         f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a>"
         "</div>",
         "</header>",
@@ -1146,6 +1147,237 @@ text-align:center;padding:40vh 20px}</style>
 """
 
 
+_COMMANDS_CSS = _BASE_CSS + """
+.layout { max-width: 960px; margin: 0 auto; padding: 28px 22px 80px; }
+header { margin-bottom: 22px; }
+header h1 {
+  font-size: 22px; margin: 0 0 4px 0; color: var(--text);
+  display: flex; align-items: center; gap: 8px;
+}
+header .sub { color: var(--muted); font-size: 13px; }
+.nav-shortcut {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 10px; border-radius: 12px;
+  background: var(--accent); color: #fff !important;
+  font-weight: 600; font-size: 13px;
+  text-decoration: none !important;
+  transition: opacity 0.15s;
+}
+.nav-shortcut:hover { opacity: 0.85; }
+.toc {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px 20px; margin-bottom: 22px;
+  box-shadow: var(--shadow);
+}
+.toc h2 { font-size: 14px; margin: 0 0 10px; color: var(--text); }
+.toc ul { margin: 0; padding-left: 18px; }
+.toc li { padding: 2px 0; }
+.toc a { font-size: 13px; }
+.cmd-section {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; margin-bottom: 16px; overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.cmd-section > summary {
+  cursor: pointer; list-style: none; padding: 16px 20px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-weight: 700; font-size: 15px;
+  background: var(--panel-alt);
+  border-bottom: 1px solid var(--border-soft);
+}
+.cmd-section > summary::-webkit-details-marker { display: none; }
+.cmd-section > summary::before {
+  content: "▸ "; color: var(--muted); margin-right: 4px; font-size: 12px;
+}
+.cmd-section[open] > summary::before { content: "▾ "; }
+.cmd-section .section-count {
+  color: var(--muted); font-weight: 400; font-size: 13px;
+}
+.cmd-body { padding: 16px 20px; }
+.cmd-entry {
+  background: var(--panel-alt); border: 1px solid var(--border-soft);
+  border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;
+}
+.cmd-entry:last-child { margin-bottom: 0; }
+.cmd-name {
+  font-size: 14px; font-weight: 700; color: var(--primary);
+  font-family: monospace;
+}
+.cmd-desc {
+  font-size: 13px; line-height: 1.65; color: var(--text);
+  margin-top: 6px; white-space: pre-wrap; word-break: break-word;
+}
+.cmd-desc code {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 5px; font-size: 12px;
+}
+.cmd-badge {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  padding: 2px 8px; border-radius: 10px; margin-left: 6px;
+  vertical-align: middle;
+}
+.cmd-badge.paid {
+  background: rgba(245,158,11,0.15); color: #d97706;
+  border: 1px solid rgba(245,158,11,0.3);
+}
+[data-theme="dark"] .cmd-badge.paid {
+  color: #fbbf24;
+}
+.cmd-badge.mutation {
+  background: rgba(239,68,68,0.12); color: #dc2626;
+  border: 1px solid rgba(239,68,68,0.25);
+}
+[data-theme="dark"] .cmd-badge.mutation {
+  color: #fca5a5;
+}
+.cmd-badge.free {
+  background: rgba(16,185,129,0.12); color: var(--primary);
+  border: 1px solid rgba(16,185,129,0.25);
+}
+.footer {
+  margin-top: 32px; padding: 16px 0; text-align: center;
+  font-size: 11px; color: var(--muted);
+  border-top: 1px solid var(--border-soft);
+}
+"""
+
+
+def _render_commands_page(token: str, lookup_guide: str,
+                          paid_commands: frozenset,
+                          mutation_commands: frozenset) -> str:
+    """Render the command reference HTML page from _LOOKUP_GUIDE_TEXT.
+
+    The guide text is Telegram HTML (safe subset: <b>, <code>, <i>, <a>
+    plus &lt; &gt; &amp; entities). Descriptions pass through as-is
+    since the tag set is already safe for browser rendering."""
+    import re as _re
+
+    section_re = _re.compile(r'═+\s*\n<b>(.+?)</b>\s*\n═+')
+    cmd_re = _re.compile(r'<b>(/\w[\w_]*(?:\s+[^<]*)?)</b>')
+
+    sections: list[dict] = []
+    raw_sections = section_re.split(lookup_guide)
+    i = 1
+    while i < len(raw_sections) - 1:
+        title = raw_sections[i].strip()
+        body = raw_sections[i + 1].strip()
+        i += 2
+        entries: list[dict] = []
+        cmd_parts = cmd_re.split(body)
+        j = 1
+        while j < len(cmd_parts) - 1:
+            cmd_sig = cmd_parts[j].strip()
+            desc = cmd_parts[j + 1].strip()
+            first_tok = cmd_sig.split()[0]
+            cmd_base = first_tok.lstrip("/").split("&")[0]
+            if (_re.search(r'[가-힣]', cmd_sig)
+                    and '&lt;' not in cmd_sig
+                    and '[' not in cmd_sig
+                    and '·' not in cmd_sig):
+                j += 2
+                continue
+            is_paid = cmd_base in paid_commands
+            is_mutation = cmd_base in mutation_commands
+            entries.append({
+                "signature": cmd_sig,
+                "description": desc,
+                "cmd_base": cmd_base,
+                "is_paid": is_paid,
+                "is_mutation": is_mutation,
+            })
+            j += 2
+        non_cmd_preamble = cmd_parts[0].strip() if cmd_parts else ""
+        if entries or non_cmd_preamble:
+            sections.append({
+                "title": title,
+                "preamble": non_cmd_preamble,
+                "entries": entries,
+            })
+
+    toc_items = []
+    for idx, sec in enumerate(sections):
+        anchor = f"sec-{idx}"
+        sec["anchor"] = anchor
+        n = len(sec["entries"])
+        toc_items.append(
+            f"<li><a href='#{anchor}'>{sec['title']}</a> "
+            f"<span style='color:var(--muted);font-size:11px'>"
+            f"({n})</span></li>"
+        )
+
+    parts = [
+        "<!DOCTYPE html><html lang='ko'><head>",
+        "<meta charset='utf-8'>",
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+        "<title>📋 명령어 레퍼런스</title>",
+        f"<style>{_COMMANDS_CSS}</style>",
+        f"<script>{_THEME_SWITCHER_JS}</script>",
+        "</head><body><div class='layout'>",
+        "<header>",
+        "<h1>📋 명령어 레퍼런스</h1>",
+        "<div class='sub'>전체 명령어 상세 가이드 · "
+        f"<a href='/{token}/' class='nav-shortcut'>🧠 Archive</a> "
+        f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a>"
+        "</div>",
+        "</header>",
+        "<div class='toc'>",
+        "<h2>📑 목차</h2>",
+        f"<ul>{''.join(toc_items)}</ul>",
+        "</div>",
+    ]
+
+    for sec in sections:
+        paid_n = sum(1 for e in sec["entries"] if e["is_paid"])
+        mut_n = sum(1 for e in sec["entries"] if e["is_mutation"])
+        count_label = f"{len(sec['entries'])}개"
+        tags = []
+        if paid_n:
+            tags.append(f"💰 {paid_n}")
+        if mut_n:
+            tags.append(f"⚠️ {mut_n}")
+        if tags:
+            count_label += " · " + " · ".join(tags)
+        parts.append(
+            f"<details class='cmd-section' open id='{sec['anchor']}'>"
+            f"<summary>{sec['title']}"
+            f"<span class='section-count'>{count_label}</span></summary>"
+            f"<div class='cmd-body'>"
+        )
+        if sec.get("preamble"):
+            parts.append(
+                f"<div class='cmd-desc' style='margin-bottom:12px'>"
+                f"{sec['preamble']}</div>"
+            )
+        for entry in sec["entries"]:
+            badge = ""
+            if entry["is_paid"] and entry["is_mutation"]:
+                badge = ("<span class='cmd-badge paid'>💰 유료</span>"
+                         "<span class='cmd-badge mutation'>⚠️ 변경</span>")
+            elif entry["is_paid"]:
+                badge = "<span class='cmd-badge paid'>💰 유료</span>"
+            elif entry["is_mutation"]:
+                badge = "<span class='cmd-badge mutation'>⚠️ 변경</span>"
+            else:
+                badge = "<span class='cmd-badge free'>무료</span>"
+            parts.append(
+                f"<div class='cmd-entry'>"
+                f"<div class='cmd-name'>{entry['signature']}{badge}</div>"
+                f"<div class='cmd-desc'>{entry['description']}</div>"
+                f"</div>"
+            )
+        parts.append("</div></details>")
+
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    gen_at = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d %H:%M")
+    total_cmds = sum(len(s["entries"]) for s in sections)
+    parts.append(
+        f"<div class='footer'>생성: {gen_at} · "
+        f"{total_cmds}개 명령어</div>"
+    )
+    parts.append("</div></body></html>")
+    return "\n".join(parts)
+
+
 # Set False after the first successful run per process so we do ONE
 # full detail-page rebuild on (re)start (propagating any template/token
 # change) and then only emit new pages incrementally.
@@ -1236,6 +1468,20 @@ def regenerate() -> None:
                 log.info("dashboard: wrote %d wiki page(s)", wiki_pages)
         except Exception:
             log.exception("dashboard wiki render failed (non-fatal)")
+        try:
+            from ..bot import (_LOOKUP_GUIDE_TEXT,
+                               _DASH_PAID_COMMANDS, _DASH_MUTATION_COMMANDS)
+            cmd_dir = target / "commands"
+            cmd_dir.mkdir(parents=True, exist_ok=True)
+            cmd_html = _render_commands_page(
+                token, _LOOKUP_GUIDE_TEXT,
+                _DASH_PAID_COMMANDS, _DASH_MUTATION_COMMANDS)
+            cmd_tmp = cmd_dir / "index.html.tmp"
+            cmd_idx = cmd_dir / "index.html"
+            cmd_tmp.write_text(cmd_html, encoding="utf-8")
+            os.replace(cmd_tmp, cmd_idx)
+        except Exception:
+            log.exception("dashboard commands page render failed (non-fatal)")
     except Exception:
         log.exception("dashboard regenerate failed")
     finally:
