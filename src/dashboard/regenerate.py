@@ -184,6 +184,46 @@ header .sub { color: var(--muted); font-size: 13px; }
 .chip.web.active    { background: var(--tool-web); border-color: var(--tool-web); }
 .chip.ingest.active { background: var(--tool-ingest); border-color: var(--tool-ingest); }
 
+.ask-hint { font-size: 11.5px; color: var(--muted); margin: 0 2px 12px; }
+.ask-hint code {
+  background: var(--panel-alt); border: 1px solid var(--border);
+  border-radius: 5px; padding: 1px 5px; font-size: 11px;
+}
+
+.ask-panel {
+  background: var(--panel); border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 12px; padding: 16px 18px; margin: 4px 0 16px;
+  box-shadow: var(--shadow);
+}
+.ask-panel.hidden { display: none; }
+.ask-panel .ask-q {
+  font-size: 13px; font-weight: 700; color: var(--text);
+  margin-bottom: 10px; display: flex; align-items: center; gap: 8px;
+}
+.ask-panel .ask-q .ask-close {
+  margin-left: auto; cursor: pointer; color: var(--muted);
+  font-weight: 400; font-size: 16px; line-height: 1;
+}
+.ask-panel .ask-q .ask-kind {
+  font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
+  background: var(--panel-alt); color: var(--muted); border: 1px solid var(--border);
+}
+.ask-panel .ask-body {
+  font-size: 13.5px; line-height: 1.7; color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+}
+.ask-panel .ask-body code {
+  background: var(--panel-alt); border-radius: 4px; padding: 1px 4px; font-size: 12px;
+}
+.ask-panel .ask-sources {
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
+  font-size: 12px; color: var(--muted);
+}
+.ask-panel .ask-sources b { color: var(--text); }
+.ask-panel .ask-spinner { color: var(--muted); font-size: 13px; }
+.ask-panel .ask-err { color: #ef4444; font-size: 13px; white-space: pre-wrap; }
+
 .summary-line {
   font-size: 12px; color: var(--muted); margin: 16px 4px 8px;
 }
@@ -732,6 +772,117 @@ _INDEX_JS = r"""
         });
     });
   });
+
+  // ── Ask the bot from the search box ──────────────────────────────
+  // Typing filters the archive live (apply(), above). Pressing Enter
+  // instead SENDS the text to the bot: natural language → a paid Gemini
+  // Q&A; a "/command" → a free read-only lookup. The request is parked
+  // in dash_queries.db; the bot drains it and we poll for the answer.
+  var askPanel = document.getElementById('ask-panel');
+  var askPoll = null;
+  var askDeadline = 0;
+
+  function askEsc(s){
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function askRenderBody(s){
+    var h = askEsc(s);
+    h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+    h = h.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    return h;
+  }
+  function askClose(){
+    if (askPoll){ clearInterval(askPoll); askPoll = null; }
+    askPanel.classList.add('hidden');
+    askPanel.innerHTML = '';
+  }
+  function askHeader(qText, kindChip){
+    return "<div class='ask-q'><span>💬 " + askEsc(qText) + "</span>" +
+      (kindChip || '') +
+      "<span class='ask-close' title='닫기'>✕</span></div>";
+  }
+  function askWire(){
+    var x = askPanel.querySelector('.ask-close');
+    if (x) x.addEventListener('click', askClose);
+  }
+  function askSpinner(qText, isCmd){
+    askPanel.innerHTML = askHeader(qText) + "<div class='ask-spinner'>" +
+      (isCmd ? '⏳ 명령 실행 중…'
+             : '🤔 생각 중… (자료 검색·답변 생성, 수십 초 걸릴 수 있어요)') +
+      "</div>";
+    askPanel.classList.remove('hidden');
+    askWire();
+  }
+  function askDone(qText, data){
+    var kindChip = "<span class='ask-kind'>" +
+      (data.kind === 'command' ? '명령어' : 'Q&amp;A') + "</span>";
+    var body;
+    if (data.error){
+      body = "<div class='ask-err'>⚠️ " + askEsc(data.error) + "</div>";
+    } else {
+      // Command output is the bot's own Telegram-HTML (a safe <b>/<i>/
+      // <code>/<a> subset) — render as-is so tags format instead of
+      // showing raw. Q&A answers are plain text + light markdown, so
+      // escape first, then apply **bold** / `code`.
+      var inner = (data.kind === 'command')
+        ? data.answer
+        : askRenderBody(data.answer);
+      body = "<div class='ask-body'>" + inner + "</div>";
+      if (data.sources && data.sources.length){
+        var lis = data.sources.map(function(s){
+          return '<li>' + askEsc(s) + '</li>'; }).join('');
+        body += "<div class='ask-sources'><b>📚 출처</b><ul>" + lis + "</ul></div>";
+      }
+    }
+    askPanel.innerHTML = askHeader(qText, kindChip) + body;
+    askPanel.classList.remove('hidden');
+    askWire();
+  }
+  function askSubmit(q){
+    if (askPoll){ clearInterval(askPoll); askPoll = null; }
+    askSpinner(q, q.charAt(0) === '/');
+    fetch('/' + token + '/ask', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({q: q})
+    }).then(function(r){
+      return r.json().then(function(j){ return {ok: r.ok, j: j}; });
+    }).then(function(res){
+      if (!res.ok || !res.j || !res.j.id){
+        askDone(q, {error: (res.j && res.j.error) || '요청 실패'});
+        return;
+      }
+      var id = res.j.id;
+      askDeadline = Date.now() + 11 * 60 * 1000;
+      askPoll = setInterval(function(){
+        if (Date.now() > askDeadline){
+          clearInterval(askPoll); askPoll = null;
+          askDone(q, {error: '시간 초과. 다시 시도해주세요.'});
+          return;
+        }
+        fetch('/' + token + '/ask/' + id).then(function(r){
+          return r.json();
+        }).then(function(d){
+          if (d.status === 'done' || d.status === 'error'){
+            clearInterval(askPoll); askPoll = null;
+            askDone(q, d);
+          }
+        }).catch(function(){ /* transient poll error — keep trying */ });
+      }, 1200);
+    }).catch(function(err){
+      askDone(q, {error: '네트워크 오류: ' + err.message});
+    });
+  }
+  if (search){
+    search.addEventListener('keydown', function(e){
+      if (e.key === 'Enter'){
+        var q = (search.value || '').trim();
+        if (!q) return;
+        e.preventDefault();
+        askSubmit(q);
+      }
+    });
+  }
 })();
 """
 
@@ -837,9 +988,11 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
 
         "<div class='controls'>",
         "<div class='search-row'>",
-        "<input id='q' type='text' placeholder='질문 / 답변 / 출처 검색...' autocomplete='off'>",
+        "<input id='q' type='text' placeholder='질문 / 답변 / 출처 검색...  (Enter = 봇에게 질문 · /명령어 가능)' autocomplete='off'>",
         "<button id='reset' class='reset' type='button'>초기화</button>",
         "</div>",
+        "<div class='ask-hint'>타이핑 = 기록 필터 · <b>Enter = 봇에게 질문</b> "
+        "(자연어 또는 <code>/usage</code>·<code>/wiki</code> 같은 조회 명령)</div>",
         "<div class='chips'>",
         "<span class='chip brain' data-tool='brain'>🧠 brain</span>",
         "<span class='chip paper' data-tool='paper'>📄 papers</span>",
@@ -849,6 +1002,8 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "<span class='chip ingest' data-tool='ingest'>📥 ingest</span>",
         "</div>",
         "</div>",
+
+        "<div id='ask-panel' class='ask-panel hidden'></div>",
 
         f"<div class='summary-line'>총 <span id='count'>{len(rows)}</span>건의 Q&amp;A 기록</div>",
     ]
