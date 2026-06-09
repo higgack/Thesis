@@ -14,10 +14,14 @@ trigger word in their MOST RECENT message:
     "내보내", "ship", "release"
 
 **All trigger words are synonyms for the FULL pipeline: commit →
-push → auto-deploy.** When the user says "커밋", they mean push too.
-Do NOT stop after `git commit` and wait for a separate "푸시" — run
-`git commit` + `git push` in one go. The trigger unlocks the entire
-ship sequence, not just one step.
+push to session branch → cherry-pick/merge to deploy branch → push
+deploy branch → VM auto-deploy.** When the user says "커밋", they
+mean the ENTIRE sequence ending with code live on the VM. Do NOT
+stop at any intermediate step (e.g. "pushed to session branch,
+waiting for merge trigger"). The trigger unlocks everything through
+to production. If working on a session branch that differs from the
+deploy branch, cherry-pick to deploy and push deploy too — that IS
+part of "커밋".
 
 Earlier authorisation does NOT carry over to a new request. Every
 new task starts in "edit-only" mode:
