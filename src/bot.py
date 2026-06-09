@@ -22,6 +22,7 @@ from telegram.request import HTTPXRequest
 from . import config
 from .store import meta, vector, obsidian, cost, qna, wiki, pending as pending_store
 from .store import pending_url_decisions
+from .store import dash_queries
 from .ingest import pipeline
 from .agent import agent
 
@@ -12267,6 +12268,285 @@ async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Dashboard query bridge (web search box → bot)
+# ──────────────────────────────────────────────────────────────────────
+# The Second Brain dashboard search box can ask the bot directly: natural
+# language → a paid agent.run(); a "/command" → a FREE read-only lookup.
+# Requests are parked in dash_queries.db by the dashboard server (a thin
+# 200 MB container that can't run the agent); this worker — in the bot,
+# which has the agent warm + a memory gate — drains them and writes the
+# answer back. See src/store/dash_queries.py for the queue contract.
+
+# ONLY read-only, zero-mutation, ₩0 commands belong here. Anything not in
+# this set is rejected, so the web surface can never trigger an ingest,
+# delete, rename, model toggle, queue/pending mutation, or an LLM spend.
+# Paid search (search_*, kr_*, kipris_*, deep, compare_*, web_search) is
+# intentionally excluded — use the natural-language box for those.
+_DASH_READONLY_COMMANDS = frozenset({
+    "usage", "cost", "status", "stats", "recent",
+    "wiki", "wiki_status", "wiki_cost", "wiki_recent", "wiki_new",
+    "wiki_today", "wiki_pending", "wiki_failed",
+    "failed", "queue", "pending", "pending_links", "orphans",
+    "blocked_hosts", "paper_stats", "patent_stats",
+    "find", "find_all", "show",
+    "guide_lookup", "papers_guide", "patents_guide", "wiki_guide",
+    "help", "start",
+})
+
+
+class _CapturedReply:
+    """Collects the text a handler would have sent to Telegram, so a
+    read-only command can run head-less for the dashboard. Inline
+    keyboards and media are dropped — the dashboard renders text only."""
+
+    def __init__(self):
+        self.chunks: list[str] = []
+
+    def add(self, text) -> None:
+        if text:
+            self.chunks.append(str(text))
+
+    def text(self) -> str:
+        return "\n\n".join(self.chunks).strip()
+
+
+class _FakeChat:
+    def __init__(self):
+        self.id = config.TELEGRAM_OWNER_ID
+        self.type = "private"
+
+
+class _FakeUser:
+    def __init__(self):
+        self.id = config.TELEGRAM_OWNER_ID
+        self.username = "dashboard"
+        self.first_name = "dashboard"
+        self.is_bot = False
+
+
+class _FakeMessage:
+    def __init__(self, sink: "_CapturedReply", text: str = ""):
+        self._sink = sink
+        self.text = text
+        self.caption = None
+        self.chat = _FakeChat()
+        self.message_id = 0
+
+    async def reply_text(self, text=None, **kw):
+        self._sink.add(text)
+        return _FakeMessage(self._sink)
+
+    async def reply_html(self, text=None, **kw):
+        self._sink.add(text)
+        return _FakeMessage(self._sink)
+
+    async def reply_markdown(self, text=None, **kw):
+        self._sink.add(text)
+        return _FakeMessage(self._sink)
+
+    async def reply_markdown_v2(self, text=None, **kw):
+        self._sink.add(text)
+        return _FakeMessage(self._sink)
+
+    async def edit_text(self, text=None, **kw):
+        self._sink.add(text)
+        return _FakeMessage(self._sink)
+
+    async def reply_photo(self, photo=None, caption=None, **kw):
+        self._sink.add(caption)
+        return _FakeMessage(self._sink)
+
+    async def reply_document(self, document=None, caption=None, **kw):
+        self._sink.add(caption)
+        return _FakeMessage(self._sink)
+
+    async def reply_chat_action(self, *a, **kw):
+        return None
+
+
+class _FakeBot:
+    def __init__(self, sink: "_CapturedReply"):
+        self._sink = sink
+
+    async def send_message(self, chat_id=None, text=None, **kw):
+        self._sink.add(text)
+        return _FakeMessage(self._sink)
+
+    async def send_photo(self, chat_id=None, caption=None, **kw):
+        self._sink.add(caption)
+        return _FakeMessage(self._sink)
+
+    async def send_document(self, chat_id=None, caption=None, **kw):
+        self._sink.add(caption)
+        return _FakeMessage(self._sink)
+
+    def __getattr__(self, name):
+        # Any other bot API call → async no-op, so a read-only handler
+        # that pokes an unsupported method can't crash the head-less run.
+        async def _noop(*a, **kw):
+            return None
+        return _noop
+
+
+class _FakeUpdate:
+    def __init__(self, sink: "_CapturedReply", text: str):
+        self.message = _FakeMessage(sink, text)
+        self.effective_message = self.message
+        self.effective_chat = _FakeChat()
+        self.effective_user = _FakeUser()
+        self.callback_query = None
+
+
+class _FakeContext:
+    def __init__(self, sink: "_CapturedReply", args: list[str]):
+        self.args = args
+        self.bot = _FakeBot(sink)
+        self.bot_data = {}
+        self.chat_data = {}
+        self.user_data = {}
+        self.application = None
+        self.job_queue = None
+
+
+async def _run_dashboard_command(cmd: str, args: list[str]) -> dict:
+    """Run an allow-listed read-only command head-less and return its
+    captured text. Returns {kind:'command', text|error}."""
+    handler = _DASH_COMMAND_HANDLERS.get(cmd)
+    if handler is None:
+        return {"kind": "command",
+                "error": f"'/{cmd}' 은 대시보드에서 지원하지 않는 명령이에요 "
+                         f"(변경·삭제·검색 명령은 웹에서 차단)."}
+    sink = _CapturedReply()
+    raw = ("/" + cmd + (" " + " ".join(args) if args else "")).strip()
+    update = _FakeUpdate(sink, raw)
+    ctx = _FakeContext(sink, list(args))
+    try:
+        await handler(update, ctx)
+    except Exception as e:
+        log.exception("dashboard command /%s failed", cmd)
+        return {"kind": "command", "error": f"명령 실행 오류: {str(e)[:200]}"}
+    out = sink.text()
+    return {"kind": "command", "text": out or "(응답이 비어 있어요)"}
+
+
+async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    """Drain one parked dashboard query per tick: free read-only command
+    or paid agent.run(). Serial by design (one per tick) so concurrent
+    web asks can't stack agent runs and OOM the bot."""
+    try:
+        pending = dash_queries.claim_pending(limit=1)
+    except Exception:
+        log.exception("dash worker: claim failed")
+        return
+    for item in pending:
+        qid = item["id"]
+        q = (item.get("query") or "").strip()
+        try:
+            if q.startswith("/"):
+                parts = q[1:].split()
+                cmd = (parts[0].split("@", 1)[0].lower() if parts else "")
+                args = parts[1:]
+                if cmd not in _DASH_READONLY_COMMANDS:
+                    dash_queries.complete(
+                        qid, "", kind="command",
+                        error=f"'/{cmd}' 은 대시보드에서 지원하지 않는 명령이에요 "
+                              f"(변경·삭제·검색 명령은 웹에서 차단).")
+                    continue
+                res = await _run_dashboard_command(cmd, args)
+                dash_queries.complete(
+                    qid, res.get("text") or "", kind="command",
+                    error=res.get("error"))
+                continue
+
+            # Natural language → paid agent. Respect the same memory gate
+            # the Telegram path uses; defer (re-queue) under pressure
+            # rather than risk an OOM kill mid-answer.
+            if _mem_pressure() >= _MEM_REFUSE_THRESHOLD:
+                dash_queries.complete(
+                    qid, "", kind="qa",
+                    error="서버 메모리 사용량이 높아 지금은 답변할 수 없어요. "
+                          "잠시 후 다시 시도해주세요.")
+                continue
+            try:
+                result = await asyncio.wait_for(
+                    agent.run(q, deep=False), timeout=_AGENT_TIMEOUT_SEC)
+            except asyncio.TimeoutError:
+                dash_queries.complete(
+                    qid, "", kind="qa",
+                    error=f"응답이 {_AGENT_TIMEOUT_SEC // 60}분을 넘겨 중단했어요. "
+                          "다시 시도해주세요.")
+                continue
+            result = result or {}
+            text = result.get("text") or ""
+            sources = result.get("sources") or []
+            if result.get("error") and not text:
+                dash_queries.complete(qid, "", kind="qa",
+                                      error=str(result.get("error"))[:300])
+                continue
+            dash_queries.complete(qid, text, sources=sources, kind="qa")
+            # Archive so the asked question also lands as a dashboard card
+            # on the next regenerate, identical to a Telegram-asked one.
+            try:
+                qna.record(
+                    chat_id=config.TELEGRAM_OWNER_ID,
+                    question=q,
+                    answer=text,
+                    sources=sources,
+                    tools=result.get("tool_calls") or [],
+                    model=result.get("model"),
+                    warning=result.get("warning"),
+                )
+            except Exception:
+                log.exception("dash worker: qna.record failed")
+        except Exception as e:
+            log.exception("dash worker: failed for #%s", qid)
+            try:
+                dash_queries.complete(qid, "", error=f"오류: {str(e)[:200]}")
+            except Exception:
+                pass
+
+
+async def _dash_query_purge(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    """Hourly: drop finished dashboard queries older than 6h."""
+    try:
+        n = dash_queries.purge_old(hours=6)
+        if n:
+            log.info("dash queries purged: %d", n)
+    except Exception:
+        log.exception("dash query purge failed")
+
+
+def _build_dash_command_map() -> dict:
+    """name → handler fn for the read-only allow-list. Built lazily so it
+    references the cmd_* handlers already defined above."""
+    candidates = {
+        "usage": cmd_usage, "cost": cmd_cost, "status": cmd_status,
+        "stats": cmd_stats, "recent": cmd_recent,
+        "wiki": cmd_wiki, "wiki_status": cmd_wiki_status,
+        "wiki_cost": cmd_wiki_cost, "wiki_recent": cmd_wiki_recent,
+        "wiki_new": cmd_wiki_new, "wiki_today": cmd_wiki_today,
+        "wiki_pending": cmd_wiki_pending, "wiki_failed": cmd_wiki_failed,
+        "failed": cmd_failed, "queue": cmd_queue, "pending": cmd_pending,
+        "pending_links": cmd_pending_links, "orphans": cmd_orphans,
+        "blocked_hosts": cmd_blocked_hosts, "paper_stats": cmd_paper_stats,
+        "patent_stats": cmd_patent_stats, "find": cmd_find,
+        "find_all": cmd_find_all, "show": cmd_show,
+        "guide_lookup": cmd_guide_lookup, "papers_guide": cmd_papers_guide,
+        "patents_guide": cmd_patents_guide, "wiki_guide": cmd_wiki_guide,
+        "help": cmd_start, "start": cmd_start,
+    }
+    return {k: v for k, v in candidates.items()
+            if k in _DASH_READONLY_COMMANDS}
+
+
+try:
+    _DASH_COMMAND_HANDLERS = _build_dash_command_map()
+except Exception:  # pragma: no cover — never let this block bot startup
+    log.exception("dashboard command map build failed; web commands off")
+    _DASH_COMMAND_HANDLERS = {}
+
+
 def main():
     if len(_HELP_TEXT) > _TG_MSG_LIMIT:
         log.warning(
@@ -12487,6 +12767,21 @@ def main():
             interval=60,
             first=20,
             name="refresh_dashboard",
+        )
+        # Dashboard search-box queries: drain every 2s (one per tick →
+        # serial agent runs, can't stack and OOM). Hourly purge of old
+        # finished rows keeps dash_queries.db tiny.
+        app.job_queue.run_repeating(
+            _dash_query_worker,
+            interval=2,
+            first=15,
+            name="dash_query_worker",
+        )
+        app.job_queue.run_repeating(
+            _dash_query_purge,
+            interval=3600,
+            first=1800,
+            name="dash_query_purge",
         )
         app.job_queue.run_repeating(
             _promote_expired_pending,
