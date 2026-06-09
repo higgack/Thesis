@@ -1921,7 +1921,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki_delete &lt;토픽&gt;</b> 토픽 완전 삭제(인덱스+페이지+큐). 삭제 후 backfill·재인제스트로 안 돌아옴(영구)
 • <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 야간 캡 내 분산 처리)
 • <b>/wiki_pending</b> 큐 대기 현황(토픽별 문서 수)
-• <b>/wiki_failed [clear|retry 토픽]</b> 머지 실패 목록 — 3회 연속 실패 시 큐에서 분리, 재시도/삭제 가능
+• <b>/wiki_failed [clear|retry 토픽|retry_all]</b> 머지 실패 목록 — 3회 연속 실패 시 큐에서 분리, 재시도/삭제 가능
 • <b>/wiki_off · /wiki_on</b> 즉시 끄기/켜기(killswitch, 재배포 불필요)
 
 <b>켜는 법(점진)</b>: ①WIKI_ENABLED=1 재배포 → 며칠 /wiki_status·/wiki_today
@@ -11623,6 +11623,8 @@ async def cmd_wiki(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 if upd_str:
                     try:
                         upd_dt = datetime.fromisoformat(upd_str)
+                        if upd_dt.tzinfo is None:
+                            upd_dt = upd_dt.replace(tzinfo=_kst)
                         badge = " 🆕" if upd_dt >= _7d_ago else ""
                     except ValueError:
                         pass
@@ -11715,12 +11717,17 @@ async def cmd_wiki_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         cr_str = t.get("created") or ""
         if cr_str:
             try:
-                if datetime.fromisoformat(cr_str) >= cutoff:
+                _cr = datetime.fromisoformat(cr_str)
+                if _cr.tzinfo is None:
+                    _cr = _cr.replace(tzinfo=_kst)
+                if _cr >= cutoff:
                     continue
             except ValueError:
                 pass
         try:
             upd_dt = datetime.fromisoformat(upd_str)
+            if upd_dt.tzinfo is None:
+                upd_dt = upd_dt.replace(tzinfo=_kst)
             if upd_dt >= cutoff:
                 recent.append((upd_dt, t))
         except ValueError:
@@ -11765,6 +11772,8 @@ async def cmd_wiki_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             continue
         try:
             cr_dt = datetime.fromisoformat(cr_str)
+            if cr_dt.tzinfo is None:
+                cr_dt = cr_dt.replace(tzinfo=_kst)
             if cr_dt >= cutoff:
                 new_topics.append((cr_dt, t))
         except ValueError:
@@ -12181,6 +12190,16 @@ async def cmd_wiki_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"🗑 {removed}건 삭제" if removed else "삭제할 항목 없음")
         return
+    if args and args[0].lower() == "retry_all":
+        res = wiki.wiki_failed_retry_all()
+        if res["retried"] == 0:
+            await update.message.reply_text("재시도할 실패 항목 없음")
+        else:
+            topics = ", ".join(res["topics"][:10])
+            await update.message.reply_text(
+                f"🔄 {res['retried']}개 토픽 · {res['requeued']}건 큐 복귀\n"
+                f"토픽: {topics}\n다음 배치(/wiki_run)에서 재시도")
+        return
     if args and args[0].lower() == "retry":
         topic = " ".join(args[1:]).strip()
         if not topic:
@@ -12208,7 +12227,8 @@ async def cmd_wiki_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"  최근: {f.get('last_ts', '?')}")
     lines.append(
         "\n/wiki_failed clear — 전체 삭제"
-        "\n/wiki_failed retry <토픽> — 재시도")
+        "\n/wiki_failed retry &lt;토픽&gt; — 단건 재시도"
+        "\n/wiki_failed retry_all — 전체 재시도")
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
