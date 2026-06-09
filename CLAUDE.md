@@ -13,6 +13,12 @@ trigger word in their MOST RECENT message:
   • "커밋", "푸시", "배포", "deploy", "commit", "push", "올려",
     "내보내", "ship", "release"
 
+**All trigger words are synonyms for the FULL pipeline: commit →
+push → auto-deploy.** When the user says "커밋", they mean push too.
+Do NOT stop after `git commit` and wait for a separate "푸시" — run
+`git commit` + `git push` in one go. The trigger unlocks the entire
+ship sequence, not just one step.
+
 Earlier authorisation does NOT carry over to a new request. Every
 new task starts in "edit-only" mode:
 
