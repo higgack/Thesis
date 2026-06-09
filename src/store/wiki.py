@@ -1549,6 +1549,57 @@ async def _merge_topic(topic: str, docs: list[dict]) -> dict:
     return _append_docs(topic, existing, docs)
 
 
+def _heal_backstamped_created(idx: dict) -> int:
+    """Strip retro-stamped `created` timestamps from the index, in place.
+
+    The `created` field was introduced after many topics already existed.
+    Those legacy records had no `created`, so the batch's
+    `if "created" not in rec: rec["created"] = now` stamped them with the
+    current date on their NEXT merge — falsely flagging long-standing pages
+    (테슬라, 앤트로픽 …) as New on /wiki + the dashboard.
+
+    Back-stamp signature, with no practical false positives:
+      created == updated  → both written in one run, AND
+      len(doc_ids) > WIKI_MAX_DOCS_PER_TOPIC → more sources than a single
+      batch can mint. A genuinely new topic is capped at that many docs per
+      batch, so exceeding it requires ≥2 merges — which bump `updated` past
+      `created`. Hence cr==up AND len>cap can only be a legacy topic that
+      was merged once after the field landed.
+
+    Idempotent: once `created` is cleared a record stops matching. Returns
+    the count healed (caller persists)."""
+    cap = int(_flag("WIKI_MAX_DOCS_PER_TOPIC", 6))
+    healed = 0
+    for rec in idx.values():
+        if not isinstance(rec, dict):
+            continue
+        cr = rec.get("created") or ""
+        if cr and cr == (rec.get("updated") or "") \
+                and len(rec.get("doc_ids") or []) > cap:
+            rec.pop("created", None)
+            healed += 1
+    return healed
+
+
+def migrate_index_created() -> int:
+    """One-shot startup heal for the back-stamped `created` bug (see
+    _heal_backstamped_created). Loads the index, strips the bad stamps,
+    persists only when something changed. Internally guarded so it can be
+    called on every boot without risk to startup."""
+    try:
+        idx = _load_json(_INDEX_PATH, {})
+        if not isinstance(idx, dict):
+            return 0
+        healed = _heal_backstamped_created(idx)
+        if healed:
+            _atomic_write_json(_INDEX_PATH, idx)
+            log.info("wiki: healed %d back-stamped 'created' timestamps", healed)
+        return healed
+    except Exception:
+        log.exception("wiki: migrate_index_created failed")
+        return 0
+
+
 async def run_batch() -> dict:
     """Nightly job: drain the queue topic-by-topic, merging each into its
     wiki page. Bounded by per-run caps AND a hard daily ₩ budget; resume-
@@ -1673,6 +1724,7 @@ async def run_batch() -> dict:
             if res.get("ok"):
                 merged_ids = [d["doc_id"] for d in use_docs]
                 processed_doc_ids.update(merged_ids)
+                existed = topic in idx
                 rec = idx.get(topic) or {"doc_ids": []}
                 seen = set(rec.get("doc_ids") or [])
                 seen.update(merged_ids)
@@ -1684,7 +1736,11 @@ async def run_batch() -> dict:
                     "updated": now,
                     "claims": rec.get("claims", 0) + res.get("docs", 0),
                 })
-                if "created" not in rec:
+                # Stamp `created` ONLY for a genuinely first-seen topic.
+                # Back-stamping a pre-existing record (one predating this
+                # field) with `now` falsely flags a long-standing page as
+                # New — see _heal_backstamped_created.
+                if not existed and "created" not in rec:
                     rec["created"] = now
                 idx[topic] = rec
                 if res.get("contradictions", 0) > 0:
