@@ -12283,15 +12283,35 @@ async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # delete, rename, model toggle, queue/pending mutation, or an LLM spend.
 # Paid search (search_*, kr_*, kipris_*, deep, compare_*, web_search) is
 # intentionally excluded — use the natural-language box for those.
-_DASH_READONLY_COMMANDS = frozenset({
-    "usage", "cost", "status", "stats", "recent",
-    "wiki", "wiki_status", "wiki_cost", "wiki_recent", "wiki_new",
-    "wiki_today", "wiki_pending", "wiki_failed",
-    "failed", "queue", "pending", "pending_links", "orphans",
-    "blocked_hosts", "paper_stats", "patent_stats",
-    "find", "find_all", "show",
-    "guide_lookup", "papers_guide", "patents_guide", "wiki_guide",
-    "help", "start",
+_DASH_PAID_COMMANDS = frozenset({
+    "deep", "search_papers", "search_papers_advanced",
+    "search_patents", "search_patents_advanced",
+    "web_search", "search_my_brain", "compare_papers",
+    "company_patents", "patent_detail", "citing_patents",
+    "kipris_search", "kipris_pub", "kipris_reg", "kipris_inventor",
+    "kipris_status", "kipris_family", "kipris_claims", "kipris_priority",
+    "kr_papers", "kr_patents", "kr_reports", "kr_trends",
+    "kr_researcher", "kr_organ", "kr_science_trend",
+    "kr_rnd_projects", "kr_related", "kr_outcomes",
+    "kr_govt_reports", "kr_agency_rnd", "kr_rnd_issues",
+    "ingest_url", "eval", "eval_seed",
+    "wiki_run", "wiki_drain", "wiki_backfill",
+})
+
+_DASH_MUTATION_COMMANDS = frozenset({
+    "reset", "forget", "forget_search", "forget_search_all",
+    "forget_qna", "forget_qna_search",
+    "forget_forwards", "forget_forwards_confirm",
+    "failed_retry", "failed_clear",
+    "queue_to_failed", "queue_panic", "queue_cancel_all",
+    "dedupe", "dedupe_confirm", "cleanup", "cleanup_confirm",
+    "wiki_delete", "wiki_rename", "wiki_split", "wiki_dedup",
+    "wiki_off", "wiki_on",
+    "reset_blocked_hosts",
+    "pending_approve_all", "pending_approve_all_confirm", "pending_cancel_all",
+    "pending_ocr", "pending_pro", "ocr_extend",
+    "youtube_restub_rescan", "fix_placeholder_titles",
+    "ingest_url",
 })
 
 
@@ -12410,13 +12430,12 @@ class _FakeContext:
 
 
 async def _run_dashboard_command(cmd: str, args: list[str]) -> dict:
-    """Run an allow-listed read-only command head-less and return its
-    captured text. Returns {kind:'command', text|error}."""
+    """Run any registered command head-less for the dashboard and return
+    its captured text. Returns {kind:'command', text|error}."""
     handler = _DASH_COMMAND_HANDLERS.get(cmd)
     if handler is None:
         return {"kind": "command",
-                "error": f"'/{cmd}' 은 대시보드에서 지원하지 않는 명령이에요 "
-                         f"(변경·삭제·검색 명령은 웹에서 차단)."}
+                "error": f"'/{cmd}' 은 등록된 명령어가 아니에요."}
     sink = _CapturedReply()
     raw = ("/" + cmd + (" " + " ".join(args) if args else "")).strip()
     update = _FakeUpdate(sink, raw)
@@ -12431,9 +12450,9 @@ async def _run_dashboard_command(cmd: str, args: list[str]) -> dict:
 
 
 async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
-    """Drain one parked dashboard query per tick: free read-only command
-    or paid agent.run(). Serial by design (one per tick) so concurrent
-    web asks can't stack agent runs and OOM the bot."""
+    """Drain one parked dashboard query per tick: any /command or a
+    natural-language agent.run(). Serial by design (one per tick) so
+    concurrent web asks can't stack agent runs and OOM the bot."""
     try:
         pending = dash_queries.claim_pending(limit=1)
     except Exception:
@@ -12447,12 +12466,6 @@ async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
                 parts = q[1:].split()
                 cmd = (parts[0].split("@", 1)[0].lower() if parts else "")
                 args = parts[1:]
-                if cmd not in _DASH_READONLY_COMMANDS:
-                    dash_queries.complete(
-                        qid, "", kind="command",
-                        error=f"'/{cmd}' 은 대시보드에서 지원하지 않는 명령이에요 "
-                              f"(변경·삭제·검색 명령은 웹에서 차단).")
-                    continue
                 res = await _run_dashboard_command(cmd, args)
                 dash_queries.complete(
                     qid, res.get("text") or "", kind="command",
@@ -12518,26 +12531,19 @@ async def _dash_query_purge(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
 
 
 def _build_dash_command_map() -> dict:
-    """name → handler fn for the read-only allow-list. Built lazily so it
-    references the cmd_* handlers already defined above."""
-    candidates = {
-        "usage": cmd_usage, "cost": cmd_cost, "status": cmd_status,
-        "stats": cmd_stats, "recent": cmd_recent,
-        "wiki": cmd_wiki, "wiki_status": cmd_wiki_status,
-        "wiki_cost": cmd_wiki_cost, "wiki_recent": cmd_wiki_recent,
-        "wiki_new": cmd_wiki_new, "wiki_today": cmd_wiki_today,
-        "wiki_pending": cmd_wiki_pending, "wiki_failed": cmd_wiki_failed,
-        "failed": cmd_failed, "queue": cmd_queue, "pending": cmd_pending,
-        "pending_links": cmd_pending_links, "orphans": cmd_orphans,
-        "blocked_hosts": cmd_blocked_hosts, "paper_stats": cmd_paper_stats,
-        "patent_stats": cmd_patent_stats, "find": cmd_find,
-        "find_all": cmd_find_all, "show": cmd_show,
-        "guide_lookup": cmd_guide_lookup, "papers_guide": cmd_papers_guide,
-        "patents_guide": cmd_patents_guide, "wiki_guide": cmd_wiki_guide,
-        "help": cmd_start, "start": cmd_start,
-    }
-    return {k: v for k, v in candidates.items()
-            if k in _DASH_READONLY_COMMANDS}
+    """Auto-discover all cmd_* handlers so the dashboard can run every
+    command the Telegram bot can. New handlers are picked up automatically
+    — no manual list to maintain."""
+    import sys
+    mod = sys.modules[__name__]
+    result = {}
+    for name in dir(mod):
+        if name.startswith("cmd_") and callable(getattr(mod, name, None)):
+            cmd_name = name[4:]
+            result[cmd_name] = getattr(mod, name)
+    if "start" in result and "help" not in result:
+        result["help"] = result["start"]
+    return result
 
 
 try:
