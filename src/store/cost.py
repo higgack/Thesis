@@ -222,12 +222,13 @@ def all_time_krw() -> dict:
     return _since("2000-01-01T00:00:00")
 
 
-def daily_breakdown(days: int = 7) -> list[dict]:
+def daily_breakdown(days: int = 7, purpose: str | None = None) -> list[dict]:
     """Per-day KRW totals for the last `days` KST days (newest first).
 
     Each row is a KST-local date with everything that fell within
     that 24-hour window. Empty days show ₩0 / 0 calls so gaps are
-    visible rather than missing."""
+    visible rather than missing. When `purpose` is given, only calls
+    tagged with that purpose are counted (e.g. 'wiki')."""
     today = datetime.now(KST).date()
     days_list = [today - timedelta(days=i) for i in range(days)]
     seen: dict[str, tuple[float, int]] = {}
@@ -235,11 +236,18 @@ def daily_breakdown(days: int = 7) -> list[dict]:
         for d in days_list:
             start = _kst_day_start_utc(d).isoformat(timespec="seconds")
             end = _kst_day_start_utc(d + timedelta(days=1)).isoformat(timespec="seconds")
-            row = c.execute(
-                "SELECT SUM(cost_krw), COUNT(*) FROM calls "
-                "WHERE ts >= ? AND ts < ?",
-                (start, end),
-            ).fetchone()
+            if purpose:
+                row = c.execute(
+                    "SELECT SUM(cost_krw), COUNT(*) FROM calls "
+                    "WHERE ts >= ? AND ts < ? AND purpose = ?",
+                    (start, end, purpose),
+                ).fetchone()
+            else:
+                row = c.execute(
+                    "SELECT SUM(cost_krw), COUNT(*) FROM calls "
+                    "WHERE ts >= ? AND ts < ?",
+                    (start, end),
+                ).fetchone()
             seen[d.isoformat()] = (float(row[0] or 0.0), int(row[1] or 0))
     return [
         {"date": d.isoformat(),

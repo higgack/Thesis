@@ -1412,7 +1412,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
 
-📚 <b>위키</b>: /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_status · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
+📚 <b>위키</b>: /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
@@ -1876,7 +1876,7 @@ NTIS 이슈로보는R&amp;D — 정부R&amp;D 한정 트렌드. ⏳ 승인 대�
 ❌ /pending* · /ocr_extend
 ❌ /forget* · /dedupe · /cleanup
 ❌ /search_my_brain · /compare_papers · /web_search · /ingest_url
-❌ /help · /guide_lookup · /patents_guide · /papers_guide · /wiki_guide · /wiki_recent · /wiki_new
+❌ /help · /guide_lookup · /patents_guide · /papers_guide · /wiki_guide · /wiki_recent · /wiki_new · /wiki_cost
 
 ═══════════════════════════════════════
 <b>💰 비용 모델 요약</b>
@@ -1918,6 +1918,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki_recent [일수]</b> 최근 N일(기본7) 업데이트 토픽만 시간순
 • <b>/wiki_new [일수]</b> 최근 N일(기본7) 신규 생성 토픽만
 • <b>/wiki_status</b> 상태·오늘 ₩·한도·큐 · <b>/wiki_run</b> 수동 실행
+• <b>/wiki_cost</b> 위키 전용 비용/사용량(오늘·7일·월·전체·일별추이·예상)
 • <b>/wiki_drain [한도=20000]</b> 임시 예산 올려서 큐 최대 소진(끝나면 즉시 ₩1000 복귀)
 • <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
 • <b>/wiki_dedup [merge A :: B | merge_all]</b> 유사 중복 토픽 감지(접미사 정규화·부분문자열) — 목록 확인 후 개별/전체 병합
@@ -11812,6 +11813,59 @@ async def cmd_wiki_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_wiki_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_cost — 위키 전용 비용/사용량: 오늘·7일·이번달·전체, 일별 추이,
+    예산 대비, 큐/페이지. /cost 의 wiki 스코프 버전."""
+    if not _is_owner(update):
+        return
+    async with _SustainedTyping(update, ctx):
+        today_w = wiki.today_cost_krw()
+        budget = wiki.budget_krw()
+        over = wiki.budget_exceeded()
+        month_w = wiki.month_cost_krw()
+        total_w = wiki.total_cost_krw()
+
+        week = cost.period_krw(7).get("by_purpose", {}).get("wiki", {})
+        week_cost = week.get("cost", 0.0)
+        week_calls = week.get("calls", 0)
+        avg_7d = week_cost / 7 if week_cost else 0.0
+        projected_monthly = avg_7d * 30
+
+        daily = cost.daily_breakdown(14, purpose="wiki")
+        max_cost = max((d["cost"] for d in daily), default=0.0)
+        daily_lines = []
+        for d in daily:
+            bar_len = int(round((d["cost"] / max_cost) * 20)) if max_cost else 0
+            bar = "█" * bar_len if bar_len else "·"
+            daily_lines.append(
+                f"  {d['date'][5:]}  {bar:<20}  ₩{d['cost']:,.0f}"
+                + (f"  ({d['calls']}콜)" if d["calls"] else "")
+            )
+        daily_block = "\n".join(daily_lines)
+
+        qn = wiki.queue_size()
+        pages = len(wiki.list_topics())
+
+        out = (
+            "📚 위키 비용/사용량 (KST · Gemini API)\n"
+            f"\n💰 비용"
+            f"\n  • 오늘:    ₩{today_w:,.0f} / 한도 ₩{budget:,.0f}"
+            f"{'  ⛔초과·오늘 중단' if over else ''}"
+            f"\n  • 7일:     ₩{week_cost:,.0f}  ({week_calls}콜)"
+            f"\n  • 이번 달: ₩{month_w:,.0f}"
+            f"\n  • 전체:    ₩{total_w:,.0f}"
+            f"\n\n📈 추세"
+            f"\n  • 일평균(7일):    ₩{avg_7d:,.0f}"
+            f"\n  • 월 예상(×30):   ₩{projected_monthly:,.0f}"
+            f"\n\n📅 최근 14일 위키 지출\n{daily_block}"
+            f"\n\n💡 비용 구조"
+            f"\n  append ₩0 · consolidation ~₩55/회 · 신규 ~₩25/회"
+            f"\n  대부분 배치는 ₩0 (append) — /wiki_guide 상세"
+            f"\n\n📦 큐: {qn:,}건 · 위키 페이지: {pages}개"
+        )
+        await update.message.reply_text(out)
+
+
 async def cmd_wiki_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_run — 야간 배치를 지금 수동 실행(테스트/즉시 반영용)."""
     if not _is_owner(update):
@@ -12380,6 +12434,7 @@ def main():
     app.add_handler(CommandHandler("wiki_recent", cmd_wiki_recent))
     app.add_handler(CommandHandler("wiki_new", cmd_wiki_new))
     app.add_handler(CommandHandler("wiki_status", cmd_wiki_status))
+    app.add_handler(CommandHandler("wiki_cost", cmd_wiki_cost))
     app.add_handler(CommandHandler("wiki_run", cmd_wiki_run))
     app.add_handler(CommandHandler("wiki_backfill", cmd_wiki_backfill))
     app.add_handler(CommandHandler("wiki_pending", cmd_wiki_pending))
