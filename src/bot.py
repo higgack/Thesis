@@ -12429,7 +12429,8 @@ class _FakeContext:
         self.job_queue = None
 
 
-async def _run_dashboard_command(cmd: str, args: list[str]) -> dict:
+async def _run_dashboard_command(cmd: str, args: list[str],
+                                  raw_text: str = "") -> dict:
     """Run any registered command head-less for the dashboard and return
     its captured text. Returns {kind:'command', text|error}."""
     handler = _DASH_COMMAND_HANDLERS.get(cmd)
@@ -12437,7 +12438,7 @@ async def _run_dashboard_command(cmd: str, args: list[str]) -> dict:
         return {"kind": "command",
                 "error": f"'/{cmd}' 은 등록된 명령어가 아니에요."}
     sink = _CapturedReply()
-    raw = ("/" + cmd + (" " + " ".join(args) if args else "")).strip()
+    raw = raw_text or ("/" + cmd + (" " + " ".join(args) if args else "")).strip()
     update = _FakeUpdate(sink, raw)
     ctx = _FakeContext(sink, list(args))
     try:
@@ -12466,7 +12467,11 @@ async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
                 parts = q[1:].split()
                 cmd = (parts[0].split("@", 1)[0].lower() if parts else "")
                 args = parts[1:]
-                res = await _run_dashboard_command(cmd, args)
+                raw_override = ""
+                m_show = _SHOW_ID_RE.match(q)
+                if m_show:
+                    cmd, args, raw_override = "show_id", [], q
+                res = await _run_dashboard_command(cmd, args, raw_text=raw_override)
                 dash_queries.complete(
                     qid, res.get("text") or "", kind="command",
                     error=res.get("error"))

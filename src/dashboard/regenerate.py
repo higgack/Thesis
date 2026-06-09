@@ -376,6 +376,13 @@ header .sub { color: var(--muted); font-size: 13px; }
   transition: opacity 0.25s, transform 0.25s;
 }
 
+.dash-cmd-link {
+  color: var(--primary) !important; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px;
+  font-family: monospace; font-weight: 600;
+}
+.dash-cmd-link:hover { opacity: 0.8; }
+
 .footer {
   margin-top: 32px; padding: 16px 0; text-align: center;
   font-size: 11px; color: var(--muted);
@@ -473,6 +480,12 @@ h1 {
   font-size: 11px; font-weight: 600; background: rgba(107,114,128,0.10);
   color: var(--muted);
 }
+.dash-cmd-link {
+  color: var(--primary) !important; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px;
+  font-family: monospace; font-weight: 600;
+}
+.dash-cmd-link:hover { opacity: 0.8; }
 """
 
 
@@ -883,6 +896,113 @@ _INDEX_JS = r"""
       }
     });
   }
+  window._dashAskSubmit = askSubmit;
+
+  // Auto-run command from URL param: ?cmd=/show_xxx
+  var params = new URLSearchParams(location.search);
+  var autoCmd = params.get('cmd');
+  if (autoCmd){
+    history.replaceState(null, '', location.pathname);
+    setTimeout(function(){ askSubmit(autoCmd); }, 200);
+  }
+})();
+"""
+
+_LINKIFY_JS = r"""
+(function(){
+  var token = location.pathname.split('/').filter(Boolean)[0] || '';
+  var isDetail = /\/q-\d+\.html/.test(location.pathname);
+  var isCommands = /\/commands\//.test(location.pathname);
+  var showRe = /\/show_[a-f0-9]{6,32}\b/g;
+  var cmdRe = /\/([a-z_]+)(?:\s|$)/;
+
+  function linkify(el){
+    if (!el) return;
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+      acceptNode: function(n){
+        var p = n.parentNode;
+        if (p && (p.tagName === 'A' || p.tagName === 'CODE')) return NodeFilter.FILTER_REJECT;
+        return showRe.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+    var nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    showRe.lastIndex = 0;
+    nodes.forEach(function(node){
+      var text = node.nodeValue;
+      var re = /\/show_[a-f0-9]{6,32}/g;
+      var frag = document.createDocumentFragment();
+      var last = 0, m;
+      while ((m = re.exec(text)) !== null){
+        if (m.index > last)
+          frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        var a = document.createElement('a');
+        a.href = '#';
+        a.className = 'dash-cmd-link';
+        a.textContent = m[0];
+        a.dataset.cmd = m[0];
+        frag.appendChild(a);
+        last = m.index + m[0].length;
+      }
+      if (last < text.length)
+        frag.appendChild(document.createTextNode(text.slice(last)));
+      if (last > 0) node.parentNode.replaceChild(frag, node);
+    });
+
+    // "처음으로" → back to index
+    var walker2 = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+      acceptNode: function(n){
+        return /처음으로/.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+    var tnodes = [];
+    while (walker2.nextNode()) tnodes.push(walker2.currentNode);
+    tnodes.forEach(function(node){
+      var text = node.nodeValue;
+      var idx = text.indexOf('처음으로');
+      if (idx < 0) return;
+      var frag = document.createDocumentFragment();
+      if (idx > 0) frag.appendChild(document.createTextNode(text.slice(0, idx)));
+      var a = document.createElement('a');
+      a.href = '/' + token + '/';
+      a.className = 'dash-cmd-link';
+      a.textContent = '처음으로';
+      frag.appendChild(a);
+      var rest = idx + 4;
+      if (rest < text.length) frag.appendChild(document.createTextNode(text.slice(rest)));
+      node.parentNode.replaceChild(frag, node);
+    });
+  }
+
+  document.querySelectorAll('.answer').forEach(linkify);
+  document.querySelectorAll('.ask-body').forEach(linkify);
+
+  document.addEventListener('click', function(e){
+    var link = e.target.closest('.dash-cmd-link');
+    if (!link || !link.dataset.cmd) return;
+    e.preventDefault();
+    var cmd = link.dataset.cmd;
+    if (!isDetail && !isCommands && window._dashAskSubmit){
+      window._dashAskSubmit(cmd);
+    } else {
+      location.href = '/' + token + '/?cmd=' + encodeURIComponent(cmd);
+    }
+  });
+
+  // Also linkify ask panel results when they appear
+  var observer = new MutationObserver(function(muts){
+    muts.forEach(function(m){
+      m.addedNodes.forEach(function(n){
+        if (n.nodeType === 1){
+          var bodies = n.querySelectorAll ? n.querySelectorAll('.ask-body') : [];
+          bodies.forEach(linkify);
+          if (n.classList && n.classList.contains('ask-body')) linkify(n);
+        }
+      });
+    });
+  });
+  var askP = document.getElementById('ask-panel');
+  if (askP) observer.observe(askP, {childList: true, subtree: true});
 })();
 """
 
@@ -1089,6 +1209,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         f"{stats['total_qna']:,}건 누적 · 무제한 보관</div>"
     )
     parts.append(f"<script>{_INDEX_JS}</script>")
+    parts.append(f"<script>{_LINKIFY_JS}</script>")
     parts.append("</div></body></html>")
     return "\n".join(parts)
 
@@ -1133,6 +1254,7 @@ def _render_detail(item: dict, token_dir: str) -> str:
         sources_html,
         "</main>",
         f"<script>{_DETAIL_JS}</script>",
+        f"<script>{_LINKIFY_JS}</script>",
         "</body></html>",
     ])
 
