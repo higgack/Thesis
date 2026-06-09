@@ -1207,21 +1207,26 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
     # click — useful once the archive crosses several months and the
     # default-open day list grows unwieldy.
     from itertools import groupby
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    _cur_month = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m")
     def _month_of(day: str) -> str:
         return day[:7] if len(day) >= 7 else day
     months_iter = groupby(days_sorted, key=_month_of)
     for month, day_iter in months_iter:
         month_days = list(day_iter)
         month_count = sum(len(grouped[d]) for d in month_days)
+        is_current = (month == _cur_month)
+        m_open = " open" if is_current else ""
         parts.append(
-            f"<details class='month-section' open data-month='{_esc(month)}'>"
+            f"<details class='month-section'{m_open} data-month='{_esc(month)}'>"
             f"<summary>📅 {_esc(month)}<span class='month-count'>{month_count}건</span></summary>"
             f"<div class='month-body'>"
         )
         for day in month_days:
             items = grouped[day]
+            d_open = " open" if is_current else ""
             parts.append(
-                f"<details class='day-section' open>"
+                f"<details class='day-section'{d_open}>"
                 f"<summary>📅 {_esc(day)}<span class='day-count'>{len(items)}건</span></summary>"
                 f"<div class='day-body'>"
             )
@@ -1443,6 +1448,7 @@ header .sub { color: var(--muted); font-size: 13px; }
   white-space: pre-wrap; word-break: break-word;
 }
 .guide-content .cmd-try-link { font-size: 13px; }
+.guide-content .cmd-badge { font-size: 9px; padding: 1px 6px; vertical-align: middle; }
 .footer {
   margin-top: 32px; padding: 16px 0; text-align: center;
   font-size: 11px; color: var(--muted);
@@ -1451,10 +1457,13 @@ header .sub { color: var(--muted); font-size: 13px; }
 """
 
 
-def _linkify_guide_cmds(guide_html: str, token: str) -> str:
+def _linkify_guide_cmds(guide_html: str, token: str,
+                        paid_commands: frozenset | None = None) -> str:
     """Make <b>/command args</b> patterns in guide Telegram HTML clickable.
-    The first token becomes an <a> link to the ask bridge; args stay bold."""
+    The first token becomes an <a> link to the ask bridge; args stay bold.
+    When paid_commands is provided, paid commands get an inline cost badge."""
     import re as _re
+    paid = paid_commands or frozenset()
     def _repl(m):
         sig = m.group(1)
         parts = sig.split(None, 1)
@@ -1462,7 +1471,12 @@ def _linkify_guide_cmds(guide_html: str, token: str) -> str:
         rest = parts[1] if len(parts) > 1 else ""
         link = (f"<a href='/{html.escape(token)}/?cmd={cmd}' "
                 f"class='cmd-try-link'>{cmd}</a>")
-        return f"<b>{link} {rest}</b>" if rest else f"<b>{link}</b>"
+        bold = f"<b>{link} {rest}</b>" if rest else f"<b>{link}</b>"
+        cmd_base = cmd.lstrip("/").split("&")[0]
+        if cmd_base in paid:
+            c = _COST_HINTS.get(cmd_base, _COST_DEFAULT)
+            bold += f" <span class='cmd-badge paid'>{c}</span>"
+        return bold
     return _re.sub(r'<b>(/\w[\w_]*(?:\s+[^<]*)?)</b>', _repl, guide_html)
 
 
@@ -1615,7 +1629,8 @@ def _render_commands_page(token: str, lookup_guide: str,
             guide_key = cb
             guide_html = guides.get(guide_key, "")
             if guide_html:
-                linked_guide = _linkify_guide_cmds(guide_html, token)
+                linked_guide = _linkify_guide_cmds(
+                    guide_html, token, paid_commands=paid_commands)
                 parts.append(
                     f"<details class='cmd-entry guide-entry'>"
                     f"<summary>"
