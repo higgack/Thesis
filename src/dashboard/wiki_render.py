@@ -695,13 +695,25 @@ _SEARCH_JS = """
   var input = document.getElementById('wiki-search');
   if (!input) return;
   var cards = document.querySelectorAll('.wiki-card');
-  input.addEventListener('input', function(){
-    var q = this.value.toLowerCase().trim();
+  var KEY = 'wiki-search-q';
+  function apply(){
+    var q = input.value.toLowerCase().trim();
     cards.forEach(function(c){
       var text = c.textContent.toLowerCase();
       c.style.display = (!q || text.indexOf(q) >= 0) ? '' : 'none';
     });
+  }
+  input.addEventListener('input', function(){
+    try { sessionStorage.setItem(KEY, input.value); } catch(e){}
+    apply();
   });
+  // Back-navigation restore: each click is a full page load (static
+  // site), which used to wipe the query. Re-fill and re-filter so the
+  // list looks exactly like the user left it.
+  try {
+    var saved = sessionStorage.getItem(KEY);
+    if (saved) { input.value = saved; if (cards.length) apply(); }
+  } catch(e){}
 })();
 """
 
@@ -710,32 +722,72 @@ _FILTER_JS = """
   var btns = document.querySelectorAll('.wiki-filter');
   var cards = document.querySelectorAll('.wiki-card');
   if (!btns.length) return;
+  var KEY = 'wiki-filter';
   var cutoff = new Date(Date.now() - 7*24*60*60*1000).toISOString();
+  function applyFilter(f){
+    cards.forEach(function(c){
+      if (!f){ c.style.display = ''; return; }
+      var cr = c.getAttribute('data-created');
+      var up = c.getAttribute('data-updated');
+      var show;
+      if (f === 'new') {
+        show = cr && cr >= cutoff;
+      } else {
+        // Recent excludes still-New topics (created within the window)
+        // so New and Recent never overlap.
+        show = up && up >= cutoff && !(cr && cr >= cutoff);
+      }
+      c.style.display = show ? '' : 'none';
+    });
+  }
   btns.forEach(function(btn){
     btn.addEventListener('click', function(){
       var wasActive = btn.classList.contains('active');
       btns.forEach(function(b){ b.classList.remove('active'); });
       if (wasActive) {
-        cards.forEach(function(c){ c.style.display = ''; });
+        try { sessionStorage.removeItem(KEY); } catch(e){}
+        applyFilter(null);
         return;
       }
       btn.classList.add('active');
       var f = btn.getAttribute('data-filter');
-      cards.forEach(function(c){
-        var cr = c.getAttribute('data-created');
-        var up = c.getAttribute('data-updated');
-        var show;
-        if (f === 'new') {
-          show = cr && cr >= cutoff;
-        } else {
-          // Recent excludes still-New topics (created within the window)
-          // so New and Recent never overlap.
-          show = up && up >= cutoff && !(cr && cr >= cutoff);
-        }
-        c.style.display = show ? '' : 'none';
-      });
+      try { sessionStorage.setItem(KEY, f); } catch(e){}
+      applyFilter(f);
     });
   });
+  // Back-navigation restore (runs after the search restore — same
+  // precedence as a user clicking a filter after typing a query).
+  try {
+    var savedF = sessionStorage.getItem(KEY);
+    if (savedF) {
+      btns.forEach(function(b){
+        if (b.getAttribute('data-filter') === savedF) b.classList.add('active');
+      });
+      applyFilter(savedF);
+    }
+  } catch(e){}
+})();
+"""
+
+# Restore the index page's window scroll on back-navigation. Must run
+# AFTER the search/filter restores above (visible-card set changes the
+# page height). scrollRestoration='manual' stops the browser's own
+# (pre-filter, wrong-offset) restore from fighting ours.
+_INDEX_SCROLL_JS = """
+(function(){
+  var KEY = 'wiki-index-scroll';
+  try {
+    if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+  } catch(e){}
+  window.addEventListener('scroll', function(){
+    try {
+      sessionStorage.setItem(KEY, String(window.scrollY || window.pageYOffset || 0));
+    } catch(e){}
+  }, {passive:true});
+  try {
+    var saved = sessionStorage.getItem(KEY);
+    if (saved !== null) window.scrollTo(0, parseInt(saved, 10) || 0);
+  } catch(e){}
 })();
 """
 
@@ -992,6 +1044,7 @@ def _render_index_page(topics_data: list[dict], token: str,
         "</div>"
         f"<script>{_SEARCH_JS}</script>"
         f"<script>{_FILTER_JS}</script>"
+        f"<script>{_INDEX_SCROLL_JS}</script>"
         "</body></html>"
     )
 
@@ -1066,9 +1119,14 @@ def render_wiki(token: str) -> int:
     # Render cache: fingerprint of the topic list + per-topic md mtime and
     # cached excerpt. Fingerprint change → full rebuild (sidebars/autolinks
     # on every page reference the topic set).
+    # _TPL_VERSION: bump on ANY template/CSS/JS change in this file —
+    # the incremental skip means already-rendered topic pages would
+    # otherwise keep old markup forever (their .md never changes).
+    _TPL_VERSION = "2"
     cache_path = config.DATA_DIR / "wiki_render_cache.json"
     fp = hashlib.sha1(
-        ("|".join(all_topics) + "\x00" + token).encode("utf-8")
+        ("|".join(all_topics) + "\x00" + token + "\x00" + _TPL_VERSION
+         ).encode("utf-8")
     ).hexdigest()
     cache: dict = {}
     try:
