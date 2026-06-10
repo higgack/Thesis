@@ -946,7 +946,7 @@ async def _loop(state: dict) -> dict:
             answer = _extract_text(cand.content).strip()
             if not tool_calls:
                 answer = _strip_fake_citations(answer)
-            return {
+            out = {
                 "text": answer,
                 "sources": sources,
                 "source_urls": source_urls,
@@ -954,6 +954,14 @@ async def _loop(state: dict) -> dict:
                 "steps": step + 1,
                 "model": model,
             }
+            # LLM audit on the NORMAL answer path. This used to run only
+            # on the rare MAX_STEPS forced-final branch, so the grounding
+            # / company-confusion / F-2 checks were effectively dead.
+            # Gated on tool_calls: tool-less small talk has no sources to
+            # audit and would just collect "출처 없음" noise.
+            if tool_calls:
+                out["warning"] = await _verify(message, answer, sources)
+            return out
 
         response_parts: list[types.Part] = []
         for fc in calls:
