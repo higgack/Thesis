@@ -1273,7 +1273,16 @@ def render_wiki(token: str) -> int:
             "mtime": mtimes[topic],
         })
 
-    topics_data.sort(key=lambda x: x.get("mtime", 0), reverse=True)
+    # Unfiltered index order = plain time order, no New/Recent grouping:
+    # newest activity first by the index `updated` stamp (set on creation
+    # AND on every merge, so it equals max(created, updated)). The stamp,
+    # not file mtime, is what the card displays — and mtime drifts on
+    # vault git ops / restores / manual Obsidian edits. mtime stays as
+    # tiebreak + fallback for orphan pages the index doesn't know.
+    topics_data.sort(
+        key=lambda x: (x.get("updated") or "", x.get("mtime", 0)),
+        reverse=True,
+    )
 
     queue_size = 0
     queue_path = config.DATA_DIR / "wiki_queue.json"
