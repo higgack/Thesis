@@ -88,7 +88,8 @@ else:
         print(f"  \033[31mFAIL\033[0m _HELP_TEXT {n} > 4000 (Telegram cap)"); ok = False
     else:
         print(f"  \033[32mOK\033[0m _HELP_TEXT {n}/4000 (headroom {4000-n})")
-for name in ("_LOOKUP_GUIDE_TEXT", "_PATENTS_GUIDE_TEXT", "_PAPERS_GUIDE_TEXT"):
+for name in ("_LOOKUP_GUIDE_TEXT", "_PATENTS_GUIDE_TEXT", "_PAPERS_GUIDE_TEXT",
+             "_WIKI_GUIDE_TEXT"):
     g = re.search(rf'{name}\s*=\s*"""(.*?)"""', src, re.S)
     if not g or not g.group(1).strip():
         print(f"  \033[31mFAIL\033[0m {name} missing/empty"); ok = False

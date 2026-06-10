@@ -152,8 +152,13 @@ async def add_chunks(doc_id: str, chunks: list[dict]) -> None:
         _meta.chunk_embed_remember(new_pairs)
 
 
-async def query(text: str, k: int = 5, kind: str | None = None) -> list[dict]:
-    vec = (await embed([text], task_type="RETRIEVAL_QUERY"))[0]
+async def query(text: str, k: int = 5, kind: str | None = None,
+                vec: list[float] | None = None) -> list[dict]:
+    """`vec`: optional precomputed query embedding. hybrid() searches
+    both kinds with the same query text — embedding once and passing it
+    in halves the Gemini embed round-trips on every Q&A."""
+    if vec is None:
+        vec = (await embed([text], task_type="RETRIEVAL_QUERY"))[0]
     where = {"kind": kind} if kind else None
     # Off the event loop — HNSW search over the full corpus blocks the
     # loop (and the typing indicator) otherwise. On the Q&A hot path.

@@ -34,6 +34,7 @@ torpedo the schedule.
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -45,15 +46,26 @@ _PATH = config.DATA_DIR / "notify_acks.json"
 _RESEND_HOURS = int(os.getenv("NOTIFY_ACK_RESEND_HOURS", "24"))
 _HARD_CAP = 30  # safety: never track more than 30 unacked alerts
 
+# Mutators run via asyncio.to_thread from the bot (resend job's
+# update_last_sent vs a user's mark_acked) — serialise the
+# load→mutate→write cycle so the last writer can't revert an ack.
+_LOCK = threading.Lock()
+
 
 def _atomic_write(data: dict) -> None:
     tmp = _PATH.with_suffix(_PATH.suffix + ".tmp")
     bak = _PATH.with_suffix(_PATH.suffix + ".bak")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
-                   encoding="utf-8")
+    # fsync + copy2 (instead of moving the live file aside): a host crash
+    # can't replace the file with an unsynced tmp, and readers never see
+    # a window where the main file doesn't exist.
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps(data, ensure_ascii=False, indent=2))
+        f.flush()
+        os.fsync(f.fileno())
     if _PATH.exists():
         try:
-            os.replace(_PATH, bak)
+            import shutil
+            shutil.copy2(_PATH, bak)
         except OSError:
             pass
     os.replace(tmp, _PATH)
@@ -61,6 +73,13 @@ def _atomic_write(data: dict) -> None:
 
 def _load() -> dict:
     if not _PATH.exists():
+        bak = _PATH.with_suffix(_PATH.suffix + ".bak")
+        if bak.exists():
+            try:
+                data = json.loads(bak.read_text(encoding="utf-8"))
+                return data if isinstance(data, dict) else {}
+            except Exception:
+                pass
         return {}
     try:
         data = json.loads(_PATH.read_text(encoding="utf-8"))
@@ -86,6 +105,12 @@ def record_pending(notify_id: str, message: str,
     """
     if not notify_id or not message:
         return False
+    with _LOCK:
+        return _record_pending_locked(notify_id, message, parse_mode)
+
+
+def _record_pending_locked(notify_id: str, message: str,
+                           parse_mode: str | None) -> bool:
     data = _load()
     existing = data.get(notify_id)
     if existing and not existing.get("acked"):
@@ -138,33 +163,35 @@ def record_pending(notify_id: str, message: str,
 def update_last_sent(notify_id: str) -> None:
     """Bump the resend clock — called after a successful resend so the
     next eligible time slides forward 24h."""
-    data = _load()
-    rec = data.get(notify_id)
-    if not rec or rec.get("acked"):
-        return
-    rec["last_sent_at"] = datetime.utcnow().isoformat(timespec="seconds")
-    try:
-        _atomic_write(data)
-    except Exception:
-        log.exception("notify_acks update_last_sent failed")
+    with _LOCK:
+        data = _load()
+        rec = data.get(notify_id)
+        if not rec or rec.get("acked"):
+            return
+        rec["last_sent_at"] = datetime.utcnow().isoformat(timespec="seconds")
+        try:
+            _atomic_write(data)
+        except Exception:
+            log.exception("notify_acks update_last_sent failed")
 
 
 def mark_acked(notify_id: str) -> bool:
     """User tapped the ✅ button. Stop resending. Returns True if a
     pending entry was actually flipped (False if unknown id or
     already acked)."""
-    data = _load()
-    rec = data.get(notify_id)
-    if not rec or rec.get("acked"):
-        return False
-    rec["acked"] = True
-    rec["ack_at"] = datetime.utcnow().isoformat(timespec="seconds")
-    try:
-        _atomic_write(data)
-    except Exception:
-        log.exception("notify_acks mark_acked failed")
-        return False
-    return True
+    with _LOCK:
+        data = _load()
+        rec = data.get(notify_id)
+        if not rec or rec.get("acked"):
+            return False
+        rec["acked"] = True
+        rec["ack_at"] = datetime.utcnow().isoformat(timespec="seconds")
+        try:
+            _atomic_write(data)
+        except Exception:
+            log.exception("notify_acks mark_acked failed")
+            return False
+        return True
 
 
 def list_due() -> list[tuple[str, dict]]:
@@ -202,16 +229,17 @@ def delete(notify_id: str) -> bool:
     fresh and fires again. Returns True if a row was removed."""
     if not notify_id:
         return False
-    data = _load()
-    if notify_id not in data:
-        return False
-    data.pop(notify_id, None)
-    try:
-        _atomic_write(data)
-    except Exception:
-        log.exception("notify_acks delete persist failed")
-        return False
-    return True
+    with _LOCK:
+        data = _load()
+        if notify_id not in data:
+            return False
+        data.pop(notify_id, None)
+        try:
+            _atomic_write(data)
+        except Exception:
+            log.exception("notify_acks delete persist failed")
+            return False
+        return True
 
 
 def list_all() -> list[dict]:

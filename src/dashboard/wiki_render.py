@@ -7,6 +7,7 @@ the dashboard.
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import logging
@@ -18,6 +19,19 @@ from .. import config
 
 log = logging.getLogger(__name__)
 
+# Normalisation used to fuzzy-match footnote titles against doc titles.
+# Module-level so render_wiki can pre-build the (expensive, 32k-entry)
+# normalised indexes ONCE per run instead of once per page.
+_NORM_KEY_RE = re.compile(r"[\W_]+")
+
+
+def _norm_key(s: str) -> str:
+    return _NORM_KEY_RE.sub("", s).lower()
+
+
+def _build_norm_idx(m: dict) -> dict[str, str]:
+    return {_norm_key(k): k for k in m}
+
 # ---------------------------------------------------------------------------
 # Lightweight markdown → HTML (handles what wiki merge pages actually use)
 # ---------------------------------------------------------------------------
@@ -25,26 +39,28 @@ log = logging.getLogger(__name__)
 def _md_to_html(md: str, topic_set: set[str] | None = None,
                 source_url_map: dict[str, str] | None = None,
                 source_date_map: dict[str, dict] | None = None,
+                norm_url_idx: dict[str, str] | None = None,
+                norm_date_idx: dict[str, str] | None = None,
                 ) -> tuple[str, list[dict], list[dict]]:
     """Convert wiki markdown to HTML. Returns (html_str, toc_entries, footnotes).
     toc_entries: [{level, id, text}, ...] for TOC sidebar.
-    footnotes: [{id, title, url, date, date_kind}, ...] for source footnotes."""
+    footnotes: [{id, title, url, date, date_kind}, ...] for source footnotes.
+
+    norm_url_idx / norm_date_idx: pre-built normalised-title indexes
+    (via _build_norm_idx) — at 32k docs building them costs more than the
+    rest of the render, so render_wiki builds them once for all pages."""
     lines = (md or "").split("\n")
     out: list[str] = []
     toc: list[dict] = []
     _topics = topic_set or set()
     _urls = source_url_map or {}
     _dates = source_date_map or {}
-    _NORM_KEY = re.compile(r"[\W_]+")
-    def _nk(s: str) -> str:
-        return _NORM_KEY.sub("", s).lower()
+    _nk = _norm_key
 
-    _norm_url_idx: dict[str, str] = {}
-    _norm_date_idx: dict[str, str] = {}
-    for k in _urls:
-        _norm_url_idx[_nk(k)] = k
-    for k in _dates:
-        _norm_date_idx[_nk(k)] = k
+    _norm_url_idx = (norm_url_idx if norm_url_idx is not None
+                     else _build_norm_idx(_urls))
+    _norm_date_idx = (norm_date_idx if norm_date_idx is not None
+                      else _build_norm_idx(_dates))
 
     def _prefix_search(nk: str, norm_idx: dict[str, str]) -> str | None:
         if len(nk) < 8:
@@ -861,11 +877,14 @@ def _render_topic_page(topic: str, page_md: str, meta: dict,
                        token: str, all_topics: list[str],
                        source_url_map: dict[str, str] | None = None,
                        source_date_map: dict[str, str] | None = None,
+                       norm_url_idx: dict[str, str] | None = None,
+                       norm_date_idx: dict[str, str] | None = None,
                        ) -> str:
     topic_set = set(all_topics) - {topic}
     body_html, toc, footnotes = _md_to_html(
         page_md, topic_set=topic_set, source_url_map=source_url_map,
         source_date_map=source_date_map,
+        norm_url_idx=norm_url_idx, norm_date_idx=norm_date_idx,
     )
     toc_html = _build_toc_html(toc)
     infobox = _build_infobox(topic, meta)
@@ -987,7 +1006,14 @@ def _topic_filename(topic: str) -> str:
 # ---------------------------------------------------------------------------
 
 def render_wiki(token: str) -> int:
-    """Generate all wiki HTML pages. Returns number of pages written."""
+    """Generate wiki HTML pages incrementally. Returns pages written.
+
+    Runs every 60s via regenerate(); at 1000+ topics a full re-render per
+    tick pegged a worker thread continuously and rewrote ~100MB/min, so a
+    page is re-rendered only when its .md mtime changed. Any topic-list
+    change (add/delete/rename) forces a full rebuild because every page
+    embeds the sidebar + autolink topic set. Render state persists in
+    DATA_DIR/wiki_render_cache.json so restarts don't trigger a rebuild."""
     from ..store import wiki
 
     if not wiki.enabled():
@@ -1026,15 +1052,6 @@ def render_wiki(token: str) -> int:
             stem = rec["file"].rsplit(".", 1)[0]
             _slug_to_topic[stem] = topic_name
 
-    source_url_map: dict[str, str] = {}
-    source_date_map: dict[str, str] = {}
-    try:
-        from ..store import meta as meta_store
-        source_url_map = meta_store.title_url_map()
-        source_date_map = meta_store.title_date_map()
-    except Exception:
-        log.debug("title_url_map/title_date_map unavailable; source links/dates degraded")
-
     target = Path(config.DATA_DIR) / "dashboard" / token / "wiki"
     target.mkdir(parents=True, exist_ok=True)
 
@@ -1043,22 +1060,79 @@ def render_wiki(token: str) -> int:
         return 0
 
     _SKIP_TOPICS = {"기타"}
-
-    all_topics: list[str] = []
-    topics_data: list[dict] = []
-    pages_written = 0
-
     md_files = [f for f in md_files if f.stem not in _SKIP_TOPICS]
-    for md_file in md_files:
-        topic = md_file.stem
-        all_topics.append(topic)
+    all_topics = [f.stem for f in md_files]
 
-    total_docs = 0
+    # Render cache: fingerprint of the topic list + per-topic md mtime and
+    # cached excerpt. Fingerprint change → full rebuild (sidebars/autolinks
+    # on every page reference the topic set).
+    cache_path = config.DATA_DIR / "wiki_render_cache.json"
+    fp = hashlib.sha1(
+        ("|".join(all_topics) + "\x00" + token).encode("utf-8")
+    ).hexdigest()
+    cache: dict = {}
+    try:
+        if cache_path.exists():
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        if not isinstance(cache, dict):
+            cache = {}
+    except Exception:
+        cache = {}
+    entries: dict = cache.get("entries") if isinstance(cache.get("entries"), dict) else {}
+    full = cache.get("fp") != fp
+
+    if full:
+        # Drop orphan pages of deleted/renamed topics so stale HTML
+        # doesn't linger behind a sidebar that no longer links it.
+        expected = {_topic_filename(t) for t in all_topics} | {"index.html"}
+        for old in target.glob("*.html"):
+            if old.name not in expected:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+
+    # Decide which pages actually need re-rendering before touching the
+    # heavy 32k-row title maps.
+    stale: list[Path] = []
+    mtimes: dict[str, float] = {}
     for md_file in md_files:
         topic = md_file.stem
         try:
-            page_md = md_file.read_text(encoding="utf-8")
+            mt = md_file.stat().st_mtime
+        except OSError:
+            continue
+        mtimes[topic] = mt
+        ent = entries.get(topic)
+        if (full or not isinstance(ent, dict) or ent.get("mtime") != mt
+                or not (target / _topic_filename(topic)).exists()):
+            stale.append(md_file)
+
+    source_url_map: dict[str, str] = {}
+    source_date_map: dict[str, str] = {}
+    norm_url_idx: dict[str, str] = {}
+    norm_date_idx: dict[str, str] = {}
+    if stale:
+        try:
+            from ..store import meta as meta_store
+            source_url_map = meta_store.title_url_map()
+            source_date_map = meta_store.title_date_map()
+            norm_url_idx = _build_norm_idx(source_url_map)
+            norm_date_idx = _build_norm_idx(source_date_map)
         except Exception:
+            log.debug("title_url_map/title_date_map unavailable; "
+                      "source links/dates degraded")
+
+    stale_names = {f.stem for f in stale}
+    new_entries: dict[str, dict] = {}
+    topics_data: list[dict] = []
+    pages_written = 0
+    total_docs = 0
+    pid = os.getpid()
+
+    for md_file in md_files:
+        topic = md_file.stem
+        if topic not in mtimes:
             continue
 
         idx_key = _slug_to_topic.get(topic)
@@ -1074,20 +1148,45 @@ def render_wiki(token: str) -> int:
         doc_count = len(meta.get("doc_ids") or [])
         total_docs += doc_count
 
-        lines = page_md.strip().split("\n")
-        excerpt = ""
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith(">"):
-                excerpt = stripped.lstrip("> ").strip()
-                break
-        if not excerpt and len(lines) > 2:
-            for line in lines[1:6]:
-                stripped = line.strip()
-                if stripped and not stripped.startswith("#"):
-                    excerpt = stripped
-                    break
+        if topic in stale_names:
+            try:
+                page_md = md_file.read_text(encoding="utf-8")
+            except Exception:
+                continue
 
+            lines = page_md.strip().split("\n")
+            excerpt = ""
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith(">"):
+                    excerpt = stripped.lstrip("> ").strip()
+                    break
+            if not excerpt and len(lines) > 2:
+                for line in lines[1:6]:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#"):
+                        excerpt = stripped
+                        break
+
+            page_html = _render_topic_page(
+                topic, page_md, meta, token, all_topics,
+                source_url_map=source_url_map,
+                source_date_map=source_date_map,
+                norm_url_idx=norm_url_idx,
+                norm_date_idx=norm_date_idx,
+            )
+            fname = target / _topic_filename(topic)
+            # Atomic + pid-suffixed tmp: bot and dashboard processes can
+            # regenerate concurrently; a shared tmp name made one side's
+            # os.replace fail and the http.server could serve a torn page.
+            tmp = fname.parent / f"{fname.name}.{pid}.tmp"
+            tmp.write_text(page_html, encoding="utf-8")
+            os.replace(tmp, fname)
+            pages_written += 1
+        else:
+            excerpt = (entries.get(topic) or {}).get("excerpt", "")
+
+        new_entries[topic] = {"mtime": mtimes[topic], "excerpt": excerpt}
         topics_data.append({
             "topic": topic,
             "title": meta.get("title") or topic,
@@ -1095,17 +1194,8 @@ def render_wiki(token: str) -> int:
             "updated": meta.get("updated", ""),
             "created": meta.get("created", ""),
             "excerpt": excerpt,
-            "mtime": md_file.stat().st_mtime,
+            "mtime": mtimes[topic],
         })
-
-        page_html = _render_topic_page(
-            topic, page_md, meta, token, all_topics,
-            source_url_map=source_url_map,
-            source_date_map=source_date_map,
-        )
-        fname = target / _topic_filename(topic)
-        fname.write_text(page_html, encoding="utf-8")
-        pages_written += 1
 
     topics_data.sort(key=lambda x: x.get("mtime", 0), reverse=True)
 
@@ -1132,7 +1222,7 @@ def render_wiki(token: str) -> int:
         pass
 
     wiki_stats = {
-        "pages": pages_written,
+        "pages": len(topics_data),
         "docs": total_docs,
         "queue": queue_size,
         "today_cost": today_cost,
@@ -1143,8 +1233,19 @@ def render_wiki(token: str) -> int:
 
     index_html = _render_index_page(topics_data, token, wiki_stats)
     idx_file = target / "index.html"
-    tmp_file = target / "index.html.tmp"
+    tmp_file = target / f"index.html.{pid}.tmp"
     tmp_file.write_text(index_html, encoding="utf-8")
     os.replace(tmp_file, idx_file)
+
+    try:
+        cache_tmp = cache_path.with_name(f"{cache_path.name}.{pid}.tmp")
+        cache_tmp.write_text(
+            json.dumps({"fp": fp, "entries": new_entries},
+                       ensure_ascii=False),
+            encoding="utf-8",
+        )
+        os.replace(cache_tmp, cache_path)
+    except Exception:
+        log.exception("wiki render cache save failed (render still ok)")
 
     return pages_written

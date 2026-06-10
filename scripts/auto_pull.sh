@@ -7,6 +7,14 @@ cd "$(dirname "$0")/.."
 
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# Single-instance guard. A docker build regularly takes >60s, so without
+# this two cron minutes overlap: the loser's compose-failure retry path
+# force-removes the containers the winner just started (duplicate 배포
+# 시작/완료 + contradictory ❌ alerts). Loser exits SILENTLY (race-loss
+# is a no-op by design). Lock fd auto-releases when the script exits.
+exec 9>/tmp/thesis_auto_pull.lock
+flock -n 9 || exit 0
+
 # Load TELEGRAM_BOT_TOKEN / TELEGRAM_OWNER_ID etc.
 if [ -f .env ]; then
     set -a
@@ -30,7 +38,8 @@ WATCHDOG_COOLDOWN_SEC=600      # restart at most once / 10 min
 
 notify() {
     [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_OWNER_ID:-}" ] || return 0
-    curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    curl -sS --max-time 15 \
+        "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         --data-urlencode "chat_id=${TELEGRAM_OWNER_ID}" \
         --data-urlencode "text=$1" >/dev/null || true
 }
@@ -131,12 +140,23 @@ TITLE=$(git log -1 --format=%s "$REMOTE" 2>/dev/null | tr -d '\r' | head -c 200)
 SUBJECT="${SHORT_OLD} → ${SHORT_NEW}"
 [ -n "$TITLE" ] && SUBJECT="${SUBJECT}${NL}${TITLE}"
 
+# Failure latch: if THIS exact remote sha already failed to pull, keep
+# retrying every minute but SILENTLY — without this, a stuck pull
+# (force-pushed branch, diverged HEAD, dirty tracked file) fired
+# 배포 시작 + 배포 실패 twice a minute forever. A new push (different
+# sha) or a successful pull clears the latch and restores loud mode.
+FAIL_LATCH="/tmp/thesis_deploy_failed_sha"
+QUIET=0
+if [ -f "$FAIL_LATCH" ] && [ "$(tr -dc 'a-f0-9' < "$FAIL_LATCH" 2>/dev/null)" = "$REMOTE" ]; then
+    QUIET=1
+fi
+
 {
-    echo "===== $(date) — pulling ${SHORT_OLD} → ${SHORT_NEW} ====="
+    echo "===== $(date) — pulling ${SHORT_OLD} → ${SHORT_NEW} (quiet=${QUIET}) ====="
     [ -n "$TITLE" ] && echo "title: $TITLE"
 } >>"$LOG"
 
-notify "🚀 배포 시작: ${SUBJECT}"
+[ "$QUIET" -eq 1 ] || notify "🚀 배포 시작: ${SUBJECT}"
 
 compose_up() {
     docker compose --profile local-api up -d --build --remove-orphans \
@@ -144,6 +164,7 @@ compose_up() {
 }
 
 if git pull --ff-only origin "$BRANCH" >>"$LOG" 2>&1; then
+    rm -f "$FAIL_LATCH"
     if ! compose_up; then
         echo "compose up failed, removing stale containers and retrying" >>"$LOG"
         docker rm -f thesis-bot-1 thesis-forward-listener-1 \
@@ -164,6 +185,9 @@ if git pull --ff-only origin "$BRANCH" >>"$LOG" 2>&1; then
         notify "❌ 컨테이너 상태 ${STATUS}: ${SUBJECT}${NL}${TAIL:0:600}"
     fi
 else
-    TAIL=$(tail -15 "$LOG")
-    notify "❌ 배포 실패: ${SUBJECT}${NL}${TAIL:0:600}"
+    printf '%s' "$REMOTE" > "${FAIL_LATCH}.tmp" && mv "${FAIL_LATCH}.tmp" "$FAIL_LATCH"
+    if [ "$QUIET" -eq 0 ]; then
+        TAIL=$(tail -15 "$LOG")
+        notify "❌ 배포 실패(pull): ${SUBJECT}${NL}${TAIL:0:600}${NL}(같은 SHA는 무음 재시도, 새 푸시가 오면 다시 알림)"
+    fi
 fi

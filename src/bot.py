@@ -2503,16 +2503,29 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     async with _SustainedTyping(update, ctx):
-        s = meta.usage_stats()
-        chunks = vector.chunk_count()
+        # All SQLite/Chroma aggregation in ONE thread hop — daily_breakdown
+        # alone is 7 queries; running these raw on the event loop stalled
+        # heartbeats under ingest+dashboard write contention.
+        def _gather_usage():
+            return {
+                "s": meta.usage_stats(),
+                "chunks": vector.chunk_count(),
+                "today": cost.today_krw(),
+                "week": cost.period_krw(7),
+                "mtd": cost.month_to_date_krw(),
+                "daily": cost.daily_breakdown(7),
+            }
+        snap = await asyncio.to_thread(_gather_usage)
+        s = snap["s"]
+        chunks = snap["chunks"]
         queue_len = len(_INGEST_RETRY_QUEUE)
         failed_len = len(_INGEST_FAILED)
 
         types_line = ", ".join(f"{t}:{c}" for t, c in s["types"][:8]) or "-"
 
-        today = cost.today_krw()
-        week = cost.period_krw(7)
-        mtd = cost.month_to_date_krw()
+        today = snap["today"]
+        week = snap["week"]
+        mtd = snap["mtd"]
         by_today = today["by_model"]
         cost_lines = []
         for m in ("gemini-2.5-pro", "gemini-2.5-flash",
@@ -2551,7 +2564,7 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # Tiny inline bar chart for the last 7 days so trends are visible
         # without leaving the /usage screen.
-        daily = cost.daily_breakdown(7)
+        daily = snap["daily"]
         max_cost = max((d["cost"] for d in daily), default=0.0)
         daily_lines = []
         for d in daily:
@@ -2594,16 +2607,18 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         # Wiki status snippet
         if wiki.enabled():
-            wiki_today = wiki.today_cost_krw()
-            wiki_budget = wiki.budget_krw()
-            wiki_q = wiki.queue_size()
-            wiki_pages = len(wiki.list_topics())
+            def _gather_wiki():
+                return (wiki.today_cost_krw(), wiki.budget_krw(),
+                        wiki.queue_size(), len(wiki.list_topics()),
+                        wiki.budget_exceeded())
+            (wiki_today, wiki_budget, wiki_q, wiki_pages,
+             wiki_over) = await asyncio.to_thread(_gather_wiki)
             out += (
                 f"\n\n📚 위키"
                 f"\n  페이지: {wiki_pages}개 · 큐: {wiki_q:,}건"
                 f"\n  오늘 비용: ₩{wiki_today:,.0f} / ₩{wiki_budget:,.0f}"
             )
-            if wiki.budget_exceeded():
+            if wiki_over:
                 out += " ⛔초과"
         await update.message.reply_text(out)
 
@@ -2620,10 +2635,10 @@ async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     async with _SustainedTyping(update, ctx):
-        today = cost.today_krw()
-        week = cost.period_krw(7)
-        mtd = cost.month_to_date_krw()
-        daily = cost.daily_breakdown(14)
+        def _gather_cost():
+            return (cost.today_krw(), cost.period_krw(7),
+                    cost.month_to_date_krw(), cost.daily_breakdown(14))
+        today, week, mtd, daily = await asyncio.to_thread(_gather_cost)
 
         # Daily average over the last 7 days; project monthly at that rate.
         # Also derive a "remaining days × today's rate" forecast so a spiky
@@ -2731,7 +2746,7 @@ async def cmd_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         n = 10
         if ctx.args and ctx.args[0].isdigit():
             n = max(1, min(int(ctx.args[0]), 50))
-        items = meta.recent(n)
+        items = await asyncio.to_thread(meta.recent, n)
         if not items:
             await update.message.reply_text("아직 비어있어요.")
             return
@@ -2740,7 +2755,9 @@ async def cmd_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             title = _clean_text(r.get("title") or "(제목 없음)")[:90]
             ingested = (r.get("ingested_at") or "")[:10]
             lines.append(f"\n[{r['type']}]  {title}\n  {ingested}  ·  id {r['id']}")
-        await update.message.reply_text("\n".join(lines))
+        # /recent 50 ≈ 6,000 chars — over the 4096 cap without a split.
+        for chunk in _split_for_telegram("\n".join(lines)):
+            await update.message.reply_text(chunk)
 
 
 async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -2759,8 +2776,10 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             src = existing.get("source") or ""
     except Exception:
         log.exception("get_doc pre-forget failed")
-    n = vector.delete_doc(doc_id)
-    ok = meta.delete(doc_id)
+    # Off-loop: delete_doc does a full-collection metadata scan (seconds
+    # at 253k chunks) — raw on the loop it stalls heartbeats.
+    n = await asyncio.to_thread(vector.delete_doc, doc_id)
+    ok = await asyncio.to_thread(meta.delete, doc_id)
     if ok:
         fname = _filename_from_source(src)
         if fname:
@@ -2773,16 +2792,20 @@ async def cmd_forget(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
-    noisy = meta.find_noise()
+    noisy = await asyncio.to_thread(meta.find_noise)
     if not noisy:
         await update.message.reply_text("정리할 노이즈 없음 ✨")
         return
     args = [a.lower() for a in (ctx.args or [])]
     if "confirm" in args:
-        n_chunks = 0
+        # ONE where-$in chroma pass + offloaded meta deletes — the old
+        # per-doc delete_doc loop ran N full-collection scans raw on the
+        # event loop (minutes at 253k chunks → watchdog-restart risk
+        # mid-delete, leaving meta/vector diverged).
+        ids = [r["id"] for r in noisy]
+        n_chunks = await asyncio.to_thread(vector.delete_docs, ids)
+        await asyncio.to_thread(lambda: [meta.delete(i) for i in ids])
         for r in noisy:
-            n_chunks += vector.delete_doc(r["id"])
-            meta.delete(r["id"])
             # Record filename so orphan scan doesn't re-queue this
             # file from disk (cleanup is normally text-only docs, but
             # belt-and-suspenders since find_noise() could expand).
@@ -2812,16 +2835,15 @@ async def cmd_forget_forwards(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     /forget_forwards previews, /forget_forwards confirm executes."""
     if not _is_owner(update):
         return
-    candidates = meta.find_forwarded_digests()
+    candidates = await asyncio.to_thread(meta.find_forwarded_digests)
     if not candidates:
         await update.message.reply_text("📭 자동 포워딩 디지스트 없음 ✨")
         return
     args = [a.lower() for a in (ctx.args or [])]
     if "confirm" in args:
-        n_chunks = 0
-        for d in candidates:
-            n_chunks += vector.delete_doc(d["id"])
-            meta.delete(d["id"])
+        ids = [d["id"] for d in candidates]
+        n_chunks = await asyncio.to_thread(vector.delete_docs, ids)
+        await asyncio.to_thread(lambda: [meta.delete(i) for i in ids])
         await update.message.reply_text(
             f"✅ 자동 포워딩 자료 {len(candidates)}건 제거 "
             f"(청크 {n_chunks}개)"
@@ -2841,31 +2863,29 @@ async def cmd_forget_forwards(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_dedupe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
-    groups = meta.find_duplicates()
+    groups = await asyncio.to_thread(meta.find_duplicates)
     if not groups:
         await update.message.reply_text("중복 없음 ✨")
         return
     args = [a.lower() for a in (ctx.args or [])]
     if "confirm" in args:
-        deleted = 0
-        chunks_removed = 0
+        doomed: list[dict] = []
         for g in groups:
             keeper = max(g, key=lambda d: len(d.get("summary") or ""))
-            for d in g:
-                if d["id"] == keeper["id"]:
-                    continue
-                chunks_removed += vector.delete_doc(d["id"])
-                meta.delete(d["id"])
-                deleted += 1
-                # Stop the orphan-scan loop: file is still on disk
-                # after meta delete; without this, _scan_orphan_files
-                # finds the file missing from documents and re-queues
-                # it on every restart → infinite dedup/retry cycle.
-                fname = _filename_from_source(d.get("source") or "")
-                if fname:
-                    _record_dedup_confirmed(fname)
+            doomed.extend(d for d in g if d["id"] != keeper["id"])
+        ids = [d["id"] for d in doomed]
+        chunks_removed = await asyncio.to_thread(vector.delete_docs, ids)
+        await asyncio.to_thread(lambda: [meta.delete(i) for i in ids])
+        for d in doomed:
+            # Stop the orphan-scan loop: file is still on disk
+            # after meta delete; without this, _scan_orphan_files
+            # finds the file missing from documents and re-queues
+            # it on every restart → infinite dedup/retry cycle.
+            fname = _filename_from_source(d.get("source") or "")
+            if fname:
+                _record_dedup_confirmed(fname)
         await update.message.reply_text(
-            f"✅ 중복 {deleted}건 / 청크 {chunks_removed}개 제거 완료\n"
+            f"✅ 중복 {len(doomed)}건 / 청크 {chunks_removed}개 제거 완료\n"
             f"(각 그룹에서 본문이 가장 긴 것 1개만 유지)"
         )
         return
@@ -4243,9 +4263,11 @@ async def cmd_blocked_hosts(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             lines.append(f"   ↳ {e['last_url'][:90]}")
     lines.append("")
     lines.append("재시도 허용: /reset_blocked_hosts (전체 초기화)")
-    await update.message.reply_text(
-        "\n".join(lines), disable_web_page_preview=True,
-    )
+    # Unbounded host list (~200 chars/entry) overflows 4096 without a split.
+    for chunk in _split_for_telegram("\n".join(lines)):
+        await update.message.reply_text(
+            chunk, disable_web_page_preview=True,
+        )
 
 
 async def cmd_reset_blocked_hosts(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -5181,16 +5203,18 @@ async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"더 구체적인 검색어로 다시 시도하거나 /forget <id>로 직접:\n{preview}"
         )
         return
+    ids = [m["id"] for m in matches]
+    n_chunks = await asyncio.to_thread(vector.delete_docs, ids)
+    await asyncio.to_thread(lambda: [meta.delete(i) for i in ids])
     forgotten = []
     for m in matches:
-        n = vector.delete_doc(m["id"])
-        meta.delete(m["id"])
         fname = _filename_from_source(m.get("source") or "")
         if fname:
             _record_dedup_confirmed(fname)
-        forgotten.append(f"  ✅ {_clean_text(m['title'])[:60]} ({n} chunks)")
+        forgotten.append(f"  ✅ {_clean_text(m['title'])[:60]}")
     await update.message.reply_text(
-        f"삭제 완료 · {len(forgotten)}건\n" + "\n".join(forgotten)
+        f"삭제 완료 · {len(forgotten)}건 / 청크 {n_chunks}개\n"
+        + "\n".join(forgotten)
     )
 
 
@@ -5253,21 +5277,22 @@ async def cmd_forget_search_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not query:
         await update.message.reply_text("사용법: /forget_search_all <키워드>")
         return
-    matches = meta.search_title(query, limit=500)
+    matches = await asyncio.to_thread(meta.search_title, query, 500)
     if not matches:
         await update.message.reply_text(f"매칭 없음: '{query}'")
         return
-    forgotten = 0
-    chunks_total = 0
+    # Batch delete off-loop: up to 500 per-doc full-collection scans on
+    # the event loop took minutes at 253k chunks → heartbeat starvation
+    # → watchdog restart mid-delete (meta/vector divergence).
+    ids = [m["id"] for m in matches]
+    chunks_total = await asyncio.to_thread(vector.delete_docs, ids)
+    await asyncio.to_thread(lambda: [meta.delete(i) for i in ids])
     for m in matches:
-        chunks_total += vector.delete_doc(m["id"])
-        meta.delete(m["id"])
-        forgotten += 1
         fname = _filename_from_source(m.get("source") or "")
         if fname:
             _record_dedup_confirmed(fname)
     await update.message.reply_text(
-        f"✅ 일괄 삭제 · {forgotten}건 / 청크 {chunks_total}개 제거"
+        f"✅ 일괄 삭제 · {len(ids)}건 / 청크 {chunks_total}개 제거"
     )
 
 
@@ -8765,7 +8790,9 @@ async def _send_agent_reply(send, result, send_photo=None, inherited: bool = Fal
     body, ordered_labels = _renumber_citations(
         body, result.get("sources") or [],
     )
-    body = _annotate_learn_date(body, result.get("sources") or [])
+    # Off-loop: up to 20 sequential unindexed-LIKE scans over 32.5k rows.
+    body = await asyncio.to_thread(
+        _annotate_learn_date, body, result.get("sources") or [])
     suffix_lines = []
     if result.get("warning"):
         suffix_lines.append(result["warning"])
@@ -9929,19 +9956,33 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
                     except Exception:
                         pass
             sent_ok = True  # intentionally suppress the result send
+        # A large forwarded digest's result text can exceed Telegram's
+        # 4096 cap — both the edit AND the fallback send used to fail,
+        # losing the result entirely. Edit gets the first chunk; any
+        # remainder goes out as follow-up sends.
+        final_chunks = _split_for_telegram(final_text) or [final_text]
         if status_msg_id and not sent_ok:
             try:
                 await ctx.bot.edit_message_text(
                     chat_id=notify_chat_id, message_id=status_msg_id,
-                    text=final_text, disable_web_page_preview=True,
+                    text=final_chunks[0], disable_web_page_preview=True,
                 )
+                for extra in final_chunks[1:]:
+                    await ctx.bot.send_message(
+                        notify_chat_id, extra,
+                        disable_web_page_preview=True,
+                    )
                 sent_ok = True
             except Exception:
                 # Edit can fail (too old, network) — fall back to new send.
                 log.warning("status final edit failed; sending fresh")
         if not sent_ok:
             try:
-                await ctx.bot.send_message(notify_chat_id, final_text)
+                for chunk in final_chunks:
+                    await ctx.bot.send_message(
+                        notify_chat_id, chunk,
+                        disable_web_page_preview=True,
+                    )
             except Exception:
                 log.exception("ingest result notify failed")
         # Bubble is now in its terminal visual state (or the user has
@@ -9985,7 +10026,7 @@ async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE,
         return await pipeline.ingest_xlsx(dest, label, on_stage=on_stage)
     if suffix in _AUDIO_SUFFIX_MIME:
         return await pipeline.ingest_audio(
-            dest.read_bytes(), label,
+            await asyncio.to_thread(dest.read_bytes), label,
             caption=msg.caption or "",
             mime_type=_AUDIO_SUFFIX_MIME[suffix],
         )
@@ -10009,7 +10050,8 @@ async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE,
                 f"필요한 내용만 메시지로 직접 붙여넣어 주세요."
             ),
         }
-    content = dest.read_text(encoding="utf-8", errors="ignore")
+    content = await asyncio.to_thread(
+        dest.read_text, encoding="utf-8", errors="ignore")
     return await pipeline.ingest_text(content, label)
 
 
@@ -11171,13 +11213,14 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 elif suffix in _AUDIO_SUFFIX_MIME:
                     r = await asyncio.wait_for(
                         pipeline.ingest_audio(
-                            dest.read_bytes(), label,
+                            await asyncio.to_thread(dest.read_bytes), label,
                             mime_type=_AUDIO_SUFFIX_MIME[suffix],
                         ),
                         timeout=_INGEST_TIMEOUT_SEC,
                     )
                 else:
-                    content = dest.read_text(encoding="utf-8", errors="ignore")
+                    content = await asyncio.to_thread(
+                        dest.read_text, encoding="utf-8", errors="ignore")
                     r = await asyncio.wait_for(
                         pipeline.ingest_text(content, label),
                         timeout=_INGEST_TIMEOUT_SEC,
@@ -11283,7 +11326,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 elif suffix in _AUDIO_SUFFIX_MIME:
                     r = await asyncio.wait_for(
                         pipeline.ingest_audio(
-                            dest.read_bytes(), label,
+                            await asyncio.to_thread(dest.read_bytes), label,
                             mime_type=_AUDIO_SUFFIX_MIME[suffix],
                         ),
                         timeout=_INGEST_TIMEOUT_SEC,
@@ -11295,12 +11338,14 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                     # uses. No caption available offline so it's pure
                     # OCR text.
                     r = await pipeline.ingest_image(
-                        dest.read_bytes(), label, caption="",
+                        await asyncio.to_thread(dest.read_bytes), label,
+                        caption="",
                         mime_type=_IMAGE_SUFFIX_MIME[suffix],
                     )
                 else:
                     try:
-                        content = dest.read_text(encoding="utf-8", errors="ignore")
+                        content = await asyncio.to_thread(
+                            dest.read_text, encoding="utf-8", errors="ignore")
                     except Exception:
                         _retry_item_done(item)
                         return
@@ -11623,7 +11668,7 @@ async def cmd_wiki(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         if upd_dt.tzinfo is None:
                             upd_dt = upd_dt.replace(tzinfo=_kst)
                         badge = " 🆕" if upd_dt >= _7d_ago else ""
-                    except ValueError:
+                    except (ValueError, TypeError):
                         pass
                 date_part = f", {upd_str[:10]}" if upd_str else ""
                 lines.append(f"• {html.escape(t['topic'])}  ({t['docs']}건{date_part}){badge}")
@@ -11720,7 +11765,7 @@ async def cmd_wiki_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     _cr = _cr.replace(tzinfo=_kst)
                 if _cr >= cutoff:
                     continue
-            except ValueError:
+            except (ValueError, TypeError):
                 pass
         try:
             upd_dt = datetime.fromisoformat(upd_str)
@@ -11728,7 +11773,7 @@ async def cmd_wiki_recent(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 upd_dt = upd_dt.replace(tzinfo=_kst)
             if upd_dt >= cutoff:
                 recent.append((upd_dt, t))
-        except ValueError:
+        except (ValueError, TypeError):
             continue
     if not recent:
         await update.message.reply_text(
@@ -11775,7 +11820,7 @@ async def cmd_wiki_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 cr_dt = cr_dt.replace(tzinfo=_kst)
             if cr_dt >= cutoff:
                 new_topics.append((cr_dt, t))
-        except ValueError:
+        except (ValueError, TypeError):
             continue
     if not new_topics:
         await update.message.reply_text(f"최근 {days}일 내 새로 생성된 위키 페이지 없음.")
@@ -11799,14 +11844,13 @@ async def cmd_wiki_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_status — 동작 상태 + 대기 큐 + 페이지 수 + 오늘/이번달 위키 비용."""
     if not _is_owner(update):
         return
-    on = wiki.enabled()
-    killed = wiki.is_disabled()
-    qn = wiki.queue_size()
-    pages = len(wiki.list_topics())
-    today_w = wiki.today_cost_krw()
+    def _gather_status():
+        return (wiki.enabled(), wiki.is_disabled(), wiki.queue_size(),
+                len(wiki.list_topics()), wiki.today_cost_krw(),
+                cost.month_to_date_krw())
+    on, killed, qn, pages, today_w, mtd = await asyncio.to_thread(_gather_status)
     budget = config.WIKI_DAILY_BUDGET_KRW
     over = budget > 0 and today_w >= budget
-    mtd = cost.month_to_date_krw()
     w = mtd.get("by_purpose", {}).get("wiki", {})
     body = (
         "📚 <b>LLM Wiki 상태</b>\n"
@@ -11834,19 +11878,21 @@ async def cmd_wiki_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     async with _SustainedTyping(update, ctx):
-        today_w = wiki.today_cost_krw()
-        budget = wiki.budget_krw()
-        over = wiki.budget_exceeded()
-        month_w = wiki.month_cost_krw()
-        total_w = wiki.total_cost_krw()
+        def _gather_wiki_cost():
+            return (wiki.today_cost_krw(), wiki.budget_krw(),
+                    wiki.budget_exceeded(), wiki.month_cost_krw(),
+                    wiki.total_cost_krw(), cost.period_krw(7),
+                    cost.daily_breakdown(14, purpose="wiki"),
+                    wiki.queue_size(), len(wiki.list_topics()))
+        (today_w, budget, over, month_w, total_w, week_all, daily,
+         qn, pages) = await asyncio.to_thread(_gather_wiki_cost)
 
-        week = cost.period_krw(7).get("by_purpose", {}).get("wiki", {})
+        week = week_all.get("by_purpose", {}).get("wiki", {})
         week_cost = week.get("cost", 0.0)
         week_calls = week.get("calls", 0)
         avg_7d = week_cost / 7 if week_cost else 0.0
         projected_monthly = avg_7d * 30
 
-        daily = cost.daily_breakdown(14, purpose="wiki")
         max_cost = max((d["cost"] for d in daily), default=0.0)
         daily_lines = []
         for d in daily:
@@ -11857,9 +11903,6 @@ async def cmd_wiki_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 + (f"  ({d['calls']}콜)" if d["calls"] else "")
             )
         daily_block = "\n".join(daily_lines)
-
-        qn = wiki.queue_size()
-        pages = len(wiki.list_topics())
 
         out = (
             "📚 위키 비용/사용량 (KST · Gemini API)\n"
@@ -12036,7 +12079,7 @@ async def cmd_wiki_split(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         results = []
         for c in candidates:
             try:
-                r = wiki.decompose_merged_topic(c)
+                r = await asyncio.to_thread(wiki.decompose_merged_topic, c)
                 results.append((c, r))
             except Exception as e:
                 results.append((c, {"error": str(e)}))
@@ -12053,7 +12096,7 @@ async def cmd_wiki_split(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
         return
     try:
-        res = wiki.decompose_merged_topic(topic)
+        res = await asyncio.to_thread(wiki.decompose_merged_topic, topic)
     except Exception as e:
         await update.message.reply_text(f"⚠️ 분리 실패: {e}")
         return
@@ -12086,7 +12129,7 @@ async def cmd_wiki_rename(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not old or not new:
         await update.message.reply_text("사용법: /wiki_rename <옛이름> :: <새이름>")
         return
-    res = wiki.rename_topic(old, new)
+    res = await asyncio.to_thread(wiki.rename_topic, old, new)
     if res.get("error"):
         await update.message.reply_text(f"⚠️ {res['error']}")
         return
@@ -12105,7 +12148,7 @@ async def cmd_wiki_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not topic:
         await update.message.reply_text("사용법: /wiki_delete <토픽명>")
         return
-    res = wiki.delete_topic(topic)
+    res = await asyncio.to_thread(wiki.delete_topic, topic)
     if res.get("error"):
         await update.message.reply_text(f"⚠️ {res['error']}")
         return
@@ -12165,33 +12208,39 @@ async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_wiki_pending(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_pending — 위키 큐 대기 현황 (토픽별 문서 수)."""
-    groups = wiki.pending_list()
+    if not _is_owner(update):
+        return
+    groups = await asyncio.to_thread(wiki.pending_list)
     if not groups:
         await update.message.reply_text("✅ 위키 큐 비어있음")
         return
     total = sum(g["docs"] for g in groups)
     lines = [f"📋 <b>위키 큐 대기: {total}건 ({len(groups)}개 토픽)</b>\n"]
     for g in groups[:30]:
-        titles = ", ".join(g["titles"])
+        titles = html.escape(", ".join(g["titles"]))
         if titles:
             titles = f" — {titles}"
-        lines.append(f"• <b>{g['topic']}</b>: {g['docs']}건{titles}")
+        lines.append(
+            f"• <b>{html.escape(g['topic'])}</b>: {g['docs']}건{titles}")
     if len(groups) > 30:
         lines.append(f"\n…외 {len(groups) - 30}개 토픽")
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    for chunk in _split_for_telegram("\n".join(lines)):
+        await update.message.reply_text(chunk, parse_mode="HTML")
 
 
 async def cmd_wiki_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_failed [clear|retry <토픽>] — 위키 머지 실패 목록 관리."""
+    if not _is_owner(update):
+        return
     args = (ctx.args or [])
     if args and args[0].lower() == "clear":
         topic = " ".join(args[1:]).strip() or None
-        removed = wiki.wiki_failed_clear(topic)
+        removed = await asyncio.to_thread(wiki.wiki_failed_clear, topic)
         await update.message.reply_text(
             f"🗑 {removed}건 삭제" if removed else "삭제할 항목 없음")
         return
     if args and args[0].lower() == "retry_all":
-        res = wiki.wiki_failed_retry_all()
+        res = await asyncio.to_thread(wiki.wiki_failed_retry_all)
         if res["retried"] == 0:
             await update.message.reply_text("재시도할 실패 항목 없음")
         else:
@@ -12205,7 +12254,7 @@ async def cmd_wiki_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not topic:
             await update.message.reply_text("사용법: /wiki_failed retry <토픽명>")
             return
-        res = wiki.wiki_failed_retry(topic)
+        res = await asyncio.to_thread(wiki.wiki_failed_retry, topic)
         if res.get("error"):
             await update.message.reply_text(f"⚠️ {res['error']}")
         else:
@@ -12222,14 +12271,16 @@ async def cmd_wiki_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for f in failed[:20]:
         promoted = " 🚫큐제거" if f.get("promoted") else ""
         lines.append(
-            f"• <b>{f['topic']}</b> ({f.get('cycles', 0)}회 실패{promoted})\n"
-            f"  오류: {f.get('last_error', '?')[:80]}\n"
-            f"  최근: {f.get('last_ts', '?')}")
+            f"• <b>{html.escape(f['topic'])}</b>"
+            f" ({f.get('cycles', 0)}회 실패{promoted})\n"
+            f"  오류: {html.escape(str(f.get('last_error', '?'))[:80])}\n"
+            f"  최근: {html.escape(str(f.get('last_ts', '?')))}")
     lines.append(
         "\n/wiki_failed clear — 전체 삭제"
         "\n/wiki_failed retry &lt;토픽&gt; — 단건 재시도"
         "\n/wiki_failed retry_all — 전체 재시도")
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    for chunk in _split_for_telegram("\n".join(lines)):
+        await update.message.reply_text(chunk, parse_mode="HTML")
 
 
 async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -12240,7 +12291,7 @@ async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if args_raw.lower() == "merge_all":
         await update.message.reply_text("🔄 전체 병합 시작...")
-        res = wiki.merge_all_duplicates()
+        res = await asyncio.to_thread(wiki.merge_all_duplicates)
         await update.message.reply_text(
             f"✅ 전체 병합 완료\n"
             f"감지: {res['pairs']}쌍 · 병합: {res['merged']}건 · "
@@ -12258,7 +12309,7 @@ async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "사용법: /wiki_dedup merge <유지할 토픽> :: <흡수할 토픽>")
             return
-        res = wiki.merge_topics(keep, absorb)
+        res = await asyncio.to_thread(wiki.merge_topics, keep, absorb)
         if res.get("error"):
             await update.message.reply_text(f"⚠️ {res['error']}")
         else:
@@ -12269,17 +12320,19 @@ async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"파일삭제: {'✓' if res['file_deleted'] else '✗'}")
         return
 
-    pairs = wiki.find_duplicates()
+    pairs = await asyncio.to_thread(wiki.find_duplicates)
     if not pairs:
         await update.message.reply_text("✅ 유사 중복 토픽 없음")
         return
     lines = [f"🔍 <b>유사 중복 토픽 후보: {len(pairs)}쌍</b>\n"]
     for i, (a, b, da, db) in enumerate(pairs[:30], 1):
-        lines.append(f"{i}. <b>{a}</b> ({da}건) ↔ <b>{b}</b> ({db}건)")
+        lines.append(f"{i}. <b>{html.escape(a)}</b> ({da}건) ↔ "
+                     f"<b>{html.escape(b)}</b> ({db}건)")
     lines.append(
         "\n개별: /wiki_dedup merge A :: B"
         "\n전체: /wiki_dedup merge_all")
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    for chunk in _split_for_telegram("\n".join(lines)):
+        await update.message.reply_text(chunk, parse_mode="HTML")
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -12952,6 +13005,31 @@ def main():
                 when=ban_release_at,
                 name="ban_release_notify",
             )
+
+    # Global error handler: without one, an unhandled handler exception
+    # vanishes into PTB's logger and the user sees a command silently do
+    # nothing — exactly how the /wiki datetime crash stayed invisible.
+    # Notify the owner (rate-limited to one alert / 5 min so a crash in
+    # a hot path can't flood Telegram).
+    _err_last_notify = {"ts": 0.0}
+
+    async def _on_handler_error(update_obj, context):
+        err = context.error
+        log.error("handler error: %s", err, exc_info=err)
+        try:
+            import time as _time
+            now = _time.time()
+            if now - _err_last_notify["ts"] < 300:
+                return
+            _err_last_notify["ts"] = now
+            await context.bot.send_message(
+                config.TELEGRAM_OWNER_ID,
+                f"⚠️ 핸들러 오류: {_explain_error(err)}"[:1000],
+            )
+        except Exception:
+            log.exception("error-handler notify failed")
+
+    app.add_error_handler(_on_handler_error)
 
     _load_persisted_state()
     _load_dedup_confirmed()

@@ -172,7 +172,7 @@ def main() -> int:
         print(f"meta.db not found at {db_path}", file=sys.stderr)
         return 1
 
-    con = sqlite3.connect(str(db_path))
+    con = sqlite3.connect(str(db_path), timeout=30)
     con.row_factory = sqlite3.Row
     rows = con.execute(
         "SELECT id, source, type, title, substr(summary, 1, 2000) as summary "

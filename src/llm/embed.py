@@ -45,10 +45,18 @@ async def _embed_gemini_batch(texts: list[str], task_type: str) -> list[list[flo
     last_err: BaseException | None = None
     for attempt in range(6):
         try:
-            resp = await _client.aio.models.embed_content(
-                model=config.EMBED_MODEL,
-                contents=texts,
-                config=types.EmbedContentConfig(task_type=task_type),
+            # 60s cap per call — same hang class gemini.complete() was
+            # fixed for (a stalled HTTP call once hung >1h). A timeout
+            # raises into the retry/backoff path below instead of pinning
+            # the Q&A or ingest task until the outer 10-15min guard kills
+            # the whole operation.
+            resp = await asyncio.wait_for(
+                _client.aio.models.embed_content(
+                    model=config.EMBED_MODEL,
+                    contents=texts,
+                    config=types.EmbedContentConfig(task_type=task_type),
+                ),
+                timeout=60,
             )
             purpose = "query" if task_type == "RETRIEVAL_QUERY" else "ingest"
             usd_in = cost.record_resp(config.EMBED_MODEL, resp, purpose=purpose)

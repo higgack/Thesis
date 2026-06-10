@@ -75,15 +75,19 @@ def _is_digest_title(title: str) -> bool:
 
 def _doc_age_days(doc: dict) -> float | None:
     """Days since ingest, or None if ingested_at is missing/malformed."""
-    from datetime import datetime
+    from datetime import datetime, timezone
     raw = (doc or {}).get("ingested_at")
     if not raw:
         return None
     try:
         ts = datetime.fromisoformat(raw)
+        if ts.tzinfo is not None:
+            # A tz-aware row would make the naive-utcnow subtraction
+            # raise TypeError mid-scoring; normalise instead.
+            ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+        return max(0.0, (datetime.utcnow() - ts).total_seconds() / 86400.0)
     except Exception:
         return None
-    return max(0.0, (datetime.utcnow() - ts).total_seconds() / 86400.0)
 
 
 def _analyst_meta(doc: dict) -> dict:
@@ -422,20 +426,25 @@ async def web_search(query: str) -> dict:
     outer agent (which uses function_declarations) can call it; Gemini API
     refuses to mix built-in google_search with function_declarations in the
     same request, hence the indirection."""
-    resp = await _search_client.aio.models.generate_content(
-        model=config.ANSWER_MODEL,
-        contents=query,
-        config=types.GenerateContentConfig(
-            system_instruction=(
-                "You are a search assistant. Use Google Search to fetch the "
-                "most recent factual information. Reply in Korean, in 3-7 "
-                "concise bullet points. Always include source domain in "
-                "brackets at end of each bullet, e.g., [bloomberg.com]."
+    # 120s cap — a stalled grounding call otherwise pins the agent step
+    # until the outer 600s guard kills the whole answer.
+    resp = await asyncio.wait_for(
+        _search_client.aio.models.generate_content(
+            model=config.ANSWER_MODEL,
+            contents=query,
+            config=types.GenerateContentConfig(
+                system_instruction=(
+                    "You are a search assistant. Use Google Search to fetch the "
+                    "most recent factual information. Reply in Korean, in 3-7 "
+                    "concise bullet points. Always include source domain in "
+                    "brackets at end of each bullet, e.g., [bloomberg.com]."
+                ),
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+                temperature=0.1,
+                max_output_tokens=1024,
             ),
-            tools=[types.Tool(google_search=types.GoogleSearch())],
-            temperature=0.1,
-            max_output_tokens=1024,
         ),
+        timeout=120,
     )
     cost.record_resp(config.ANSWER_MODEL, resp, purpose="query")
     text = ""
@@ -483,8 +492,14 @@ async def compare_papers(topic: str, limit: int = 50,
     # ahead of recent daily summaries; this is what made queries like
     # "반도체 강세 이유" cite 2024 reports despite May-2026 ingest.
     from .retrieve import _recency_factor, _depth_bonus
+    # One batched, off-loop metadata fetch. _rank + the bundle loop used
+    # to call meta.get_doc per hit (up to limit*4 = 320 fresh SQLite
+    # connects, twice) synchronously on the event loop.
+    doc_ids = list({h["metadata"]["doc_id"] for h in hits
+                    if h["metadata"].get("doc_id")})
+    docs_map = await asyncio.to_thread(meta.get_docs_batch, doc_ids)
     def _rank(h):
-        doc = meta.get_doc(h["metadata"]["doc_id"]) or {}
+        doc = docs_map.get(h["metadata"]["doc_id"]) or {}
         recency = _recency_factor(doc.get("ingested_at") or "")
         semantic = 1.0 - float(h.get("distance", 0) or 0)
         score = semantic * recency * _depth_bonus(doc)
@@ -504,7 +519,7 @@ async def compare_papers(topic: str, limit: int = 50,
         if doc_id in seen:
             continue
         seen.add(doc_id)
-        doc = meta.get_doc(doc_id) or {}
+        doc = docs_map.get(doc_id) or {}
         if type_filter and doc.get("type") != type_filter:
             continue
         title = (doc.get("title") or "").strip()

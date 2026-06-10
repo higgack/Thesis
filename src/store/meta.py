@@ -753,19 +753,30 @@ def count() -> int:
 def usage_stats() -> dict:
     """Aggregate stats for the /usage command: totals, ingest velocity,
     type breakdown, latest doc."""
+    # Cutoffs computed in Python with the SAME 'T'-separated isoformat
+    # the rows are stored in (datetime.utcnow().isoformat()). SQLite's
+    # datetime('now','-1 day') yields a SPACE separator, and since
+    # 'T' > ' ' lexicographically, every row sharing the cutoff's
+    # calendar date passed regardless of time — each window overcounted
+    # by up to a full day.
+    from datetime import datetime as _dt, timedelta as _td
+    _now = _dt.utcnow()
+    cut_24h = (_now - _td(days=1)).isoformat()
+    cut_7d = (_now - _td(days=7)).isoformat()
+    cut_30d = (_now - _td(days=30)).isoformat()
     with _conn() as c:
         total = c.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
         last_24h = c.execute(
-            "SELECT COUNT(*) FROM documents "
-            "WHERE ingested_at >= datetime('now', '-1 day')"
+            "SELECT COUNT(*) FROM documents WHERE ingested_at >= ?",
+            (cut_24h,),
         ).fetchone()[0]
         last_7d = c.execute(
-            "SELECT COUNT(*) FROM documents "
-            "WHERE ingested_at >= datetime('now', '-7 days')"
+            "SELECT COUNT(*) FROM documents WHERE ingested_at >= ?",
+            (cut_7d,),
         ).fetchone()[0]
         last_30d = c.execute(
-            "SELECT COUNT(*) FROM documents "
-            "WHERE ingested_at >= datetime('now', '-30 days')"
+            "SELECT COUNT(*) FROM documents WHERE ingested_at >= ?",
+            (cut_30d,),
         ).fetchone()[0]
         type_rows = c.execute(
             "SELECT type, COUNT(*) c FROM documents "
