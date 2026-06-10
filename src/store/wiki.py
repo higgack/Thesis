@@ -216,6 +216,30 @@ def budget_exceeded() -> bool:
     return b > 0 and today_cost_krw() >= b
 
 
+# Digest throttle: the synthesis batch now runs hourly (on the hour), but
+# the "what it learned" Telegram digest must stay at most once per KST day
+# so hourly learning never turns into hourly pings. State is a tiny dated
+# stamp; a wiped/corrupt file fails open (one extra digest, never a loop).
+_DIGEST_STATE_PATH = config.DATA_DIR / "wiki_last_digest.json"
+
+
+def digest_sent_today() -> bool:
+    """True if the once-daily wiki digest already went out this KST day."""
+    try:
+        data = _load_json(_DIGEST_STATE_PATH, {})
+        return isinstance(data, dict) and data.get("date") == _now_kst_iso()[:10]
+    except Exception:
+        return False
+
+
+def mark_digest_sent() -> None:
+    """Stamp today's KST date so further hourly runs skip the digest."""
+    try:
+        _atomic_write_json(_DIGEST_STATE_PATH, {"date": _now_kst_iso()[:10]})
+    except Exception:
+        log.exception("wiki mark_digest_sent failed")
+
+
 # ----------------------------------------------------------------------
 # Atomic JSON state (matches the repo's tmp→replace + .bak convention)
 # ----------------------------------------------------------------------

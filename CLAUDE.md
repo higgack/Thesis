@@ -450,8 +450,19 @@ pending 이나 대기로 남지 않고 꼭 명심해").
   default 1000). Single source of truth — do not hardcode fallbacks
   elsewhere. VM `.env` override was removed; if it reappears the
   dashboard will show the wrong number.
-- **Batch hour**: 04:00 KST (`config.WIKI_BATCH_HOUR`, default 4).
-  Fallback in scheduler setup is `_wiki_hour = 4`.
+- **Batch cadence**: hourly, on the hour (KST). `wiki_batch` job is
+  `run_repeating(interval=3600, first=<next top-of-hour>)`, recomputed
+  each boot so deploys don't drift the phase. The daily ₩ budget still
+  caps spend (resets KST midnight); once hit, the rest of the day's
+  hourly runs no-op. `config.WIKI_BATCH_HOUR` is DEPRECATED (the old
+  nightly schedule) — kept only for .env back-compat, read nowhere.
+- **Digest throttle**: the hourly batch's "what it learned" Telegram
+  digest is gated to once per KST day via `wiki.digest_sent_today()` /
+  `wiki.mark_digest_sent()` (state: `data/wiki_last_digest.json`). Hourly
+  *learning* must never become hourly *pings*. The budget-block and
+  contradiction alerts are exempt — they're already deduped (notify_id /
+  content hash). Fails open: a wiped state file = one extra digest, never
+  a loop.
 - **Deleted topics are permanent**: `data/wiki_deleted_topics.json`
   is a sorted list of topic names. `wiki.is_topic_deleted(t)` is
   checked at ALL three entry points — `enqueue()`, `backfill()`,

@@ -1413,7 +1413,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
 
-📚 <b>위키</b>: /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
+📚 <b>위키</b>(매시 정시 학습·요약알림 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
@@ -1900,7 +1900,9 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 
 <b>동작 (append-only + periodic consolidation)</b>
 • 수집 때: 큐에 적재만(LLM 0, 비용 0). 요약 600자(기본) 미만은 위키 제외.
-• 매일 새벽(기본 4시, KST) 야간 배치: 큐를 토픽별로 묶어 위키 페이지 갱신.
+• 매시 정시(KST) 배치: 큐를 토픽별로 묶어 위키 페이지 갱신(일일 예산 캡 내).
+• 학습 요약 알림: <b>1일 1회</b> — 그날(KST) 첫 갱신이 나온 정시 직후(시각 유동).
+  예산 초과·모순 알람은 별도로 즉시 발송(디듀프됨).
 • <b>핵심 — 2단계 머지 전략:</b>
   ① 페이지 &lt; 30K자 → <b>append</b> (날짜별 섹션 이어붙이기, LLM 0, ₩0)
   ② 페이지 ≥ 30K자 → <b>LLM consolidation</b> (테마별 재구성, ~₩55)
@@ -1919,7 +1921,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki_dedup [merge A :: B | merge_all]</b> 유사 중복 토픽 감지(접미사 정규화·부분문자열) — 목록 확인 후 개별/전체 병합
 • <b>/wiki_rename &lt;옛이름&gt; :: &lt;새이름&gt;</b> 토픽명 변경(인덱스+파일+큐+alias 일괄)
 • <b>/wiki_delete &lt;토픽&gt;</b> 토픽 완전 삭제(인덱스+페이지+큐). 삭제 후 backfill·재인제스트로 안 돌아옴(영구)
-• <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 야간 캡 내 분산 처리)
+• <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 매시 배치·일일 예산 캡 내 분산)
 • <b>/wiki_pending</b> 큐 대기 현황(토픽별 문서 수)
 • <b>/wiki_failed [clear|retry 토픽|retry_all]</b> 머지 실패 목록 — 3회 연속 실패 시 큐에서 분리, 재시도/삭제 가능
 • <b>/wiki_off · /wiki_on</b> 즉시 끄기/켜기(killswitch, 재배포 불필요)
@@ -2387,7 +2389,8 @@ DB 엔진(LSM Tree), 이벤트 소싱, 위키피디아 편집 모델 등에서 �
 • <code>WIKI_MERGE_MAX_TOKENS=12000</code> — 정리 출력 상한 (~18K 한국어 자)
 • <code>WIKI_MAX_DOCS_PER_TOPIC=6</code> — 1회 배치 토픽당 최대 문서
 • <code>WIKI_DAILY_BUDGET_KRW=1000</code> — 일일 예산 (KST)
-• <code>WIKI_BATCH_HOUR=4</code> — 야간 배치 시각 (KST)
+• 배치 주기: <b>매시 정시</b> (KST) — 큐 자동 머지, 일일 예산 캡 내
+• 알림: 학습 요약 <b>1일 1회</b>(그날 첫 갱신된 정시 직후, 시각 유동) · 예산/모순 알람은 별도 즉시
 • <code>WIKI_MIN_SUMMARY_CHARS=600</code> — 이하 요약은 위키 제외
 
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -11486,11 +11489,11 @@ async def _wiki_drain_resume(ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def _wiki_batch_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Nightly LLM-Wiki synthesis (P1) + 'what it learned' digest (P4) +
-    contradiction ack-alert (P3) + daily-budget block alert. No-op unless
-    WIKI_ENABLED=1, so it's safe to register unconditionally. Fully
-    wrapped — a batch error can never crash the JobQueue loop or touch
-    the RAG corpus."""
+    """Hourly LLM-Wiki synthesis (P1) + 'what it learned' digest (P4,
+    throttled to once/KST day) + contradiction ack-alert (P3) + daily-
+    budget block alert. No-op unless WIKI_ENABLED=1, so it's safe to
+    register unconditionally. Fully wrapped — a batch error can never
+    crash the JobQueue loop or touch the RAG corpus."""
     if not wiki.enabled():
         return
     try:
@@ -11514,33 +11517,37 @@ async def _wiki_batch_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
                     "· 상태 /wiki_status"))
         except Exception:
             log.exception("wiki budget alert failed")
-    if summary.get("status") != "ok" or not summary.get("pages"):
-        return
-    pages = summary.get("pages", 0)
-    docs = summary.get("docs", 0)
     contradictions = summary.get("contradictions", 0)
-    remaining = summary.get("remaining_in_queue", 0)
-    updated = summary.get("updated_topics") or []
-    topics_line = ", ".join(html.escape(t) for t in updated[:12]) + (
-        "…" if len(updated) > 12 else "")
-    blocked_note = "\n⛔ (오늘 예산 도달로 일부 중단)" if summary.get("budget_blocked") else ""
-    digest = (
-        "📚 <b>위키 업데이트 (야간 배치)</b>\n"
-        f"• 갱신 페이지: {pages}개\n"
-        f"• 통합 자료: {docs}건\n"
-        f"• ⚠️ 모순 표시: {contradictions}건\n"
-        f"• 큐 잔여: {remaining}건"
-        f"{blocked_note}"
-        + (f"\n\n갱신: {topics_line}" if topics_line else "")
-        + "\n\n/wiki_today 자세히 · /wiki &lt;토픽&gt; 열람"
-    )
-    try:
-        await ctx.bot.send_message(
-            config.TELEGRAM_OWNER_ID, digest, parse_mode="HTML",
-            disable_web_page_preview=True,
+    # Routine "what it learned" digest: hourly batch, but notify at most
+    # once per KST day (the contradiction ack-alert below still fires every
+    # run — it's deduped by content hash, so it's important + non-spammy).
+    if (summary.get("status") == "ok" and summary.get("pages")
+            and not await asyncio.to_thread(wiki.digest_sent_today)):
+        pages = summary.get("pages", 0)
+        docs = summary.get("docs", 0)
+        remaining = summary.get("remaining_in_queue", 0)
+        updated = summary.get("updated_topics") or []
+        topics_line = ", ".join(html.escape(t) for t in updated[:12]) + (
+            "…" if len(updated) > 12 else "")
+        blocked_note = "\n⛔ (오늘 예산 도달로 일부 중단)" if summary.get("budget_blocked") else ""
+        digest = (
+            "📚 <b>위키 업데이트</b>\n"
+            f"• 갱신 페이지: {pages}개\n"
+            f"• 통합 자료: {docs}건\n"
+            f"• ⚠️ 모순 표시: {contradictions}건\n"
+            f"• 큐 잔여: {remaining}건"
+            f"{blocked_note}"
+            + (f"\n\n갱신: {topics_line}" if topics_line else "")
+            + "\n\n/wiki_today 자세히 · /wiki &lt;토픽&gt; 열람"
         )
-    except Exception:
-        log.exception("wiki digest send failed")
+        try:
+            await ctx.bot.send_message(
+                config.TELEGRAM_OWNER_ID, digest, parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            await asyncio.to_thread(wiki.mark_digest_sent)
+        except Exception:
+            log.exception("wiki digest send failed")
     # Contradictions warrant a deliberate look → actionable ack alert.
     # notify_id is a CONTENT hash of the conflicting topic set (NOT a
     # date — per the ack-store rule), so the same conflict set dedups
@@ -11651,7 +11658,7 @@ async def cmd_wiki(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if not topics:
                 await update.message.reply_text(
                     "📚 위키 페이지가 아직 없습니다.\n"
-                    f"WIKI_ENABLED=1 로 켜고 자료가 쌓이면 매일 {config.WIKI_BATCH_HOUR}시"
+                    "WIKI_ENABLED=1 로 켜고 자료가 쌓이면 매시 정시"
                     "(KST) 자동 생성됩니다. 지금 만들려면 /wiki_run."
                 )
                 return
@@ -11863,8 +11870,8 @@ async def cmd_wiki_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"• 오늘 위키 비용: ₩{today_w:,.0f} / 한도 ₩{budget:,.0f}"
         f"{' ⛔초과·오늘 중단' if over else ''}\n"
         f"• 이번달 위키 비용: ₩{w.get('cost', 0.0):,.1f}  ({w.get('calls', 0)}콜)\n"
-        f"• 배치: 매일 {config.WIKI_BATCH_HOUR}시(KST) · 캡 "
-        f"{config.WIKI_MAX_TOPICS_PER_RUN}토픽×{config.WIKI_MAX_DOCS_PER_TOPIC}건\n"
+        f"• 배치: 매시 정시(KST) · 캡 "
+        f"{config.WIKI_MAX_TOPICS_PER_RUN}토픽×{config.WIKI_MAX_DOCS_PER_TOPIC}건/회\n"
         "\n/wiki_run 지금 실행 · /wiki_off 끄기 · /wiki_on 켜기"
     )
     await update.message.reply_text(
@@ -11925,7 +11932,7 @@ async def cmd_wiki_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_wiki_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/wiki_run — 야간 배치를 지금 수동 실행(테스트/즉시 반영용)."""
+    """/wiki_run — 배치를 지금 수동 실행(매시 정시 외 즉시 반영용)."""
     if not _is_owner(update):
         return
     if not wiki.enabled():
@@ -11957,13 +11964,13 @@ async def cmd_wiki_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_wiki_off(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/wiki_off — 런타임 킬스위치(재배포 없이 즉시 중지). 큐 적재·야간
+    """/wiki_off — 런타임 킬스위치(재배포 없이 즉시 중지). 큐 적재·매시
     배치·질의우선 전부 멈춤. 기존 페이지/코퍼스는 그대로. /wiki_on 해제."""
     if not _is_owner(update):
         return
     wiki.set_disabled(True)
     await update.message.reply_text(
-        "⛔ 위키 즉시 중지(killswitch). 큐 적재·야간 배치·질의우선 모두 정지. "
+        "⛔ 위키 즉시 중지(killswitch). 큐 적재·매시 배치·질의우선 모두 정지. "
         "기존 위키 페이지와 RAG 코퍼스는 그대로. 해제: /wiki_on"
     )
 
@@ -12164,8 +12171,8 @@ async def cmd_wiki_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_backfill [개월=6|all] — 기존 자료(meta.db)를 위키 큐에 적재.
-    적재 자체는 ₩0; 실제 머지는 야간 배치가 일일 예산 캡 내에서 처리하므로
-    큰 백필도 여러 밤에 걸쳐 안전하게 빠진다."""
+    적재 자체는 ₩0; 실제 머지는 매시 배치가 일일 예산 캡 내에서 처리하므로
+    큰 백필도 여러 날에 걸쳐 안전하게 빠진다."""
     if not _is_owner(update):
         return
     if not wiki.enabled():
@@ -12200,7 +12207,7 @@ async def cmd_wiki_backfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"• 건너뜀: 이미위키 {res['skipped_wikied']} · 큐중복 "
         f"{res['skipped_queued']} · 짧음/기타 {res['skipped_gate']} · "
         f"실패제외 {res.get('skipped_failed', 0)}\n"
-        f"• 적재 비용 ₩0 — 야간 배치가 ₩{budget:,}/일 캡 내에서 며칠~몇 주에 "
+        f"• 적재 비용 ₩0 — 매시 배치가 ₩{budget:,}/일 캡 내에서 며칠~몇 주에 "
         f"걸쳐 처리(추정 일회성 ~₩{res['enqueued']:,}, 문서당 ~₩1).\n"
         f"지금 한 묶음 바로 처리하려면 /wiki_run · 상태 /wiki_status"
     )
@@ -12896,28 +12903,25 @@ def main():
             first=600,
             name="resend_unacked_alerts",
         )
-        # Daily LLM-Wiki synthesis batch (P1/P3/P4). Registered always;
+        # Hourly LLM-Wiki synthesis batch (P1/P3/P4). Registered always;
         # the callback no-ops unless WIKI_ENABLED=1, so toggling the env
-        # never requires re-wiring jobs. Uses run_repeating(24h) with
-        # `first` anchored to the next WIKI_BATCH_HOUR KST — recomputed on
-        # every boot so an auto-deploy can't drift it into peak hours, and
-        # it matches this block's run_repeating idiom (sidesteps
-        # run_daily's tz-aware-time edge cases).
+        # never requires re-wiring jobs. run_repeating(1h) with `first`
+        # anchored to the next top-of-hour KST so runs land on :00,
+        # recomputed every boot so an auto-deploy can't drift the phase.
+        # The daily ₩ budget still caps spend (today_cost resets at KST
+        # midnight); once the cap is hit the remaining hourly runs no-op
+        # until midnight. The "what it learned" digest is throttled to
+        # once per KST day (wiki.digest_sent_today) so hourly learning
+        # never becomes hourly pings.
         from datetime import timezone as _tz, timedelta as _td
         _kst = _tz(_td(hours=9))
-        try:
-            _wiki_hour = max(0, min(23, int(config.WIKI_BATCH_HOUR)))
-        except Exception:
-            _wiki_hour = 4
         _now_kst = datetime.now(_kst)
-        _next_wiki = _now_kst.replace(hour=_wiki_hour, minute=0,
-                                      second=0, microsecond=0)
-        if _next_wiki <= _now_kst:
-            _next_wiki += _td(days=1)
+        _next_hour = (_now_kst.replace(minute=0, second=0, microsecond=0)
+                      + _td(hours=1))
         app.job_queue.run_repeating(
             _wiki_batch_job,
-            interval=24 * 3600,
-            first=(_next_wiki - _now_kst).total_seconds(),
+            interval=3600,
+            first=(_next_hour - _now_kst).total_seconds(),
             name="wiki_batch",
         )
         # Resume wiki drain if temp budget survives a restart

@@ -57,7 +57,9 @@ WIKI_QUERY_FIRST = os.getenv("WIKI_QUERY_FIRST", "1") == "1"
 # Merge model — flash by default (NOT pro). Every merge is tagged
 # purpose="wiki" so /usage + cost.db isolate the wiki's real spend.
 WIKI_MERGE_MODEL = os.getenv("WIKI_MERGE_MODEL", ANSWER_MODEL)
-# Nightly batch hour (KST, 0–23). Off-peak so it never competes with ingest.
+# DEPRECATED: the synthesis batch now runs hourly (on the hour, KST) instead
+# of once nightly, so this is no longer read by the scheduler. Kept defined
+# for .env back-compat (setting it is a harmless no-op).
 WIKI_BATCH_HOUR = int(os.getenv("WIKI_BATCH_HOUR", "4"))
 # Importance gate: docs whose summary is shorter than this are archived as
 # notes but NOT wiki-merged (keeps low-signal forwards from spending tokens).
