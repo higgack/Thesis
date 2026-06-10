@@ -34,7 +34,7 @@ NL=$'\n'
 HEARTBEAT_FILE="data/bot_heartbeat"
 HEARTBEAT_STALE_SEC=600        # 10 min with no stamp = hung loop
 WATCHDOG_COOLDOWN_FILE="/tmp/thesis_watchdog_cooldown"
-WATCHDOG_COOLDOWN_SEC=600      # restart at most once / 10 min
+WATCHDOG_COOLDOWN_SEC=1800     # alert at most once / 30 min (≤2/h)
 
 notify() {
     [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_OWNER_ID:-}" ] || return 0
@@ -44,11 +44,17 @@ notify() {
         --data-urlencode "text=$1" >/dev/null || true
 }
 
-# Restart the bot container iff it claims to be running but its
-# heartbeat has gone stale (loop wedged). Crashes are already handled by
-# compose 'restart: unless-stopped'; this only covers the hung-but-alive
-# case. No-op (and SILENT) on every healthy minute — only the actual
-# restart sends Telegram.
+# ALERT-ONLY hang watchdog (phase 1, 2026-06). Crashes are recovered by
+# compose 'restart: unless-stopped'; this covers the hung-but-alive case
+# (process up, event loop wedged, heartbeat frozen) — previously the bot
+# just went silently dead until the user noticed. Sends a Telegram alert
+# at most once per WATCHDOG_COOLDOWN_SEC; deliberately does NOT restart:
+# the 2026-05-27 auto-restart version caused a restart loop when the
+# cold BM25 warm-up starved the loop past the stale window. That root
+# cause is gone (heartbeat stamped at boot; warm-up no-ops above
+# BM25_MAX_CHUNKS), but restarts stay manual until this alert proves
+# itself false-positive-free for a few weeks (phase 2: re-add restart).
+# No-op and SILENT on every healthy minute.
 check_heartbeat() {
     local status
     status=$(docker inspect -f '{{.State.Status}}' thesis-bot-1 2>/dev/null || echo missing)
@@ -82,8 +88,8 @@ check_heartbeat() {
     age=$(( now - hb ))
     [ "$age" -ge "$HEARTBEAT_STALE_SEC" ] || return 0
 
-    # Cooldown: a just-restarted container needs time to boot and write
-    # its first stamp. Without this we'd fire every minute during boot.
+    # Cooldown: re-alert at most every 30 min while the hang persists —
+    # enough to know it's STILL hung without flooding Telegram.
     if [ -f "$WATCHDOG_COOLDOWN_FILE" ]; then
         local last
         last=$(tr -dc '0-9' < "$WATCHDOG_COOLDOWN_FILE" 2>/dev/null)
@@ -93,19 +99,9 @@ check_heartbeat() {
     fi
     echo "$now" > "$WATCHDOG_COOLDOWN_FILE"
 
-    echo "===== $(date) — heartbeat stale ${age}s, force-recreating bot =====" >>"$LOG"
-    notify "⚠️ 봇 무응답 ${age}s (하트비트 정지) → 자동 재시작 중"
-    docker compose --profile local-api up -d --force-recreate bot >>"$LOG" 2>&1
-    sleep 5
-    local st2
-    st2=$(docker inspect -f '{{.State.Status}}' thesis-bot-1 2>/dev/null || echo missing)
-    if [ "$st2" = "running" ]; then
-        notify "✅ 봇 자동 재시작 완료 (무응답 복구)"
-    else
-        local tail2
-        tail2=$(docker compose logs --tail=10 bot 2>&1 | tail -10)
-        notify "❌ 봇 재시작 후 상태 ${st2}${NL}${tail2:0:600}"
-    fi
+    local mins=$(( age / 60 ))
+    echo "===== $(date) — heartbeat stale ${age}s, ALERT (no restart) =====" >>"$LOG"
+    notify "⚠️ 봇 하트비트 ${mins}분 정지 — 컨테이너는 running이지만 이벤트 루프가 멈춘 듯.${NL}복구: docker compose --profile local-api up -d --force-recreate bot${NL}(30분마다 재알림, 정상화되면 자동 중지)"
 }
 
 git fetch origin "$BRANCH" >/dev/null 2>>"$LOG" || exit 0
@@ -117,18 +113,12 @@ REMOTE=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo none)
 # this script reliably, remove the duplicate cron line:
 #   crontab -e   → delete the '~/Thesis/scripts/auto_deploy.sh' row
 # leaving only the 'scripts/auto_pull.sh' entry.
-# No new commits → steady state, nothing to do.
-#
-# Heartbeat watchdog DISABLED (2026-05-27). It caused a restart cycle:
-# each restart triggers the cold 178k-chunk BM25 warm-up + retry-queue
-# drain, which starves the event loop long enough to re-trip the 10-min
-# heartbeat threshold → another restart → warm-up never finishes (saw
-# 무응답 658s @19:17, 632s @19:30 in a loop). Docker's
-# `restart: unless-stopped` already recovers genuine crashes, so the
-# hang-watchdog was net-negative for this workload. check_heartbeat()
-# above is kept dormant in case a smarter (warm-up-aware) version is
-# wired later; the bot still stamps data/bot_heartbeat harmlessly.
+# No new commits → steady state: run the alert-only hang check, then
+# exit silently. (History: the auto-RESTART watchdog was disabled
+# 2026-05-27 after a BM25-warm-up restart loop; revived 2026-06 as
+# alert-only — see check_heartbeat() comment for the full rationale.)
 if [ "$LOCAL" = "$REMOTE" ]; then
+    check_heartbeat
     exit 0
 fi
 
