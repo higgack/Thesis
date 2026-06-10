@@ -727,6 +727,7 @@ _FILTER_JS = """
   var original = cards.slice();
   var cutoff = new Date(Date.now() - 7*24*60*60*1000).toISOString();
   function applyFilter(f){
+    if (f === 'all') f = null;
     cards.forEach(function(c){
       if (!f){ c.style.display = ''; return; }
       var cr = c.getAttribute('data-created');
@@ -742,8 +743,8 @@ _FILTER_JS = """
       c.style.display = show ? '' : 'none';
     });
     // Time order inside a filter: New sorts by creation date, Recent by
-    // update date — newest on top, older pushed down. Clearing the
-    // filter restores the as-rendered order.
+    // update date — newest on top, older pushed down. All restores the
+    // as-rendered order (plain time order, no New/Recent grouping).
     var order = original;
     if (f) {
       var attr = (f === 'new') ? 'data-created' : 'data-updated';
@@ -754,33 +755,32 @@ _FILTER_JS = """
       });
     }
     order.forEach(function(c){ grid.appendChild(c); });
+    btns.forEach(function(b){
+      b.classList.toggle('active',
+        b.getAttribute('data-filter') === (f || 'all'));
+    });
   }
   btns.forEach(function(btn){
     btn.addEventListener('click', function(){
-      var wasActive = btn.classList.contains('active');
-      btns.forEach(function(b){ b.classList.remove('active'); });
-      if (wasActive) {
+      var f = btn.getAttribute('data-filter');
+      // All, or re-clicking the active filter, returns to All.
+      if (f === 'all' || btn.classList.contains('active')) {
         try { sessionStorage.removeItem(KEY); } catch(e){}
         applyFilter(null);
         return;
       }
-      btn.classList.add('active');
-      var f = btn.getAttribute('data-filter');
       try { sessionStorage.setItem(KEY, f); } catch(e){}
       applyFilter(f);
     });
   });
   // Back-navigation restore (runs after the search restore — same
   // precedence as a user clicking a filter after typing a query).
-  try {
-    var savedF = sessionStorage.getItem(KEY);
-    if (savedF) {
-      btns.forEach(function(b){
-        if (b.getAttribute('data-filter') === savedF) b.classList.add('active');
-      });
-      applyFilter(savedF);
-    }
-  } catch(e){}
+  // No saved filter -> leave the server-rendered state alone (All is
+  // pre-marked active, all cards visible) so a restored search query's
+  // hiding isn't wiped by a redundant applyFilter(null).
+  var savedF = null;
+  try { savedF = sessionStorage.getItem(KEY); } catch(e){}
+  if (savedF) applyFilter(savedF);
 })();
 """
 
@@ -1054,6 +1054,7 @@ def _render_index_page(topics_data: list[dict], token: str,
         '<div class="wiki-title-row">'
         "<h1>Noah LLM Wiki</h1>"
         '<div class="wiki-filters">'
+        '<button class="wiki-filter active" data-filter="all">All</button>'
         '<button class="wiki-filter" data-filter="new">New</button>'
         '<button class="wiki-filter" data-filter="recent">Recent</button>'
         '</div></div>'
