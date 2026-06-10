@@ -720,9 +720,11 @@ _SEARCH_JS = """
 _FILTER_JS = """
 (function(){
   var btns = document.querySelectorAll('.wiki-filter');
-  var cards = document.querySelectorAll('.wiki-card');
-  if (!btns.length) return;
+  var grid = document.querySelector('.wiki-grid');
+  var cards = Array.prototype.slice.call(document.querySelectorAll('.wiki-card'));
+  if (!btns.length || !grid) return;
   var KEY = 'wiki-filter';
+  var original = cards.slice();
   var cutoff = new Date(Date.now() - 7*24*60*60*1000).toISOString();
   function applyFilter(f){
     cards.forEach(function(c){
@@ -733,12 +735,25 @@ _FILTER_JS = """
       if (f === 'new') {
         show = cr && cr >= cutoff;
       } else {
-        // Recent excludes still-New topics (created within the window)
-        // so New and Recent never overlap.
+        // New wins for its whole 7-day window: a still-New topic is
+        // never Recent, even if it was updated yesterday.
         show = up && up >= cutoff && !(cr && cr >= cutoff);
       }
       c.style.display = show ? '' : 'none';
     });
+    // Time order inside a filter: New sorts by creation date, Recent by
+    // update date — newest on top, older pushed down. Clearing the
+    // filter restores the as-rendered order.
+    var order = original;
+    if (f) {
+      var attr = (f === 'new') ? 'data-created' : 'data-updated';
+      order = cards.slice().sort(function(a, b){
+        var ka = a.getAttribute(attr) || '';
+        var kb = b.getAttribute(attr) || '';
+        return ka > kb ? -1 : (ka < kb ? 1 : 0);
+      });
+    }
+    order.forEach(function(c){ grid.appendChild(c); });
   }
   btns.forEach(function(btn){
     btn.addEventListener('click', function(){
@@ -1014,6 +1029,9 @@ def _render_index_page(topics_data: list[dict], token: str,
         created_iso = td.get("created") or ""
         updated_iso = td.get("updated") or ""
         badge = ""
+        # New = created within 7d (wins for its whole window, even when
+        # updated meanwhile). Recent = updated within 7d but past the New
+        # window. Mirrors the index filter buttons' logic in _FILTER_JS.
         if created_iso and created_iso >= _7d_ago:
             badge = ' <span class="wiki-badge new">New</span>'
         elif updated_iso and updated_iso >= _7d_ago:
