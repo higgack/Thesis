@@ -1745,9 +1745,12 @@ def regenerate() -> None:
             "generated_at": generated_at,
         }
         # Atomic index write so the http.server never serves a
-        # half-written page.
+        # half-written page. pid-suffixed tmp: the bot and the dashboard
+        # server both call regenerate() — with a shared tmp name one
+        # process's os.replace could consume the other's half-written tmp.
+        pid = os.getpid()
         idx = target / "index.html"
-        tmp = target / "index.html.tmp"
+        tmp = target / f"index.html.{pid}.tmp"
         tmp.write_text(_render_index(rows, stats, token=token), encoding="utf-8")
         os.replace(tmp, idx)
         # Detail pages: full rebuild only on first run after (re)start;
@@ -1757,7 +1760,9 @@ def regenerate() -> None:
         for it in rows:
             fname = target / f"q-{int(it['id'])}.html"
             if full or not fname.exists():
-                fname.write_text(_render_detail(it, token), encoding="utf-8")
+                dtmp = target / f"{fname.name}.{pid}.tmp"
+                dtmp.write_text(_render_detail(it, token), encoding="utf-8")
+                os.replace(dtmp, fname)
                 written += 1
         _FIRST_RUN = False
         if written:
@@ -1795,7 +1800,7 @@ def regenerate() -> None:
                 cmd_dir.mkdir(parents=True, exist_ok=True)
                 cmd_html = _render_commands_page(
                     token, guide, paid, mutation, guides=guide_texts)
-                cmd_tmp = cmd_dir / "index.html.tmp"
+                cmd_tmp = cmd_dir / f"index.html.{pid}.tmp"
                 cmd_idx = cmd_dir / "index.html"
                 cmd_tmp.write_text(cmd_html, encoding="utf-8")
                 os.replace(cmd_tmp, cmd_idx)

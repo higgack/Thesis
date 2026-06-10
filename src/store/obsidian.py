@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 import subprocess
 import time
@@ -107,7 +108,10 @@ async def write_note(*, doc_type: str, title: str, source: str,
         f"## Source\n\n{source}\n\n"
         f"## Original\n\n{body}\n"
     )
-    path.write_text(md, encoding="utf-8")
+    # tmp+replace so a SIGKILL mid-write can't leave a truncated note.
+    tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+    tmp.write_text(md, encoding="utf-8")
+    os.replace(tmp, path)
     rel = path.relative_to(_VAULT).as_posix()
 
     # Fire-and-forget: the .md is already on disk (the note is saved);

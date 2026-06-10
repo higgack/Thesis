@@ -1288,25 +1288,36 @@ async def run(channels: list[str], plain_channels: set[str]) -> None:
     target_name = _forward_target()
     session_path = config.DATA_DIR / "import_session"
 
+    # Exponential backoff on consecutive failures. A permanent failure
+    # mode (invalidated session → interactive-login EOFError in a no-tty
+    # container, zero sources resolved, …) used to degrade into a silent
+    # 5s tight loop: a fresh TelegramClient + connect every 5s forever
+    # (~17k connects/day — account flood-limit risk). A lifecycle that
+    # survives >60s counts as healthy and resets the backoff.
+    delay = RECONNECT_DELAY_SEC
+    max_delay = 300
     while True:
+        started = asyncio.get_event_loop().time()
         try:
             await _client_lifecycle(
                 channels, plain_channels, target_name,
                 api_id, api_hash, session_path,
             )
-            print(
-                f"client disconnected — reconnecting in "
-                f"{RECONNECT_DELAY_SEC}s..."
-            )
+            print(f"client disconnected — reconnecting in {delay}s...")
         except KeyboardInterrupt:
             print("interrupted")
             raise
         except Exception as e:
             print(
                 f"client loop error: {type(e).__name__}: {e} — "
-                f"sleeping {RECONNECT_DELAY_SEC}s before retry"
+                f"sleeping {delay}s before retry"
             )
-        await asyncio.sleep(RECONNECT_DELAY_SEC)
+        alive_sec = asyncio.get_event_loop().time() - started
+        if alive_sec > 60:
+            delay = RECONNECT_DELAY_SEC
+        else:
+            delay = min(delay * 2, max_delay)
+        await asyncio.sleep(delay)
 
 
 def main() -> None:

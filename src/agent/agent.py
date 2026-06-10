@@ -2,6 +2,7 @@
 
 The model decides which tools to call based on the user's natural-language
 message. Loop is bounded by MAX_STEPS to keep cost predictable."""
+import asyncio
 import json
 import logging
 import re
@@ -924,8 +925,15 @@ async def _loop(state: dict) -> dict:
     )
 
     for step in range(state["step"], MAX_STEPS):
-        resp = await _client.aio.models.generate_content(
-            model=model, contents=contents, config=cfg
+        # 300s cap per LLM call (generous for Pro + tools). agent.run is
+        # wrapped by the bot's 600s guard, but agent.resume — the path
+        # after the user taps the Pro/Flash button — has NO outer guard:
+        # a stalled call would pin that callback task forever.
+        resp = await asyncio.wait_for(
+            _client.aio.models.generate_content(
+                model=model, contents=contents, config=cfg
+            ),
+            timeout=300,
         )
         cost.record_resp(model, resp, purpose="query")
         cand = resp.candidates[0] if resp.candidates else None
@@ -1003,19 +1011,22 @@ async def _loop(state: dict) -> dict:
             log.info("user-approved Pro upgrade (%d docs)", compare_papers_count)
             model = config.DEEP_MODEL
 
-    final = await _client.aio.models.generate_content(
-        model=model,
-        contents=contents + [types.Content(
-            role="user",
-            parts=[types.Part.from_text(
-                text="위 도구 결과를 바탕으로 최종 답변을 작성하세요."
+    final = await asyncio.wait_for(
+        _client.aio.models.generate_content(
+            model=model,
+            contents=contents + [types.Content(
+                role="user",
+                parts=[types.Part.from_text(
+                    text="위 도구 결과를 바탕으로 최종 답변을 작성하세요."
+                )],
             )],
-        )],
-        config=types.GenerateContentConfig(
-            system_instruction=_system_for_today(),
-            temperature=0.2,
-            max_output_tokens=8192,
+            config=types.GenerateContentConfig(
+                system_instruction=_system_for_today(),
+                temperature=0.2,
+                max_output_tokens=8192,
+            ),
         ),
+        timeout=300,
     )
     cost.record_resp(model, final, purpose="query")
     text = ""

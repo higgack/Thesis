@@ -53,6 +53,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -221,10 +223,18 @@ def budget_exceeded() -> bool:
 def _atomic_write_json(path: Path, data) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     bak = path.with_suffix(path.suffix + ".bak")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    # fsync before replace: without it a host crash can replace the file
+    # with an unsynced (possibly empty) tmp. copy2 instead of moving the
+    # live file to .bak: the old move left a window where `path` didn't
+    # exist at all, and concurrent readers (dashboard thread, backfill
+    # thread) saw "missing → empty default" mid-cycle.
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps(data, ensure_ascii=False))
+        f.flush()
+        os.fsync(f.fileno())
     if path.exists():
         try:
-            os.replace(path, bak)
+            shutil.copy2(path, bak)
         except OSError:
             pass
     os.replace(tmp, path)
@@ -232,6 +242,15 @@ def _atomic_write_json(path: Path, data) -> None:
 
 def _load_json(path: Path, default):
     if not path.exists():
+        # Crash between the old move-to-.bak and replace could leave only
+        # the .bak behind — recover from it instead of silently returning
+        # an empty default that the next write would persist.
+        bak = path.with_suffix(path.suffix + ".bak")
+        if bak.exists():
+            try:
+                return json.loads(bak.read_text(encoding="utf-8"))
+            except Exception:
+                pass
         return default
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -244,6 +263,39 @@ def _load_json(path: Path, default):
             except Exception:
                 pass
         return default
+
+
+# Read-mostly JSON cache keyed by file mtime. resolve_topic /
+# _is_known_topic / is_topic_deleted / _load_aliases re-parsed the
+# (multi-MB at 1000 topics) index from disk on EVERY call — per queue
+# item in run_batch's grouping loop (on the event loop!), per ingested
+# doc via topics_for, 32.5k× during a backfill. Results MUST be treated
+# as read-only by callers; mutators load fresh via _load_json.
+_JSON_CACHE: dict[str, tuple[int, object]] = {}
+_JSON_CACHE_LOCK = threading.Lock()
+
+# Serialises read-modify-write cycles on wiki_queue.json across the
+# event loop (enqueue, run_batch persists) and worker threads (backfill
+# runs via asyncio.to_thread) — without it a minutes-long threaded
+# backfill rewrote the queue from a stale snapshot, silently dropping
+# entries enqueued by live ingest in the meantime.
+_QUEUE_LOCK = threading.Lock()
+
+
+def _load_json_cached(path: Path, default):
+    try:
+        mt = path.stat().st_mtime_ns
+    except OSError:
+        return default
+    key = str(path)
+    with _JSON_CACHE_LOCK:
+        ent = _JSON_CACHE.get(key)
+        if ent is not None and ent[0] == mt:
+            return ent[1]
+    data = _load_json(path, default)
+    with _JSON_CACHE_LOCK:
+        _JSON_CACHE[key] = (mt, data)
+    return data
 
 
 # ----------------------------------------------------------------------
@@ -277,7 +329,7 @@ def _is_known_topic(name: str) -> bool:
         return False
     if name in _load_aliases():
         return True
-    idx = _load_json(_INDEX_PATH, {})
+    idx = _load_json_cached(_INDEX_PATH, {})
     if not isinstance(idx, dict) or not idx:
         return False
     if name in idx:
@@ -371,44 +423,49 @@ def enqueue(*, doc_id: str, title: str, summary: str, doc_type: str,
         if len((summary or "").strip()) < min_chars:
             return
         tlist = topics_for(metadata, title)
-        q = _load_json(_QUEUE_PATH, [])
-        if not isinstance(q, list):
-            q = []
-        queued_keys = {
-            (it.get("doc_id"), it.get("topic"))
-            for it in q if isinstance(it, dict)
-        }
-        ts = datetime.utcnow().isoformat(timespec="seconds")
-        added = False
-        for topic in tlist:
-            if topic == "기타" or is_topic_deleted(topic) or is_topic_blocked(topic):
-                continue
-            if (doc_id, topic) in queued_keys:
-                continue
-            q.append({
-                "doc_id": doc_id,
-                "title": title,
-                "summary": summary,
-                "doc_type": doc_type,
-                "source": source,
-                "topic": topic,
-                "ts": ts,
-            })
-            added = True
-        if added:
-            _atomic_write_json(_QUEUE_PATH, q)
+        # Merge only ever reads summary[:WIKI_DOC_SUMMARY_CHARS]; storing
+        # the full multi-KB summary made the queue file tens of MB after
+        # a backfill, re-serialized on every live ingest.
+        keep = int(_flag("WIKI_DOC_SUMMARY_CHARS", 1200)) + 100
+        with _QUEUE_LOCK:
+            q = _load_json(_QUEUE_PATH, [])
+            if not isinstance(q, list):
+                q = []
+            queued_keys = {
+                (it.get("doc_id"), it.get("topic"))
+                for it in q if isinstance(it, dict)
+            }
+            ts = datetime.utcnow().isoformat(timespec="seconds")
+            added = False
+            for topic in tlist:
+                if topic == "기타" or is_topic_deleted(topic) or is_topic_blocked(topic):
+                    continue
+                if (doc_id, topic) in queued_keys:
+                    continue
+                q.append({
+                    "doc_id": doc_id,
+                    "title": title,
+                    "summary": summary[:keep],
+                    "doc_type": doc_type,
+                    "source": source,
+                    "topic": topic,
+                    "ts": ts,
+                })
+                added = True
+            if added:
+                _atomic_write_json(_QUEUE_PATH, q)
     except Exception:
         log.exception("wiki enqueue failed (ignored — ingest unaffected)")
 
 
 def queue_size() -> int:
-    q = _load_json(_QUEUE_PATH, [])
+    q = _load_json_cached(_QUEUE_PATH, [])
     return len(q) if isinstance(q, list) else 0
 
 
 def pending_list() -> list[dict]:
     """Queue contents grouped by topic for /wiki_pending display."""
-    q = _load_json(_QUEUE_PATH, [])
+    q = _load_json_cached(_QUEUE_PATH, [])
     if not isinstance(q, list):
         return []
     groups: dict[str, dict] = {}
@@ -490,21 +547,22 @@ def promote_to_failed(topic: str) -> bool:
     rec = next((f for f in failed if f.get("topic") == topic), None)
     if not rec or rec.get("cycles", 0) < _MAX_FAIL_CYCLES:
         return False
-    q = _load_json(_QUEUE_PATH, [])
-    if not isinstance(q, list):
-        return False
-    evicted = [it for it in q
-               if isinstance(it, dict) and it.get("topic") == topic]
-    remaining = [it for it in q
-                 if not (isinstance(it, dict) and it.get("topic") == topic)]
-    if not evicted:
-        return False
+    with _QUEUE_LOCK:
+        q = _load_json(_QUEUE_PATH, [])
+        if not isinstance(q, list):
+            return False
+        evicted = [it for it in q
+                   if isinstance(it, dict) and it.get("topic") == topic]
+        remaining = [it for it in q
+                     if not (isinstance(it, dict) and it.get("topic") == topic)]
+        if not evicted:
+            return False
+        _atomic_write_json(_QUEUE_PATH, remaining)
     all_ids = set(rec.get("doc_ids") or [])
     all_ids.update(it.get("doc_id") for it in evicted if it.get("doc_id"))
     rec["doc_ids"] = sorted(all_ids)
     rec["doc_count"] = len(all_ids)
     rec["promoted"] = True
-    _atomic_write_json(_QUEUE_PATH, remaining)
     _save_failed(failed)
     return True
 
@@ -545,34 +603,41 @@ def wiki_failed_retry(topic: str) -> dict:
     if not rec:
         return {"error": f"'{topic}' 실패 목록에 없음"}
     doc_ids = rec.get("doc_ids") or []
-    q = _load_json(_QUEUE_PATH, [])
-    if not isinstance(q, list):
-        q = []
-    queued_keys = {(it.get("doc_id"), it.get("topic"))
-                   for it in q if isinstance(it, dict)}
+    keep = int(_flag("WIKI_DOC_SUMMARY_CHARS", 1200)) + 100
     ts = datetime.utcnow().isoformat(timespec="seconds")
-    requeued = 0
+    # Fetch docs from meta BEFORE taking the queue lock so the lock is
+    # held only for the load→append→write cycle.
+    items: list[dict] = []
     for doc_id in doc_ids:
-        if (doc_id, topic) in queued_keys:
-            continue
         try:
             d = meta.get_doc(doc_id)
         except Exception:
             continue
         if not d:
             continue
-        q.append({
+        items.append({
             "doc_id": doc_id,
             "title": d.get("title") or "",
-            "summary": (d.get("summary") or "").strip(),
+            "summary": (d.get("summary") or "").strip()[:keep],
             "doc_type": d.get("type") or "",
             "source": d.get("source") or "",
             "topic": topic,
             "ts": ts,
         })
-        queued_keys.add((doc_id, topic))
-        requeued += 1
-    _atomic_write_json(_QUEUE_PATH, q)
+    requeued = 0
+    with _QUEUE_LOCK:
+        q = _load_json(_QUEUE_PATH, [])
+        if not isinstance(q, list):
+            q = []
+        queued_keys = {(it.get("doc_id"), it.get("topic"))
+                       for it in q if isinstance(it, dict)}
+        for it in items:
+            if (it["doc_id"], topic) in queued_keys:
+                continue
+            q.append(it)
+            queued_keys.add((it["doc_id"], topic))
+            requeued += 1
+        _atomic_write_json(_QUEUE_PATH, q)
     new_failed = [f for f in failed if f.get("topic") != topic]
     _save_failed(new_failed)
     return {"retried": topic, "requeued": requeued,
@@ -668,17 +733,12 @@ def decompose_merged_topic(topic: str) -> dict:
     if not doc_ids:
         return {"error": "doc_ids 비어있음"}
 
-    q = _load_json(_QUEUE_PATH, [])
-    if not isinstance(q, list):
-        q = []
-    q = [it for it in q if not (isinstance(it, dict) and it.get("topic") == topic)]
-    queued_keys = {
-        (it.get("doc_id"), it.get("topic"))
-        for it in q if isinstance(it, dict)
-    }
     min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 800))
+    keep = int(_flag("WIKI_DOC_SUMMARY_CHARS", 1200)) + 100
     ts = datetime.utcnow().isoformat(timespec="seconds")
-    enqueued = 0
+    # Build re-enqueue items BEFORE the lock (meta lookups are slow-ish);
+    # merge into the live queue under the lock.
+    new_items: list[dict] = []
     for doc_id in doc_ids:
         try:
             d = meta.get_doc(doc_id)
@@ -698,20 +758,33 @@ def decompose_merged_topic(topic: str) -> dict:
         for t in topics_for(md, d.get("title") or ""):
             if t == topic:
                 continue
-            if (doc_id, t) in queued_keys:
-                continue
-            q.append({
+            new_items.append({
                 "doc_id": doc_id,
                 "title": d.get("title") or "",
-                "summary": summary,
+                "summary": summary[:keep],
                 "doc_type": d.get("type") or "",
                 "source": d.get("source") or "",
                 "topic": t,
                 "ts": ts,
             })
-            queued_keys.add((doc_id, t))
+    enqueued = 0
+    with _QUEUE_LOCK:
+        q = _load_json(_QUEUE_PATH, [])
+        if not isinstance(q, list):
+            q = []
+        q = [it for it in q
+             if not (isinstance(it, dict) and it.get("topic") == topic)]
+        queued_keys = {
+            (it.get("doc_id"), it.get("topic"))
+            for it in q if isinstance(it, dict)
+        }
+        for it in new_items:
+            if (it["doc_id"], it["topic"]) in queued_keys:
+                continue
+            q.append(it)
+            queued_keys.add((it["doc_id"], it["topic"]))
             enqueued += 1
-    _atomic_write_json(_QUEUE_PATH, q)
+        _atomic_write_json(_QUEUE_PATH, q)
 
     p = _page_path(topic)
     deleted_file = False
@@ -761,20 +834,21 @@ def _is_substr_dup(short: str, long: str) -> bool:
 
 
 def _load_aliases() -> dict[str, str]:
-    """Load alias map: {alias_name → canonical_topic}."""
-    d = _load_json(_ALIASES_PATH, {})
+    """Load alias map: {alias_name → canonical_topic}. Cached by mtime —
+    treat the returned dict as READ-ONLY (mutators must copy)."""
+    d = _load_json_cached(_ALIASES_PATH, {})
     return d if isinstance(d, dict) else {}
 
 
 def _save_alias(alias: str, canonical: str) -> None:
     """Record an alias so future ingests auto-route."""
-    aliases = _load_aliases()
+    aliases = dict(_load_aliases())  # copy: the loaded dict is cached
     aliases[alias] = canonical
     _atomic_write_json(_ALIASES_PATH, aliases)
 
 
 def _load_deleted_topics() -> set[str]:
-    d = _load_json(_DELETED_TOPICS_PATH, [])
+    d = _load_json_cached(_DELETED_TOPICS_PATH, [])
     return set(d) if isinstance(d, list) else set()
 
 
@@ -866,8 +940,8 @@ def resolve_topic(proposed: str) -> str:
             _save_alias(proposed, translated)
             return resolve_topic(translated)
 
-    # 2) Dedup-key match against existing index topics
-    idx = _load_json(_INDEX_PATH, {})
+    # 2) Dedup-key match against existing index topics (cached read)
+    idx = _load_json_cached(_INDEX_PATH, {})
     if not isinstance(idx, dict):
         return proposed
     pk = _dedup_key(proposed)
@@ -997,37 +1071,46 @@ def merge_topics(keep: str, absorb: str) -> dict:
         except Exception:
             pass
 
-    q = _load_json(_QUEUE_PATH, [])
-    if not isinstance(q, list):
-        q = []
-    for it in q:
-        if isinstance(it, dict) and it.get("topic") == absorb:
-            it["topic"] = keep
-    queued_keys = {(it.get("doc_id"), it.get("topic"))
-                   for it in q if isinstance(it, dict)}
     from . import meta
-    enqueued = 0
+    keep_chars = int(_flag("WIKI_DOC_SUMMARY_CHARS", 1200)) + 100
+    # Queue ts uses the same naive-UTC isoformat as every other writer —
+    # this site previously wrote naive-KST (_now_kst_iso), planting a
+    # mixed-format landmine in one field.
+    ts = datetime.utcnow().isoformat(timespec="seconds")
+    new_items: list[dict] = []
     for doc_id in new_ids:
-        if (doc_id, keep) in queued_keys:
-            continue
         try:
             d = meta.get_doc(doc_id)
         except Exception:
             continue
         if not d:
             continue
-        summary = (d.get("summary") or "").strip()
-        q.append({
+        new_items.append({
             "doc_id": doc_id,
             "title": d.get("title") or "",
-            "summary": summary,
+            "summary": (d.get("summary") or "").strip()[:keep_chars],
             "doc_type": d.get("type") or "",
             "source": d.get("source") or "",
             "topic": keep,
-            "ts": _now_kst_iso(),
+            "ts": ts,
         })
-        enqueued += 1
-    _atomic_write_json(_QUEUE_PATH, q)
+    enqueued = 0
+    with _QUEUE_LOCK:
+        q = _load_json(_QUEUE_PATH, [])
+        if not isinstance(q, list):
+            q = []
+        for it in q:
+            if isinstance(it, dict) and it.get("topic") == absorb:
+                it["topic"] = keep
+        queued_keys = {(it.get("doc_id"), it.get("topic"))
+                       for it in q if isinstance(it, dict)}
+        for it in new_items:
+            if (it["doc_id"], keep) in queued_keys:
+                continue
+            q.append(it)
+            queued_keys.add((it["doc_id"], keep))
+            enqueued += 1
+        _atomic_write_json(_QUEUE_PATH, q)
 
     return {
         "keep": keep, "absorbed": absorb,
@@ -1091,15 +1174,16 @@ def rename_topic(old_name: str, new_name: str) -> dict:
             except Exception:
                 pass
 
-    q = _load_json(_QUEUE_PATH, [])
     remapped = 0
-    if isinstance(q, list):
-        for it in q:
-            if isinstance(it, dict) and it.get("topic") == old_name:
-                it["topic"] = new_name
-                remapped += 1
-        if remapped:
-            _atomic_write_json(_QUEUE_PATH, q)
+    with _QUEUE_LOCK:
+        q = _load_json(_QUEUE_PATH, [])
+        if isinstance(q, list):
+            for it in q:
+                if isinstance(it, dict) and it.get("topic") == old_name:
+                    it["topic"] = new_name
+                    remapped += 1
+            if remapped:
+                _atomic_write_json(_QUEUE_PATH, q)
 
     if not in_index and remapped == 0:
         return {"error": f"토픽 '{old_name}' 인덱스·큐 어디에도 없음"}
@@ -1127,14 +1211,15 @@ def delete_topic(topic: str) -> dict:
                 pass
         _atomic_write_json(_INDEX_PATH, idx)
 
-    q = _load_json(_QUEUE_PATH, [])
     removed_queue = 0
-    if isinstance(q, list):
-        new_q = [it for it in q
-                 if not (isinstance(it, dict) and it.get("topic") == topic)]
-        removed_queue = len(q) - len(new_q)
-        if removed_queue:
-            _atomic_write_json(_QUEUE_PATH, new_q)
+    with _QUEUE_LOCK:
+        q = _load_json(_QUEUE_PATH, [])
+        if isinstance(q, list):
+            new_q = [it for it in q
+                     if not (isinstance(it, dict) and it.get("topic") == topic)]
+            removed_queue = len(q) - len(new_q)
+            if removed_queue:
+                _atomic_write_json(_QUEUE_PATH, new_q)
 
     if not rec and removed_queue == 0:
         return {"error": f"토픽 '{topic}' 인덱스/큐에 없음"}
@@ -1156,12 +1241,19 @@ def backfill(docs: list[dict]) -> dict:
         res["error"] = "wiki disabled"
         return res
     min_chars = int(_flag("WIKI_MIN_SUMMARY_CHARS", 800))
+    keep = int(_flag("WIKI_DOC_SUMMARY_CHARS", 1200)) + 100
     wikied = _wikied_doc_ids()
     failed_ids = _failed_doc_ids()
-    q = _load_json(_QUEUE_PATH, [])
-    if not isinstance(q, list):
-        q = []
-    queued_ids = {it.get("doc_id") for it in q if isinstance(it, dict)}
+    q0 = _load_json(_QUEUE_PATH, [])
+    if not isinstance(q0, list):
+        q0 = []
+    queued_ids = {it.get("doc_id") for it in q0 if isinstance(it, dict)}
+    # Backfill runs in a worker thread for minutes over the full corpus.
+    # Collect new items locally and merge into the live queue under the
+    # lock at the END — the old load-once/rewrite-at-end pattern silently
+    # dropped anything live ingest enqueued (or run_batch consumed)
+    # while the scan was running.
+    new_items: list[dict] = []
     for d in docs:
         doc_id = d.get("id") or d.get("doc_id")
         if not doc_id:
@@ -1187,10 +1279,10 @@ def backfill(docs: list[dict]) -> dict:
             continue
         ts = datetime.utcnow().isoformat(timespec="seconds")
         for topic in tlist:
-            q.append({
+            new_items.append({
                 "doc_id": doc_id,
                 "title": d.get("title") or "",
-                "summary": summary,
+                "summary": summary[:keep],
                 "doc_type": d.get("type") or d.get("doc_type") or "",
                 "source": d.get("source") or "",
                 "topic": topic,
@@ -1198,7 +1290,19 @@ def backfill(docs: list[dict]) -> dict:
             })
         queued_ids.add(doc_id)
         res["enqueued"] += 1
-    _atomic_write_json(_QUEUE_PATH, q)
+    with _QUEUE_LOCK:
+        q = _load_json(_QUEUE_PATH, [])
+        if not isinstance(q, list):
+            q = []
+        live_keys = {
+            (it.get("doc_id"), it.get("topic"))
+            for it in q if isinstance(it, dict)
+        }
+        for it in new_items:
+            if (it["doc_id"], it["topic"]) in live_keys:
+                continue
+            q.append(it)
+        _atomic_write_json(_QUEUE_PATH, q)
     return res
 
 
@@ -1332,8 +1436,8 @@ def read_page(topic: str) -> str | None:
 
 def list_topics() -> list[dict]:
     """All wiki pages with light stats, newest-updated first. Reads the
-    index (cheap); falls back to scanning the dir if the index is missing."""
-    idx = _load_json(_INDEX_PATH, {})
+    index (mtime-cached); falls back to scanning the dir if missing."""
+    idx = _load_json_cached(_INDEX_PATH, {})
     out: list[dict] = []
     if isinstance(idx, dict) and idx:
         for topic, rec in idx.items():
@@ -1520,7 +1624,11 @@ def _append_docs(topic: str, existing: str, docs: list[dict]) -> dict:
                 "contradictions": 0, "error": "no vault"}
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(page, encoding="utf-8")
+        # tmp+replace: a SIGKILL mid-write used to truncate the only live
+        # copy of the page, and the next append would bake the loss in.
+        tmp = p.with_suffix(p.suffix + f".{os.getpid()}.tmp")
+        tmp.write_text(page, encoding="utf-8")
+        os.replace(tmp, p)
     except Exception as e:
         log.exception("wiki append write failed for %s", topic)
         return {"topic": topic, "ok": False, "docs": len(docs),
@@ -1573,7 +1681,9 @@ async def _consolidate_topic(topic: str, existing: str, docs: list[dict]) -> dic
                 "contradictions": 0, "error": "no vault"}
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(page, encoding="utf-8")
+        tmp = p.with_suffix(p.suffix + f".{os.getpid()}.tmp")
+        tmp.write_text(page, encoding="utf-8")
+        os.replace(tmp, p)
     except Exception as e:
         log.exception("wiki consolidate write failed for %s", topic)
         return {"topic": topic, "ok": False, "docs": len(docs),
@@ -1698,9 +1808,15 @@ async def run_batch() -> dict:
     for t in dropped_deleted:
         del by_topic[t]
     if dropped_deleted:
+        with _QUEUE_LOCK:
+            cur = _load_json(_QUEUE_PATH, [])
+            if isinstance(cur, list):
+                cur = [it for it in cur
+                       if not (isinstance(it, dict)
+                               and it.get("topic") in dropped_deleted)]
+                _atomic_write_json(_QUEUE_PATH, cur)
         q = [it for it in q
              if not (isinstance(it, dict) and it.get("topic") in dropped_deleted)]
-        _atomic_write_json(_QUEUE_PATH, q)
 
     max_topics = int(_flag("WIKI_MAX_TOPICS_PER_RUN", 25))
     max_docs = int(_flag("WIKI_MAX_DOCS_PER_TOPIC", 12))
@@ -1728,6 +1844,11 @@ async def run_batch() -> dict:
     contradiction_topics: list[str] = []
     runs = 0
     budget_hit = False
+    # Index records updated by THIS run. Persisted by re-applying onto a
+    # fresh disk read — writing back the whole start-of-run `idx` snapshot
+    # used to resurrect topics the user deleted/renamed mid-batch (the
+    # loop yields between chunks, so /wiki_delete etc. can interleave).
+    batch_updates: dict[str, dict] = {}
 
     # Phase 1: pre-filter and build task list
     task_list: list[tuple[str, list[dict]]] = []
@@ -1789,6 +1910,7 @@ async def run_batch() -> dict:
                 if not existed and "created" not in rec:
                     rec["created"] = now
                 idx[topic] = rec
+                batch_updates[topic] = rec
                 if res.get("contradictions", 0) > 0:
                     contradiction_topics.append(topic)
             else:
@@ -1797,15 +1919,27 @@ async def run_batch() -> dict:
                     log.warning("wiki topic '%s' moved to failed after %d cycles",
                                 topic, _MAX_FAIL_CYCLES)
 
-        # Persist after each chunk (resume-safety)
-        cur = _load_json(_QUEUE_PATH, [])
-        if not isinstance(cur, list):
-            cur = []
-        remaining = [it for it in cur
-                     if isinstance(it, dict)
-                     and it.get("doc_id") not in processed_doc_ids]
-        _atomic_write_json(_QUEUE_PATH, remaining)
-        _atomic_write_json(_INDEX_PATH, idx)
+        # Persist after each chunk (resume-safety). Queue under the lock
+        # (a threaded backfill may be merging items concurrently); index
+        # re-applied onto a fresh disk read so mid-batch deletes/renames
+        # by the user survive — a topic deleted mid-run is NOT re-written.
+        with _QUEUE_LOCK:
+            cur = _load_json(_QUEUE_PATH, [])
+            if not isinstance(cur, list):
+                cur = []
+            remaining = [it for it in cur
+                         if isinstance(it, dict)
+                         and it.get("doc_id") not in processed_doc_ids]
+            _atomic_write_json(_QUEUE_PATH, remaining)
+        idx_disk = _load_json(_INDEX_PATH, {})
+        if not isinstance(idx_disk, dict):
+            idx_disk = {}
+        deleted_now = _load_deleted_topics()
+        for t, rec in batch_updates.items():
+            if t in deleted_now:
+                continue
+            idx_disk[t] = rec
+        _atomic_write_json(_INDEX_PATH, idx_disk)
 
         if throttle > 0:
             await asyncio.sleep(throttle)
@@ -1813,13 +1947,14 @@ async def run_batch() -> dict:
     # Final queue cleanup: pre-filter may mark doc_ids as processed
     # (already-merged / 기타) without entering the chunk loop.
     if processed_doc_ids:
-        final_q = _load_json(_QUEUE_PATH, [])
-        if isinstance(final_q, list):
-            remaining = [it for it in final_q
-                         if isinstance(it, dict)
-                         and it.get("doc_id") not in processed_doc_ids]
-            if len(remaining) < len(final_q):
-                _atomic_write_json(_QUEUE_PATH, remaining)
+        with _QUEUE_LOCK:
+            final_q = _load_json(_QUEUE_PATH, [])
+            if isinstance(final_q, list):
+                remaining = [it for it in final_q
+                             if isinstance(it, dict)
+                             and it.get("doc_id") not in processed_doc_ids]
+                if len(remaining) < len(final_q):
+                    _atomic_write_json(_QUEUE_PATH, remaining)
 
     pages_ok = sum(1 for r in results if r.get("ok"))
     if pages_ok:

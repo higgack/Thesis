@@ -146,7 +146,7 @@ async def run(limit: int) -> None:
             title = getattr(target, "title", target_name)
             print(f"verifying last {limit} msgs in '{title}' against meta.documents")
 
-            con = sqlite3.connect(str(db_path))
+            con = sqlite3.connect(str(db_path), timeout=30)
             con.row_factory = sqlite3.Row
 
             counts = {"learned": 0, "missing": 0, "skipped_blocked": 0,

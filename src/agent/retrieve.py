@@ -5,7 +5,7 @@ import math
 import os
 import re
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 
 from rank_bm25 import BM25Okapi
 
@@ -93,9 +93,15 @@ def _recency_factor(ingested_at_iso: str) -> float:
     deep work stays competitive when recency × semantic conflict."""
     try:
         ts = datetime.fromisoformat(ingested_at_iso)
+        if ts.tzinfo is not None:
+            # Stored values are naive UTC today, but fromisoformat accepts
+            # offsets — a single aware row would make the subtraction
+            # below raise TypeError inside the scoring loop and kill
+            # retrieval entirely. Normalise instead.
+            ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+        days = max(0.0, (datetime.utcnow() - ts).total_seconds() / 86400.0)
     except Exception:
         return 1.0
-    days = max(0.0, (datetime.utcnow() - ts).total_seconds() / 86400.0)
     return 0.70 + 0.30 * math.exp(-days / 365.0)
 
 
@@ -136,6 +142,7 @@ def _tokenize(text: str) -> list[str]:
 _BM25: dict = {"count": -1, "index": None, "ids": None,
                "docs": None, "metas": None, "building": False}
 _BM25_LOCK = threading.Lock()
+_BM25_OFF_LOGGED = False
 
 
 def _build_bm25_sync(chunks: list, count: int) -> None:
@@ -156,21 +163,30 @@ def _build_bm25_sync(chunks: list, count: int) -> None:
 
 def _ensure_bm25() -> dict | None:
     """Return the cached BM25 bundle, kicking off a background rebuild
-    when the corpus snapshot drifts. Returns None on cold start (caller
-    falls back to dense-only this turn); returns a possibly-stale bundle
-    while a rebuild is in flight (better recall than dense-only)."""
+    when the corpus snapshot drifts. Returns None on cold start OR when
+    the corpus exceeds BM25_MAX_CHUNKS (vector layer returns no snapshot
+    → dense-only); returns a possibly-stale bundle while a rebuild is in
+    flight (better recall than dense-only). Returns a dict COPY taken
+    under the lock so callers can't see index/ids from different builds
+    (the multi-key read was a torn-read race)."""
     snap = vector.all_documents_text()
     if not snap:
         return None
     n = len(snap)
-    if _BM25["index"] is not None and _BM25["count"] == n:
-        return _BM25
     with _BM25_LOCK:
+        if _BM25["index"] is not None and _BM25["count"] == n:
+            return dict(_BM25)
         if not _BM25["building"]:
             _BM25["building"] = True
-            threading.Thread(target=_build_bm25_sync, args=(snap, n),
-                             daemon=True).start()
-    return _BM25 if _BM25["index"] is not None else None
+            try:
+                threading.Thread(target=_build_bm25_sync, args=(snap, n),
+                                 daemon=True).start()
+            except Exception:
+                # Thread spawn failure would otherwise leave `building`
+                # stuck True forever → BM25 frozen until restart.
+                _BM25["building"] = False
+                log.exception("bm25 build thread spawn failed")
+        return dict(_BM25) if _BM25["index"] is not None else None
 
 
 async def expand_query(query: str) -> list[str]:
@@ -258,9 +274,14 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
     3. Ask Gemini Flash-Lite to rerank by query relevance, return top k.
     """
     over = max(k * 4, 25)
+    # Embed the query ONCE and reuse for both kind-filtered searches —
+    # each vector.query() call otherwise fires its own identical Gemini
+    # embedding round-trip (2× latency + cost on every question).
+    from ..llm.embed import embed as _embed
+    qvec = (await _embed([query], task_type="RETRIEVAL_QUERY"))[0]
     summary_hits, chunk_hits = await asyncio.gather(
-        vector.query(query, k=over, kind="summary"),
-        vector.query(query, k=over, kind="chunk"),
+        vector.query(query, k=over, kind="summary", vec=qvec),
+        vector.query(query, k=over, kind="chunk", vec=qvec),
     )
 
     dense = {h["id"]: (1.0 - h["distance"], h) for h in summary_hits + chunk_hits}
@@ -284,7 +305,16 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
                     "metadata": metas[i], "distance": 1.0 - n,
                 })
     else:
-        log.info("bm25 index cold — dense-only retrieval this turn")
+        # At >BM25_MAX_CHUNKS this is the PERMANENT state, not a cold
+        # start — log once at info, then debug, instead of misleading
+        # "index cold" noise on every query.
+        global _BM25_OFF_LOGGED
+        if not _BM25_OFF_LOGGED:
+            _BM25_OFF_LOGGED = True
+            log.info("bm25 unavailable (cold start or corpus > "
+                     "BM25_MAX_CHUNKS) — dense-only retrieval")
+        else:
+            log.debug("bm25 off — dense-only retrieval this turn")
 
     # Batch-fetch parent doc metadata in one query (offloaded to thread
     # so we never block the event loop on SQLite).

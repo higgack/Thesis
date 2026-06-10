@@ -66,7 +66,7 @@ async def run(limit: int, confirm: bool) -> None:
             title = getattr(target, "title", target_name)
             print(f"scanning last {limit} msgs in '{title}' for missing items")
 
-            con = sqlite3.connect(str(db_path))
+            con = sqlite3.connect(str(db_path), timeout=30)
             con.row_factory = sqlite3.Row
             missing: list = []
             try:

@@ -600,10 +600,20 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
     )
 
     _emit(on_stage, f"요약 + 임베딩 ({len(chunks)} 청크)")
-    (summary, metadata), _ = await asyncio.gather(
+    # return_exceptions so a summarize failure doesn't leave add_chunks
+    # running detached (plain gather propagates the first error while the
+    # sibling keeps writing; the retry then re-adds the same chunk ids
+    # concurrently). Both finish, THEN we re-raise the first failure into
+    # the existing retry-classification path.
+    _res = await asyncio.gather(
         summarize_and_extract(title, body, doc_type, hint=hint, skip_meta=skip_meta),
         vector.add_chunks(doc_id, chunk_items),
+        return_exceptions=True,
     )
+    for _r in _res:
+        if isinstance(_r, BaseException):
+            raise _r
+    (summary, metadata), _ = _res
 
     _emit(on_stage, "요약 임베딩")
     await vector.add_chunks(doc_id, [{

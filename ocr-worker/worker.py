@@ -175,14 +175,40 @@ def _touch_heartbeat() -> None:
         pass
 
 
+_SWEEP_TTL_SEC = 3600
+
+
+def _sweep_orphans() -> None:
+    """Drop result/queue files older than 1h. When the bot's 60s wait
+    deadline expires after the worker already claimed a job, the worker
+    still writes the result file — and nothing ever consumes it, so they
+    accumulate forever in hybrid mode under load."""
+    cutoff = time.time() - _SWEEP_TTL_SEC
+    for d in (RESULT_DIR, QUEUE_DIR):
+        try:
+            for p in d.glob("*"):
+                try:
+                    if p.stat().st_mtime < cutoff:
+                        p.unlink(missing_ok=True)
+                        log.info("swept stale %s", p.name)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+
 def main() -> None:
     last_heartbeat = 0.0
+    last_sweep = 0.0
     while True:
         try:
             now = time.time()
             if now - last_heartbeat >= 5.0:
                 _touch_heartbeat()
                 last_heartbeat = now
+            if now - last_sweep >= 600.0:
+                _sweep_orphans()
+                last_sweep = now
 
             jobs = sorted(
                 p for p in QUEUE_DIR.glob("*.json")

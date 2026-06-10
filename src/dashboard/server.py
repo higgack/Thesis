@@ -18,6 +18,7 @@ token-path stage.
 from __future__ import annotations
 
 import base64
+import hmac
 import json
 import logging
 import os
@@ -45,6 +46,14 @@ _EXPECTED_AUTH = (
     if _BASIC_ENABLED else None
 )
 
+def _eq(a: str, b: str) -> bool:
+    """Timing-safe string compare for auth values."""
+    try:
+        return hmac.compare_digest(a, b)
+    except TypeError:
+        return a == b
+
+
 _DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/q-(\d+)/?$")
 _ASK_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/?$")
 _ASK_GET_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/(\d+)/?$")
@@ -69,7 +78,7 @@ class Handler(SimpleHTTPRequestHandler):
         if not _BASIC_ENABLED:
             return True
         provided = self.headers.get("Authorization", "")
-        if provided == _EXPECTED_AUTH:
+        if _EXPECTED_AUTH is not None and _eq(provided, _EXPECTED_AUTH):
             return True
         self.send_response(401)
         self.send_header("WWW-Authenticate", 'Basic realm="Second Brain"')
@@ -113,7 +122,7 @@ class Handler(SimpleHTTPRequestHandler):
         """Park a dashboard search-box query for the bot to run. Returns
         {id} for the browser to poll. Token-gated like the delete route;
         flood-capped because each Q&A costs real money."""
-        if not _TOKEN or token != _TOKEN:
+        if not _TOKEN or not _eq(token, _TOKEN):
             self.send_error(403, "forbidden")
             return
         try:
@@ -150,7 +159,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _handle_ask_get(self, token: str, qid: int):
         """Poll one parked query's status/answer."""
-        if not _TOKEN or token != _TOKEN:
+        if not _TOKEN or not _eq(token, _TOKEN):
             self.send_error(403, "forbidden")
             return
         try:
@@ -179,7 +188,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(404)
             return
         token, qid = m.group(1), int(m.group(2))
-        if not _TOKEN or token != _TOKEN:
+        if not _TOKEN or not _eq(token, _TOKEN):
             self.send_error(403, "forbidden")
             return
         try:
@@ -187,14 +196,15 @@ class Handler(SimpleHTTPRequestHandler):
                 cur = c.execute("DELETE FROM qna WHERE id = ?", (qid,))
                 n = cur.rowcount
             log.info("deleted qna #%d (rows=%d)", qid, n)
-            # Regenerate the static HTML now so a browser refresh reflects
-            # the delete immediately. Without this the row reappears until
-            # the bot's 60s refresh_dashboard tick rebuilds the page.
+            # Drop the now-orphaned detail page; the dashboard JS already
+            # removed the card client-side and the bot's 60s tick rebuilds
+            # index.html. The previous full regenerate() here pulled the
+            # chroma/vector import chain into this 200MB-capped container
+            # (OOM risk) and hung the request thread for the whole render.
             try:
-                from .regenerate import regenerate
-                regenerate()
-            except Exception:
-                log.exception("post-delete regenerate failed")
+                (Path(_DOC_ROOT) / token / f"q-{qid}.html").unlink(missing_ok=True)
+            except OSError:
+                log.warning("detail page unlink failed for q-%d", qid)
         except Exception as e:
             log.exception("delete failed")
             self.send_error(500, f"delete failed: {e}")
@@ -212,6 +222,16 @@ def main() -> None:
         sys.exit("DASHBOARD_TOKEN must be set in .env")
     if not _DOC_ROOT.exists():
         _DOC_ROOT.mkdir(parents=True, exist_ok=True)
+    # Until the bot's first regenerate writes the public index, a bare
+    # directory would be auto-listed by SimpleHTTPRequestHandler and
+    # reveal the <token>/ directory name. Park a placeholder.
+    pub = _DOC_ROOT / "index.html"
+    if not pub.exists():
+        try:
+            pub.write_text("<!doctype html><title>second brain</title>",
+                           encoding="utf-8")
+        except OSError:
+            pass
     httpd = ThreadingHTTPServer(("0.0.0.0", _PORT), Handler)
     log.info("dashboard server on :%d, root=%s, basic_auth=%s",
              _PORT, _DOC_ROOT, "on" if _BASIC_ENABLED else "off")
