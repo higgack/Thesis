@@ -12821,12 +12821,6 @@ def main():
         filters.ChatType.PRIVATE & ~filters.COMMAND, on_private
     ))
 
-    # One-shot heal for the back-stamped wiki `created` bug: legacy topics
-    # that predate the field were stamped with today's date on their next
-    # merge and showed up as New (테슬라, 앤트로픽 …). Strip those on boot —
-    # idempotent and internally guarded, so it's safe every deploy.
-    wiki.migrate_index_created()
-
     if app.job_queue:
         app.job_queue.run_repeating(
             _retry_pending,

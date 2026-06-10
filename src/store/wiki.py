@@ -1710,50 +1710,6 @@ async def _merge_topic(topic: str, docs: list[dict]) -> dict:
     return _append_docs(topic, existing, docs)
 
 
-def _heal_backstamped_created(idx: dict) -> int:
-    """Strip ALL retro-stamped `created` timestamps from the index.
-
-    The field was introduced after ~1000 topics already existed.  Every
-    topic merged in the first post-deployment batch got created==updated
-    ==today, regardless of actual age.  No heuristic (source count, page
-    content) reliably separates genuinely new topics from back-stamped
-    ones — consolidation-path pages lack the dated headers that the
-    content-date check relies on.
-
-    Clean-slate approach: wipe every created that equals updated.
-    Tomorrow's batch uses the `not existed` guard, so only truly first-
-    seen topics get stamped going forward.  One-day loss of New badges
-    for today's genuine newcomers (they still show as Recent)."""
-    healed = 0
-    for rec in idx.values():
-        if not isinstance(rec, dict):
-            continue
-        cr = rec.get("created") or ""
-        if cr and cr == (rec.get("updated") or ""):
-            rec.pop("created", None)
-            healed += 1
-    return healed
-
-
-def migrate_index_created() -> int:
-    """One-shot startup heal for the back-stamped `created` bug (see
-    _heal_backstamped_created). Loads the index, strips the bad stamps,
-    persists only when something changed. Internally guarded so it can be
-    called on every boot without risk to startup."""
-    try:
-        idx = _load_json(_INDEX_PATH, {})
-        if not isinstance(idx, dict):
-            return 0
-        healed = _heal_backstamped_created(idx)
-        if healed:
-            _atomic_write_json(_INDEX_PATH, idx)
-            log.info("wiki: healed %d back-stamped 'created' timestamps", healed)
-        return healed
-    except Exception:
-        log.exception("wiki: migrate_index_created failed")
-        return 0
-
-
 async def run_batch() -> dict:
     """Nightly job: drain the queue topic-by-topic, merging each into its
     wiki page. Bounded by per-run caps AND a hard daily ₩ budget; resume-
@@ -1903,10 +1859,13 @@ async def run_batch() -> dict:
                     "updated": now,
                     "claims": rec.get("claims", 0) + res.get("docs", 0),
                 })
-                # Stamp `created` ONLY for a genuinely first-seen topic.
-                # Back-stamping a pre-existing record (one predating this
-                # field) with `now` falsely flags a long-standing page as
-                # New — see _heal_backstamped_created.
+                # Stamp `created` ONLY for a genuinely first-seen topic
+                # (the `not existed` guard). A new topic gets created==
+                # updated==now today; it KEEPS that stamp (New badge for
+                # 7 days) until a later merge bumps `updated` past it.
+                # Re-merging a pre-existing topic never adds `created`, so
+                # a long-standing page can't be falsely flagged New — and
+                # nothing strips a real newcomer's stamp on the next boot.
                 if not existed and "created" not in rec:
                     rec["created"] = now
                 idx[topic] = rec
