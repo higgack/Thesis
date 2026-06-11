@@ -12346,17 +12346,23 @@ async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # Dashboard query bridge (web search box → bot)
 # ──────────────────────────────────────────────────────────────────────
 # The Second Brain dashboard search box can ask the bot directly: natural
-# language → a paid agent.run(); a "/command" → a FREE read-only lookup.
-# Requests are parked in dash_queries.db by the dashboard server (a thin
-# 200 MB container that can't run the agent); this worker — in the bot,
-# which has the agent warm + a memory gate — drains them and writes the
-# answer back. See src/store/dash_queries.py for the queue contract.
+# language → a paid agent.run(); a "/command" → the SAME cmd_* handler the
+# Telegram bot runs, executed head-less as the owner (see
+# _run_dashboard_command + _build_dash_command_map). Requests are parked in
+# dash_queries.db by the dashboard server (a thin 200 MB container that
+# can't run the agent); this worker — in the bot, which has the agent warm
+# + a memory gate — drains them and writes the answer back. See
+# src/store/dash_queries.py for the queue contract.
 
-# ONLY read-only, zero-mutation, ₩0 commands belong here. Anything not in
-# this set is rejected, so the web surface can never trigger an ingest,
-# delete, rename, model toggle, queue/pending mutation, or an LLM spend.
-# Paid search (search_*, kr_*, kipris_*, deep, compare_*, web_search) is
-# intentionally excluded — use the natural-language box for those.
+# NOTE: these two sets are NOT an execution gate — they only drive the
+# Commands page badges (💰 paid / ⚠️ 변경 mutation) in regenerate.py. The
+# real allowlist is _DASH_COMMAND_HANDLERS, which auto-discovers EVERY
+# cmd_*, so the web surface can run anything the Telegram bot can —
+# mutations and paid spends included. The only boundary is the secret URL
+# token (timing-safe-checked + flood-capped in dashboard/server.py); there
+# is no per-command block, so e.g. /wiki_rename or /forget DO run from the
+# web. Keep both sets in sync with the handlers they classify so the
+# badges stay truthful.
 _DASH_PAID_COMMANDS = frozenset({
     "deep", "search_papers", "search_papers_advanced", "paper_stats",
     "search_patents", "search_patents_advanced", "patent_stats",
