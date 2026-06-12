@@ -58,6 +58,16 @@ ship**:
     "don't nag per task" — never "push on your own". Accumulated work
     sitting uncommitted is the correct, expected state.
 
+  • **Status footer (every answer):** end each turn with a one-line
+    accumulation indicator so the user always knows how much is waiting
+    to ship without asking:
+      - work pending → `📦 누적: N개 파일` (N = changed files in the
+        working tree; list the names when it's short / helpful)
+      - clean tree   → `📦 worktree 누적: 0개 (현재 깨끗)`
+    Count from `git status --short` (or track the files you just
+    touched). The footer is informational only — showing it is NOT a
+    prompt to push and does NOT need a trigger word.
+
 User's exact ask (verbatim): "요청사항은 묶어서 처리하는걸로. 내가
 명시적으로 커밋, 배포, 푸쉬라는 말없으면 니가 무리가 없는한해서 계속
 쌓아놓는걸로 … 한꺼번에 니가 처리하는동안 내가 다른일하고 너 처리하면
