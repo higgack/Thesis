@@ -28,8 +28,40 @@ new task starts in "edit-only" mode:
 
 1. Make the file changes.
 2. Run pre-push verification (next section).
-3. Show the user a brief summary of what changed.
-4. STOP and wait for the explicit trigger word.
+3. End the turn with a brief summary of what changed.
+4. Keep the changes UNCOMMITTED on disk and move straight on to the
+   next request — accumulate, do NOT push. Only a trigger word ships.
+   (See "Batch/accumulate mode" right below.)
+
+### Batch/accumulate mode (default working posture — user's explicit ask)
+
+The user works in parallel: they fire several requests in a row, go do
+other things, and want ONE final consolidated report + a single ship at
+the end — NOT a per-task stop-and-wait. Waiting on the agent task by
+task wastes their time. So the default posture is **accumulate, don't
+ship**:
+
+  • Treat successive requests as one growing batch. Do each task's
+    edits, end the turn with a short summary, and pick up the next
+    request — keep stacking changes on disk across tasks.
+  • Do NOT commit / push / deploy after each task. Do NOT close a turn
+    by asking "푸시할까?" every time. Just keep building.
+  • Keep going "as long as it's reasonable" (무리 없는 한). Pause and
+    surface it — don't blindly stack — only when a real obstacle hits:
+    a later request contradicts an earlier one, needs a decision only
+    the user can make, or would force reworking already-stacked edits.
+  • When the user finally gives a trigger word (커밋/푸시/배포/deploy/
+    commit/push/올려/내보내/ship/release), ship EVERYTHING accumulated
+    in ONE pipeline (commit → push session → cherry-pick deploy → push
+    deploy), then give the final consolidated report.
+  • The no-push-without-trigger gate is UNCHANGED. Batching only means
+    "don't nag per task" — never "push on your own". Accumulated work
+    sitting uncommitted is the correct, expected state.
+
+User's exact ask (verbatim): "요청사항은 묶어서 처리하는걸로. 내가
+명시적으로 커밋, 배포, 푸쉬라는 말없으면 니가 무리가 없는한해서 계속
+쌓아놓는걸로 … 한꺼번에 니가 처리하는동안 내가 다른일하고 너 처리하면
+최종으로 보고." Locking this in.
 
 ### MANDATORY pre-commit self-check (paste-the-message rule)
 
