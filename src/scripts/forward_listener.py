@@ -85,6 +85,7 @@ _CHANNEL_DENYLIST: set[str] = {
     "awake_realtimecheck", # 52주 신고가 — 제거
     "darthacking",    # 옛 다트해킹 — finter 로 잠시 교체 후 daju_dart 로 통일
     "daju_017_bot",   # 옛 봇 DM — daju_dart 채널로 교체
+    "daju_dart",      # DAJU 기업공시 — 사용자 결정으로 제거 (더 이상 수신 안 함)
 }
 
 
@@ -991,7 +992,7 @@ async def _relay_plain(client: TelegramClient, msg, target,
             )
             return
     else:
-        # TEXT-ONLY path (daju_dart, fundeasyearnings): strip the
+        # TEXT-ONLY path (fundeasyearnings): strip the
         # channel-specific URL noise patterns, drop attachments by
         # not forwarding them. Per user policy these feeds are noisy
         # and attachments would inflate cost.

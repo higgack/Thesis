@@ -1439,7 +1439,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
 [Noah 디지스트] 📋 TG 원문 fetch / 📰 Substack URL relay / 그 외 drop
-[PLAIN] 텍스트만: daju_dart·Fundeasyearnings / 전체: aicorporateanalysisdeepdive
+[PLAIN] 텍스트만: Fundeasyearnings / 전체: aicorporateanalysisdeepdive
 [URL전용] benineb9·getfeed: naver/youtube/t.me 자동, 그외=알림
 [제목필터] insidertracking: "미국 레딧 게시물 분석"만 forward
 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
