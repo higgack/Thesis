@@ -505,6 +505,18 @@ pending 이나 대기로 남지 않고 꼭 명심해").
   contradiction alerts are exempt — they're already deduped (notify_id /
   content hash). Fails open: a wiped state file = one extra digest, never
   a loop.
+- **Structural lint (₩0, no LLM)**: `wiki.lint()` — Karpathy's "Lint"
+  op. Index read + one pass over each page; flags stale single-source
+  topics (1 doc, >30d unupdated → merge/delete candidates), unresolved
+  `## ⚠️ 검토 필요` contradiction markers, and orphan topics (no other
+  page `[[links]]` them, informational). Persists `data/wiki_lint.json`.
+  Refreshed hourly by `_wiki_batch_job` (off the 60s render path) + on
+  demand via `/wiki_lint`. Surfaced on the **dashboard** wiki index as a
+  health panel (`_render_lint_panel` reads the JSON cheaply) and via the
+  Telegram command. NOT an actionable alert (avoid notification spam).
+  NOTE: a vault `log.md` changelog (Karpathy/OKF) was deliberately NOT
+  added — the user browses the wiki via the dashboard, not Obsidian, so
+  git subtree history + the daily digest already cover the timeline.
 - **Deleted topics are permanent**: `data/wiki_deleted_topics.json`
   is a sorted list of topic names. `wiki.is_topic_deleted(t)` is
   checked at ALL three entry points — `enqueue()`, `backfill()`,
