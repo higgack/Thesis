@@ -2024,14 +2024,6 @@ def last_run() -> dict | None:
 # ----------------------------------------------------------------------
 
 _CONTRA_MARKER = "## ⚠️ 검토 필요"   # written by _consolidate_topic on a clash
-_WIKILINK_RE = re.compile(r"\[\[(.+?)\]\]")
-
-
-def _norm_link(s: str) -> str:
-    """Loose key for matching a [[wikilink]] against a topic name —
-    drops spaces/underscores/hyphens and lowercases (mirrors the
-    renderer's autolink normalisation)."""
-    return re.sub(r"[\s_\-]+", "", s or "").lower()
 
 
 def lint(stale_days: int = 30, persist: bool = True) -> dict:
@@ -2043,8 +2035,12 @@ def lint(stale_days: int = 30, persist: bool = True) -> dict:
         days → merge (/wiki_dedup) or delete (/wiki_delete) candidates.
       • contradictions   — pages still carrying the `## ⚠️ 검토 필요`
         marker → need a human look (/wiki <topic>).
-      • orphans          — topics no OTHER page cross-links via [[...]]
-        → informational (isolated knowledge); capped sample.
+      • missing_pages    — topics in the index whose .md file is gone
+        (index/file drift → dashboard 404s) → integrity fix needed.
+
+    (An earlier "orphans = topics no page [[links]]" check was dropped:
+    pages cite SOURCE docs via [[title]] but rarely cross-link topics,
+    so it flagged ~99% of topics — pure noise, not a signal.)
 
     Result is persisted to wiki_lint.json so the dashboard health panel
     reads it cheaply instead of rescanning on its 60s render tick."""
@@ -2058,18 +2054,17 @@ def lint(stale_days: int = 30, persist: bool = True) -> dict:
     cutoff = (datetime.now(_KST) - timedelta(days=stale_days)).strftime("%Y-%m-%d")
 
     topic_names = [t for t in idx if isinstance(idx.get(t), dict)]
-    norm_topics = {_norm_link(t): t for t in topic_names}
 
-    referenced: set[str] = set()
     contradiction_topics: list[str] = []
+    missing_pages: list[str] = []
     pages_scanned = 0
 
     if d and d.exists():
         for t in topic_names:
             rec = idx[t]
-            fname = rec.get("file") or f"{_slug(t)}.md"
-            p = d / fname
+            p = d / (rec.get("file") or f"{_slug(t)}.md")
             if not p.exists():
+                missing_pages.append(t)
                 continue
             try:
                 text = p.read_text(encoding="utf-8")
@@ -2078,10 +2073,6 @@ def lint(stale_days: int = 30, persist: bool = True) -> dict:
             pages_scanned += 1
             if _CONTRA_MARKER in text:
                 contradiction_topics.append(t)
-            for m in _WIKILINK_RE.finditer(text):
-                orig = norm_topics.get(_norm_link(m.group(1)))
-                if orig and orig != t:   # cross-ref to a DIFFERENT topic
-                    referenced.add(orig)
 
     stale_singletons = []
     for t in topic_names:
@@ -2093,8 +2084,6 @@ def lint(stale_days: int = 30, persist: bool = True) -> dict:
                                      "updated": upd})
     stale_singletons.sort(key=lambda r: r["updated"])
 
-    orphans = sorted(set(topic_names) - referenced)
-
     result = {
         "generated_at": _now_kst_iso(),
         "total_topics": len(topic_names),
@@ -2102,8 +2091,7 @@ def lint(stale_days: int = 30, persist: bool = True) -> dict:
         "stale_days": stale_days,
         "stale_singletons": stale_singletons,
         "contradictions": sorted(contradiction_topics),
-        "orphans_count": len(orphans),
-        "orphans_sample": orphans[:30],
+        "missing_pages": sorted(missing_pages),
     }
     if persist:
         try:

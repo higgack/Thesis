@@ -508,8 +508,11 @@ pending 이나 대기로 남지 않고 꼭 명심해").
 - **Structural lint (₩0, no LLM)**: `wiki.lint()` — Karpathy's "Lint"
   op. Index read + one pass over each page; flags stale single-source
   topics (1 doc, >30d unupdated → merge/delete candidates), unresolved
-  `## ⚠️ 검토 필요` contradiction markers, and orphan topics (no other
-  page `[[links]]` them, informational). Persists `data/wiki_lint.json`.
+  `## ⚠️ 검토 필요` contradiction markers, and missing pages (index
+  record whose `.md` is gone → integrity). An "orphans = topics no page
+  `[[links]]`" check was tried and dropped: pages cite SOURCE docs via
+  `[[title]]`, rarely cross-link topics, so it flagged ~99% — pure
+  noise. Persists `data/wiki_lint.json`.
   Refreshed hourly by `_wiki_batch_job` (off the 60s render path) + on
   demand via `/wiki_lint`. Surfaced on the **dashboard** wiki index as a
   health panel (`_render_lint_panel` reads the JSON cheaply) and via the

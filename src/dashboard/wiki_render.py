@@ -1084,17 +1084,17 @@ def _render_lint_panel(token: str) -> str:
         return ""
     contra = data.get("contradictions") or []
     stale = data.get("stale_singletons") or []
-    orph_n = data.get("orphans_count", 0)
+    missing = data.get("missing_pages") or []
     gen = html.escape(str(data.get("generated_at", "")))
 
     def _chip(t: str) -> str:
         return (f'<a href="{_topic_filename(t)}" '
                 f'style="color:inherit">{html.escape(t)}</a>')
 
-    if not contra and not stale:
+    if not contra and not stale and not missing:
         return (
             '<div style="margin:0 0 18px;font-size:13px;color:var(--muted)">'
-            f'🩺 점검: 모순·정체 없음 · 고립 {orph_n} '
+            f'🩺 점검: 이상 없음 '
             f'<span style="opacity:.7">({gen})</span></div>'
         )
 
@@ -1119,10 +1119,18 @@ def _render_lint_panel(token: str) -> str:
             '<span style="color:var(--muted);font-size:12px">'
             f'({data.get("stale_days", 30)}일+ 미갱신 → 병합/삭제 후보)</span><br>'
             f'{items}{more}</div>')
+    if missing:
+        items = ", ".join(_chip(t) for t in missing[:15])
+        more = f" … 외 {len(missing) - 15}개" if len(missing) > 15 else ""
+        body.append(
+            '<div style="margin:6px 0"><b>🗂 누락 페이지</b> '
+            '<span style="color:var(--muted);font-size:12px">'
+            '(인덱스엔 있으나 .md 없음)</span><br>'
+            f'{items}{more}</div>')
 
-    open_attr = " open" if contra else ""
+    open_attr = " open" if (contra or missing) else ""
     summary = (f"🩺 위키 점검 — ⚠️ 모순 {len(contra)} · "
-               f"🧹 정체 {len(stale)} · 🔗 고립 {orph_n}")
+               f"🧹 정체 {len(stale)} · 🗂 누락 {len(missing)}")
     return (
         f'<details{open_attr} style="margin:0 0 18px;padding:10px 14px;'
         'border:1px solid var(--border-light);border-radius:10px;'
@@ -1208,7 +1216,7 @@ def render_wiki(token: str) -> int:
     # _TPL_VERSION: bump on ANY template/CSS/JS change in this file —
     # the incremental skip means already-rendered topic pages would
     # otherwise keep old markup forever (their .md never changes).
-    _TPL_VERSION = "3"
+    _TPL_VERSION = "4"
     cache_path = config.DATA_DIR / "wiki_render_cache.json"
     fp = hashlib.sha1(
         ("|".join(all_topics) + "\x00" + token + "\x00" + _TPL_VERSION
