@@ -1413,7 +1413,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
 
-📚 <b>위키</b>(매시 정시 학습·요약알림 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
+📚 <b>위키</b>(매시 정시 학습·요약알림 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
@@ -1914,6 +1914,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki</b> 목록(🆕=7일내 업데이트) · <b>/wiki &lt;토픽&gt;</b> 열람 · <b>/wiki_today</b> 마지막 배치
 • <b>/wiki_recent [일수]</b> 최근 N일(기본7) 업데이트 토픽만 시간순
 • <b>/wiki_new [일수]</b> 최근 N일(기본7) 신규 생성 토픽만
+• <b>/wiki_lint</b> ₩0 구조 점검(LLM 없음): 정체 단일소스(병합/삭제 후보)·미해결 모순(검토 필요)·고립 토픽. 대시보드 위키 상단 점검 패널에도 매시 자동 표시
 • <b>/wiki_status</b> 상태·오늘 ₩·한도·큐 · <b>/wiki_run</b> 수동 실행
 • <b>/wiki_cost</b> 위키 전용 비용/사용량(오늘·7일·월·전체·일별추이·예상)
 • <b>/wiki_drain [한도=20000]</b> 임시 예산 올려서 큐 최대 소진(끝나면 즉시 ₩1000 복귀)
@@ -2391,6 +2392,7 @@ DB 엔진(LSM Tree), 이벤트 소싱, 위키피디아 편집 모델 등에서 �
 • <code>WIKI_DAILY_BUDGET_KRW=1000</code> — 일일 예산 (KST)
 • 배치 주기: <b>매시 정시</b> (KST) — 큐 자동 머지, 일일 예산 캡 내
 • 알림: 학습 요약 <b>1일 1회</b>(그날 첫 갱신된 정시 직후, 시각 유동) · 예산/모순 알람은 별도 즉시
+• 점검: <b>/wiki_lint</b>(₩0, LLM 없음) — 정체 단일소스·미해결 모순·고립 토픽. 매시 배치가 자동 갱신해 대시보드 위키 상단 점검 패널에 표시(온디맨드 실행도 가능)
 • <code>WIKI_MIN_SUMMARY_CHARS=600</code> — 이하 요약은 위키 제외
 
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -11501,6 +11503,13 @@ async def _wiki_batch_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception:
         log.exception("wiki batch job failed")
         return
+    # Refresh the ₩0 structural lint each hour so the dashboard health
+    # panel stays current without rescanning ~1000 pages on its 60s
+    # render tick. Off the render path, best-effort (never blocks digest).
+    try:
+        await asyncio.to_thread(wiki.lint)
+    except Exception:
+        log.exception("wiki lint refresh failed")
     # Daily-budget breaker hit → actionable alert (fires regardless of
     # whether any pages were produced this run). Stable notify_id dedups
     # within the ack window and re-arms later (per notify_acks).
@@ -11845,6 +11854,48 @@ async def cmd_wiki_new(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             chunk, parse_mode="HTML",
             disable_web_page_preview=True,
         )
+
+
+async def cmd_wiki_lint(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_lint — ₩0 구조 점검: 정체 단일소스·미해결 모순·고립 토픽."""
+    if not _is_owner(update):
+        return
+    async with _SustainedTyping(update, ctx):
+        res = await asyncio.to_thread(wiki.lint)
+    stale = res.get("stale_singletons") or []
+    contra = res.get("contradictions") or []
+    orph_n = res.get("orphans_count", 0)
+    orph = res.get("orphans_sample") or []
+    lines = [
+        "🩺 <b>위키 점검</b> (₩0, LLM 없음)",
+        f"📊 토픽 {res.get('total_topics', 0)}개 · 스캔 {res.get('pages_scanned', 0)}",
+    ]
+    if contra:
+        lines.append(f"\n⚠️ <b>미해결 모순 {len(contra)}개</b> — 검토 <code>/wiki &lt;토픽&gt;</code>")
+        for t in contra[:20]:
+            lines.append(f"• {html.escape(t)}")
+        if len(contra) > 20:
+            lines.append(f"… 외 {len(contra) - 20}개")
+    if stale:
+        lines.append(
+            f"\n🧹 <b>정체 단일소스 {len(stale)}개</b> "
+            f"({res.get('stale_days', 30)}일+ 미갱신 → 병합/삭제 후보)")
+        for r in stale[:20]:
+            lines.append(f"• {html.escape(r['topic'])}  ({r['docs']}건, {r['updated']})")
+        if len(stale) > 20:
+            lines.append(f"… 외 {len(stale) - 20}개")
+    if orph_n:
+        lines.append(
+            f"\n🔗 <b>고립 토픽 {orph_n}개</b> "
+            "(다른 페이지서 참조 안 됨, 정보용)")
+        lines.append("· " + ", ".join(html.escape(t) for t in orph[:15])
+                     + (" …" if orph_n > 15 else ""))
+    if not contra and not stale and not orph_n:
+        lines.append("\n✅ 이상 없음 — 모순·정체·고립 토픽 없음.")
+    lines.append(f"\n<i>생성: {html.escape(res.get('generated_at', ''))}</i>")
+    for chunk in _split_for_telegram("\n".join(lines)):
+        await update.message.reply_text(
+            chunk, parse_mode="HTML", disable_web_page_preview=True)
 
 
 async def cmd_wiki_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -12815,6 +12866,7 @@ def main():
     app.add_handler(CommandHandler("wiki_today", cmd_wiki_today))
     app.add_handler(CommandHandler("wiki_recent", cmd_wiki_recent))
     app.add_handler(CommandHandler("wiki_new", cmd_wiki_new))
+    app.add_handler(CommandHandler("wiki_lint", cmd_wiki_lint))
     app.add_handler(CommandHandler("wiki_status", cmd_wiki_status))
     app.add_handler(CommandHandler("wiki_cost", cmd_wiki_cost))
     app.add_handler(CommandHandler("wiki_run", cmd_wiki_run))

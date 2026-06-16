@@ -81,6 +81,7 @@ def _flag(name: str, default):
 _QUEUE_PATH = config.DATA_DIR / "wiki_queue.json"
 _INDEX_PATH = config.DATA_DIR / "wiki_index.json"
 _LASTRUN_PATH = config.DATA_DIR / "wiki_last_run.json"
+_LINT_PATH = config.DATA_DIR / "wiki_lint.json"
 _FAILED_PATH = config.DATA_DIR / "wiki_failed.json"
 _ALIASES_PATH = config.DATA_DIR / "wiki_aliases.json"
 _DELETED_TOPICS_PATH = config.DATA_DIR / "wiki_deleted_topics.json"
@@ -2016,6 +2017,104 @@ async def drain_queue(on_progress=None) -> list[dict]:
 
 def last_run() -> dict | None:
     return _load_json(_LASTRUN_PATH, None)
+
+
+# ----------------------------------------------------------------------
+# Structural lint — ₩0 health scan (no LLM), Karpathy "Lint" operation.
+# ----------------------------------------------------------------------
+
+_CONTRA_MARKER = "## ⚠️ 검토 필요"   # written by _consolidate_topic on a clash
+_WIKILINK_RE = re.compile(r"\[\[(.+?)\]\]")
+
+
+def _norm_link(s: str) -> str:
+    """Loose key for matching a [[wikilink]] against a topic name —
+    drops spaces/underscores/hyphens and lowercases (mirrors the
+    renderer's autolink normalisation)."""
+    return re.sub(r"[\s_\-]+", "", s or "").lower()
+
+
+def lint(stale_days: int = 30, persist: bool = True) -> dict:
+    """Zero-cost structural health scan of the wiki — NO LLM, no API,
+    just an index read + one pass over each page. Surfaces drift the
+    append/consolidate pipeline can't self-correct:
+
+      • stale_singletons — 1-source topics not updated in `stale_days`
+        days → merge (/wiki_dedup) or delete (/wiki_delete) candidates.
+      • contradictions   — pages still carrying the `## ⚠️ 검토 필요`
+        marker → need a human look (/wiki <topic>).
+      • orphans          — topics no OTHER page cross-links via [[...]]
+        → informational (isolated knowledge); capped sample.
+
+    Result is persisted to wiki_lint.json so the dashboard health panel
+    reads it cheaply instead of rescanning on its 60s render tick."""
+    idx = _load_json(_INDEX_PATH, {})
+    if not isinstance(idx, dict):
+        idx = {}
+    d = _wiki_dir()
+
+    # Lexical date cutoff on the YYYY-MM-DD prefix — format-agnostic
+    # between the naive-KST and isoformat timestamp writers.
+    cutoff = (datetime.now(_KST) - timedelta(days=stale_days)).strftime("%Y-%m-%d")
+
+    topic_names = [t for t in idx if isinstance(idx.get(t), dict)]
+    norm_topics = {_norm_link(t): t for t in topic_names}
+
+    referenced: set[str] = set()
+    contradiction_topics: list[str] = []
+    pages_scanned = 0
+
+    if d and d.exists():
+        for t in topic_names:
+            rec = idx[t]
+            fname = rec.get("file") or f"{_slug(t)}.md"
+            p = d / fname
+            if not p.exists():
+                continue
+            try:
+                text = p.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            pages_scanned += 1
+            if _CONTRA_MARKER in text:
+                contradiction_topics.append(t)
+            for m in _WIKILINK_RE.finditer(text):
+                orig = norm_topics.get(_norm_link(m.group(1)))
+                if orig and orig != t:   # cross-ref to a DIFFERENT topic
+                    referenced.add(orig)
+
+    stale_singletons = []
+    for t in topic_names:
+        rec = idx[t]
+        upd = (rec.get("updated") or "")[:10]
+        if len(rec.get("doc_ids") or []) <= 1 and upd and upd < cutoff:
+            stale_singletons.append({"topic": t,
+                                     "docs": len(rec.get("doc_ids") or []),
+                                     "updated": upd})
+    stale_singletons.sort(key=lambda r: r["updated"])
+
+    orphans = sorted(set(topic_names) - referenced)
+
+    result = {
+        "generated_at": _now_kst_iso(),
+        "total_topics": len(topic_names),
+        "pages_scanned": pages_scanned,
+        "stale_days": stale_days,
+        "stale_singletons": stale_singletons,
+        "contradictions": sorted(contradiction_topics),
+        "orphans_count": len(orphans),
+        "orphans_sample": orphans[:30],
+    }
+    if persist:
+        try:
+            _atomic_write_json(_LINT_PATH, result)
+        except Exception:
+            log.exception("wiki lint persist failed")
+    return result
+
+
+def last_lint() -> dict | None:
+    return _load_json(_LINT_PATH, None)
 
 
 def init() -> None:

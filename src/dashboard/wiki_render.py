@@ -1059,12 +1059,79 @@ def _render_index_page(topics_data: list[dict], token: str,
         '<button class="wiki-filter" data-filter="recent">Recent</button>'
         '</div></div>'
         f"{stats_html}"
+        f"{_render_lint_panel(token)}"
         f'<div class="wiki-grid">{"".join(cards)}</div>'
         "</div>"
         f"<script>{_SEARCH_JS}</script>"
         f"<script>{_FILTER_JS}</script>"
         f"<script>{_INDEX_SCROLL_JS}</script>"
         "</body></html>"
+    )
+
+
+def _render_lint_panel(token: str) -> str:
+    """Compact health panel from wiki_lint.json (written ₩0/hour by the
+    wiki batch). Topics link to their pages. Returns '' when the scan
+    hasn't run yet so the index stays clean on a fresh deploy."""
+    try:
+        path = config.DATA_DIR / "wiki_lint.json"
+        if not path.exists():
+            return ""
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return ""
+    except Exception:
+        return ""
+    contra = data.get("contradictions") or []
+    stale = data.get("stale_singletons") or []
+    orph_n = data.get("orphans_count", 0)
+    gen = html.escape(str(data.get("generated_at", "")))
+
+    def _chip(t: str) -> str:
+        return (f'<a href="{_topic_filename(t)}" '
+                f'style="color:inherit">{html.escape(t)}</a>')
+
+    if not contra and not stale:
+        return (
+            '<div style="margin:0 0 18px;font-size:13px;color:var(--muted)">'
+            f'🩺 점검: 모순·정체 없음 · 고립 {orph_n} '
+            f'<span style="opacity:.7">({gen})</span></div>'
+        )
+
+    body = []
+    if contra:
+        items = ", ".join(_chip(t) for t in contra[:15])
+        more = f" … 외 {len(contra) - 15}개" if len(contra) > 15 else ""
+        body.append(
+            '<div style="margin:6px 0"><b>⚠️ 미해결 모순</b> '
+            '<span style="color:var(--muted);font-size:12px">'
+            '(페이지 열어 검토)</span><br>'
+            f'{items}{more}</div>')
+    if stale:
+        items = ", ".join(
+            f'{_chip(r.get("topic", ""))} '
+            f'<span style="color:var(--muted);font-size:11px">'
+            f'({html.escape(str(r.get("updated", "")))})</span>'
+            for r in stale[:15])
+        more = f" … 외 {len(stale) - 15}개" if len(stale) > 15 else ""
+        body.append(
+            '<div style="margin:6px 0"><b>🧹 정체 단일소스</b> '
+            '<span style="color:var(--muted);font-size:12px">'
+            f'({data.get("stale_days", 30)}일+ 미갱신 → 병합/삭제 후보)</span><br>'
+            f'{items}{more}</div>')
+
+    open_attr = " open" if contra else ""
+    summary = (f"🩺 위키 점검 — ⚠️ 모순 {len(contra)} · "
+               f"🧹 정체 {len(stale)} · 🔗 고립 {orph_n}")
+    return (
+        f'<details{open_attr} style="margin:0 0 18px;padding:10px 14px;'
+        'border:1px solid var(--border-light);border-radius:10px;'
+        'background:var(--panel)">'
+        f'<summary style="cursor:pointer;font-weight:600">{summary} '
+        '<span style="color:var(--muted);font-weight:400;font-size:12px">'
+        f'({gen})</span></summary>'
+        '<div style="margin-top:8px;font-size:13px;line-height:1.7">'
+        f'{"".join(body)}</div></details>'
     )
 
 
@@ -1141,7 +1208,7 @@ def render_wiki(token: str) -> int:
     # _TPL_VERSION: bump on ANY template/CSS/JS change in this file —
     # the incremental skip means already-rendered topic pages would
     # otherwise keep old markup forever (their .md never changes).
-    _TPL_VERSION = "2"
+    _TPL_VERSION = "3"
     cache_path = config.DATA_DIR / "wiki_render_cache.json"
     fp = hashlib.sha1(
         ("|".join(all_topics) + "\x00" + token + "\x00" + _TPL_VERSION
