@@ -11869,28 +11869,24 @@ async def cmd_wiki_lint(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "🩺 <b>위키 점검</b> (₩0, LLM 없음)",
         f"📊 토픽 {res.get('total_topics', 0)}개 · 스캔 {res.get('pages_scanned', 0)}",
     ]
+    # No truncation — _split_for_telegram chunks long lists across
+    # messages, and the dashboard concatenates them. Show every item.
     if contra:
         lines.append(f"\n⚠️ <b>미해결 모순 {len(contra)}개</b> — 검토 <code>/wiki &lt;토픽&gt;</code>")
-        for t in contra[:20]:
+        for t in contra:
             lines.append(f"• {html.escape(t)}")
-        if len(contra) > 20:
-            lines.append(f"… 외 {len(contra) - 20}개")
     if stale:
         lines.append(
             f"\n🧹 <b>정체 단일소스 {len(stale)}개</b> "
             f"({res.get('stale_days', 30)}일+ 미갱신 → 병합/삭제 후보)")
-        for r in stale[:20]:
+        for r in stale:
             lines.append(f"• {html.escape(r['topic'])}  ({r['docs']}건, {r['updated']})")
-        if len(stale) > 20:
-            lines.append(f"… 외 {len(stale) - 20}개")
     if missing:
         lines.append(
             f"\n🗂 <b>누락 페이지 {len(missing)}개</b> "
             "(인덱스엔 있으나 .md 없음 → 정합성)")
-        for t in missing[:20]:
+        for t in missing:
             lines.append(f"• {html.escape(t)}")
-        if len(missing) > 20:
-            lines.append(f"… 외 {len(missing) - 20}개")
     if not contra and not stale and not missing:
         lines.append("\n✅ 이상 없음 — 모순·정체·누락 없음.")
     lines.append(f"\n<i>생성: {html.escape(res.get('generated_at', ''))}</i>")
