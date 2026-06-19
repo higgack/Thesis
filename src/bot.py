@@ -32,7 +32,13 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
-_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "8"))
+# Ingest concurrency cap. Sized for the live VM = n2-standard-2 (2 vCPU,
+# 7.8 GB) + 5500m bot mem_limit. 4 parallel ingests keep the chunk +
+# reranker working set under the cap, so a multi-file burst refuses
+# gracefully (retry queue) instead of OOM-killing the co-tenant `stock`
+# project that shares this host. Was 8 — tuned for a 16 GB VM that never
+# ran in production. Override via env if the VM is later upsized.
+_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "4"))
 _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # Interactive-priority gate. A user's command (_SustainedTyping bumps
 # _INTERACTIVE_INFLIGHT) or Q&A (_run_agent bumps _ACTIVE_AGENT_RUNS)
@@ -47,10 +53,11 @@ _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # there's no self-wait / deadlock.
 _INTERACTIVE_INFLIGHT = 0
 _INTERACTIVE_MAX_DEFER_SEC = float(os.getenv("INGEST_DEFER_SEC", "300"))
-# How many queued retries to drain per tick + how often we tick. Tuned
-# for c3-standard-4 / n2-standard-4 (4 vCPU, 16 GiB RAM) + 12 GiB bot
-# mem_limit + BGE-M3 (local embed, no API wait). 4 items per 30 s =
-# 8/min ≈ 480/hour of sustained drain, ~4× the e2-standard-2 baseline.
+# How many queued retries to drain per tick + how often we tick. Batch
+# is an upper bound on tasks spawned per tick; actual concurrency is
+# bounded by _INGEST_SEM (4 on the live n2-standard-2 / 8 GB VM), shared
+# with live ingests. Extras just block on the semaphore acquire, so a
+# larger batch only speeds slot refill — it never overloads the box.
 # Live ingests still get priority because the semaphore is shared.
 # Override via env when the queue is huge and live messages are getting
 # starved (e.g. RETRY_INGEST_INTERVAL_SEC=120 + RETRY_INGEST_BATCH=1
@@ -9351,7 +9358,7 @@ async def on_link_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ran ingest sequentially — N links × ~1-5 min each = N minutes of
     # apparent silence with no progress signal. Send a start bubble so
     # the tap clearly registers, and run the ingests in a 4-wide gather
-    # below (still capped by _INGEST_SEM=8 globally) so the whole batch
+    # below (still capped by _INGEST_SEM globally) so the whole batch
     # finishes in roughly one URL's time instead of N URLs'.
     if sel == "all" and len(targets) >= 2:
         try:
@@ -10339,7 +10346,7 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
         # waited ~6 min sequentially (each URL serialised behind the
         # previous one's full unshorten + fetch + summarise + embed).
         # 4-wide gather inside a single message gives ~4× speedup; the
-        # outer _INGEST_SEM (8 slots) still bounds cross-message
+        # outer _INGEST_SEM still bounds cross-message
         # concurrency, so total Gemini/network pressure hasn't changed.
         # gather preserves input order so the user sees URL results in
         # the order they appeared in the message.

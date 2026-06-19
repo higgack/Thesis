@@ -57,10 +57,10 @@ async def _local_rerank(query: str, candidates: list[dict], k: int) -> list[dict
     available so the caller can fall back to Gemini.
 
     Enabled by default (LOCAL_RERANKER_ENABLED defaults to '1'). The
-    BGE-reranker-base model is ~400MB resident; the bot container's
-    mem_limit is 12GB (n2-standard-4 / 16GB VM), so there's ample
-    headroom — this was previously gated OFF for an old 2GB e2-small
-    VM with a 1500m cap that no longer exists. Set the env to '0' to
+    BGE-reranker-base model is ~400MB resident and already counted in
+    the bot's ~4GB idle RSS; it fits under the 5500m mem_limit on the
+    live n2-standard-2 / 8GB VM. Was gated OFF on an old 2GB e2-small
+    VM (1500m cap), re-enabled once there was headroom. Set the env to '0' to
     force the Gemini Flash-Lite rerank fallback (e.g. for A/B testing
     or if a future VM downsize reintroduces a memory squeeze)."""
     if os.getenv("LOCAL_RERANKER_ENABLED", "1") != "1":
