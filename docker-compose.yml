@@ -38,6 +38,12 @@ services:
     # — startup load strips stale in_flight_ts and the retry tick
     # resumes the work within 10 s of the new container coming up.
     stop_grace_period: 120s
+    # Vertex ADC fetches the SA token from metadata.google.internal, which
+    # the custom `dns:` below (8.8.8.8) can't resolve — pin the link-local
+    # metadata IP so google-auth works in-container (embed + generation
+    # both failed with "Failed to retrieve metadata.google.internal").
+    extra_hosts:
+      - "metadata.google.internal:169.254.169.254"
     dns:
       - 8.8.8.8
       - 1.1.1.1
@@ -60,6 +66,8 @@ services:
       - bot
     restart: unless-stopped
     mem_limit: 400m
+    extra_hosts:
+      - "metadata.google.internal:169.254.169.254"
     dns:
       - 8.8.8.8
       - 1.1.1.1
@@ -82,6 +90,8 @@ services:
       - bot
     restart: unless-stopped
     mem_limit: 200m
+    extra_hosts:
+      - "metadata.google.internal:169.254.169.254"
     dns:
       - 8.8.8.8
       - 1.1.1.1
