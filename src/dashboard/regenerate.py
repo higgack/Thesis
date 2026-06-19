@@ -278,6 +278,17 @@ header .sub { color: var(--muted); font-size: 13px; }
   transition: 0.1s;
 }
 .qna-card:hover { border-color: var(--border); }
+/* Card-level accent: extend the per-chip tool colours to the whole card's
+   left border so categories (brain/web/patent/…) are scannable at a glance. */
+.qna-card.acc-brain  { border-left: 3px solid var(--tool-brain); }
+.qna-card.acc-paper  { border-left: 3px solid var(--tool-paper); }
+.qna-card.acc-patent { border-left: 3px solid var(--tool-patent); }
+.qna-card.acc-report { border-left: 3px solid var(--tool-report); }
+.qna-card.acc-web    { border-left: 3px solid var(--tool-web); }
+.qna-card.acc-ingest { border-left: 3px solid var(--tool-ingest); }
+/* Keyboard navigation focus ring (j/k). Indigo — distinct from every tool
+   colour so it reads clearly as "this is the keyboard-selected card". */
+.qna-card.kbd-focus  { box-shadow: 0 0 0 2px #6366f1; border-color: #6366f1; }
 .qna-card details { background: transparent; border: 0; padding: 0; }
 .qna-card summary { cursor: pointer; list-style: none; outline: none; }
 .qna-card summary::-webkit-details-marker { display: none; }
@@ -792,6 +803,42 @@ _INDEX_JS = r"""
     });
   });
 
+  // ── Keyboard navigation: j/k move between visible cards, Enter
+  //    expands the focused card inline. Ignored while typing in the
+  //    search box so it never fights the bot-query Enter handler.
+  var kbdIdx = -1;
+  function visibleCards(){
+    return Array.prototype.filter.call(cards, function(c){
+      return !c.classList.contains('hidden') && c.offsetParent !== null;
+    });
+  }
+  function focusCard(list, idx){
+    for (var i = 0; i < list.length; i++) list[i].classList.remove('kbd-focus');
+    if (idx < 0 || idx >= list.length) return;
+    list[idx].classList.add('kbd-focus');
+    list[idx].scrollIntoView({block:'center', behavior:'smooth'});
+  }
+  document.addEventListener('keydown', function(e){
+    var tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var list = visibleCards();
+    if (!list.length) return;
+    if (e.key === 'j'){
+      e.preventDefault();
+      kbdIdx = kbdIdx < 0 ? 0 : Math.min(kbdIdx + 1, list.length - 1);
+      focusCard(list, kbdIdx);
+    } else if (e.key === 'k'){
+      e.preventDefault();
+      kbdIdx = kbdIdx < 0 ? 0 : Math.max(kbdIdx - 1, 0);
+      focusCard(list, kbdIdx);
+    } else if (e.key === 'Enter' && kbdIdx >= 0 && kbdIdx < list.length){
+      e.preventDefault();
+      var d = list[kbdIdx].querySelector('details');
+      if (d) d.open = !d.open;
+    }
+  });
+
   // ── Ask the bot from the search box ──────────────────────────────
   // Typing filters the archive live (apply(), above). Pressing Enter
   // instead SENDS the text to the bot: natural language → a paid Gemini
@@ -1253,12 +1300,14 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
                 )
                 data_text = _card_data_text(it)
                 data_tools = _card_data_tools(it)
+                # Card accent class from the primary (first) tool's bucket.
+                acc = f" acc-{_tool_bucket(tools[0])}" if tools else ""
                 del_btn = (
                     f"<button type='button' class='del-btn' "
                     f"data-id='{int(it['id'])}' title='이 Q&A 삭제'>🗑</button>"
                 )
                 parts.append(
-                    f"<div class='qna-card' data-text=\"{data_text}\" data-tools=\"{data_tools}\">"
+                    f"<div class='qna-card{acc}' data-text=\"{data_text}\" data-tools=\"{data_tools}\">"
                     "<details><summary>"
                     "<div class='row1'>"
                     f"<span>{_esc(_kst_hhmm(it['ts']))}</span>"
