@@ -1,0 +1,29 @@
+# GPU overlay for the bot service. Apply with:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#
+# Requirements on the host:
+#   - GCE instance attached to a CUDA GPU (T4 / L4 / A100).
+#   - NVIDIA driver visible to docker (COS-gpu image handles this;
+#     on Ubuntu install `nvidia-container-toolkit` + restart docker).
+#
+# What this overrides:
+#   - Builds the bot from Dockerfile.gpu (CUDA-12.1 torch wheel).
+#   - Reserves 1 GPU through the device-request DSL so the kernel
+#     namespace mounts /dev/nvidia* into the container.
+#   - Bumps mem_limit to fit the larger torch+cuda working set.
+#
+# Reverts cleanly: stop containers, `up -d` without the -f overlay,
+# and the bot rebuilds CPU-only.
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    mem_limit: 14000m
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

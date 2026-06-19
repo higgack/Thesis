@@ -1,0 +1,678 @@
+# Project notes for Claude
+
+Standing instructions / project-specific facts that need to survive
+context compaction. Anything Claude should ALWAYS remember while
+working on this repo.
+
+## Commit / push gate (CRITICAL — top priority rule, VIOLATED REPEATEDLY)
+
+Do NOT run `git commit`, `git push`, or anything that triggers a
+deploy (touching `pyproject.toml`, `.env`, Dockerfile, anything the
+auto-deploy cron will rebuild) UNLESS the user has used an explicit
+trigger word in their MOST RECENT message:
+  • "커밋", "푸시", "배포", "deploy", "commit", "push", "올려",
+    "내보내", "ship", "release"
+
+**All trigger words are synonyms for the FULL pipeline: commit →
+push to session branch → cherry-pick/merge to deploy branch → push
+deploy branch → VM auto-deploy.** When the user says "커밋", they
+mean the ENTIRE sequence ending with code live on the VM. Do NOT
+stop at any intermediate step (e.g. "pushed to session branch,
+waiting for merge trigger"). The trigger unlocks everything through
+to production. If working on a session branch that differs from the
+deploy branch, cherry-pick to deploy and push deploy too — that IS
+part of "커밋".
+
+Earlier authorisation does NOT carry over to a new request. Every
+new task starts in "edit-only" mode:
+
+1. Make the file changes.
+2. Run pre-push verification (next section).
+3. End the turn with a brief summary of what changed.
+4. Keep the changes UNCOMMITTED on disk and move straight on to the
+   next request — accumulate, do NOT push. Only a trigger word ships.
+   (See "Batch/accumulate mode" right below.)
+
+### Batch/accumulate mode (default working posture — user's explicit ask)
+
+The user works in parallel: they fire several requests in a row, go do
+other things, and want ONE final consolidated report + a single ship at
+the end — NOT a per-task stop-and-wait. Waiting on the agent task by
+task wastes their time. So the default posture is **accumulate, don't
+ship**:
+
+  • Treat successive requests as one growing batch. Do each task's
+    edits, end the turn with a short summary, and pick up the next
+    request — keep stacking changes on disk across tasks.
+  • Do NOT commit / push / deploy after each task. Do NOT close a turn
+    by asking "푸시할까?" every time. Just keep building.
+  • Keep going "as long as it's reasonable" (무리 없는 한). Pause and
+    surface it — don't blindly stack — only when a real obstacle hits:
+    a later request contradicts an earlier one, needs a decision only
+    the user can make, or would force reworking already-stacked edits.
+  • When the user finally gives a trigger word (커밋/푸시/배포/deploy/
+    commit/push/올려/내보내/ship/release), ship EVERYTHING accumulated
+    in ONE pipeline (commit → push session → cherry-pick deploy → push
+    deploy), then give the final consolidated report.
+  • The no-push-without-trigger gate is UNCHANGED. Batching only means
+    "don't nag per task" — never "push on your own". Accumulated work
+    sitting uncommitted is the correct, expected state.
+
+  • **Status footer (every answer):** end each turn with a one-line
+    accumulation indicator so the user always knows how much is waiting
+    to ship without asking:
+      - work pending → `📦 누적: N개 파일` (N = changed files in the
+        working tree; list the names when it's short / helpful)
+      - clean tree   → `📦 worktree 누적: 0개 (현재 깨끗)`
+    Count from `git status --short` (or track the files you just
+    touched). The footer is informational only — showing it is NOT a
+    prompt to push and does NOT need a trigger word.
+
+User's exact ask (verbatim): "요청사항은 묶어서 처리하는걸로. 내가
+명시적으로 커밋, 배포, 푸쉬라는 말없으면 니가 무리가 없는한해서 계속
+쌓아놓는걸로 … 한꺼번에 니가 처리하는동안 내가 다른일하고 너 처리하면
+최종으로 보고." Locking this in.
+
+### MANDATORY pre-commit self-check (paste-the-message rule)
+
+Before running ANY `git commit` or `git push` Bash call, do this
+explicit mental step (no shortcuts):
+
+  a. Re-read the user's most recent message verbatim.
+  b. Scan it for ONE of the trigger words above (Korean or English,
+     exact match, case-insensitive). Trigger words appearing in your
+     OWN earlier output don't count. Trigger words inside a quoted
+     code snippet or pasted log the user shared don't count either.
+  c. If no trigger word: STOP. Present the diff/summary instead.
+     Ask "푸시할까?" only if you genuinely need confirmation —
+     otherwise just end the turn cleanly.
+
+This step exists because the agent has violated the gate multiple
+times in single sessions, always with the same self-justification
+pattern ("the user clearly wants this fixed, so they'd want it
+pushed"). They wouldn't. They want it presented first.
+
+### Forbidden inferences (none of these are trigger words)
+
+  • "fix this bug" ≠ permission to push the fix
+  • "please add X" ≠ permission to deploy X
+  • "thanks, looks good" ≠ permission to push something pending
+  • A prior session's `/ultrareview` or similar ≠ blanket push licence
+  • Test result feedback ("이렇게 나왔어", "여기 결과", screenshot)
+    ≠ permission to push the next fix
+  • Bug report or unexpected output ≠ permission to push patch
+  • Analytical question ("왜 그래?", "이건 데이터 부족인가?")
+    ≠ permission to push
+  • Asking a clarifying question ("Q: should X work?") ≠ permission
+    to push your answer
+  • "이번건은 그냥 넘어가" (let this one slide) about a past unauthorized
+    push ≠ blanket permission for future pushes
+
+### Common violation pattern (the one that keeps happening)
+
+After a multi-step implementation: edits → syntax check → diff
+preview → it feels "done" → the agent reflexively reaches for
+`git commit && git push`. THIS IS WRONG. "Done with edits" ≠
+"ready to push". The default end-of-task state is uncommitted
+changes on disk + a summary message to the user. Pushing without
+trigger overrides their explicit workflow.
+
+If the auto-stop-hook nags about uncommitted changes, that is NOT
+permission to push. It's just a reminder; the gate still requires a
+user trigger word.
+
+The user has lost work and time multiple times because the agent
+pushed unprompted. This rule overrides any in-task assumption about
+workflow speed, "completion feel", or hook nagging.
+
+## Pre-push verification (MANDATORY — block on every push)
+
+User has been burned multiple times by shipped-then-immediately-
+broken code: shell scripts with `\n` literal in double-quoted
+strings, state files that don't persist and trigger infinite
+notification loops, scheduler scripts that fire every minute
+forever, etc. Each incident costs the user real time and trust.
+
+### Automated gate: `bash scripts/preflight.sh`
+
+Run this FIRST on every push — it automates the bulk of the checklist
+below (AST syntax on changed .py, ruff F821 undefined-name detection,
+`_HELP_TEXT` ≤4000 + guide-constant render, handler↔help cross-check).
+It exists because the same bug class kept shipping: a handler using a
+lazy alias (`_html`, `re`) without its `import` line → silent NameError
+PTB swallows (cost: /fix_placeholder_titles + /youtube_restub_rescan
+both shipped broken). `--all` scans every tracked .py. Exit 1 = a
+BLOCKING issue (syntax / help cap) — do NOT push. F821 + handler
+warnings are surfaced for a human glance (lazy-import / forward-ref
+`"ET.Element"` strings are expected false positives). Passing preflight
+does NOT replace the manual trace below for shell/cron/Telegram logic —
+preflight only covers Python-mechanical checks.
+
+Before EVERY git push, walk this checklist:
+
+### 1. Shell scripts (cron / deploy / scheduler)
+- [ ] Trace the script with three concrete value sets:
+      (a) first run on a fresh VM, (b) idempotent re-run, (c) the
+      race-loss case (another script just did the work).
+- [ ] For every notification/side-effect, confirm the path that
+      fires it has a HARD off-switch on no-op runs. If the script
+      runs every minute, what does it send on minute N when
+      nothing changed? Must be NOTHING.
+- [ ] `\n` in double-quoted strings is LITERAL. Use `$'\n'`
+      (ANSI-C quoting), printf `\n`, or actual newline in the
+      source. NEVER ship `"...\n..."` to Telegram / curl / log.
+- [ ] State files (anything written to disk to survive between
+      runs) MUST be in a path that's:
+        • writable from the cron user's context (test with `ls -la`),
+        • NOT cleaned by `git reset --hard`, `git clean -fdx`,
+          docker volume re-create, or a parallel cron job,
+        • atomically written (tmp + rename), atomically read.
+- [ ] `bash -n script.sh` to lint syntax before commit.
+
+### 2. Python
+- [ ] `python3 -c "import ast; ast.parse(open('path').read())"`
+      on every modified .py.
+- [ ] For new code paths, mentally trace one happy path + one
+      error path with concrete values.
+- [ ] Imports for new optional deps wrapped in try/except so a
+      missing module doesn't break the rest of the bot.
+
+### 3. Cron-scheduled code
+- [ ] Pretend the script runs every minute for 24 hours. Does the
+      user get spammed? If yes, that's a bug — fix the dedup
+      condition BEFORE pushing.
+- [ ] Multi-script races: list every cron entry that touches the
+      same resource. Spell out who wins, what the loser does.
+      Loser must NOT send notifications about work it didn't do.
+
+### 4. Telegram notifications
+- [ ] Test the exact message string with substituted values
+      (write it out by hand, look for literal `\n`, `\t`, broken
+      escape sequences).
+- [ ] No new high-frequency notification source. If it could fire
+      more than ~5×/hour under any condition, add a rate limit
+      BEFORE pushing.
+
+### 5. Persistence (JSON / SQLite / state files)
+- [ ] Atomic write (`_atomic_write_json` or tmp + os.replace).
+- [ ] Recovery on read: missing file → empty default, corrupt
+      file → log + .bak fallback (per existing pattern in bot.py).
+- [ ] Path consistency: same path from host cron AND from inside
+      container? Bind-mount root differs (/app/data vs ~/Thesis/
+      data) — make sure your code uses the right one for its
+      runtime context.
+
+### 6. Forbidden patterns (lessons learned)
+- [ ] NEVER add a recurring cron entry. The existing ones (auto_pull.sh
+      every minute, scheduler_watchdog.sh every 5 minutes, @reboot
+      http.server) cover all current use cases. One-off pinned-date
+      reminders (e.g. `0 0 18 5 * curl ... EPO reminder`) are OK when
+      the user explicitly asks for a future-date alert.
+- [ ] NEVER ship a script whose only off-switch is a state file
+      in `./data/` — that dir gets touched by docker, git, etc.
+- [ ] NEVER use `"\n"` in a bash double-quoted string and assume
+      it's a newline.
+- [ ] NEVER tell the user "run this command yourself". See the
+      Automation-first principle below.
+
+### When in doubt → STOP, ASK before pushing.
+A 10-second confirmation costs nothing. A botched push that spams
+the user's Telegram every minute costs trust and forces an
+emergency revert. Always pick the confirmation.
+
+## VM operation instructions — always step-by-step
+
+When the user has to run something on the VM that can't be
+automated yet (interactive editor, one-time setup, recovery
+after a manual config change), the response MUST include:
+
+1. **Exact command** — copy-pasteable, no placeholders the user
+   has to substitute.
+2. **For interactive editors (nano, vim, less, etc.)** — every
+   keystroke spelled out:
+     • how to move the cursor to the right line
+     • the exact shortcut to delete / save / quit
+     • what prompt appears between steps
+3. **Expected output** — the literal text that confirms success.
+   If a step is silent on success, say so explicitly.
+4. **Failure recovery** — what does it look like when it goes
+   wrong? Show the bad output and how to back out (e.g. `Ctrl+C`
+   to abort nano without saving).
+5. **Verification step** — a follow-up command (`crontab -l`,
+   `docker logs`, `git status`, etc.) plus what its output
+   should look like when correct.
+
+User's exact request: '앞으로도 꼭 다른것도 이렇게 알려줘.
+이것도 박아넣어.' Translation: 'always give VM steps in this
+much detail going forward. Lock this in too.'
+
+Anti-patterns to avoid:
+- 'Open the file in an editor and remove the line.' (Which
+  editor? Which keys?)
+- 'Save and exit.' (How? `:wq`? `Ctrl+O`+`Ctrl+X`? `:x`?)
+- 'It should work now.' (How do I verify? What if it didn't?)
+
+## Actionable alerts — always use the ack-button pattern
+
+When the bot needs the user to take a deliberate action (paddle
+release out, ban lifted, queue full, monthly cost over budget,
+etc.), DO NOT use a one-shot Telegram send_message. The user can
+miss it while away from chat, and a single notification has no
+state — you can't tell whether the user saw it.
+
+Always route through `_send_actionable_alert` (defined in
+`src/bot.py`) which:
+  1. Records the alert in `src/store/notify_acks.py` (atomic
+     JSON, persisted across bot restarts).
+  2. Sends the message with an inline `[✅ 확인 / 알람 정지]`
+     button.
+  3. The hourly `_resend_unacked_alerts` job re-fires the same
+     message every 24 hours until the user taps the button.
+  4. `on_ack_callback` (registered on pattern `^ack:`) flips
+     the record and edits the message to "→ ✅ 확인됨, 알람 중단".
+
+Each alert needs a stable `notify_id` (e.g. `paddle_v3.4.0`).
+Duplicate ids are refused so a recurring check (weekly paddle scan,
+hourly cost watchdog, etc.) can call `_send_actionable_alert`
+freely without spamming — the ack store dedups.
+
+DO NOT:
+  - Send actionable alerts via raw `ctx.bot.send_message` — the
+    user will miss it the day they're not on Telegram.
+  - Use a notify_id that includes timestamps (e.g.
+    `paddle_2026-05-15`); the resend pattern depends on the id
+    being identifiable across days.
+  - Skip the hourly job registration; without it the alert never
+    re-fires after the first send.
+
+## Automation-first principle (always default to schedulers)
+
+When the user wants something to happen "from now on" / "every time"
+/ "automatically", the answer is ALWAYS one of:
+  - cron job (system-level, every minute / hour / day)
+  - docker compose service (restart: unless-stopped)
+  - APScheduler hook inside the bot (already used for retry tick,
+    memory cleanup, pending promotion)
+  - git hook / GitHub Action
+
+NEVER answer with "run this command yourself when needed". The user
+has explicitly rejected that posture multiple times. If a task
+involves a recurring action, the default deliverable is the
+scheduler config + the script it runs, not a manual recipe.
+
+Verification checklist before responding:
+  1. Did the user say "from now on / 매번 / 항상 / 자동으로 / 알아서"?
+     → YES means: automation only, no manual fallback offered.
+  2. Is there an existing scheduler that should handle this?
+     → Check `crontab -l` and `docker-compose.yml` mentally first.
+  3. After the work, does the user have to do anything to keep
+     it running?
+     → If yes, that's a bug — either wire it into cron / docker /
+     APScheduler, or explain why automation isn't possible.
+
+## Docker — service vs container names
+
+`docker-compose.yml` services and their auto-generated container names:
+
+| Service name (use with `docker compose ...`) | Container name (use with raw `docker ...`) |
+|---|---|
+| `bot` | `thesis-bot-1` |
+| `forward-listener` | `thesis-forward-listener-1` |
+| `dashboard` | `thesis-dashboard-1` |
+| `telegram-bot-api` (profile: local-api) | `thesis-telegram-bot-api-1` |
+
+Rules:
+- `docker compose <verb> <SERVICE>` — always the bare service name (`bot`,
+  not `bot-1` and not `thesis-bot-1`).
+- `docker logs / rm / exec / inspect <CONTAINER>` — full container name
+  (`thesis-bot-1`).
+
+## Auto-deploy is ALREADY active — do NOT suggest manual git pull
+
+**VM has these cron entries** (verified via `crontab -l`):
+
+```
+* * * * * cd /home/higgack/Thesis && bash scripts/auto_pull.sh
+@reboot cd ~/.summary_archive && nohup python3 -m http.server 8080 --bind 0.0.0.0 > /dev/null 2>&1 &
+*/5 * * * * bash /home/higgack/scheduler_watchdog.sh >> ~/deploy.log 2>&1
+0 0 18 5 * source /home/higgack/Thesis/.env && curl -s ".../sendMessage" -d "text=📬 EPO OPS Phase B 시작..."
+```
+
+`scripts/auto_pull.sh` is the **all-in-one deploy script**. The legacy
+`scripts/auto_deploy.sh` row (from an earlier setup) has been
+consolidated into auto_pull.sh — do NOT re-add it. The script itself
+has an inline comment ("legacy auto_deploy.sh won the race") warning
+that running both creates a race that drops 배포 시작 + 배포 완료
+notifications. Stick to auto_pull.sh alone.
+
+`scripts/auto_pull.sh` (matching this branch's HEAD) does, every minute:
+  1. `git fetch origin <BRANCH>` — checks for new commits.
+  2. If `LOCAL == REMOTE` → silent exit (no spam).
+  3. If new commits → send "🚀 배포 시작: <old> → <new>\n<title>" to
+     TELEGRAM_OWNER_ID via curl.
+  4. `git pull --ff-only` + `docker compose --profile local-api up -d
+     --build --remove-orphans`. On compose failure, force-remove stale
+     containers and retry once.
+  5. `docker inspect thesis-bot-1` → if `running` send "✅ 배포 완료
+     <sha> <title>"; else send "❌ 컨테이너 상태 …" with `docker
+     compose logs --tail=10`.
+
+What this means for the agent:
+- After ANY `git push`, the VM auto-pulls the branch within 60 seconds
+  and recreates the bot/forward-listener/dashboard containers.
+- The user sees "🚀 배포 시작" → "✅ 배포 완료 <sha>" on Telegram for
+  every successful redeploy.
+- **NEVER** tell the user to run `git pull` / `docker compose up -d` /
+  `docker compose restart` themselves. They've heard that 10× already
+  and it wastes their time.
+- **NEVER** add new cron entries (only exception: a one-off reminder
+  pinned to a specific date+month like the EPO line above is OK if
+  explicitly requested). The repeating ones cover all current cases —
+  adding duplicates causes race conditions.
+- After pushing, the correct closing line is: "푸시 완료 (sha). 1분 내
+  자동 배포 + 텔레그램 알림 갈 거야." That's it.
+
+The only exceptions where a manual command IS needed:
+- After editing `.env` on the VM, because `docker compose restart` doesn't
+  re-read env_file. Use `docker compose up -d --force-recreate <service>`.
+  But auto-deploy doesn't touch `.env`, so this only applies to manual
+  edits the user makes.
+- `docker logs` for diagnostics — read-only, fine to suggest.
+
+Common commands the user might run on their own (read-only / observational):
+```bash
+docker logs --tail 20 thesis-bot-1
+docker logs --tail 20 thesis-forward-listener-1
+tail ~/deploy.log
+crontab -l
+```
+
+## Branch / push policy
+
+Development branch: `claude/personal-rag-knowledge-base-sLSvV`.
+All work commits go here. Never push to a different branch without
+explicit permission. PR #1 already exists for this branch.
+
+## Standing behavioural rules
+
+- Review code first; only commit when the user explicitly asks. ("리뷰
+  먼저하고 내가 요청하면 커밋"). See the **Commit / push gate** section
+  at the top — it has authority over every other workflow assumption.
+- Every ingest-pipeline change must apply equally to new ingest AND
+  retry queue — this is the default, never partial.
+- Always update `_HELP_TEXT` in `src/bot.py` when adding / renaming /
+  removing a command, changing user-visible policy, OR changing any
+  model id (SUMMARY/ANSWER/DEEP/EMBED). Help must stay under the
+  4000-char soft-split limit so it renders as a single Telegram message.
+- **Existing commands must stay listed in `_HELP_TEXT`.** Do NOT silently
+  drop a command from the listing to make room for a new one — users
+  reach commands through this surface. When the 4000-char cap is tight,
+  the rule is: **condense sections 9, 10-1, 10-2, 10-3, 11 first**
+  (they're prose, easy to tighten without losing meaning). Touch the
+  command listings only as a last resort, and only after explicit user
+  approval. The user's exact instruction (verbatim): "기존 명령어는
+  지우지말고 만약에 Help 자리가 모자라면 9, 10-1,2,3 번과 11번을 더
+  요약하는 방법을 써." Locking this in.
+- Model identifiers in `_HELP_TEXT` (section 10-1 today) must reflect
+  the actual values in `src/config.py` / `.env` defaults. When you
+  upgrade Pro/Flash/Lite/Embed versions, update the help line at the
+  same commit — don't leave stale model tags users can see.
+- **Help AND every guide constant must move together on any command /
+  feature / policy change.** Five guide surfaces today:
+    • `_HELP_TEXT`            — one-line summary, 4000-char cap
+    • `_LOOKUP_GUIDE_TEXT`    — `/guide_lookup`, all commands detail,
+                                no cap (auto-splits)
+    • `_PATENTS_GUIDE_TEXT`   — `/patents_guide`, patent features only
+    • `_PAPERS_GUIDE_TEXT`    — `/papers_guide`, paper features only
+    • `_WIKI_GUIDE_TEXT`      — `/wiki_guide`, merge mechanism + cost
+  Workflow:
+    1. Change behaviour / add a command / bump a model.
+    2. Update `_HELP_TEXT` (one-line entry under right category).
+    3. Update `_LOOKUP_GUIDE_TEXT` (full prose section).
+    4. If it's a patent change → also `_PATENTS_GUIDE_TEXT`.
+       If it's a paper change → also `_PAPERS_GUIDE_TEXT`.
+       If it's a wiki change → also `_WIKI_GUIDE_TEXT`.
+       (Both/all if it spans multiple, e.g. a new shared filter.)
+  Skipping any of these is a regression — users discover commands
+  through these surfaces. CI gate: the pre-push checklist's syntax
+  pass already runs `len(_HELP_TEXT) ≤ 4000`; add the same render
+  check for the guide constants when extending them substantially.
+- `.env` on the VM contains secrets (Telegram bot token, Google API
+  key, GitHub PAT, dashboard creds). Never echo its contents back in
+  chat. If the user pastes them, warn and recommend rotation
+  immediately.
+
+## /failed_clear and [🗑] semantics — permanent delete, never re-queue
+
+Both the bulk `/failed_clear` command and the per-item `[🗑 #N]`
+button (in `/failed`) and the per-item `[🗑 영구 무시 #N]` button
+(in `/recover_orphans`) do the SAME thing:
+
+1. Remove the row(s) from `_INGEST_FAILED`.
+2. Add the filename to `_IGNORED_FILENAMES` (persisted in
+   `data/ignored_filenames.json`).
+3. Add the URL to `_IGNORED_URLS` (persisted in
+   `data/ignored_urls.json`).
+4. For orphan scan: also delete the file from `data/files/` so the
+   next scan doesn't see it at all.
+
+After any of these actions the item is GONE — it does NOT move to
+pending, retry queue, or any other waiting list. It is permanently
+suppressed across:
+  • orphan scan
+  • URL ingest pipeline
+  • forward-listener relay
+  • re-forwarded telegram messages (text/file dedup)
+
+Only way to revive: edit `data/ignored_filenames.json` /
+`data/ignored_urls.json` by hand, restart the bot. There is no
+"undo /failed_clear" command.
+
+DO NOT explain this as "moved to pending" or "queued for review"
+or any other intermediate state. The user has explicitly confirmed
+this is the intended semantics ("그냥 없어지는거야 아무것으로도
+pending 이나 대기로 남지 않고 꼭 명심해").
+
+## Cost-sensitive defaults (do not change without asking)
+
+- `SUMMARY_MODEL=gemini-2.5-flash-lite`
+- `ANSWER_MODEL=gemini-2.5-flash` (Q&A)
+- `DEEP_MODEL=gemini-2.5-pro` (/deep, large compare)
+- `EMBED_MODEL=gemini-embedding-001`
+- `EMBED_BACKEND=gemini` (BGE-M3 path exists but disabled — earlier
+  CPU bottleneck caused flood-bans, do not re-enable casually)
+- `CHUNK_TOKENS=1000`, `CHUNK_OVERLAP=150`
+- `TOP_K=10`
+- OCR: `OCR_DPI=100`, `OCR_AUTO_CAP=7`, `OCR_SPARSE_THRESHOLD=800`,
+  `OCR_PROBE_PAGES=3`, `OCR_PROBE_MIN_TEXT=300`
+
+## Gemini backend = Vertex AI (migrated 2026-06-19 — NOT AI Studio)
+
+AI Studio's Gemini API (api_key) was EXCLUDED from the GCP Free Trial
+credit as of March 2026, so it 429'd ("prepayment credits depleted")
+once the prepay balance hit ₩0. The bot now runs Gemini through
+**Vertex AI** — same models, bills to Cloud Billing, IS Free-Trial-
+eligible (verified empirically).
+
+- All `genai.Client(...)` go through **`config.make_genai_client()`**.
+  `GEMINI_BACKEND=vertex` → `genai.Client(vertexai=True, project=…,
+  location=…)`; default `aistudio` = old api_key path. Do NOT regress the
+  7 call sites back to inline `genai.Client(api_key=…)`.
+- VM `.env`: `GEMINI_BACKEND=vertex`,
+  `VERTEX_PROJECT=gen-lang-client-0325676393`,
+  `VERTEX_LOCATION=us-central1`. `GOOGLE_API_KEY` is now optional.
+- Auth = **ADC, no key file**: VM service account
+  `722358979517-compute@developer.gserviceaccount.com` has
+  `roles/aiplatform.user`, VM OAuth scope widened to `cloud-platform`.
+  Containers reach the metadata server via **`extra_hosts:
+  metadata.google.internal:169.254.169.254`** (the custom `dns: 8.8.8.8`
+  can't resolve it — without this, embed/gen fail "Failed to retrieve
+  metadata"). Present on bot + forward-listener + dashboard.
+- Models unchanged (flash-lite / flash / pro + gemini-embedding-001
+  3072-dim, verified compatible). Vertex price == AI Studio so cost.db
+  tracking stays accurate. web_search grounding (`types.GoogleSearch()`)
+  works on Vertex (~30s latency is normal, not a hang).
+
+## Billing = new account Free Trial (expires ~mid-Sept 2026)
+
+Billing was moved off the old depleted account to a NEW Google account's
+Free Trial: account `01A847-50A403-149C08` ("결제계정-2"), $300 / 90 days.
+Projects `gen-lang-client-0325676393` (VM/bot/stock) +
+`gen-lang-client-0957886559` (Gemini API) link to it → VM + network +
+Vertex Gemini all draw from this credit ≈ effectively free.
+
+- Hard limit: **$300 OR 90 days, whichever first**; at ~₩10만/mo burn the
+  90-day clock (≈ mid-Sept 2026) wins first. After that: upgrade to
+  pay-as-you-go (real money) or services stop.
+- Credit balance / ₩0-net proof is **Console-only** (billing → 보고서 /
+  크레딧), not exposed via gcloud. Budget alert recommended (NOT yet set).
+- Do NOT chase "make another new account for fresh credits" — Google
+  detects dup card/phone, ToS risk; the user already did old→new once.
+
+## VM right-sizing (2026-06-19)
+
+VM `telegram-bot` is now **e2-standard-2** (2 vCPU / 8 GB; was
+n2-standard-2). Static IP `34.50.23.221` survives stop/start. bot
+`mem_limit: 5500m` + `INGEST_SEM_CAPACITY=4` — sized for the REAL 8 GB,
+not the 16 GB the old code comments assumed. Dashboard index rebuild tick
+= 15s (was 60s) so dashboard deletes drop off faster. The host is SHARED
+with `~/stock` + `~/stock-trade` (separate host-venv telegram bots, also
+on Vertex via `GOOGLE_GENAI_USE_VERTEXAI=true`) — don't let the bot eat
+all RAM. Those stock repos are NOT `higgack/thesis`; their one known gap
+is `bot/gemini_cache_manager.py:137` still passing `api_key=` (401s on
+Vertex) — their own assistant's job, not ours.
+
+## Wiki system — established behaviors (do not regress)
+
+- **Daily budget**: ₩1,000 KRW (`config.WIKI_DAILY_BUDGET_KRW`,
+  default 1000). Single source of truth — do not hardcode fallbacks
+  elsewhere. VM `.env` override was removed; if it reappears the
+  dashboard will show the wrong number.
+- **Batch cadence**: hourly, on the hour (KST). `wiki_batch` job is
+  `run_repeating(interval=3600, first=<next top-of-hour>)`, recomputed
+  each boot so deploys don't drift the phase. The daily ₩ budget still
+  caps spend (resets KST midnight); once hit, the rest of the day's
+  hourly runs no-op. `config.WIKI_BATCH_HOUR` is DEPRECATED (the old
+  nightly schedule) — kept only for .env back-compat, read nowhere.
+- **Digest throttle**: the hourly batch's "what it learned" Telegram
+  digest is gated to once per KST day via `wiki.digest_sent_today()` /
+  `wiki.mark_digest_sent()` (state: `data/wiki_last_digest.json`). Hourly
+  *learning* must never become hourly *pings*. The budget-block and
+  contradiction alerts are exempt — they're already deduped (notify_id /
+  content hash). Fails open: a wiped state file = one extra digest, never
+  a loop.
+- **Structural lint (₩0, no LLM)**: `wiki.lint()` — Karpathy's "Lint"
+  op. Index read + one pass over each page; flags stale single-source
+  topics (1 doc, >30d unupdated → merge/delete candidates), unresolved
+  `## ⚠️ 검토 필요` contradiction markers, and missing pages (index
+  record whose `.md` is gone → integrity). An "orphans = topics no page
+  `[[links]]`" check was tried and dropped: pages cite SOURCE docs via
+  `[[title]]`, rarely cross-link topics, so it flagged ~99% — pure
+  noise. Persists `data/wiki_lint.json`.
+  Refreshed hourly by `_wiki_batch_job` (off the 60s render path) + on
+  demand via `/wiki_lint`. Surfaced on the **dashboard** wiki index as a
+  health panel (`_render_lint_panel` reads the JSON cheaply) and via the
+  Telegram command. NOT an actionable alert (avoid notification spam).
+  NOTE: a vault `log.md` changelog (Karpathy/OKF) was deliberately NOT
+  added — the user browses the wiki via the dashboard, not Obsidian, so
+  git subtree history + the daily digest already cover the timeline.
+- **Deleted topics are permanent**: `data/wiki_deleted_topics.json`
+  is a sorted list of topic names. `wiki.is_topic_deleted(t)` is
+  checked at ALL three entry points — `enqueue()`, `backfill()`,
+  `run_batch()`. A deleted topic never re-enters the system via
+  any path. Only manual JSON edit + restart can revive.
+- **Drain temp budget clears immediately**: `drain_queue()` wraps
+  its loop in `try/finally` with `clear_temp_budget()` in the
+  finally-block (skipped only on `asyncio.CancelledError`). After
+  drain finishes, the user's budget reverts to ₩1,000 instantly —
+  NOT at midnight.
+- **Query-first mode** (`WIKI_QUERY_FIRST=1`, default on): Q&A
+  answers include relevant wiki knowledge before vector-only RAG.
+- **Channel duplicate suppression**: when all results from a
+  channel-forwarded ingest are `status=duplicate`, the bot sends
+  no "♻️ 이미 있음" notification. Suppression only fires when
+  `notify_chat_id != msg.chat_id` (i.e. channel-originated).
+- **SQLite hardening**: ALL connection sites (cost.db, meta.db,
+  qna.db, pending.db, dashboard server) use `timeout=30` and
+  `PRAGMA journal_mode=WAL` to prevent "database is locked" under
+  concurrent access from bot + dashboard + ingest.
+- **Merge strategy: append-only + periodic consolidation**.
+  `_merge_topic` routes by page size:
+    • **New/empty page** → LLM consolidation (initial structure)
+    • **Page < 30K chars** → append dated sections (₩0, no LLM)
+    • **Page ≥ 30K chars** → LLM consolidation (thematic rewrite)
+  Config: `CONSOLIDATION_CHARS=30000`, `MAX_PAGE_CHARS=30000`,
+  `MERGE_MAX_TOKENS=12000`. Consolidation costs ~₩55 but fires
+  only every 1–2 weeks per topic; daily spend stays well under
+  ₩1,000. Do NOT revert to full-rewrite-every-merge — that
+  caused serial lossy compression (236-source "AI" page lost
+  all early information).
+- **Topic split gate**: `_split_multi_topic` only splits on
+  single spaces when ALL fragments are already known topics
+  (index or alias). Prevents 'Applied Materials' → junk.
+  Explicit delimiters (`,;/·`) always split regardless.
+
+## OCR backend — dormant local worker is pre-built but disabled
+
+`src/ingest/ocr_client.py` routes Vision OCR through `OCR_BACKEND`
+(default `gemini` = current behaviour). Two other backends exist but
+are dormant:
+
+- `OCR_BACKEND=local`  — every page goes through the PaddleOCR
+  `ocr-worker` container. Zero per-page API cost, but quality drops
+  ~10-20% on chart-heavy pages.
+- `OCR_BACKEND=hybrid` — PaddleOCR first; if confidence < 0.8 or
+  text < 50 chars, falls back to Gemini Vision for that one page.
+
+To activate:
+```bash
+docker compose --profile ocr-local up -d ocr-worker
+# Edit .env: OCR_BACKEND=hybrid
+docker compose up -d --force-recreate bot
+```
+
+To deactivate:
+```bash
+# Edit .env: OCR_BACKEND=gemini  (or remove the line)
+docker compose stop ocr-worker
+docker compose up -d --force-recreate bot
+```
+
+Worker uses a file queue (`data/ocr_queue/` ↔ `data/ocr_results/`)
+with atomic-write + heartbeat (`data/ocr_worker_heartbeat`). PaddleOCR
+pin: 2.7.3 (proven API). v3.x rewrite exists (3.5.0 current) — see
+`ocr-worker/worker.py` comment for upgrade notes.
+
+## Resume-safety invariants
+
+- All persisted state files use `_atomic_write_json` (tmp → fsync →
+  rename) with `.bak` fallback on load.
+- All live ingest entry points call `_enqueue_with_inflight` BEFORE
+  the pipeline call and `_finish_inflight(done/retry)` after, so a
+  mid-process kill is recoverable.
+- `docker-compose.yml` `stop_grace_period: 120s` gives short
+  ingests time to finish gracefully on deploy.
+
+## Backlog / future considerations (not active work)
+
+Low-priority items parked here so they survive context compaction.
+None of these are authorised for work until the user explicitly asks.
+
+- **Wiki 팩트 테이블 (Phase 2)** — 현재 append+consolidation 방식의
+  다음 단계. 인제스트 시 원자적 사실을 `wiki_facts` SQLite 테이블로
+  추출 `(topic, claim_text, source_doc_id, date, confidence)`. 위키
+  페이지가 팩트 테이블의 렌더링 뷰가 되면 정보 손실 완전 해결 +
+  모순 감지가 DB 쿼리로 가능. 추출 비용: Flash-Lite 문서당 ~₩2.
+  현재 append 방식이 충분히 동작하면 보류; 정보 보존이 부족하다고
+  느껴지면 착수.
+
+- **CodeGraph 시범 적용** — when `src/bot.py` grows to ~15k lines
+  (currently ~10.5k), trial `npx @colbymchenry/codegraph` (local
+  semantic knowledge graph, zero config, no cloud/API key). Goal:
+  cut agent exploration token cost on the single large file (handler
+  lookup, callback patterns, command registration) without reading
+  the whole file each session. Not impactful now — this project's
+  context cost is dominated by `bot.py` size + conversation length,
+  not multi-file exploration, so don't expect the marketed ~59%
+  token reduction. After indexing, compare agent-session token use
+  before/after to decide whether to keep it.

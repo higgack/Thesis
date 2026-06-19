@@ -1,0 +1,16 @@
+app = "substacknoah-secondbrain"
+primary_region = "nrt"
+
+[build]
+
+[env]
+  DATA_DIR = "/data"
+  OBSIDIAN_VAULT_PATH = "/data/vault"
+
+[[mounts]]
+  source = "rag_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
