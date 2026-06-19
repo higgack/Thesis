@@ -12905,7 +12905,14 @@ def main():
         )
         app.job_queue.run_repeating(
             _refresh_dashboard,
-            interval=60,
+            # 15s (was 60s) so a dashboard 휴지통 delete drops off the list
+            # within ~15s instead of lingering up to a minute. The DELETE
+            # removes the qna.db row immediately, but the static index.html
+            # only rebuilds on this tick — server.py can't regenerate inline
+            # (chroma import → OOM in the 200MB dashboard container). regenerate()
+            # is off-thread + lock-guarded + incremental, so 4× more ticks stay
+            # cheap and skip whenever a prior run is still going.
+            interval=15,
             first=20,
             name="refresh_dashboard",
         )
