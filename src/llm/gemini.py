@@ -2,14 +2,13 @@
 import asyncio
 import logging
 
-from google import genai
 from google.genai import types
 
 from .. import config
 from ..store import cost
 
 log = logging.getLogger(__name__)
-_client = genai.Client(api_key=config.GOOGLE_API_KEY)
+_client = config.make_genai_client()
 
 # When a model returns 503 / 429 / RESOURCE_EXHAUSTED, immediately retry on
 # the next entry instead of waiting for the same overloaded model. The

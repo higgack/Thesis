@@ -9,7 +9,34 @@ TELEGRAM_OWNER_ID = int(os.environ["TELEGRAM_OWNER_ID"])
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "").strip() or None
 TELEGRAM_BASE_URL = os.getenv("TELEGRAM_BASE_URL", "").strip() or None
 
-GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
+# Optional now: only used when GEMINI_BACKEND=aistudio (the default).
+# A Vertex deployment authenticates via ADC, so a vertex-only .env
+# without GOOGLE_API_KEY must still import cleanly.
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+
+# ── Gemini transport backend ─────────────────────────────────────────
+# "aistudio" (default) → Google AI Studio Gemini API via api_key.
+# "vertex"             → Vertex AI (aiplatform) via ADC. Same models and
+#   the same generate_content / embed_content surface (the google-genai
+#   SDK abstracts the transport), but Vertex bills to the project's Cloud
+#   Billing account — and, unlike the AI Studio Gemini API, its usage is
+#   eligible for the GCP Free Trial credit. Flip via .env; no code change.
+GEMINI_BACKEND = os.getenv("GEMINI_BACKEND", "aistudio").strip().lower()
+VERTEX_PROJECT = os.getenv("VERTEX_PROJECT", "").strip()
+VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1").strip()
+
+
+def make_genai_client():
+    """The single google-genai client factory every module uses instead
+    of genai.Client(...). Centralised so the AI Studio → Vertex switch is
+    one env var, not seven edits. Lazy import keeps google-genai off the
+    import path for callers that only need config constants."""
+    from google import genai
+    if GEMINI_BACKEND == "vertex":
+        return genai.Client(
+            vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION
+        )
+    return genai.Client(api_key=GOOGLE_API_KEY)
 
 OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH", "").strip() or None
 OBSIDIAN_GIT_REMOTE = os.getenv("OBSIDIAN_GIT_REMOTE", "").strip() or None

@@ -13,14 +13,13 @@ import logging
 import os
 import threading
 
-from google import genai
 from google.genai import types
 
 from .. import config
 from ..store import cost
 
 log = logging.getLogger(__name__)
-_client = genai.Client(api_key=config.GOOGLE_API_KEY)
+_client = config.make_genai_client()
 
 EMBED_BACKEND = os.getenv("EMBED_BACKEND", "gemini").lower()
 

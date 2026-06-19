@@ -1003,13 +1003,12 @@ def _ocr_image(img_bytes: bytes, mime_type: str = "image/jpeg") -> str:
     standalone photos (screenshots, table captures, news clippings).
     Cost is ~$0.0003 per image on gemini-2.5-flash-lite."""
     try:
-        from google import genai
         from google.genai import types
         from .. import config
         from ..store import cost as _cost
     except Exception:
         return ""
-    client = genai.Client(api_key=config.GOOGLE_API_KEY)
+    client = config.make_genai_client()
     prompt = (
         "이 이미지에 포함된 모든 텍스트를 그대로 추출하세요. "
         "표는 마크다운 표 형식으로 변환하고, 단락/제목 구조를 유지하세요. "
@@ -1042,13 +1041,12 @@ def _transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
     files. Cost ~₩50 per audio hour on gemini-2.5-flash-lite. Inline byte
     limit is ~20MB; longer recordings should be split client-side."""
     try:
-        from google import genai
         from google.genai import types
         from .. import config
         from ..store import cost as _cost
     except Exception:
         return ""
-    client = genai.Client(api_key=config.GOOGLE_API_KEY)
+    client = config.make_genai_client()
     prompt = (
         "이 오디오를 그대로 받아쓰기 하세요. 화자가 여럿이면 단락으로 "
         "구분하고, 들리는 언어 그대로(한국어/영어 등) 출력하세요. "
