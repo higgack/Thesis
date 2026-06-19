@@ -7,7 +7,6 @@ import logging
 import re
 from urllib.parse import urlparse
 
-from google import genai
 from google.genai import types
 
 from .. import config
@@ -18,7 +17,7 @@ from . import (retrieve, papersearch, patentsearch,
 
 log = logging.getLogger(__name__)
 
-_search_client = genai.Client(api_key=config.GOOGLE_API_KEY)
+_search_client = config.make_genai_client()
 
 # compare_papers quality filters — drop noise that inflates Pro
 # synthesis cost without adding signal. The earlier behaviour pulled

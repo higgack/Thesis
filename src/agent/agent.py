@@ -9,7 +9,6 @@ import re
 import time
 import uuid
 
-from google import genai
 from google.genai import types
 
 from .. import config
@@ -52,7 +51,7 @@ def _strip_fake_citations(text: str) -> str:
 
 log = logging.getLogger(__name__)
 
-_client = genai.Client(api_key=config.GOOGLE_API_KEY)
+_client = config.make_genai_client()
 
 MAX_STEPS = 4
 PRO_THRESHOLD = 20

@@ -134,7 +134,6 @@ def _gemini_ocr_sync(img_bytes: bytes) -> str:
     re-raise so one bad page doesn't kill the whole batch). Identical
     behaviour to the pre-refactor inline call in loaders.py."""
     try:
-        from google import genai
         from google.genai import types
         from ..store import cost as _cost
     except Exception:
@@ -147,7 +146,7 @@ def _gemini_ocr_sync(img_bytes: bytes) -> str:
         "텍스트만 출력하세요."
     )
     try:
-        client = genai.Client(api_key=config.GOOGLE_API_KEY)
+        client = config.make_genai_client()
         resp = client.models.generate_content(
             model=config.SUMMARY_MODEL,
             contents=[
