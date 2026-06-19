@@ -486,6 +486,62 @@ pending 이나 대기로 남지 않고 꼭 명심해").
 - OCR: `OCR_DPI=100`, `OCR_AUTO_CAP=7`, `OCR_SPARSE_THRESHOLD=800`,
   `OCR_PROBE_PAGES=3`, `OCR_PROBE_MIN_TEXT=300`
 
+## Gemini backend = Vertex AI (migrated 2026-06-19 — NOT AI Studio)
+
+AI Studio's Gemini API (api_key) was EXCLUDED from the GCP Free Trial
+credit as of March 2026, so it 429'd ("prepayment credits depleted")
+once the prepay balance hit ₩0. The bot now runs Gemini through
+**Vertex AI** — same models, bills to Cloud Billing, IS Free-Trial-
+eligible (verified empirically).
+
+- All `genai.Client(...)` go through **`config.make_genai_client()`**.
+  `GEMINI_BACKEND=vertex` → `genai.Client(vertexai=True, project=…,
+  location=…)`; default `aistudio` = old api_key path. Do NOT regress the
+  7 call sites back to inline `genai.Client(api_key=…)`.
+- VM `.env`: `GEMINI_BACKEND=vertex`,
+  `VERTEX_PROJECT=gen-lang-client-0325676393`,
+  `VERTEX_LOCATION=us-central1`. `GOOGLE_API_KEY` is now optional.
+- Auth = **ADC, no key file**: VM service account
+  `722358979517-compute@developer.gserviceaccount.com` has
+  `roles/aiplatform.user`, VM OAuth scope widened to `cloud-platform`.
+  Containers reach the metadata server via **`extra_hosts:
+  metadata.google.internal:169.254.169.254`** (the custom `dns: 8.8.8.8`
+  can't resolve it — without this, embed/gen fail "Failed to retrieve
+  metadata"). Present on bot + forward-listener + dashboard.
+- Models unchanged (flash-lite / flash / pro + gemini-embedding-001
+  3072-dim, verified compatible). Vertex price == AI Studio so cost.db
+  tracking stays accurate. web_search grounding (`types.GoogleSearch()`)
+  works on Vertex (~30s latency is normal, not a hang).
+
+## Billing = new account Free Trial (expires ~mid-Sept 2026)
+
+Billing was moved off the old depleted account to a NEW Google account's
+Free Trial: account `01A847-50A403-149C08` ("결제계정-2"), $300 / 90 days.
+Projects `gen-lang-client-0325676393` (VM/bot/stock) +
+`gen-lang-client-0957886559` (Gemini API) link to it → VM + network +
+Vertex Gemini all draw from this credit ≈ effectively free.
+
+- Hard limit: **$300 OR 90 days, whichever first**; at ~₩10만/mo burn the
+  90-day clock (≈ mid-Sept 2026) wins first. After that: upgrade to
+  pay-as-you-go (real money) or services stop.
+- Credit balance / ₩0-net proof is **Console-only** (billing → 보고서 /
+  크레딧), not exposed via gcloud. Budget alert recommended (NOT yet set).
+- Do NOT chase "make another new account for fresh credits" — Google
+  detects dup card/phone, ToS risk; the user already did old→new once.
+
+## VM right-sizing (2026-06-19)
+
+VM `telegram-bot` is now **e2-standard-2** (2 vCPU / 8 GB; was
+n2-standard-2). Static IP `34.50.23.221` survives stop/start. bot
+`mem_limit: 5500m` + `INGEST_SEM_CAPACITY=4` — sized for the REAL 8 GB,
+not the 16 GB the old code comments assumed. Dashboard index rebuild tick
+= 15s (was 60s) so dashboard deletes drop off faster. The host is SHARED
+with `~/stock` + `~/stock-trade` (separate host-venv telegram bots, also
+on Vertex via `GOOGLE_GENAI_USE_VERTEXAI=true`) — don't let the bot eat
+all RAM. Those stock repos are NOT `higgack/thesis`; their one known gap
+is `bot/gemini_cache_manager.py:137` still passing `api_key=` (401s on
+Vertex) — their own assistant's job, not ours.
+
 ## Wiki system — established behaviors (do not regress)
 
 - **Daily budget**: ₩1,000 KRW (`config.WIKI_DAILY_BUDGET_KRW`,
