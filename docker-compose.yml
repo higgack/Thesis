@@ -20,11 +20,16 @@ services:
       - ./data:/app/data
       - tg-bot-api-data:/var/lib/telegram-bot-api
     restart: unless-stopped
-    # Sized for c3-standard-4 (16 GB VM). Leaves ~4 GB for OS +
-    # dashboard + forward-listener + headroom. Bumped from 6000m
-    # alongside Semaphore(4→8) so 8 parallel ingests can hold their
-    # chunks + BGE-M3 weights without tripping the cleanup guards.
-    mem_limit: 12000m
+    # Sized for the LIVE VM = n2-standard-2 (2 vCPU, 7.8 GB RAM), NOT
+    # the 16 GB machine the old comment assumed. Bot idles ~4 GB; a
+    # 5500m cap leaves ~2.3 GB for the OS, telegram-bot-api, listener,
+    # dashboard AND the co-tenant `stock` project that shares this host.
+    # The previous 12000m exceeded physical RAM, so _MEM_REFUSE_THRESHOLD
+    # computed against ~7.8 GB and let RSS climb until the kernel
+    # OOM-killer fired on a random process (incl. stock). 5500m makes the
+    # bot refuse new agent/ingest runs (retry queue intact) well before
+    # the box is exhausted. Paired with INGEST_SEM_CAPACITY=4 (bot.py).
+    mem_limit: 5500m
     # Default 10s SIGTERM→SIGKILL is too short for any non-trivial
     # ingest. 120s lets short jobs (URLs, text, photos, small PDFs)
     # finish cleanly during deploys; longer jobs are still safe
