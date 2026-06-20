@@ -1459,7 +1459,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【9. 답변 품질】</b> 시점 필수 · brain 재검색 · web [도메인]·인용 [N] · 숫자 audit · _verify
 
-<b>【10. 운영】</b> VM e2-std-2(8GB) bot 5.5GB · Sem 4 · 영속(atomic+.bak) · 메모리 5분 · 질문＞학습
+<b>【10. 운영】</b> 영속(atomic+.bak) · 메모리 5분 · 질문＞학습
 
 <b>【10-1. 모델】</b> Embed gemini-embedding-001 · Lite flash-lite · 답변 flash · /deep pro · 캐시 1h
 
