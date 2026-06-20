@@ -32,8 +32,8 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
-# Ingest concurrency cap. Sized for the live VM = n2-standard-2 (2 vCPU,
-# 7.8 GB) + 5500m bot mem_limit. 4 parallel ingests keep the chunk +
+# Ingest concurrency cap. Sized for the live VM = e2-standard-2 (2 vCPU,
+# 8 GB) + 5500m bot mem_limit. 4 parallel ingests keep the chunk +
 # reranker working set under the cap, so a multi-file burst refuses
 # gracefully (retry queue) instead of OOM-killing the co-tenant `stock`
 # project that shares this host. Was 8 — tuned for a 16 GB VM that never
@@ -55,7 +55,7 @@ _INTERACTIVE_INFLIGHT = 0
 _INTERACTIVE_MAX_DEFER_SEC = float(os.getenv("INGEST_DEFER_SEC", "300"))
 # How many queued retries to drain per tick + how often we tick. Batch
 # is an upper bound on tasks spawned per tick; actual concurrency is
-# bounded by _INGEST_SEM (4 on the live n2-standard-2 / 8 GB VM), shared
+# bounded by _INGEST_SEM (4 on the live e2-standard-2 / 8 GB VM), shared
 # with live ingests. Extras just block on the semaphore acquire, so a
 # larger batch only speeds slot refill — it never overloads the box.
 # Live ingests still get priority because the semaphore is shared.
@@ -1431,35 +1431,35 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup · /wiki_guide
 
-<b>【2. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
+<b>【2. 대시보드】</b> Basic Auth(.env) · 60s 갱신·다크 19~07
+📊 Q&amp;A http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html
+📚 Wiki http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/index.html
 
-<b>【3. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS · ⚖️ patents EPO · 🌐 web · 📥 ingest · 한국어번역
+<b>【3. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【3-1. 회사 분석】</b> "회사명+실적/매출" → 본문 + 신사업(·합의 N건) + 📌 실적 표(A./F.·YoY·QoQ) + xychart + 분석가 가이던스 + brain/web 분리. 숫자 audit 자동.
+<b>【4. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS · ⚖️ patents EPO · 🌐 web · 📥 ingest · 한국어번역
 
-<b>【4. 자연어 트리거】</b>
+<b>【4-1. 회사 분석】</b> "회사명+실적/매출" → 본문 + 신사업(·합의 N건) + 📌 실적 표(A./F.·YoY·QoQ) + xychart + 분석가 가이던스 + brain/web 분리. 숫자 audit 자동.
+
+<b>【5. 자연어 트리거】</b>
 🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL"
 
-<b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 전송
+<b>【6. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 전송
 • PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · 캡션≥80자 OCR skip · [OCR] 강제 · 음성=Gemini STT · YouTube=자막→Jina · <b>.txt/.md/.csv 학습 제외</b>
 차단: LinkedIn/FB/IG · Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
-<b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
+<b>【7. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
 [Noah 디지스트] 📋 TG 원문 fetch / 📰 Substack URL relay / 그 외 drop
 [PLAIN] 텍스트만: Fundeasyearnings / 전체: aicorporateanalysisdeepdive
 [URL전용] benineb9·getfeed: naver/youtube/t.me 자동, 그외=알림
 [제목필터] insidertracking: "미국 레딧 게시물 분석"만 forward
 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
 
-<b>【7. 메타데이터】</b> Flash-Lite 요약+메타 1콜 · 🏢회사 🏷태그 📅YYYY.MM · 📊브로커리지·애널리스트(리포트 자동 추출, 회사 분석에 활용)
-
-<b>【8. 대시보드】</b> Basic Auth(.env) · 60s 갱신·다크 19~07
-📊 Q&amp;A http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html
-📚 Wiki http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/index.html
+<b>【8. 메타데이터】</b> Flash-Lite 요약+메타 1콜 · 🏢회사 🏷태그 📅YYYY.MM · 📊브로커리지·애널리스트(리포트 자동 추출, 회사 분석에 활용)
 
 <b>【9. 답변 품질】</b> 시점 필수 · brain 재검색 · web [도메인]·인용 [N] · 숫자 audit · _verify
 
-<b>【10. 운영】</b> VM n2-std-4 bot 12GB · Sem 8+batch 8 · 영속(atomic+.bak) · 메모리 5분 · 질문＞학습
+<b>【10. 운영】</b> VM e2-std-2(8GB) bot 5.5GB · Sem 4 · 영속(atomic+.bak) · 메모리 5분 · 질문＞학습
 
 <b>【10-1. 모델】</b> Embed gemini-embedding-001 · Lite flash-lite · 답변 flash · /deep pro · 캐시 1h
 
