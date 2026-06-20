@@ -1388,7 +1388,11 @@ async def _await_interactive_idle(
 
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
-<b>【1. 명령어】</b>
+<b>【1. 대시보드】</b> Basic Auth(.env) · 60s 갱신·다크 19~07
+📊 Q&amp;A http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html
+📚 Wiki http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/index.html
+
+<b>【2. 명령어】</b>
 
 📋 <b>조회</b>
   /find &lt;kw&gt; [N=50](헤더 학습/발행/청크수) · /find_all &lt;kw&gt;(최대 500)
@@ -1430,10 +1434,6 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
         /kr_outcomes · /kr_govt_reports · /kr_agency_rnd · /kr_rnd_issues
 
 ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup · /wiki_guide
-
-<b>【2. 대시보드】</b> Basic Auth(.env) · 60s 갱신·다크 19~07
-📊 Q&amp;A http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html
-📚 Wiki http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/index.html
 
 <b>【3. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
