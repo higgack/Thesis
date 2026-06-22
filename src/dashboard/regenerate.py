@@ -1825,6 +1825,13 @@ def regenerate() -> None:
         except Exception:
             log.exception("dashboard wiki render failed (non-fatal)")
         try:
+            from .notes_render import render_notes
+            note_pages = render_notes(token)
+            if note_pages:
+                log.info("dashboard: wrote %d note page(s)", note_pages)
+        except Exception:
+            log.exception("dashboard notes render failed (non-fatal)")
+        try:
             import sys
             bot_mod = sys.modules.get("src.bot")
             if bot_mod is None:

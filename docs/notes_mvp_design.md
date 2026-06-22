@@ -146,5 +146,32 @@ reviews(                       -- 복습 이력 (통계/주기조정용)
   합성 + 복습질문 → vault + notes.db(SRS) → 대시보드 노트/복습 큐.
 - **Phase 1 (파싱 고도화, 필요 시만)**: 디지털 PDF 구조가 부족하면
   `opendataloader-pdf` A/B 투입(회사리포트 A/B와 동일 방식).
-- **Phase 2 (고급 체화)**: 인터리빙·약점 토픽 집중·복습 통계·수식 OCR
-  (스캔 자료 생기면 클라우드 Vision fallback).
+- **Phase 2 (고급 체화 — 지식그래프)**: 핵심은 **노트 간 지식그래프**.
+  내재화 = 연결 만들기이므로, "🔗 관련 노트"를 단순 링크에서 그래프로
+  키운다. 그 외 인터리빙·약점 토픽 집중·복습 통계·수식 OCR(스캔 자료
+  생기면 클라우드 Vision fallback).
+
+### Phase 2 채택안: LightRAG + Gemini 지식그래프 (확정)
+
+RAG-Anything(HKUDS) 검토 결과 **통째 도입은 회피**한다: 주 파서 MinerU =
+GPU 성향(8GB CPU VM 부적합), 기본 LLM = OpenAI(우리는 Vertex/Gemini),
+LibreOffice 등 무거운 의존성 → 리스크·비용 과다. **대신 그 베이스인
+LightRAG만 채택**한다.
+
+설계:
+1. **파싱은 우리 로더 재사용**(+필요시 opendataloader, CPU). MinerU/GPU
+   안 씀 → 새 인프라 0.
+2. LightRAG의 `llm_model_func`·`embedding_func`를 **`config.make_genai_client()`
+   (Vertex/Gemini)에 배선** → 비용은 cost.db에 그대로 집계, OpenAI 미사용.
+3. 합성된 노트 텍스트 → LightRAG **엔티티·관계 추출 → 노트 간 그래프**.
+   그래프 저장은 notes.db 옆에 분리 보관(위키 무간섭).
+4. 대시보드: "🔗 관련 노트"를 **그래프 뷰**로 — 한 개념에서 연결된
+   노트로 타고 들어가며 되새김질.
+
+비용: 노트당 합성 ₩18 + KG 추출 ₩10~30 ≈ **₩30~50/노트**. 개인 학습
+저빈도라 월 ₩수백, 정액 인프라 대비 무시 가능. **GPU/OpenAI/MinerU =
+새 비용·리스크라 도입 금지**(어제 egress 비용 교훈 반영: 새 인프라를
+얹지 않는다).
+
+착수 조건: Phase 0가 실제로 체화에 먹히는 게 검증된 뒤. 그 전엔
+프레임워크 도입 = 과설계.

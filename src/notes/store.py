@@ -234,11 +234,22 @@ def due_notes(on: date | None = None) -> list[dict]:
     cutoff = (on or _today()).isoformat()
     with _conn() as c:
         rows = c.execute(
-            "SELECT n.id,n.title,n.source_type,s.next_due,s.reps,s.lapses "
+            "SELECT n.rowid AS rowid,n.id,n.title,n.source_type,"
+            "s.next_due,s.reps,s.lapses "
             "FROM notes n JOIN note_srs s ON s.note_id=n.id "
             "WHERE s.next_due<=? ORDER BY s.next_due ASC",
             (cutoff,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def id_for_rowid(rowid: int) -> str | None:
+    """Resolve a note's stable slug id from its integer rowid — used to
+    keep Telegram callback_data short (slug ids can be long/multibyte)."""
+    init_db()
+    with _conn() as c:
+        row = c.execute("SELECT id FROM notes WHERE rowid=?",
+                        (int(rowid),)).fetchone()
+    return row["id"] if row else None
 
 
 def stats() -> dict:
