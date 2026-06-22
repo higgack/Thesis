@@ -1,0 +1,426 @@
+--- page 1 ---
+Page 1 
+Determinants of Technological Breadth and Strategic Orientation 
+in Hybrid Bonding Patents: A Count and Discrete-Choice Analysis 
+Technology Management Quantitative Analysis — Final Report 
+HyungKyu Lee (이형규) · 2025155651 
+ 
+Abstract 
+Hybrid bonding has become the bottleneck process for sub-micron interconnect in HBM and 3D logic. 
+The technology itself has been studied closely, but in-depth analysis of its patents remains scarce. This 
+paper treats the patent record as data for econometric estimation. Working from 928 hybrid-bonding 
+applications (5,277 application–CPC records) drawn from EPO PATSTAT, I model two patent-level 
+outcomes. The first is technological breadth, the count of distinct CPC subclasses a patent spans; the 
+second is strategic orientation, whether a patent reaches into front-end fabrication (CPC H01L21) rather 
+than staying at the bonding and interconnect level (H01L24). Because breadth is a count, I begin with 
+OLS, show through diagnostics that it is mis-specified, and move to Poisson and then negative binomial. 
+The OLS residuals are heteroskedastic (Breusch–Pagan p < 0.001) and the Poisson is overdispersed (ln-
+alpha = −1.316, alpha ≈ 0.27, p < 0.001), so the negative binomial is the preferred model and has the 
+lowest AIC (4883 against 5477 for Poisson). Breadth widens with filing year and is about 21% narrower 
+for filings at the Chinese office than at the U.S. office. Strategic orientation is then estimated with binary 
+and multinomial logit: broader patents are far more likely to claim fabrication-process technology, the 
+process share has fallen over time, and Chinese-office filings are markedly more process-oriented while 
+Japanese-office filings almost never take a process-only form. 
+Keywords: hybrid bonding; patent analysis; technological breadth; negative binomial regression; 
+multinomial logit 
+1. Introduction 
+The slowdown of dimensional scaling has pushed the semiconductor industry to look for performance 
+gains after the transistor is fabricated rather than only inside it. Heterogeneous integration — 
+partitioning a die into chiplets and reassembling them in the package — is the response, and its success 
+depends on how densely and cleanly those chiplets can be wired together. Hybrid bonding, which joins 
+copper pads and the surrounding oxide directly without solder bumps, pushes interconnect pitch below 
+one micron, and it is now drawing attention as a general-purpose technology (GPT) for the future of 
+semiconductors — reaching across logic, memory, CMOS image sensors, power devices such as GaN 
+and SiC, and even MicroLED. 
+This study focuses on two attributes of hybrid bonding patents. One is how broad a patent is — the 
+number of distinct technology classes it touches, which proxies for the scope it seeks to protect. The 
+other is where it sits in the value chain — whether it claims front-end fabrication or stays at the bonding 
+and assembly level. The first is a count; the second is a category. 
+In substance, the question is whether hybrid bonding, as a back-end process that now reaches into front-
+end territory, is genuinely blurring the line between front- and back-end as the industry evolves. The 
+study answers three questions with models suited to each outcome. Does breadth widen over time and 
+differ by filing jurisdiction? Does the probability that a patent claims fabrication-process technology 
+
+--- page 2 ---
+Page 2 
+depend on its breadth, filing year, and jurisdiction? And how is the three-way strategy type — assembly-
+only, integrated, or process-only — distributed across jurisdictions? The contribution is not a new index 
+but a demonstration that scope and strategic position can be estimated, with the model chosen to fit the 
+statistical nature of each outcome rather than forced into a single linear specification. 
+ 
+Figure 1. Hybrid bonding technology ecosystem: process, structure, and applications (products). 
+2. Data and Variables 
+In the PATSTAT data, each row pairs one application with one CPC classification symbol, giving 5,277 
+rows for 928 unique applications filed between 1968 and 2024. Every symbol sits under CPC class 
+H01L (semiconductor devices), and within it the records divide between H01L21, which covers 
+fabrication and processing, and H01L24, which covers bonding and interconnect. 
+These two areas capture the character of the technology. In practice the process divides into wafer-to-
+wafer (W2W) bonding, which joins whole wafers, and wafer-to-die (W2D) bonding, which attaches 
+individual dies to a wafer; fabrication (H01L21) and bonding/interconnect (H01L24) are realized 
+together. After collapsing to the application level I constructed the variables in Table 1. 
+Table 1. Variable definitions and construction. 
+Variable 
+Definition 
+Type 
+breadth 
+Number of distinct CPC subclass symbols on the 
+application (technological scope) 
+Count, 1–21 
+has_process 
+1 if the application carries any H01L21 (fabrication-
+process) symbol 
+Binary 
+tech_cat 
+Assembly-only (H01L24 only) / Integrated (both) / 
+Process-only (H01L21 only) 
+Categorical, 3 
+ccode 
+Filing office: US, CN, KR, TW, JP, EP, WO, Other (US = 
+reference) 
+Categorical, 8 
+
+--- page 3 ---
+Page 3 
+yc 
+Filing year measured as years since the first filing in the 
+sample 
+Continuous 
+Breadth averages 5.69 distinct subclasses (s.d. 4.07, range 1–21). By volume the U.S. office leads with 
+382 applications, ahead of China (175), the PCT/WO route (113), the EPO (83), Taiwan (75), Korea 
+(58) and Japan (26). By strategy, 425 applications are integrated, 338 assembly-only and 165 process-
+only; in all, 63.6% carry at least one fabrication-process symbol. Figure 2 shows the filing-year profile. 
+Activity is negligible before 2010 and climbs steeply through the late 2010s, peaking around 2022; the 
+fall in 2023–24 reflects the lag before recent applications are fully published rather than a real decline. 
+The steep recent build-up can be read as a signal that the technology is approaching volume production. 
+ 
+Figure 2. Hybrid bonding applications by filing year. The 2023–24 dip is a publication-lag artifact. 
+One caveat needs stating up front. The jurisdiction variable is the office where the application was filed, 
+not the nationality of the applicant, and WO and EP are international and regional routes rather than 
+countries. Differences across this variable therefore reflect filing and protection strategy as much as 
+where the invention originated, and I read them in that light throughout. 
+3. Empirical Strategy 
+The baseline regresses breadth on the filing-year trend and a full set of jurisdiction dummies with the 
+U.S. office as the reference. I then test the OLS residuals for heteroskedasticity (Breusch–Pagan) and 
+inspect the residual-versus-fitted plot, fit a Poisson model, and check for overdispersion through the 
+estimated dispersion and the likelihood-ratio test on the negative binomial's over-dispersion parameter. 
+Coefficients in the preferred count model are read as incidence-rate ratios. 
+Strategic orientation is modeled as discrete choice. A binary logit predicts has process from breadth, 
+the year trend and jurisdiction, reported as odds ratios and assessed with the area under the ROC curve. 
+A multinomial logit then takes the three-way strategy type with assembly-only as the base category, 
+reported as relative-risk ratios, so that the integrated and process-only branches can be read against the 
+
+--- page 4 ---
+Page 4 
+same reference. 
+4. Results 
+4.1 Technological breadth 
+Table 2 collects the breadth models. In OLS the year trend is positive and significant (0.070, p < 0.01): 
+patents have grown broader as the field matured, though the model explains little of the variation (R² = 
+0.033). The residual diagnostics are the point of interest. Breusch–Pagan rejects constant variance (p < 
+0.001), and the residual-versus-fitted plot in Figure 3 shows the diagonal striping and fan shape that a 
+count outcome produces — variance rising with the fitted value and residuals bounded below. Robust 
+standard errors change little, which tells us the problem is the functional form, not just the errors. 
+Table 2. Determinants of technological breadth. US office is the reference; standard errors in parentheses; * 
+p<0.10, ** p<0.05, *** p<0.01. 
+ 
+OLS 
+OLS (robust) 
+Poisson 
+Neg. Binomial 
+Filing year 
+0.070*** 
+0.070*** 
+0.013*** 
+0.014*** 
+ 
+(0.019) 
+(0.020) 
+(0.002) 
+(0.003) 
+China (CN) 
+−1.321*** 
+−1.321*** 
+−0.241*** 
+−0.242*** 
+ 
+(0.370) 
+(0.330) 
+(0.040) 
+(0.062) 
+Korea (KR) 
+0.089 
+0.089 
+0.017 
+0.017 
+ 
+(0.570) 
+(0.630) 
+(0.059) 
+(0.094) 
+Taiwan (TW) 
+0.102 
+0.102 
+0.016 
+0.021 
+ 
+(0.510) 
+(0.544) 
+(0.051) 
+(0.083) 
+Japan (JP) 
+1.737** 
+1.737 
+0.280*** 
+0.239* 
+ 
+(0.845) 
+(1.328) 
+(0.080) 
+(0.133) 
+EPO (EP) 
+−0.032 
+−0.032 
+−0.005 
+−0.007 
+ 
+(0.487) 
+(0.453) 
+(0.050) 
+(0.080) 
+PCT (WO) 
+−1.071** 
+−1.071*** 
+−0.193*** 
+−0.191*** 
+ 
+(0.432) 
+(0.399) 
+(0.047) 
+(0.073) 
+Other 
+0.124 
+0.124 
+0.024 
+0.056 
+ 
+(1.029) 
+(1.556) 
+(0.106) 
+(0.171) 
+Constant 
+2.506*** 
+2.506** 
+1.143*** 
+1.069*** 
+ 
+(0.944) 
+(1.046) 
+(0.107) 
+(0.175) 
+ln(alpha) 
+ 
+ 
+ 
+−1.316*** 
+ 
+ 
+ 
+ 
+(0.076) 
+N 
+928 
+928 
+928 
+928 
+R-sq. 
+0.033 
+0.033 
+— 
+— 
+AIC 
+5224.9 
+5224.9 
+5477.2 
+4883.0 
+
+--- page 5 ---
+Page 5 
+ 
+Figure 3. OLS residuals versus fitted values. The banding and funnel shape signal a count process and 
+heteroskedasticity. 
+Moving to Poisson and then negative binomial confirms this. The negative binomial's over-dispersion 
+parameter is large and precisely estimated (ln-alpha = −1.316, alpha ≈ 0.27), the likelihood-ratio test 
+against Poisson is decisive, and AIC drops from 5477 under Poisson to 4883 under negative binomial. 
+I therefore read the negative binomial as the working model. The year trend survives (IRR ≈ 1.014 per 
+year). Against the U.S. baseline, filings at the Chinese office are about 21% narrower (IRR 0.785, p < 
+0.01) and PCT/WO filings about 17% narrower (IRR 0.826, p < 0.01), while Japanese-office filings are 
+the broadest in the sample (IRR ≈ 1.27, p < 0.10). Korea, Taiwan and the EPO do not separate from the 
+U.S. baseline. Figure 4 plots the predicted breadth by jurisdiction that the model implies. 
+
+--- page 6 ---
+Page 6 
+ 
+Figure 4. Predicted technological breadth by filing jurisdiction (negative binomial, other covariates at their 
+means). 
+4.2 Strategic orientation 
+Table 3 reports the binary logit for whether a patent claims fabrication-process technology. Breadth is 
+the dominant predictor: each additional CPC subclass raises the odds of a process claim by about 27% 
+(OR 1.267, p < 0.01), which fits the idea that patents reaching back into front-end steps are also the 
+ones that span more classes. The year trend runs the other way (OR 0.946 per year, p < 0.01) — the 
+share of process-oriented filings has fallen as bonding- and assembly-level invention has taken over the 
+field. Among jurisdictions only the Chinese office stands out, at 65% higher odds of a process claim 
+than the U.S. office (OR 1.650, p < 0.05). The model discriminates acceptably, with an area under the 
+ROC curve of 0.707 (Figure 5). 
+Table 3. Binary logit of process orientation (has_process). Odds ratios; standard errors in parentheses; * 
+p<0.10, ** p<0.05, *** p<0.01. 
+ 
+Odds ratio 
+Std. err. 
+Filing year 
+0.946*** 
+(0.011) 
+Breadth 
+1.267*** 
+(0.034) 
+China (CN) 
+1.650** 
+(0.338) 
+Korea (KR) 
+1.430 
+(0.467) 
+Taiwan (TW) 
+1.555 
+(0.451) 
+Japan (JP) 
+0.483 
+(0.233) 
+EPO (EP) 
+1.170 
+(0.312) 
+PCT (WO) 
+1.398 
+(0.329) 
+Other 
+2.132 
+(1.307) 
+N = 928 · log-lik = −547.6 · AIC = 1115.1 · AUC = 
+0.707 
+ 
+ 
+
+--- page 7 ---
+Page 7 
+ 
+Figure 5. ROC curve for the process-orientation logit (AUC = 0.707). 
+The multinomial logit in Table 4 separates the two ways a patent can be a pure play. Read against 
+assembly-only, breadth pushes a patent toward the integrated type (RRR 1.403, p < 0.01) and away 
+from process-only (RRR 0.905, p < 0.05): broad patents straddle both layers, narrow ones specialize. 
+The clearest contrasts are by jurisdiction in the process-only branch. The Chinese office is far more 
+likely to host a process-only patent than the U.S. office (RRR 2.687, p < 0.01), with Taiwan and the 
+PCT route also elevated, whereas the Japanese office almost never does (RRR 0.086, p < 0.01). The 
+year trend again pulls down the process-only share (RRR 0.913, p < 0.01). Figure 6 shows the predicted 
+probability of a process-only strategy by jurisdiction implied by the model. 
+Table 4. Multinomial logit of strategy type (relative-risk ratios, base = assembly-only). Standard errors in 
+parentheses; * p<0.10, ** p<0.05, *** p<0.01. 
+ 
+Integrated 
+(SE) 
+Process-only 
+(SE) 
+Filing year 
+0.993 
+(0.015) 
+0.913*** 
+(0.013) 
+Breadth 
+1.403*** 
+(0.043) 
+0.905** 
+(0.044) 
+China (CN) 
+1.205 
+(0.280) 
+2.687*** 
+(0.740) 
+Korea (KR) 
+1.166 
+(0.444) 
+1.906 
+(0.799) 
+Taiwan (TW) 
+1.312 
+(0.422) 
+2.102* 
+(0.857) 
+Japan (JP) 
+1.046 
+(0.583) 
+0.086*** 
+(0.070) 
+EPO (EP) 
+1.307 
+(0.380) 
+0.858 
+(0.376) 
+PCT (WO) 
+1.126 
+(0.302) 
+1.997** 
+(0.645) 
+Other 
+2.326 
+(1.585) 
+1.901 
+(1.480) 
+N = 928 · log-lik = −774.5 · 
+AIC = 1589.0 · base = 
+Assembly-only 
+ 
+ 
+ 
+ 
+
+--- page 8 ---
+Page 8 
+ 
+Figure 6. Predicted probability of a process-only strategy by filing jurisdiction (multinomial logit). 
+5. Discussion 
+The jurisdiction pattern is the part worth dwelling on, with the filing-office caveat kept in mind. 
+Chinese-office filings are narrower in scope and the most likely to be process-only; Japanese-office 
+filings are the broadest and essentially never process-only. These are recognizable strategies. A narrow, 
+process-focused filing profile is what one expects from a catch-up posture that concentrates on 
+internalizing specific fabrication steps — copper surface preparation, low-temperature anneal, dicing 
+— rather than claiming whole integrated stacks; it points to a focus on semiconductor fabrication itself 
+rather than on back-end packaging. The Japanese profile, broad and integration-oriented, is consistent 
+with the equipment and materials suppliers who patent across the full process flow. Korea and Taiwan 
+sit near the U.S. baseline, which is plausible for the memory makers and the foundry that compete head-
+on with U.S. assignees. 
+The time trends point the same way for both outcomes: breadth rises and the process share falls. 
+Together they describe a field maturing out of its foundational fabrication patents and into broader 
+bonding- and integration-level claims — the same shift, in patent terms, that the industry has lived 
+through as hybrid bonding moved from wafer-to-wafer use in image sensors and 3D NAND toward die-
+to-wafer integration for HBM and advanced logic. 
+6. Conclusion and Limitations 
+Estimated rather than merely counted, the hybrid-bonding patent record shows technological breadth 
+widening over time and varying by filing jurisdiction, and a strategic orientation that has drifted from 
+fabrication toward assembly while remaining sharply different across offices. Methodologically the 
+paper makes the case that the model has to follow the outcome: a count belongs in a negative binomial 
+once overdispersion is shown, and a categorical strategy belongs in a multinomial logit. 
+Three limitations bound these claims. The jurisdiction variable is the filing office, not applicant 
+nationality, so cross-office differences mix invention origin with protection strategy. The estimates are 
+
+--- page 9 ---
+Page 9 
+associational; breadth and strategy are plausibly jointly determined, and with no credible instrument 
+available in the data I do not attempt an instrumental-variables correction and leave causal identification 
+to later work. And without applicant identifiers I cannot add firm fixed effects, which a linked dataset 
+would allow and which would sharpen every comparison made here. 
+References 
+European Patent Office. (2025). PATSTAT Global. EPO. 
+Clancy, M. S. (2021). The burden of knowledge and ideas getting harder to find. Research Policy. 
+Cameron, A. C., & Trivedi, P. K. (2013). Regression Analysis of Count Data (2nd ed.). Cambridge 
+University Press. 
+이제환. (2019). 특허 빅데이터 정량 분석을 이용한 기술 분석 방법론. 
+김영준. (2023). 기업의 기술 융복합 활동 및 시장 다변화가 특허 피인용에 미치는 영향. 
+박지민. (2019). 특허 데이터를 활용한 인공지능 반도체 트렌드 및 글로벌 기업 활동 분석. 
+ 
