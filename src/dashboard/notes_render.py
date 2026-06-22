@@ -202,15 +202,15 @@ def _render_index(token: str, notes: list[dict], due: list[dict],
         f"<div class='value'>{st.get('due_today',0):,}개</div></div>",
         f"<div class='card'><div class='label'>✅ 누적 복습</div>"
         f"<div class='value'>{st.get('total_reviews',0):,}회</div></div>",
-        f"<div class='card'><div class='label'>💰 오늘 비용</div>"
-        f"<div class='value'>₩{cost.get('today_krw',0):,.0f}</div>"
+        f"<div class='card'><div class='label'>💰 오늘 노트 비용</div>"
+        f"<div class='value'>₩{cost.get('today_krw',0):,.1f}</div>"
         f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
-        f"{cost.get('today_calls',0)}콜</div></div>",
-        f"<div class='card'><div class='label'>📅 이번 달 비용 "
+        f"{cost.get('today_count',0)}개 생성</div></div>",
+        f"<div class='card'><div class='label'>📅 이번 달 노트 비용 "
         f"({cost.get('mtd_year','')}년 {cost.get('mtd_month','')}월)</div>"
-        f"<div class='value'>₩{cost.get('mtd_krw',0):,.0f}</div>"
+        f"<div class='value'>₩{cost.get('mtd_krw',0):,.1f}</div>"
         f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
-        f"{cost.get('mtd_day','')}일차</div></div>",
+        f"{cost.get('mtd_count',0)}개 누적</div></div>",
         "</div>",
         "\n".join(rows),
         "<div class='footer'>채점은 텔레그램 <code>/review</code>에서 · "
@@ -264,19 +264,17 @@ def render_notes(token: str) -> int:
         return 0
     try:
         from ..notes import store, recall
-        from ..store import cost as cost_store
         notes = store.list_notes()
         due = store.due_notes()
         st = recall.stats()
-        _today = cost_store.today_krw()
-        _mtd = cost_store.month_to_date_krw()
+        nc = store.cost_summary()   # notes-only spend, not the bot-wide total
         cost = {
-            "today_krw": _today.get("total_krw", 0),
-            "today_calls": _today.get("calls", 0),
-            "mtd_krw": _mtd.get("total_krw", 0),
-            "mtd_year": _mtd.get("year", ""),
-            "mtd_month": _mtd.get("month", ""),
-            "mtd_day": _mtd.get("day", ""),
+            "today_krw": nc["today_krw"],
+            "today_count": nc["today_count"],
+            "mtd_krw": nc["month_krw"],
+            "mtd_count": nc["month_count"],
+            "mtd_year": nc["year"],
+            "mtd_month": nc["month"],
         }
     except Exception:
         log.exception("notes_render: store read failed")

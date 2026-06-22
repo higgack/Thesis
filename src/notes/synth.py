@@ -33,6 +33,9 @@ _SYSTEM = """너는 사용자의 개인 학습 노트를 만드는 조수다. �
 
 원칙:
 - 요약하지 말고 구조화한다. 핵심 논리·정의·예시를 보존한다.
+- ⭐ 자료가 길수록 정리를 더 풍부하게: 자료의 모든 주요 섹션/주제를
+  빠짐없이 다루고, 각 섹션을 충분한 분량으로 설명한다. 한두 문단으로
+  압축하지 말 것. 69쪽짜리면 그에 걸맞은 깊이의 노트를 만든다.
 - 원문의 표는 마크다운 표로, 수식은 $...$(인라인)/$$...$$(블록)으로 보존.
   숫자·기호·표 값을 임의로 바꾸지 않는다.
 - 자료에 없는 내용을 지어내지 않는다. 불확실하면 적지 않는다.
@@ -64,7 +67,9 @@ TYPE: concept
 질문은 3~5개. recall/concept/application 유형을 섞고, 답은 노트 본문으로
 검증 가능해야 한다. NOTE 본문 안에는 ===마커=== 문자열을 절대 쓰지 마라."""
 
-_MAX_INPUT_CHARS = 60000  # ~15K tokens; trims pathological inputs
+_MAX_INPUT_CHARS = 200000  # ~50K tokens; covers a full long report
+                           # (flash has a 1M-token context). 60K truncated
+                           # 69-page PDFs to their first ~25 pages → thin notes.
 _MARKER_RE = re.compile(r"(?m)^===(TITLE|NOTE|QUESTIONS)===\s*$")
 
 
