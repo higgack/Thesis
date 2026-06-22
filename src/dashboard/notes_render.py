@@ -226,7 +226,8 @@ def _render_index(token: str, notes: list[dict], due: list[dict],
         "<header><h1>📒 학습 노트 <span style='font-size:13px;color:var(--muted)'>"
         "(체화)</span></h1>",
         f"<div class='sub'><a class='nav' href='/{_esc(token)}/'>🧠 Archive</a> "
-        f"<a class='nav' href='/{_esc(token)}/wiki/'>📚 Wiki</a></div></header>",
+        f"<a class='nav' href='/{_esc(token)}/wiki/'>📚 Wiki</a> "
+        f"<a class='nav' href='/{_esc(token)}/commands/'>📋 Commands</a></div></header>",
         "<div class='stats'>",
         f"<div class='card'><div class='label'>📒 총 노트</div>"
         f"<div class='value'>{st.get('notes',0):,}개</div></div>",
@@ -237,12 +238,12 @@ def _render_index(token: str, notes: list[dict], due: list[dict],
         f"<div class='card'><div class='label'>💰 오늘 노트 비용</div>"
         f"<div class='value'>₩{cost.get('today_krw',0):,.1f}</div>"
         f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
-        f"{cost.get('today_count',0)}개 생성</div></div>",
+        f"{cost.get('today_count',0)}회 합성</div></div>",
         f"<div class='card'><div class='label'>📅 이번 달 노트 비용 "
         f"({cost.get('mtd_year','')}년 {cost.get('mtd_month','')}월)</div>"
         f"<div class='value'>₩{cost.get('mtd_krw',0):,.1f}</div>"
         f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
-        f"{cost.get('mtd_count',0)}개 누적</div></div>",
+        f"{cost.get('mtd_count',0)}회 합성</div></div>",
         "</div>",
         "\n".join(rows),
         "<div class='footer'>채점은 텔레그램 <code>/review</code>에서 · "
@@ -297,15 +298,18 @@ def render_notes(token: str) -> int:
         return 0
     try:
         from ..notes import store, recall
+        from ..store import cost as cost_store
         notes = store.list_notes()
         due = store.due_notes()
         st = recall.stats()
-        nc = store.cost_summary()   # notes-only spend, not the bot-wide total
+        # Spend from cost.db (purpose=note_synth) — persistent, so deleting
+        # a note never changes the cost, and a paid-but-failed synth counts.
+        nc = cost_store.purpose_today_month("note_synth")
         cost = {
             "today_krw": nc["today_krw"],
-            "today_count": nc["today_count"],
+            "today_count": nc["today_calls"],
             "mtd_krw": nc["month_krw"],
-            "mtd_count": nc["month_count"],
+            "mtd_count": nc["month_calls"],
             "mtd_year": nc["year"],
             "mtd_month": nc["month"],
         }

@@ -236,6 +236,32 @@ def month_to_date_krw() -> dict:
     return out
 
 
+def _since_purpose(start_iso: str, purpose: str) -> dict:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT COALESCE(SUM(cost_krw),0), COUNT(*) FROM calls "
+            "WHERE ts >= ? AND purpose = ?", (start_iso, purpose)).fetchone()
+    return {"krw": float(row[0] or 0.0), "calls": int(row[1] or 0)}
+
+
+def purpose_today_month(purpose: str) -> dict:
+    """Spend for ONE purpose tag — KST today + month-to-date — read from
+    cost.db (append-only). Persistent: deleting whatever the call produced
+    (e.g. a study note) never changes the spend, and a paid-but-failed
+    call still counts. Use this for per-feature cost cards."""
+    today = datetime.now(KST).date()
+    t = _since_purpose(
+        _kst_day_start_utc(today).isoformat(timespec="seconds"), purpose)
+    m = _since_purpose(
+        _kst_day_start_utc(today.replace(day=1)).isoformat(timespec="seconds"),
+        purpose)
+    return {
+        "today_krw": t["krw"], "today_calls": t["calls"],
+        "month_krw": m["krw"], "month_calls": m["calls"],
+        "year": today.year, "month": today.month, "day": today.day,
+    }
+
+
 def all_time_krw() -> dict:
     """All-time cumulative cost breakdown."""
     return _since("2000-01-01T00:00:00")
