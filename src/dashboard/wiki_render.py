@@ -634,6 +634,11 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
   overflow: hidden; display: -webkit-box;
   -webkit-line-clamp: 3; -webkit-box-orient: vertical;
 }
+mark.kw {
+  background: #fef08a; color: #202122; padding: 0 1px;
+  border-radius: 2px;
+}
+[data-theme="dark"] mark.kw { background: #b59f3b; color: #0d1117; }
 
 /* ── Metadata infobox ─────────────────────── */
 .wiki-infobox {
@@ -690,17 +695,41 @@ _THEME_JS = """
 })();
 """
 
-_SEARCH_JS = """
+_SEARCH_JS = r"""
 (function(){
   var input = document.getElementById('wiki-search');
   if (!input) return;
   var cards = document.querySelectorAll('.wiki-card');
   var KEY = 'wiki-search-q';
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function rx(s){return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
+  function snippet(text, query){
+    if(!text||!query) return '';
+    var i=text.toLowerCase().indexOf(query.toLowerCase());
+    if(i<0) return '';
+    var s=Math.max(0,i-80), e=Math.min(text.length,i+query.length+80);
+    var slice=(s>0?'…':'')+text.slice(s,e)+(e<text.length?'…':'');
+    return esc(slice).replace(new RegExp(rx(query),'gi'),
+      function(m){return '<mark class="kw">'+m+'</mark>';});
+  }
+  cards.forEach(function(c){ var ex=c.querySelector('.card-excerpt');
+    if(ex && ex.dataset.orig===undefined) ex.dataset.orig=ex.textContent; });
+  // Full-text filter: matches topic title + full body (data-text), shows a
+  // highlighted snippet in the card excerpt when the hit is in the body.
   function apply(){
-    var q = input.value.toLowerCase().trim();
+    var q = input.value.trim(), ql=q.toLowerCase();
     cards.forEach(function(c){
-      var text = c.textContent.toLowerCase();
-      c.style.display = (!q || text.indexOf(q) >= 0) ? '' : 'none';
+      var hay = c.getAttribute('data-text') || '';
+      var h3 = c.querySelector('h3'); var title = h3 ? h3.textContent : '';
+      var inBody = !ql || hay.toLowerCase().indexOf(ql)>=0;
+      var inTitle = !ql || title.toLowerCase().indexOf(ql)>=0;
+      var ok = !ql || inBody || inTitle;
+      c.style.display = ok ? '' : 'none';
+      var ex = c.querySelector('.card-excerpt');
+      if(ex){
+        if(ok && ql && inBody){ ex.innerHTML = snippet(hay,q) || esc(ex.dataset.orig||''); }
+        else { ex.textContent = ex.dataset.orig || ''; }
+      }
     });
   }
   input.addEventListener('input', function(){
@@ -983,6 +1012,15 @@ def _render_topic_page(topic: str, page_md: str, meta: dict,
     )
 
 
+def _wiki_search_text(md: str) -> str:
+    """Topic markdown → plain search haystack for the index full-text
+    search (drops code/mermaid fences + md symbols, capped)."""
+    s = re.sub(r"```.*?```", " ", md or "", flags=re.S)
+    s = re.sub(r"[#>*`|]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:4000]
+
+
 def _render_index_page(topics_data: list[dict], token: str,
                        wiki_stats: dict) -> str:
     total_pages = wiki_stats.get("pages", 0)
@@ -1025,6 +1063,7 @@ def _render_index_page(topics_data: list[dict], token: str,
         topic = td["topic"]
         display = td.get("title") or topic
         excerpt = html.escape(td.get("excerpt", "")[:200])
+        search_text = html.escape(td.get("search_text", "")[:4000])
         doc_count = td.get("docs", 0)
         updated = (td.get("updated") or "")[:10]
         created_iso = td.get("created") or ""
@@ -1039,7 +1078,8 @@ def _render_index_page(topics_data: list[dict], token: str,
             badge = ' <span class="wiki-badge recent">Recent</span>'
         cards.append(
             f'<div class="wiki-card" data-created="{html.escape(created_iso)}"'
-            f' data-updated="{html.escape(updated_iso)}">'
+            f' data-updated="{html.escape(updated_iso)}"'
+            f' data-text="{search_text}">'
             f'<h3><a href="{_topic_filename(topic)}">'
             f"{html.escape(display)}</a>{badge}</h3>"
             f'<div class="card-meta">'
@@ -1217,7 +1257,7 @@ def render_wiki(token: str) -> int:
     # _TPL_VERSION: bump on ANY template/CSS/JS change in this file —
     # the incremental skip means already-rendered topic pages would
     # otherwise keep old markup forever (their .md never changes).
-    _TPL_VERSION = "4"
+    _TPL_VERSION = "5"  # bumped: index full-text search (data-text + snippet)
     cache_path = config.DATA_DIR / "wiki_render_cache.json"
     fp = hashlib.sha1(
         ("|".join(all_topics) + "\x00" + token + "\x00" + _TPL_VERSION
@@ -1301,6 +1341,7 @@ def render_wiki(token: str) -> int:
         doc_count = len(meta.get("doc_ids") or [])
         total_docs += doc_count
 
+        search_text = ""
         if topic in stale_names:
             try:
                 page_md = md_file.read_text(encoding="utf-8")
@@ -1320,6 +1361,7 @@ def render_wiki(token: str) -> int:
                     if stripped and not stripped.startswith("#"):
                         excerpt = stripped
                         break
+            search_text = _wiki_search_text(page_md)
 
             page_html = _render_topic_page(
                 topic, page_md, meta, token, all_topics,
@@ -1338,8 +1380,10 @@ def render_wiki(token: str) -> int:
             pages_written += 1
         else:
             excerpt = (entries.get(topic) or {}).get("excerpt", "")
+            search_text = (entries.get(topic) or {}).get("search_text", "")
 
-        new_entries[topic] = {"mtime": mtimes[topic], "excerpt": excerpt}
+        new_entries[topic] = {"mtime": mtimes[topic], "excerpt": excerpt,
+                              "search_text": search_text}
         topics_data.append({
             "topic": topic,
             "title": meta.get("title") or topic,
@@ -1347,6 +1391,7 @@ def render_wiki(token: str) -> int:
             "updated": meta.get("updated", ""),
             "created": meta.get("created", ""),
             "excerpt": excerpt,
+            "search_text": search_text,
             "mtime": mtimes[topic],
         })
 
