@@ -52,13 +52,28 @@ def _dash_link(note_id: str | None = None) -> str:
 # ----------------------------------------------------------- ingest ---
 
 async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Route one study-channel message to the notes pipeline."""
+    """Route one study-channel message to the notes pipeline, with a
+    live progress message so the owner is never left in the dark
+    (success, empty-extraction, or error all get surfaced)."""
     owner = config.TELEGRAM_OWNER_ID
     text = msg.text or msg.caption or ""
+    doc = getattr(msg, "document", None)
+    url_m = _URL_RE.search(text)
+    src_label = (doc.file_name if doc else None) or (
+        url_m.group(0) if url_m else "텍스트")
+    log.info("study post received: %s", src_label)
+
+    progress = None
+    try:
+        progress = await ctx.bot.send_message(
+            owner, f"📒 노트 만드는 중… ({src_label})")
+    except Exception:
+        progress = None
+
     note_ids: list[str] = []
+    err: str | None = None
     try:
         # 1) Attached document (pdf/office) → download + ingest.
-        doc = getattr(msg, "document", None)
         if doc and (doc.file_name or "").lower().rsplit(".", 1)[-1] in _DOC_EXTS:
             dest = config.DATA_DIR / "files" / (doc.file_name or f"{doc.file_id}.bin")
             tf = await ctx.bot.get_file(doc.file_id)
@@ -78,26 +93,37 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 note_ids.append(nid)
     except Exception as e:
         log.exception("study post failed")
-        try:
-            await ctx.bot.send_message(owner, f"⚠️ 학습 노트 생성 실패: {str(e)[:160]}")
-        except Exception:
-            pass
-        return
+        err = str(e)[:160]
 
-    if not note_ids:
-        return
-    for nid in note_ids:
-        link = _dash_link(nid)
-        n = store.get_note(nid)
-        title = (n or {}).get("title") or nid
-        body = f"📒 학습 노트 생성: <b>{title}</b>\n내일 첫 복습 예정."
-        if link:
-            body += f"\n🔗 {link}"
-        try:
-            await ctx.bot.send_message(owner, body, parse_mode="HTML",
+    # Build the outcome message (success / empty / error).
+    if note_ids:
+        lines = ["📒 <b>학습 노트 생성 완료</b>"]
+        for nid in note_ids:
+            n = store.get_note(nid)
+            title = (n or {}).get("title") or nid
+            link = _dash_link(nid)
+            lines.append(f"• <b>{title}</b>" + (f"\n  🔗 {link}" if link else ""))
+        lines.append("\n내일 첫 복습 예정 · /review 로 복습")
+        out = "\n".join(lines)
+    elif err:
+        out = f"⚠️ 노트 생성 실패: {err}"
+    else:
+        out = (f"⚠️ 노트를 못 만들었어 ({src_label})\n"
+               "본문이 너무 짧거나 추출 실패 — 스캔 PDF/이미지거나 차단 호스트일 수 "
+               "있어. 텍스트가 살아있는 자료/URL로 다시 시도해봐.")
+    log.info("study post done: %s → %d note(s)%s",
+             src_label, len(note_ids), f" err={err}" if err else "")
+
+    try:
+        if progress is not None:
+            await ctx.bot.edit_message_text(
+                out, chat_id=owner, message_id=progress.message_id,
+                parse_mode="HTML", disable_web_page_preview=True)
+        else:
+            await ctx.bot.send_message(owner, out, parse_mode="HTML",
                                        disable_web_page_preview=True)
-        except Exception:
-            log.warning("note-created notify failed for %s", nid)
+    except Exception:
+        log.warning("study post outcome notify failed")
 
 
 # --------------------------------------------------------- commands ---

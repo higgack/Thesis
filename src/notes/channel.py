@@ -61,10 +61,16 @@ async def ingest_text(source_type: str, source_ref: str, raw_text: str,
                       title: str | None = None) -> str | None:
     """Core path: synthesise a note from already-extracted text, persist
     it. Returns the note id or None."""
+    log.info("notes ingest: %s '%s' (%d chars)",
+             source_type, source_ref, len((raw_text or "")))
     note = await synth.synthesize(source_type, source_ref, raw_text, title)
     if not note:
+        log.info("notes ingest: no note (synth skipped/failed) for %s",
+                 source_ref)
         return None
-    return store.save_note(note)
+    nid = store.save_note(note)
+    log.info("notes ingest: saved note %s from %s", nid, source_ref)
+    return nid
 
 
 async def ingest_url(url: str) -> str | None:
