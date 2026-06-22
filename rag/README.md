@@ -9,15 +9,30 @@ RAG-Anything is used as a **dependency**, not vendored. You install it with pip.
 
 ## Setup
 
-```bash
-# 1. Install (from the repo root)
-pip install -r rag/requirements.txt
-# Office docs also need LibreOffice; extended image formats need Pillow.
+> **Heads-up — this is a heavy install (~6–8 GB).** RAG-Anything pulls MinerU,
+> which pulls **PyTorch**. On PyPI, `torch` now bundles NVIDIA **CUDA** wheels
+> (~3 GB) even on machines with no GPU — on a small VPS this fails with
+> `No space left on device`. On a CPU-only box, install CPU-only torch **first**
+> (see below) so those CUDA wheels are skipped.
 
-# 2. Configure secrets — copy and fill in
+```bash
+# --- CPU-only / small server (recommended there) ---
+python3 -m venv .venv && source .venv/bin/activate
+pip install --upgrade pip wheel                                    # wheel avoids legacy setup.py builds
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install -r rag/requirements.txt                               # torch already satisfied -> no CUDA wheels
+
+# --- GPU box (CUDA wanted) ---
+pip install --upgrade pip wheel
+pip install -r rag/requirements.txt
+
+# Configure secrets — copy and fill in
 cp rag/.env.example rag/.env
 #   edit rag/.env: set OPENAI_API_KEY (and OPENAI_BASE_URL if using a proxy)
 ```
+
+Check free space first with `df -h .` — you want **~10 GB free** for the full
+stack. Office docs also need LibreOffice; extended image formats need Pillow.
 
 `rag/.env`, `rag/rag_storage/`, and `rag/output/` are git-ignored — keys and
 generated indexes never get committed.

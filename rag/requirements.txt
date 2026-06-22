@@ -1,8 +1,12 @@
 # RAG-Anything multimodal RAG integration.
-# 'all' pulls image + text + office extras; drop to e.g. raganything[image,text]
-# if you don't need every parser. See https://github.com/HKUDS/RAG-Anything
+# WARNING: this is heavy — raganything -> MinerU -> PyTorch. On PyPI, torch
+# bundles NVIDIA CUDA wheels (~3 GB) even with no GPU. On a CPU-only / small
+# machine, install CPU torch FIRST so those are skipped (see rag/README.md):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# 'all' adds image+text+office format extras (small). See HKUDS/RAG-Anything.
 raganything[all]
 python-dotenv
+wheel                 # avoid legacy setup.py install path for some sub-deps
 # Pre-flight page triage (rag/triage.py) — cheap signal extraction before
 # paying for OCR/LLM parsing. Used by `ingest.py --triage` and standalone.
 pymupdf>=1.24
