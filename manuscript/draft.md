@@ -58,7 +58,7 @@
 
 반도체 패키징은 칩을 보호하고 외부와 연결하는 후공정으로 인식되어 왔으나, 이종 집적 시대에는 시스템 성능을 결정하는 핵심 기술로 위상이 격상되었다. 칩렛(chiplet) 기반 설계는 대면적 단일 칩의 수율·비용 한계를 회피하면서 이종 노드·이종 기능 블록을 한 패키지에 통합하여 단일 제품처럼 동작하게 한다. 2.5D 인터포저, 3D 적층, 그리고 다이 간 직접 접합으로 이어지는 패키징 기술의 진화는 인터커넥트 밀도와 신호 무결성을 향상시키는 방향으로 전개되어 왔다.
 
-하이브리드 본딩은 이 흐름의 정점에 있다. 유전체-유전체(dielectric-to-dielectric) 접합과 구리-구리(Cu-to-Cu) 접합을 동시에 형성하여 범프 없이 다이 표면을 직접 결합함으로써, 마이크로범프 대비 인터커넥트 길이를 단축하고 서브미크론 피치와 고대역폭을 실현한다(*Journal of Microelectronics and Electronic Packaging*, 2021 ★확인; ASME *Journal of Electronic Packaging*, 2026 ★확인). 공정상으로는 전체 웨이퍼를 접합하는 W2W와 개별 다이를 웨이퍼에 부착하는 D2W로 나뉘며, 전공정(H01L21)과 접합·인터커넥트(H01L24)가 함께 구현된다는 점에서 전·후공정의 기술적 경계에 위치한다.
+하이브리드 본딩은 이 흐름의 정점에 있다. 유전체-유전체(dielectric-to-dielectric) 접합과 구리-구리(Cu-to-Cu) 접합을 동시에 형성하여 범프 없이 다이 표면을 직접 결합함으로써, 마이크로범프 대비 인터커넥트 길이를 단축하고 서브미크론 피치와 고대역폭을 실현한다(*Journal of Microelectronics and Electronic Packaging*, 2021 ★확인; ASME *Journal of Electronic Packaging*, 2026 ★확인). 공정상으로는 전체 웨이퍼를 접합하는 W2W와 개별 다이를 웨이퍼에 부착하는 D2W로 나뉘며, 전공정(H01L21)과 접합·인터커넥트(H01L24)가 함께 구현된다는 점에서 전·후공정의 기술적 경계에 위치한다. 국내 연구들도 하이브리드 본딩을 기존 패키징 공정의 판도를 바꾸는 파괴적 혁신으로 규정하며 그 산업적 파급을 분석해 왔고(이승환, 2025; 김민규 외, 2025), 파운드리의 전공정 기술 내재화 흐름 또한 보고되었다(지일용, 2025; 이종호·오철, 2022; 오유진, 2025).
 
 ## 2.2 범용기술(GPT)과 기술 진화
 
@@ -173,13 +173,64 @@
 
 이에 Poisson을 거쳐 음이항으로 이행하였다. 음이항의 과산포 모수가 크고 정밀하게 추정되었으며(ln-alpha=−1.316, alpha≈0.27), Poisson 대비 우도비 검정이 결정적이었고 AIC가 5,477(Poisson)에서 **4,883(음이항)** 으로 감소하여 음이항을 작업 모형으로 채택하였다. 기술범위의 최솟값이 1이어서 영(0) 관측이 없으므로, 영과잉(zero-inflation)을 가정하는 ZINB가 아니라 표준 음이항이 적정하다. 음이항 추정에서 출원연도 추세는 유지되고(연간 IRR≈1.014), 미국 기준 대비 **중국 출원청 출원은 약 21% 좁았으며**(IRR 0.785, p<0.01), PCT/WO도 약 17% 좁았다(IRR 0.826, p<0.01). 반면 **일본 출원청 출원이 표본에서 가장 넓었다**(IRR≈1.27, p<0.10). 한국·대만·EPO는 미국 기준과 유의하게 구분되지 않았다([그림 4]).
 
+**[표 5-1] 기술범위(breadth)의 결정요인** (미국 출원청=기준; 괄호 안 표준오차; * p<0.10, ** p<0.05, *** p<0.01)
+
+| 변수 | OLS | Poisson | 음이항(NB) |
+|---|---|---|---|
+| 출원연도(yc) | 0.070*** | 0.013*** | 0.014*** |
+| 중국(CN) | −1.321*** | −0.241*** | −0.242*** |
+| 한국(KR) | 0.089 | 0.017 | 0.017 |
+| 대만(TW) | 0.102 | 0.016 | 0.021 |
+| 일본(JP) | 1.737** | 0.280*** | 0.239* |
+| EPO | −0.032 | −0.005 | −0.007 |
+| PCT(WO) | −1.071** | −0.193*** | −0.191*** |
+| 기타 | 0.124 | 0.024 | 0.056 |
+| 상수 | 2.506*** | 1.143*** | 1.069*** |
+| ln(alpha) | — | — | −1.316*** |
+| N | 928 | 928 | 928 |
+| R²/AIC | 0.033 / 5224.9 | 5477.2 | **4883.0** |
+
+*주: 음이항 계수의 지수가 발생률비(IRR). 출원연도 IRR≈1.014, 중국 IRR 0.785(약 21%↓), PCT 0.826(약 17%↓).*
+
 ## 5.2 전략지향: 전공정 침투 여부 (이항 로짓)
 
 전공정(H01L21) 기술을 청구하는지(has_process)를 예측한 이항 로짓([표 3], 자료①)에서 **기술범위가 지배적 예측변수**였다. CPC 서브클래스가 하나 늘 때 전공정 청구 승산이 약 27% 증가하여(OR 1.267, p<0.01), 더 많은 클래스를 포괄하는 특허가 전공정으로도 손을 뻗음을 보여준다. 출원연도 추세는 반대로(OR 0.946/년, p<0.01) **전공정 지향 비중이 시간에 따라 감소**함을 나타냈고, 출원청 중에서는 중국만이 미국 대비 65% 높은 승산을 보였다(OR 1.650, p<0.05). 모형의 판별력은 ROC 곡선 면적 0.707로 수용 가능했다([그림 5]).
 
+**[표 5-2] 전공정 지향(has_process) 이항 로짓** (승산비; 괄호 안 표준오차; * p<0.10, ** p<0.05, *** p<0.01)
+
+| 변수 | 승산비(OR) |
+|---|---|
+| 출원연도(yc) | 0.946*** (0.011) |
+| 기술범위(breadth) | 1.267*** (0.034) |
+| 중국(CN) | 1.650** (0.338) |
+| 한국(KR) | 1.430 (0.467) |
+| 대만(TW) | 1.555 (0.451) |
+| 일본(JP) | 0.483 (0.233) |
+| EPO | 1.170 (0.312) |
+| PCT(WO) | 1.398 (0.329) |
+| 기타 | 2.132 (1.307) |
+
+*주: N=928 · log-lik −547.6 · AIC 1115.1 · AUC 0.707.*
+
 ## 5.3 전략유형 (다항 로짓)
 
 전략유형을 assembly-only(기준)·integrated·process-only로 구분한 다항 로짓([표 4], 자료①)은 순수형 두 갈래를 분리해 보여준다. 기술범위는 특허를 **integrated 쪽으로** 밀고(RRR 1.403, p<0.01) **process-only에서 멀어지게**(RRR 0.905, p<0.05) 하여, 넓은 특허는 두 층위를 아우르고 좁은 특허는 특화됨을 나타낸다. 가장 뚜렷한 대비는 process-only 갈래의 출원청 효과로, **중국 출원청이 미국 대비 process-only를 호스팅할 가능성이 훨씬 높고**(RRR 2.687, p<0.01) 대만(RRR 2.102, p<0.10)·PCT(RRR 1.997, p<0.05)도 높은 반면 **일본은 거의 없었다**(RRR 0.086, p<0.01). 출원연도 추세도 process-only 비중을 끌어내렸다(RRR 0.913, p<0.01)([그림 6]).
+
+**[표 5-3] 전략유형 다항 로짓** (상대위험비 RRR, 기준=assembly-only; 괄호 안 표준오차; * p<0.10, ** p<0.05, *** p<0.01)
+
+| 변수 | Integrated | Process-only |
+|---|---|---|
+| 출원연도(yc) | 0.993 (0.015) | 0.913*** (0.013) |
+| 기술범위(breadth) | 1.403*** (0.043) | 0.905** (0.044) |
+| 중국(CN) | 1.205 (0.280) | 2.687*** (0.740) |
+| 한국(KR) | 1.166 (0.444) | 1.906 (0.799) |
+| 대만(TW) | 1.312 (0.422) | 2.102* (0.857) |
+| 일본(JP) | 1.046 (0.583) | 0.086*** (0.070) |
+| EPO | 1.307 (0.380) | 0.858 (0.376) |
+| PCT(WO) | 1.126 (0.302) | 1.997** (0.645) |
+| 기타 | 2.326 (1.585) | 1.901 (1.480) |
+
+*주: N=928 · log-lik −774.5 · AIC 1589.0 · 기준=assembly-only.*
 
 ---
 
@@ -271,10 +322,8 @@ RQ4의 "수렴"을 측정 가능한 형태로 정리하면 [표 6.1]과 같다. 
 
 ## 영문
 - Cameron, A. C., & Trivedi, P. K. (2013). *Regression analysis of count data* (2nd ed.). Cambridge University Press.
-- Clancy, M. S. (2021). The burden of knowledge and ideas getting harder to find. *New Things Under the Sun*. ★확인
 - Curran, C.-S., & Leker, J. (2011). Patent indicators for monitoring convergence – Examples from NFF and ICT. *Technological Forecasting and Social Change, 78*(2), 256–273.
 - European Patent Office. (2025). *PATSTAT Global* [Database]. EPO.
-- Furman, J. L., Porter, M. E., & Stern, S. (2000). *The determinants of national innovative capacity* (NBER Working Paper No. 7876). ★확인
 - Hall, B. H., & Trajtenberg, M. (2004). *Uncovering GPTs with patent data* (NBER Working Paper No. 10901). National Bureau of Economic Research.
 - Hausman, J., Hall, B. H., & Griliches, Z. (1984). Econometric models for count data with an application to the patents–R&D relationship. *Econometrica, 52*(4), 909–938.
 - Kwon, O., An, Y., Kim, M., & Lee, C. (2020). Anticipating technology-driven industry convergence: Evidence from large-scale patent analysis. *Technology Analysis & Strategic Management, 32*(4), 363–378.
@@ -283,3 +332,18 @@ RQ4의 "수렴"을 측정 가능한 형태로 정리하면 [표 6.1]과 같다. 
 - Yoon, B., & Park, Y. (2004). A text-mining-based patent network: Analytical tool for high-technology trend. *The Journal of High Technology Management Research, 15*(1), 37–50.
 - *State-of-the-art and outlooks of chiplets heterogeneous integration and hybrid bonding.* (2021). *Journal of Microelectronics and Electronic Packaging, 18*(4), 145. ★확인
 - *Manufacturing challenges of hybrid bonding for chiplets heterogeneous integration.* (2026). *ASME Journal of Electronic Packaging, 148*(1), 010801. ★확인
+
+---
+
+# 부록. 표·그림 목록
+
+> 회귀 표(표 5-1~5-3, 6-1, 6-2)는 본문에 수치로 삽입됨. 아래 **그림·원자료 표**는 원본(①②)의 이미지/표로, 학교 양식 변환 시 해당 위치에 삽입 예정.
+
+**본문 삽입 완료(수치 표)**
+- 표 1(변수 정의), 표 5-1(breadth 결정요인), 표 5-2(이항 로짓), 표 5-3(다항 로짓), 표 6-1(거시–미시 수렴), 표 6-2(전략유형↔관할권 교차)
+
+**원본에서 삽입 예정(이미지/세부 표)**
+- 그림: [그림 2] 출원연도 분포(①), [그림 3] OLS 잔차(①), [그림 4] 관할권별 예측 범위(①), [그림 5] ROC(①), [그림 6] process-only 예측(①); [그림 10] 연구 프레임워크(②), [그림 11] 하이브리드본딩·HBM 추이(②), [그림 12] 출원회사 Top10(②), [그림 13] 과학연계성(②), [그림 14] 인용영향력(②), [그림 15] 특허인용 감쇠(②)
+- 표: [표 2]·[표 3] CPC 분류(②), [표 4] 출원국가 순위(②), [표 5] 기술집중도(②), [표 6] 기술 클러스터(②), [표 7] 기술 네트워크(②), [표 8] 인용특허 Top10(②), [표 9] 인용수명(②)
+
+> 비고: 위 원본 그림/표는 저자의 선행 산출물에서 가져오며, 이미지 파일은 학교 양식(템플릿) 확정 후 최종본에 삽입한다.
