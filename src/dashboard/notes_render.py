@@ -108,6 +108,8 @@ font-size:13px;text-align:left}
 font-size:12px}
 .note-body blockquote{border-left:3px solid var(--border);margin:8px 0;
 padding-left:14px;color:var(--muted)}
+.note-body .mermaid{text-align:center;margin:18px 0;background:var(--panel-alt);
+border:1px solid var(--border-soft);border-radius:8px;padding:12px}
 .q-sec{margin-top:24px}
 .q-card{background:var(--panel);border:1px solid var(--border);
 border-left:3px solid var(--primary);border-radius:10px;padding:14px 16px;
@@ -136,6 +138,22 @@ _NOTE_JS = r"""
     var el = document.getElementById('md');
     if(!el || !window.marked) return;
     el.innerHTML = window.marked.parse(el.textContent);
+    // ```mermaid code blocks → <div class="mermaid"> for diagram render
+    el.querySelectorAll('pre code.language-mermaid').forEach(function(c){
+      var d = document.createElement('div');
+      d.className = 'mermaid';
+      d.textContent = c.textContent;
+      var pre = c.closest('pre');
+      if(pre) pre.replaceWith(d);
+    });
+    if(window.mermaid){
+      try{
+        var dark = document.documentElement.dataset.theme === 'dark';
+        window.mermaid.initialize({startOnLoad:false, securityLevel:'loose',
+          theme: dark ? 'dark' : 'default'});
+        window.mermaid.run({querySelector:'.mermaid'});
+      }catch(e){ /* a bad diagram must not break the note */ }
+    }
     if(window.renderMathInElement){
       window.renderMathInElement(el,{delimiters:[
         {left:'$$',right:'$$',display:true},
@@ -153,6 +171,7 @@ _CDN = (
     "<link rel='stylesheet' "
     "href='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css'>"
     "<script src='https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js'></script>"
+    "<script src='https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js'></script>"
     "<script defer src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js'></script>"
     "<script defer src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/"
     "auto-render.min.js' onload='window.renderMathInElement&&"
