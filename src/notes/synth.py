@@ -1,23 +1,27 @@
 """LLM note synthesis — parsed study material → a rich study note.
 
 NOT a summary. Produces a structured, re-readable note (concept map,
-sections with tables/formulas preserved, key terms, related-note links)
-plus active-recall questions for the SRS layer.
+sections with tables/formulas preserved, key terms) plus active-recall
+questions for the SRS layer.
 
-Uses `gemini.complete` on ANSWER_MODEL (flash) — notes are re-read
-often, so quality matters more than the flash-lite summary path. Output
-is requested as JSON so the markdown body and the recall questions come
-back in one call (≈ ₩18/note).
+Output format = **delimiter-based, NOT JSON**. Embedding a large
+markdown note (with LaTeX `$\frac{}{}$`, tables, quotes, newlines)
+inside a JSON string is fragile — LaTeX backslashes alone break
+`json.loads`. Marker sections (===TITLE===/===NOTE===/===QUESTIONS===)
+sidestep all escaping, so math-heavy notes parse reliably.
+
+Uses `gemini.complete` on ANSWER_MODEL (flash).
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
+import time
 from datetime import datetime, timezone, timedelta
 
 from .. import config
 from ..llm import gemini
+from ..store import cost as _cost
 
 log = logging.getLogger(__name__)
 
@@ -34,49 +38,66 @@ _SYSTEM = """너는 사용자의 개인 학습 노트를 만드는 조수다. �
 - 자료에 없는 내용을 지어내지 않는다. 불확실하면 적지 않는다.
 - 한국어로 쓴다(원문 용어/고유명사는 원어 병기 가능).
 
-반드시 아래 JSON 한 개만 출력한다(코드펜스 금지):
-{
-  "title": "노트 제목(간결, 핵심 주제)",
-  "md": "마크다운 노트 본문 — 아래 섹션 순서를 따른다",
-  "questions": [
-    {"question": "...", "answer": "...", "q_type": "recall|concept|application"}
-  ]
-}
+⚠️ 출력은 정확히 아래 형식만(JSON 금지, 코드펜스 금지, 마커 줄 그대로):
 
-md 본문 섹션 순서:
+===TITLE===
+노트 제목 한 줄 (간결, 핵심 주제)
+===NOTE===
 ## 🎯 한 줄 요지
-## 🧠 개념 지도   (핵심 개념 - 개념 간 관계, 불릿)
-## 📖 정리        (### 소제목들로 구조화, 표/수식 보존)
-## 🔑 핵심 용어   (**용어**: 정의)
-questions 는 3~5개. recall(사실 회상)/concept(개념 이해)/application(적용)
-유형을 섞는다. 답은 노트 본문으로 검증 가능해야 한다."""
+...
+## 🧠 개념 지도
+- 핵심개념 — 관계
+## 📖 정리
+### 소제목
+설명 (표는 마크다운 표, 수식은 $...$ 그대로)
+## 🔑 핵심 용어
+- **용어**: 정의
+===QUESTIONS===
+Q: 복습 질문
+A: 답
+TYPE: recall
+
+Q: ...
+A: ...
+TYPE: concept
+
+질문은 3~5개. recall/concept/application 유형을 섞고, 답은 노트 본문으로
+검증 가능해야 한다. NOTE 본문 안에는 ===마커=== 문자열을 절대 쓰지 마라."""
 
 _MAX_INPUT_CHARS = 60000  # ~15K tokens; trims pathological inputs
+_MARKER_RE = re.compile(r"(?m)^===(TITLE|NOTE|QUESTIONS)===\s*$")
 
 
-def _parse_json(raw: str) -> dict | None:
-    s = raw.strip()
-    # Strip accidental ```json fences.
-    if s.startswith("```"):
-        s = re.sub(r"^```(?:json)?\s*", "", s)
-        s = re.sub(r"\s*```$", "", s)
-    try:
-        return json.loads(s)
-    except Exception:
-        # Last resort: grab the outermost {...} block.
-        m = re.search(r"\{.*\}", s, re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group(0))
-            except Exception:
-                return None
-    return None
+def _split_sections(raw: str) -> dict[str, str]:
+    parts = _MARKER_RE.split(raw)
+    out: dict[str, str] = {}
+    # parts = [pre, MARKER, body, MARKER, body, ...]
+    for i in range(1, len(parts) - 1, 2):
+        out[parts[i]] = parts[i + 1].strip()
+    return out
+
+
+def _parse_questions(block: str) -> list[dict]:
+    qs: list[dict] = []
+    cur: dict = {}
+    for line in block.splitlines():
+        s = line.strip()
+        if s.startswith("Q:"):
+            if cur.get("question"):
+                qs.append(cur)
+            cur = {"question": s[2:].strip(), "q_type": "recall"}
+        elif s.startswith("A:") and cur:
+            cur["answer"] = s[2:].strip()
+        elif s.upper().startswith("TYPE:") and cur:
+            cur["q_type"] = s.split(":", 1)[1].strip() or "recall"
+    if cur.get("question"):
+        qs.append(cur)
+    return [q for q in qs if q.get("question")]
 
 
 async def synthesize(source_type: str, source_ref: str, raw_text: str,
                      title: str | None = None) -> dict | None:
     """Return a note dict ready for store.save_note, or None on failure.
-
     keys: title, source_type, source_ref, md, questions
     """
     body = (raw_text or "").strip()
@@ -91,38 +112,49 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
         + f"[출처 유형] {source_type}\n[출처] {source_ref}\n\n"
         + "[본문]\n" + body
     )
+    t0 = time.monotonic()
     try:
         out = await gemini.complete(
-            config.ANSWER_MODEL,
-            _SYSTEM,
-            user,
-            max_tokens=4096,
-            temperature=0.3,
-            purpose="note_synth",
-        )
+            config.ANSWER_MODEL, _SYSTEM, user,
+            max_tokens=8192, temperature=0.3, purpose="note_synth")
     except Exception as e:
         log.warning("note synth call failed: %s", str(e)[:160])
         return None
+    gen_seconds = round(time.monotonic() - t0, 1)
+    # Exact KRW from the call we just recorded; fall back to a token
+    # estimate if usage_metadata was absent.
+    cc = _cost.last_call("note_synth")
+    if cc:
+        cost_krw = cc["cost_krw"]
+    else:
+        cost_krw = _cost._price_krw(
+            config.ANSWER_MODEL, len(user) // 4, len(out or "") // 4)
+    cost_krw = round(cost_krw, 2)
 
-    data = _parse_json(out)
-    if not data or not data.get("md"):
-        log.warning("note synth: unparseable/empty output")
-        return None
+    sections = _split_sections(out or "")
+    note_md = sections.get("NOTE", "").strip()
+    if not note_md:
+        # Model ignored the format — salvage the raw body as the note so
+        # a missing marker doesn't lose the whole note.
+        note_md = (out or "").strip()
+        if len(note_md) < 40:
+            log.warning("note synth: empty/unparseable output (%d chars)",
+                        len(out or ""))
+            return None
+        log.warning("note synth: NOTE marker missing, using raw output")
 
     today = datetime.now(_KST).date().isoformat()
-    note_title = (title or data.get("title") or source_ref or "노트").strip()
-    header = (f"# {data.get('title') or note_title}\n"
+    llm_title = (sections.get("TITLE") or "").splitlines()[0].strip() \
+        if sections.get("TITLE") else ""
+    note_title = (title or llm_title or source_ref or "노트").strip()
+    header = (f"# {llm_title or note_title}\n"
               f"> 출처: {source_ref} · 학습일: {today} · 유형: {source_type}\n\n")
     return {
-        "title": data.get("title") or note_title,
+        "title": llm_title or note_title,
         "source_type": source_type,
         "source_ref": source_ref,
-        "md": header + data["md"].strip() + "\n",
-        "questions": [
-            {"question": q.get("question", ""),
-             "answer": q.get("answer", ""),
-             "q_type": q.get("q_type", "recall")}
-            for q in (data.get("questions") or [])
-            if q.get("question")
-        ],
+        "md": header + note_md + "\n",
+        "questions": _parse_questions(sections.get("QUESTIONS", "")),
+        "cost_krw": cost_krw,
+        "gen_seconds": gen_seconds,
     }

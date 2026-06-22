@@ -1426,7 +1426,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 📚 <b>위키</b>(매시 정시 학습·요약알림 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
-📒 <b>학습 노트</b>(체화·복습): /notes · /review
+📒 <b>학습 노트</b>(체화): /notes · /review · 상세: /notes_guide
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents

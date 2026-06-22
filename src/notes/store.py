@@ -57,7 +57,9 @@ def init_db() -> None:
               source_ref TEXT,
               md_path TEXT,
               created TEXT,
-              updated TEXT
+              updated TEXT,
+              cost_krw REAL DEFAULT 0,
+              gen_seconds REAL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS note_srs (
               note_id TEXT PRIMARY KEY,
@@ -88,6 +90,12 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_q_note ON questions(note_id);
             """
         )
+        # Migrate older DBs that predate the cost/time columns.
+        cols = {row[1] for row in c.execute("PRAGMA table_info(notes)")}
+        if "cost_krw" not in cols:
+            c.execute("ALTER TABLE notes ADD COLUMN cost_krw REAL DEFAULT 0")
+        if "gen_seconds" not in cols:
+            c.execute("ALTER TABLE notes ADD COLUMN gen_seconds REAL DEFAULT 0")
 
 
 # ------------------------------------------------------------- vault ---
@@ -142,9 +150,11 @@ def save_note(note: dict) -> str:
     with _conn() as c:
         c.execute(
             "INSERT INTO notes(id,title,source_type,source_ref,md_path,"
-            "created,updated) VALUES(?,?,?,?,?,?,?)",
+            "created,updated,cost_krw,gen_seconds) VALUES(?,?,?,?,?,?,?,?,?)",
             (note_id, note.get("title") or note_id, note.get("source_type"),
-             note.get("source_ref"), str(md_path), now, now),
+             note.get("source_ref"), str(md_path), now, now,
+             float(note.get("cost_krw") or 0.0),
+             float(note.get("gen_seconds") or 0.0)),
         )
         c.execute(
             "INSERT INTO note_srs(note_id,ease,interval_days,reps,lapses,"

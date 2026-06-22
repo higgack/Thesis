@@ -33,6 +33,35 @@ _DOC_EXTS = ("pdf", "pptx", "docx", "xlsx", "xls")
 
 _GRADE_LABELS = {0: "😵 까먹음", 1: "🤔 가물가물", 2: "✅ 기억함"}
 
+_NOTES_GUIDE_TEXT = """📒 <b>학습 노트 (체화) 사용법</b>
+
+검색용 위키와 달리, <b>내가 공부한 걸 다시 읽고 되새김질해 오래 체화</b>하는 개인 노트 시스템.
+
+<b>1. 자료 넣기</b>
+전용 학습 채널에 그냥 올리면 자동 노트화:
+• URL · 유튜브 · PDF · PPTX · DOCX · XLSX · 텍스트
+• 올리면 DM으로 <i>📒 노트 만드는 중…</i> → 완료/실패 알림
+• 텍스트 살아있는 자료가 최적 (스캔 PDF는 OCR, 최대 7p)
+
+<b>2. 노트 = 요약이 아님</b>
+🎯 한 줄 요지 · 🧠 개념 지도 · 📖 정리(표·수식 보존) · 🔑 핵심 용어 · ❓ 복습 질문(능동 회상). 수식은 $...$로 렌더링.
+
+<b>3. 복습 — 체화의 핵심</b>
+• /review → 오늘 복습할 노트 + [😵 까먹음 / 🤔 가물가물 / ✅ 기억함]
+• 자가평가 → SM-2로 <b>다음 복습일 자동 조정</b> (까먹음=1일, 기억함=점점 길게)
+• 새 노트는 내일 첫 복습 예약
+
+<b>4. 명령어</b>
+• /notes — 통계(총 노트·오늘 복습·누적·비용) + 대시보드 링크
+• /review — 오늘 복습 큐 + 자가평가 버튼
+• /notes_guide — 이 도움말
+
+<b>5. 대시보드</b>
+읽기·복습 전용: 노트 본문(KaTeX 수식·표) + 복습질문 펼치기 + 노트별 💰비용·⏱시간 + 오늘/이번달 비용. Archive·Wiki와 상호 연결.
+
+<b>6. 비용</b>
+노트당 flash 합성 ~₩수(저렴) · 파싱 무료(로컬) · OCR 페이지만 유료."""
+
 
 def _is_owner(update: Update) -> bool:
     u = update.effective_user
@@ -143,7 +172,15 @@ async def cmd_notes(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         lines.append("\n복습하려면 /review")
     if link:
         lines.append(f"🔗 대시보드: {link}")
+    lines.append("ℹ️ 상세 사용법: /notes_guide")
     await update.message.reply_text("\n".join(lines), parse_mode="HTML",
+                                    disable_web_page_preview=True)
+
+
+async def cmd_notes_guide(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_owner(update):
+        return
+    await update.message.reply_text(_NOTES_GUIDE_TEXT, parse_mode="HTML",
                                     disable_web_page_preview=True)
 
 
@@ -209,5 +246,6 @@ def register(app: Application) -> None:
     """Wire the study-notes commands + grade callback into the bot."""
     app.add_handler(CommandHandler("notes", cmd_notes))
     app.add_handler(CommandHandler("review", cmd_review))
+    app.add_handler(CommandHandler("notes_guide", cmd_notes_guide))
     app.add_handler(CallbackQueryHandler(on_grade_callback, pattern=r"^nrev:"))
     log.info("study-notes telegram handlers registered")

@@ -121,6 +121,25 @@ def record(model: str, in_tokens: int = 0, out_tokens: int = 0,
         return 0.0
 
 
+def last_call(purpose: str) -> dict | None:
+    """Most recent recorded call for a `purpose` tag — lets a caller
+    surface the exact KRW cost of the call it just made (real token
+    counts, not an estimate). Low-concurrency callers only."""
+    try:
+        with _conn() as c:
+            row = c.execute(
+                "SELECT cost_krw, in_tokens, out_tokens FROM calls "
+                "WHERE purpose=? ORDER BY rowid DESC LIMIT 1",
+                (purpose,)).fetchone()
+        if not row:
+            return None
+        return {"cost_krw": float(row[0] or 0.0),
+                "in_tokens": int(row[1] or 0),
+                "out_tokens": int(row[2] or 0)}
+    except Exception:
+        return None
+
+
 def record_resp(model: str, resp, purpose: str = "unknown") -> float:
     """Convenience wrapper — pull token counts off a Gemini response."""
     um = getattr(resp, "usage_metadata", None)
