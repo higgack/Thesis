@@ -27,6 +27,7 @@ import sqlite3
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s")
@@ -37,6 +38,7 @@ _PORT = int(os.getenv("DASHBOARD_PORT", "8082"))
 _DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data")).resolve()
 _DOC_ROOT = _DATA_DIR / "dashboard"
 _QNA_DB = _DATA_DIR / "qna.db"
+_NOTES_DB = _DATA_DIR / "notes.db"
 
 _BASIC_USER = os.getenv("DASHBOARD_USER", "").strip()
 _BASIC_PASS = os.getenv("DASHBOARD_PASSWORD", "").strip()
@@ -55,6 +57,8 @@ def _eq(a: str, b: str) -> bool:
 
 
 _DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/q-(\d+)/?$")
+# Study-note delete: id is a (url-encoded) slug, so capture the rest.
+_NOTE_DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+?)/?$")
 _ASK_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/?$")
 _ASK_GET_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/(\d+)/?$")
 
@@ -180,11 +184,56 @@ class Handler(SimpleHTTPRequestHandler):
             "error": row["error"],
         })
 
+    def _send_ok(self, n: int):
+        body = json.dumps({"ok": True, "deleted": n}).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _delete_note(self, token: str, nid: str):
+        """Delete one study note: rows (notes/srs/questions/reviews —
+        FK cascade is off in SQLite so do it explicitly) + vault .md +
+        dashboard page. Runs in the 200MB container → sqlite only."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self.send_error(403, "forbidden")
+            return
+        if not nid or nid == "index.html":
+            self.send_error(404)
+            return
+        try:
+            with sqlite3.connect(str(_NOTES_DB), timeout=30) as c:
+                row = c.execute(
+                    "SELECT md_path FROM notes WHERE id=?", (nid,)).fetchone()
+                md_path = row[0] if row else None
+                c.execute("DELETE FROM questions WHERE note_id=?", (nid,))
+                c.execute("DELETE FROM reviews WHERE note_id=?", (nid,))
+                c.execute("DELETE FROM note_srs WHERE note_id=?", (nid,))
+                n = c.execute("DELETE FROM notes WHERE id=?", (nid,)).rowcount
+            log.info("deleted note %s (rows=%d)", nid, n)
+            for p in (md_path and Path(md_path),
+                      Path(_DOC_ROOT) / token / "notes" / f"note-{nid}.html"):
+                if p:
+                    try:
+                        p.unlink(missing_ok=True)
+                    except OSError:
+                        log.warning("note unlink failed: %s", p)
+        except Exception as e:
+            log.exception("note delete failed")
+            self.send_error(500, f"delete failed: {e}")
+            return
+        self._send_ok(n)
+
     def do_DELETE(self):
         if not self._check_basic_auth():
             return
         m = _DELETE_RE.match(self.path)
         if not m:
+            mn = _NOTE_DELETE_RE.match(self.path)
+            if mn:
+                self._delete_note(mn.group(1), unquote(mn.group(2)))
+                return
             self.send_error(404)
             return
         token, qid = m.group(1), int(m.group(2))

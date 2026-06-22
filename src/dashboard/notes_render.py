@@ -80,6 +80,14 @@ display:flex;align-items:center;gap:12px}
 .note-row.due{border-left:3px solid var(--due)}
 .note-row .t{font-weight:600;flex:1;word-break:break-word}
 .note-row .meta{font-size:11px;color:var(--muted);white-space:nowrap}
+.ndel{cursor:pointer;background:rgba(148,163,184,.18);
+border:1px solid rgba(148,163,184,.32);color:var(--muted);font-size:15px;
+line-height:1;padding:5px 9px;border-radius:8px;transition:.12s}
+.ndel:hover{background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.55);
+color:#ef4444;transform:translateY(-1px)}
+[data-theme=dark] .ndel{background:rgba(71,85,105,.45);
+border-color:rgba(100,116,139,.55);color:#cbd5e1}
+.note-row.removing{opacity:0;transform:scale(.97);transition:.2s}
 .badge{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;
 border-radius:10px;background:rgba(245,158,11,.15);color:#d97706}
 [data-theme=dark] .badge{color:#fbbf24}
@@ -153,6 +161,29 @@ _CDN = (
 )
 
 
+_INDEX_JS = r"""
+(function(){
+  var token = location.pathname.split('/').filter(Boolean)[0] || '';
+  document.querySelectorAll('.ndel').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      var row = btn.closest('.note-row');
+      var id = row && row.dataset.id;
+      if(!id) return;
+      if(!confirm('이 노트를 삭제할까요?\n\n'+id)) return;
+      fetch('/'+token+'/notes/'+encodeURIComponent(id), {method:'DELETE'})
+        .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .then(function(){
+          row.classList.add('removing');
+          setTimeout(function(){ row.remove(); }, 220);
+        })
+        .catch(function(err){ alert('삭제 실패: '+err.message); });
+    });
+  });
+})();
+"""
+
+
 def _head(title: str) -> str:
     return (
         "<!DOCTYPE html><html lang='ko'><head><meta charset='utf-8'>"
@@ -183,10 +214,11 @@ def _render_index(token: str, notes: list[dict], due: list[dict],
         nd = n.get("next_due") or ""
         lr = n.get("last_reviewed") or "—"
         rows.append(
-            f"<div class='note-row'>"
+            f"<div class='note-row' data-id=\"{_esc(n['id'])}\">"
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
             f"<span class='stype'>{_esc(n.get('source_type') or '')}</span>"
             f"<span class='meta'>다음복습 {_esc(nd)} · 마지막 {_esc(lr[:10])}</span>"
+            f"<button class='ndel' type='button' title='노트 삭제'>🗑</button>"
             f"</div>"
         )
     return "\n".join([
@@ -214,7 +246,8 @@ def _render_index(token: str, notes: list[dict], due: list[dict],
         "</div>",
         "\n".join(rows),
         "<div class='footer'>채점은 텔레그램 <code>/review</code>에서 · "
-        "대시보드는 읽기·복습 전용</div>",
+        "대시보드는 읽기·복습 전용 · 🗑 = 노트 삭제</div>",
+        f"<script>{_INDEX_JS}</script>",
         "</div></body></html>",
     ])
 
