@@ -28,6 +28,7 @@ generated indexes never get committed.
 # Drop your PDFs / docs into rag/sources/ first, then:
 python rag/ingest.py rag/sources/some_paper.pdf      # one file
 python rag/ingest.py rag/sources/                    # whole folder
+python rag/ingest.py rag/sources/ --triage           # triage-filter PDFs first
 
 python rag/query.py "What methods address declining response rates in surveys?"
 python rag/query.py --mode hybrid "Summarize the debate on construct validity"
@@ -35,6 +36,24 @@ python rag/query.py --mode hybrid "Summarize the debate on construct validity"
 
 `ingest.py` parses + indexes documents into `rag/rag_storage/`; `query.py` runs a
 hybrid retrieval query against that index. Both read config from `rag/.env`.
+
+## Pre-flight triage (cheaper ingestion)
+
+`triage.py` (PyMuPDF) extracts near-free signals from each PDF page and sorts it
+into **SKIP** (blank), **TEXT_ONLY** (native text, no OCR), **OCR_NEEDED**
+(image/scanned), or **LLM_NEEDED** (tables/forms/mixed layouts) — so you only pay
+OCR/LLM cost where it's actually needed. Signal extraction is ~0.001x the cost of
+OCR (~1x) or LLM (~2–50x).
+
+```bash
+python rag/triage.py rag/sources/paper.pdf            # human-readable report
+python rag/triage.py rag/sources/paper.pdf --details  # machine-readable JSON (routes + per-page)
+```
+
+`ingest.py --triage` uses it to skip entirely-blank PDFs before they reach
+RAG-Anything. The `--details` JSON exposes `routes` (skip/text/ocr/llm page lists)
+plus helpers (`route_pages`, `extract_text_pages`, `render_pages_for_ocr`) if you
+want to build a custom per-page pipeline.
 
 ## How it connects to the skills
 

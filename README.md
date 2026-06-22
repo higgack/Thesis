@@ -15,7 +15,7 @@ with Claude Code. It bundles three building blocks:
 
 ```
 manuscript/          ← your actual paper: drafts, sections, data, figures, refs
-rag/                 ← RAG-Anything integration (ingest.py, query.py, sources/)
+rag/                 ← RAG-Anything integration (ingest.py, query.py, triage.py, sources/)
 docs/tooling/        ← optional tooling (rtk setup)
 .claude/
   skills/   → 4 skills (symlinks)   commands/ → /ars-*   agents/
