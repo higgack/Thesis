@@ -1,0 +1,30 @@
+{
+  "_comment": "OPTIONAL. Copy to settings.json ONLY if you want the suite's optional hooks active. These hooks run vendored shell/Python on session start (dependency install + announce) and on every Write/Edit/Bash (the write-scope guard). The core skills, slash commands, and agents work WITHOUT this file — they are auto-discovered from .claude/. Enable hooks only after reviewing hooks/run_guard.sh and scripts/announce-ars-loaded.sh.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pip install -q -r \"${CLAUDE_PROJECT_DIR}/requirements-dev.txt\" >/dev/null 2>&1 || true"
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/scripts/announce-ars-loaded.sh\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR}/hooks/run_guard.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

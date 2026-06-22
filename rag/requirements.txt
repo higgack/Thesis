@@ -1,0 +1,5 @@
+# RAG-Anything multimodal RAG integration.
+# 'all' pulls image + text + office extras; drop to e.g. raganything[image,text]
+# if you don't need every parser. See https://github.com/HKUDS/RAG-Anything
+raganything[all]
+python-dotenv
