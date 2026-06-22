@@ -40,7 +40,16 @@ async def _triaged_pdf_extract(p: Path) -> tuple[str, str | None]:
                 page_text[i] = doc[i].get_text("text") or ""
             except Exception:
                 page_text[i] = ""
-        for i in routes["ocr"]:                          # OCR only these
+        # OCR is paid + slow (one Gemini Vision call/page). Cap it so a
+        # fully-scanned PDF can't trigger N Vision calls — mirrors the
+        # loader's image-only cap. Pages past the cap are skipped.
+        ocr_pages = sorted(routes["ocr"])
+        cap = getattr(loaders, "OCR_AUTO_CAP", 7)
+        if len(ocr_pages) > cap:
+            log.info("notes pdf triage: capping OCR %d→%d pages (%s)",
+                     len(ocr_pages), cap, p.name)
+            ocr_pages = ocr_pages[:cap]
+        for i in ocr_pages:
             try:
                 png = await asyncio.to_thread(
                     lambda idx=i: doc[idx].get_pixmap(dpi=dpi).tobytes("png"))
