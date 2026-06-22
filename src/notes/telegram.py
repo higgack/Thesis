@@ -2,10 +2,12 @@
 
 - handle_study_post(): a message in the dedicated study channel →
   parse (reusing loaders) → synthesise a note → notify the owner.
-- /notes   : stats + dashboard link.
-- /review  : show today's due notes with [😵/🤔/✅] self-grade buttons.
-- grade callback (^nrev:): apply the grade via SM-2 lite, reschedule,
-  edit the message to show the next review date.
+- /notes       : count + dashboard link.
+- /notes_guide : detailed usage (also repliable in-channel for pinning).
+
+No spaced-repetition review UI — the user browses notes daily on the
+dashboard. The SRS data layer (note_srs, srs.py) stays dormant in case
+it's wanted again.
 
 Owner-gated. Registered from bot.py via register(app); on_channel_post
 routes the study channel here (config.STUDY_CHANNEL_ID) before the
@@ -17,25 +19,20 @@ import logging
 import os
 import re
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    ContextTypes,
-)
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 from .. import config
-from . import channel, recall, store
+from . import channel, store
 
 log = logging.getLogger(__name__)
 
 _URL_RE = re.compile(r"https?://[^\s<>\")]+")
 _DOC_EXTS = ("pdf", "pptx", "docx", "xlsx", "xls")
 
-_GRADE_LABELS = {0: "😵 까먹음", 1: "🤔 가물가물", 2: "✅ 기억함"}
+_NOTES_GUIDE_TEXT = """📒 <b>학습 노트 사용법</b>
 
-_NOTES_GUIDE_TEXT = """📒 <b>학습 노트 (체화) 사용법</b>
-
-검색용 위키와 달리, <b>내가 공부한 걸 다시 읽고 되새김질해 오래 체화</b>하는 개인 노트 시스템.
+내가 공부한 자료를 다시 읽고 되새김질하는 개인 노트 시스템.
 
 <b>1. 자료 넣기</b>
 전용 학습 채널에 그냥 올리면 자동 노트화:
@@ -44,22 +41,16 @@ _NOTES_GUIDE_TEXT = """📒 <b>학습 노트 (체화) 사용법</b>
 • 텍스트 살아있는 자료가 최적 (스캔 PDF는 OCR, 최대 7p)
 
 <b>2. 노트 = 요약이 아님</b>
-🎯 한 줄 요지 · 🧠 개념 지도 · 📖 정리(표·수식 보존) · 🔑 핵심 용어 · ❓ 복습 질문(능동 회상). 수식은 $...$로 렌더링.
+🎯 한 줄 요지 · 🧠 개념 지도(Mermaid 다이어그램) · 📖 정리(표·수식 보존) · 🔑 핵심 용어. 수식은 $...$로 렌더링.
 
-<b>3. 복습 — 체화의 핵심</b>
-• /review → 오늘 복습할 노트 + [😵 까먹음 / 🤔 가물가물 / ✅ 기억함]
-• 자가평가 → SM-2로 <b>다음 복습일 자동 조정</b> (까먹음=1일, 기억함=점점 길게)
-• 새 노트는 내일 첫 복습 예약
-
-<b>4. 명령어</b>
-• /notes — 통계(총 노트·오늘 복습·누적·비용) + 대시보드 링크
-• /review — 오늘 복습 큐 + 자가평가 버튼
+<b>3. 명령어</b>
+• /notes — 노트 개수 + 대시보드 링크
 • /notes_guide — 이 도움말
 
-<b>5. 대시보드</b>
-읽기·복습 전용: 노트 본문(KaTeX 수식·표) + 복습질문 펼치기 + 노트별 💰비용·⏱시간 + 오늘/이번달 비용. Archive·Wiki와 상호 연결.
+<b>4. 대시보드</b>
+노트 본문(KaTeX 수식·마크다운 표·Mermaid 다이어그램) + 노트별 💰비용·⏱시간 + 오늘/이번달 노트 비용 + 🗑 삭제. Archive·Wiki·Commands와 상호 연결.
 
-<b>6. 비용</b>
+<b>5. 비용</b>
 노트당 flash 합성 ~₩수(저렴) · 파싱 무료(로컬) · OCR 페이지만 유료."""
 
 
@@ -88,15 +79,10 @@ async def _channel_command(cmd: str, chat_id, ctx: ContextTypes.DEFAULT_TYPE) ->
         await ctx.bot.send_message(chat_id, _NOTES_GUIDE_TEXT,
                                    parse_mode="HTML", disable_web_page_preview=True)
     elif cmd == "notes":
-        st = recall.stats()
+        st = store.stats()
         await ctx.bot.send_message(
-            chat_id,
-            f"📒 <b>학습 노트</b>\n• 총 {st['notes']}개 · 오늘 복습 "
-            f"{st['due_today']}개 · 누적 {st['total_reviews']}회\n"
+            chat_id, f"📒 <b>학습 노트</b> · 총 {st['notes']}개\n"
             "ℹ️ 사용법: /notes_guide", parse_mode="HTML")
-    elif cmd == "review":
-        await ctx.bot.send_message(
-            chat_id, "복습은 봇 DM에서 /review 로 진행하세요 (자가평가 버튼은 DM 전용).")
     else:
         await ctx.bot.send_message(
             chat_id, f"알 수 없는 명령: /{cmd}\nℹ️ 사용법: /notes_guide")
@@ -167,7 +153,6 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             title = (n or {}).get("title") or nid
             link = _dash_link(nid)
             lines.append(f"• <b>{title}</b>" + (f"\n  🔗 {link}" if link else ""))
-        lines.append("\n내일 첫 복습 예정 · /review 로 복습")
         out = "\n".join(lines)
     elif err:
         out = f"⚠️ 노트 생성 실패: {err}"
@@ -195,16 +180,9 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_notes(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_owner(update):
         return
-    st = recall.stats()
+    st = store.stats()
+    lines = ["📒 <b>학습 노트</b>", f"• 총 노트: {st['notes']}개"]
     link = _dash_link()
-    lines = [
-        "📒 <b>학습 노트 (체화)</b>",
-        f"• 총 노트: {st['notes']}개",
-        f"• 오늘 복습: {st['due_today']}개",
-        f"• 누적 복습: {st['total_reviews']}회",
-    ]
-    if st["due_today"]:
-        lines.append("\n복습하려면 /review")
     if link:
         lines.append(f"🔗 대시보드: {link}")
     lines.append("ℹ️ 상세 사용법: /notes_guide")
@@ -219,68 +197,8 @@ async def cmd_notes_guide(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
                                     disable_web_page_preview=True)
 
 
-def _grade_kb(rowid: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("😵 까먹음", callback_data=f"nrev:0:{rowid}"),
-        InlineKeyboardButton("🤔 가물가물", callback_data=f"nrev:1:{rowid}"),
-        InlineKeyboardButton("✅ 기억함", callback_data=f"nrev:2:{rowid}"),
-    ]])
-
-
-async def cmd_review(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _is_owner(update):
-        return
-    due = store.due_notes()
-    if not due:
-        await update.message.reply_text("✅ 오늘 복습할 노트가 없어요.")
-        return
-    await update.message.reply_text(
-        f"🔁 오늘 복습할 노트 {len(due)}개. 각 노트를 떠올려본 뒤 자가평가하세요.")
-    for n in due[:10]:
-        link = _dash_link(n["id"])
-        body = f"📒 <b>{n['title']}</b>"
-        if link:
-            body += f"\n🔗 {link}"
-        await ctx.bot.send_message(
-            update.effective_chat.id, body, parse_mode="HTML",
-            disable_web_page_preview=True,
-            reply_markup=_grade_kb(int(n["rowid"])))
-
-
-async def on_grade_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    q = update.callback_query
-    if not q:
-        return
-    if not _is_owner(update):
-        await q.answer()
-        return
-    try:
-        _, grade_s, rowid_s = q.data.split(":", 2)
-        grade = int(grade_s)
-        rowid = int(rowid_s)
-    except Exception:
-        await q.answer("잘못된 요청")
-        return
-    note_id = store.id_for_rowid(rowid)
-    if not note_id:
-        await q.answer("노트를 찾을 수 없음")
-        return
-    new = recall.grade(note_id, grade)
-    await q.answer(_GRADE_LABELS.get(grade, ""))
-    nxt = (new or {}).get("next_due", "?")
-    try:
-        await q.edit_message_text(
-            f"{(q.message.text or '').splitlines()[0]}\n"
-            f"→ {_GRADE_LABELS.get(grade,'')} · 다음 복습 {nxt}",
-            parse_mode="HTML", disable_web_page_preview=True)
-    except Exception:
-        pass
-
-
 def register(app: Application) -> None:
-    """Wire the study-notes commands + grade callback into the bot."""
+    """Wire the study-notes commands into the bot."""
     app.add_handler(CommandHandler("notes", cmd_notes))
-    app.add_handler(CommandHandler("review", cmd_review))
     app.add_handler(CommandHandler("notes_guide", cmd_notes_guide))
-    app.add_handler(CallbackQueryHandler(on_grade_callback, pattern=r"^nrev:"))
     log.info("study-notes telegram handlers registered")

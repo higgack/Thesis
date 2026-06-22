@@ -77,7 +77,6 @@ padding:16px 18px;box-shadow:var(--shadow)}
 .note-row{background:var(--panel);border:1px solid var(--border);
 border-radius:10px;padding:13px 16px;margin-bottom:8px;box-shadow:var(--shadow);
 display:flex;align-items:center;gap:12px}
-.note-row.due{border-left:3px solid var(--due)}
 .note-row .t{font-weight:600;flex:1;word-break:break-word}
 .note-row .meta{font-size:11px;color:var(--muted);white-space:nowrap}
 .ndel{cursor:pointer;background:rgba(148,163,184,.18);
@@ -88,9 +87,6 @@ color:#ef4444;transform:translateY(-1px)}
 [data-theme=dark] .ndel{background:rgba(71,85,105,.45);
 border-color:rgba(100,116,139,.55);color:#cbd5e1}
 .note-row.removing{opacity:0;transform:scale(.97);transition:.2s}
-.badge{display:inline-block;font-size:10px;font-weight:700;padding:2px 8px;
-border-radius:10px;background:rgba(245,158,11,.15);color:#d97706}
-[data-theme=dark] .badge{color:#fbbf24}
 .stype{font-size:10px;color:var(--muted);border:1px solid var(--border);
 border-radius:8px;padding:1px 6px}
 .empty{text-align:center;padding:60px 20px;color:var(--muted)}
@@ -123,8 +119,6 @@ color:var(--text);display:none}
 .q-card.open .a{display:block}
 .q-card .reveal{font-size:11px;color:var(--accent);margin-top:6px}
 .q-card.open .reveal{display:none}
-.grade-hint{margin-top:20px;padding:14px 16px;background:var(--panel-alt);
-border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--muted)}
 .footer{margin-top:32px;padding:16px 0;text-align:center;font-size:11px;
 color:var(--muted);border-top:1px solid var(--border-soft)}
 """
@@ -147,12 +141,23 @@ _NOTE_JS = r"""
       if(pre) pre.replaceWith(d);
     });
     if(window.mermaid){
-      try{
-        var dark = document.documentElement.dataset.theme === 'dark';
-        window.mermaid.initialize({startOnLoad:false, securityLevel:'loose',
-          theme: dark ? 'dark' : 'default'});
-        window.mermaid.run({querySelector:'.mermaid'});
-      }catch(e){ /* a bad diagram must not break the note */ }
+      var dark = document.documentElement.dataset.theme === 'dark';
+      window.mermaid.initialize({startOnLoad:false, securityLevel:'loose',
+        theme: dark ? 'dark' : 'default'});
+      // Render each diagram individually so a single bad one degrades to
+      // its source text instead of mermaid's "Syntax error" bomb.
+      el.querySelectorAll('.mermaid').forEach(function(node, i){
+        var src = node.textContent;
+        window.mermaid.render('mmd'+Date.now()+'_'+i, src).then(function(res){
+          node.innerHTML = res.svg;
+        }).catch(function(){
+          var pre = document.createElement('pre');
+          pre.style.whiteSpace = 'pre-wrap';
+          pre.style.textAlign = 'left';
+          pre.textContent = src;
+          node.replaceWith(pre);
+        });
+      });
     }
     if(window.renderMathInElement){
       window.renderMathInElement(el,{delimiters:[
@@ -212,48 +217,33 @@ def _head(title: str) -> str:
     )
 
 
-def _render_index(token: str, notes: list[dict], due: list[dict],
+def _render_index(token: str, notes: list[dict],
                   st: dict, cost: dict | None = None) -> str:
     cost = cost or {}
     rows = []
-    if due:
-        rows.append("<div class='sec-title'>🔁 오늘 복습할 노트 "
-                    f"({len(due)})</div>")
-        for n in due:
-            rows.append(
-                f"<div class='note-row due'><span class='badge'>복습</span>"
-                f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
-                f"<span class='stype'>{_esc(n.get('source_type') or '')}</span></div>"
-            )
     rows.append(f"<div class='sec-title'>📒 전체 노트 ({len(notes)})</div>")
     if not notes:
         rows.append("<div class='empty'>아직 노트가 없어요. 학습 채널에 "
                     "자료를 올리면 여기에 노트로 쌓입니다.</div>")
     for n in notes:
-        nd = n.get("next_due") or ""
-        lr = n.get("last_reviewed") or "—"
+        learned = (n.get("updated") or "")[:10]
         rows.append(
             f"<div class='note-row' data-id=\"{_esc(n['id'])}\">"
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
             f"<span class='stype'>{_esc(n.get('source_type') or '')}</span>"
-            f"<span class='meta'>다음복습 {_esc(nd)} · 마지막 {_esc(lr[:10])}</span>"
+            f"<span class='meta'>학습 {_esc(learned)}</span>"
             f"<button class='ndel' type='button' title='노트 삭제'>🗑</button>"
             f"</div>"
         )
     return "\n".join([
         _head("📒 학습 노트"), "</head><body><div class='layout'>",
-        "<header><h1>📒 학습 노트 <span style='font-size:13px;color:var(--muted)'>"
-        "(체화)</span></h1>",
+        "<header><h1>📒 학습 노트</h1>",
         f"<div class='sub'><a class='nav' href='/{_esc(token)}/'>🧠 Archive</a> "
         f"<a class='nav' href='/{_esc(token)}/wiki/'>📚 Wiki</a> "
         f"<a class='nav' href='/{_esc(token)}/commands/'>📋 Commands</a></div></header>",
         "<div class='stats'>",
         f"<div class='card'><div class='label'>📒 총 노트</div>"
         f"<div class='value'>{st.get('notes',0):,}개</div></div>",
-        f"<div class='card'><div class='label'>🔁 오늘 복습</div>"
-        f"<div class='value'>{st.get('due_today',0):,}개</div></div>",
-        f"<div class='card'><div class='label'>✅ 누적 복습</div>"
-        f"<div class='value'>{st.get('total_reviews',0):,}회</div></div>",
         f"<div class='card'><div class='label'>💰 오늘 노트 비용</div>"
         f"<div class='value'>₩{cost.get('today_krw',0):,.1f}</div>"
         f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
@@ -265,8 +255,7 @@ def _render_index(token: str, notes: list[dict], due: list[dict],
         f"{cost.get('mtd_count',0)}회 합성</div></div>",
         "</div>",
         "\n".join(rows),
-        "<div class='footer'>채점은 텔레그램 <code>/review</code>에서 · "
-        "대시보드는 읽기·복습 전용 · 🗑 = 노트 삭제</div>",
+        "<div class='footer'>대시보드는 읽기 전용 · 🗑 = 노트 삭제</div>",
         f"<script>{_INDEX_JS}</script>",
         "</div></body></html>",
     ])
@@ -286,13 +275,10 @@ def _render_note(token: str, note: dict) -> str:
     if qs:
         q_html = ("<div class='q-sec'><div class='sec-title'>❓ 복습 질문 "
                   "(능동 회상)</div>" + "\n".join(qs) + "</div>")
-    srs = note.get("srs") or {}
     cost = float(note.get("cost_krw") or 0)
     gsec = float(note.get("gen_seconds") or 0)
-    meta = (f"다음복습 {_esc(srs.get('next_due') or '—')} · "
-            f"복습 {_esc(srs.get('reps') or 0)}회 · "
-            f"마지막 {_esc((srs.get('last_reviewed') or '—')[:10])} · "
-            f"💰 ₩{cost:,.2f} · ⏱ {gsec:.0f}초")
+    learned = (note.get("created") or "")[:10]
+    meta = f"학습 {_esc(learned)} · 💰 ₩{cost:,.2f} · ⏱ {gsec:.0f}초"
     return "\n".join([
         _head(note.get("title") or "노트"), _CDN,
         "</head><body><main>",
@@ -301,9 +287,6 @@ def _render_note(token: str, note: dict) -> str:
         # marked parses the raw markdown held in #md (textContent).
         f"<div class='note-body' id='md'>{_esc(note.get('md') or '')}</div>",
         q_html,
-        "<div class='grade-hint'>📲 복습 후 <b>텔레그램 /review</b>에서 "
-        "[😵 까먹음 / 🤔 가물가물 / ✅ 기억함] 으로 자가평가하면 다음 복습일이 "
-        "자동 조정돼요.</div>",
         "</main>",
         f"<script>{_NOTE_JS}</script>",
         "</body></html>",
@@ -316,11 +299,10 @@ def render_notes(token: str) -> int:
     if not token:
         return 0
     try:
-        from ..notes import store, recall
+        from ..notes import store
         from ..store import cost as cost_store
         notes = store.list_notes()
-        due = store.due_notes()
-        st = recall.stats()
+        st = store.stats()
         # Spend from cost.db (purpose=note_synth) — persistent, so deleting
         # a note never changes the cost, and a paid-but-failed synth counts.
         nc = cost_store.purpose_today_month("note_synth")
@@ -335,7 +317,7 @@ def render_notes(token: str) -> int:
     except Exception:
         log.exception("notes_render: store read failed")
         return 0
-    if not notes and not due:
+    if not notes:
         # Nothing to show yet — skip writing an empty tree.
         return 0
 
@@ -351,7 +333,7 @@ def render_notes(token: str) -> int:
     written = 0
     try:
         _atomic(base / "index.html",
-                _render_index(token, notes, due, st, cost))
+                _render_index(token, notes, st, cost))
         written += 1
         for n in notes:
             full = store.get_note(n["id"])
