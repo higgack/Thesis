@@ -1426,7 +1426,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 📚 <b>위키</b>(매시 정시 학습·요약알림 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
-📒 <b>학습 노트</b>(체화): /notes · /review · 상세: /notes_guide
+📒 <b>학습 노트</b>: /notes · 상세: /notes_guide
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
@@ -1941,20 +1941,19 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 WIKI_ENABLED=0(Chroma/meta.db 안 건드려 끄면 기존 RAG 그대로) · 상세 docs/WIKI.md
 
 ═══════════════════════════════════════
-<b>📒 14. 학습 노트 (체화)</b>
+<b>📒 14. 학습 노트</b>
 ═══════════════════════════════════════
 
 검색용 위키와 별개로, <b>내가 직접 공부한 자료를 다시 읽고 되새김질해 오래
 체화</b>하는 개인 노트 시스템. 전용 학습 채널에 자료(URL·PDF·유튜브·PPT·워드·
 텍스트)를 올리면 봇이 <b>노트 형태로 재구성</b>(요약 아님: 한 줄 요지·개념
-지도·정리·핵심용어·복습질문)해서 대시보드에 쌓고, <b>SM-2 복습 주기</b>로 체화를
-돕는다. 노트당 flash 합성 ~₩수(파싱 무료, OCR 페이지만 유료). 채널에서
-/notes_guide 입력 시 사용법을 채널에 게시(핀 고정용).
+지도(Mermaid)·정리·표·수식·핵심용어)해서 대시보드에 쌓는다. 매일 알아서 읽어
+되새김질하는 용도. 노트당 flash 합성 ~₩수(파싱 무료, OCR 페이지만 유료).
+채널에서 /notes_guide 입력 시 사용법을 채널에 게시(핀 고정용).
 
 <b>명령어</b>
-• <b>/notes</b> 통계(총 노트·오늘 복습·누적·노트 비용) + 대시보드 링크
-• <b>/review</b> 오늘 복습할 노트 + [😵 까먹음 / 🤔 가물가물 / ✅ 기억함] 자가평가 → SM-2로 다음 복습일 자동 조정
-• <b>/notes_guide</b> 학습 노트 상세 사용법(자료 넣기·노트 구성·복습·대시보드·비용)
+• <b>/notes</b> 노트 개수 + 대시보드 링크
+• <b>/notes_guide</b> 학습 노트 상세 사용법(자료 넣기·노트 구성·대시보드·비용)
 """
 
 
