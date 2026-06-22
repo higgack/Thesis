@@ -80,12 +80,47 @@ def _dash_link(note_id: str | None = None) -> str:
 
 # ----------------------------------------------------------- ingest ---
 
+async def _channel_command(cmd: str, chat_id, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reply to a command posted *in* the study channel (so the guide can
+    be pinned). Telegram never echoes the bot's own channel posts back,
+    so this can't re-trigger handle_study_post."""
+    if cmd in ("notes_guide", "help", "guide", "start", "notes_help"):
+        await ctx.bot.send_message(chat_id, _NOTES_GUIDE_TEXT,
+                                   parse_mode="HTML", disable_web_page_preview=True)
+    elif cmd == "notes":
+        st = recall.stats()
+        await ctx.bot.send_message(
+            chat_id,
+            f"📒 <b>학습 노트</b>\n• 총 {st['notes']}개 · 오늘 복습 "
+            f"{st['due_today']}개 · 누적 {st['total_reviews']}회\n"
+            "ℹ️ 사용법: /notes_guide", parse_mode="HTML")
+    elif cmd == "review":
+        await ctx.bot.send_message(
+            chat_id, "복습은 봇 DM에서 /review 로 진행하세요 (자가평가 버튼은 DM 전용).")
+    else:
+        await ctx.bot.send_message(
+            chat_id, f"알 수 없는 명령: /{cmd}\nℹ️ 사용법: /notes_guide")
+
+
 async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Route one study-channel message to the notes pipeline, with a
     live progress message so the owner is never left in the dark
     (success, empty-extraction, or error all get surfaced)."""
     owner = config.TELEGRAM_OWNER_ID
     text = msg.text or msg.caption or ""
+
+    # Commands typed in the channel → reply in the channel (pinnable),
+    # never ingested as study material.
+    stripped = text.strip()
+    if stripped.startswith("/"):
+        cmd = stripped[1:].split()[0].split("@")[0].lower() if len(stripped) > 1 else ""
+        log.info("study channel command: /%s", cmd)
+        try:
+            await _channel_command(cmd, msg.chat_id, ctx)
+        except Exception:
+            log.warning("study channel command reply failed: /%s", cmd)
+        return
+
     doc = getattr(msg, "document", None)
     url_m = _URL_RE.search(text)
     src_label = (doc.file_name if doc else None) or (
