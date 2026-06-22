@@ -269,25 +269,3 @@ def stats() -> dict:
         due = len(due_notes())
         reviews = c.execute("SELECT COUNT(*) FROM reviews").fetchone()[0]
     return {"notes": total, "due_today": due, "total_reviews": reviews}
-
-
-def cost_summary() -> dict:
-    """Notes-ONLY spend — sum of per-note synthesis cost by KST date.
-    (The dashboard's note cost cards must reflect study-note cost only,
-    not the bot-wide cost.db total.)"""
-    init_db()
-    today = _today()
-    today_s = today.isoformat()      # YYYY-MM-DD
-    month_s = today_s[:7]            # YYYY-MM
-    with _conn() as c:
-        t = c.execute(
-            "SELECT COALESCE(SUM(cost_krw),0),COUNT(*) FROM notes "
-            "WHERE substr(created,1,10)=?", (today_s,)).fetchone()
-        m = c.execute(
-            "SELECT COALESCE(SUM(cost_krw),0),COUNT(*) FROM notes "
-            "WHERE substr(created,1,7)=?", (month_s,)).fetchone()
-    return {
-        "today_krw": float(t[0] or 0.0), "today_count": int(t[1] or 0),
-        "month_krw": float(m[0] or 0.0), "month_count": int(m[1] or 0),
-        "year": today.year, "month": today.month, "day": today.day,
-    }
