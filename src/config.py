@@ -7,6 +7,9 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_OWNER_ID = int(os.environ["TELEGRAM_OWNER_ID"])
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "").strip() or None
+# Dedicated study-notes (체화) channel. When set, posts here route to the
+# study-notes pipeline (src/notes/) instead of the brain ingest.
+STUDY_CHANNEL_ID = os.getenv("STUDY_CHANNEL_ID", "").strip() or None
 TELEGRAM_BASE_URL = os.getenv("TELEGRAM_BASE_URL", "").strip() or None
 
 # Optional now: only used when GEMINI_BACKEND=aistudio (the default).

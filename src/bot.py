@@ -1426,6 +1426,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 📚 <b>위키</b>(매시 정시 학습·요약알림 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
+📒 <b>학습 노트</b>(체화·복습): /notes · /review
+
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents
           /kipris_{search,pub,reg,inventor,status,family,claims,priority}
@@ -8439,6 +8441,12 @@ async def on_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post
     if not msg:
         return
+    # Dedicated study-notes channel → route to the 체화 pipeline instead
+    # of the brain ingest (keeps study material out of the wiki).
+    if config.STUDY_CHANNEL_ID and str(msg.chat.id) == config.STUDY_CHANNEL_ID:
+        from .notes import telegram as _notes_tg
+        await _notes_tg.handle_study_post(msg, ctx)
+        return
     if config.TELEGRAM_CHANNEL_ID and str(msg.chat.id) != config.TELEGRAM_CHANNEL_ID:
         return
     await _ingest_message(msg, ctx, notify_chat_id=config.TELEGRAM_OWNER_ID)
@@ -12800,6 +12808,13 @@ def main():
     app.add_handler(CallbackQueryHandler(
         on_ack_callback, pattern=r"^ack:"
     ))
+    # Study-notes (체화) subsystem: /notes, /review + grade callbacks.
+    # Dormant until STUDY_CHANNEL_ID is set, but the commands work now.
+    try:
+        from .notes import telegram as _notes_tg
+        _notes_tg.register(app)
+    except Exception:
+        log.exception("study-notes handler registration failed (non-fatal)")
     app.add_handler(CommandHandler("queue", cmd_queue))
     app.add_handler(CommandHandler("audit", cmd_audit))
     app.add_handler(CommandHandler("blocked_hosts", cmd_blocked_hosts))
