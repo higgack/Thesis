@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime, timezone, timedelta
 
 from .. import config
 from ..llm import gemini
+from ..store import cost as _cost
 
 log = logging.getLogger(__name__)
 
@@ -110,6 +112,7 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
         + f"[출처 유형] {source_type}\n[출처] {source_ref}\n\n"
         + "[본문]\n" + body
     )
+    t0 = time.monotonic()
     try:
         out = await gemini.complete(
             config.ANSWER_MODEL, _SYSTEM, user,
@@ -117,6 +120,16 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
     except Exception as e:
         log.warning("note synth call failed: %s", str(e)[:160])
         return None
+    gen_seconds = round(time.monotonic() - t0, 1)
+    # Exact KRW from the call we just recorded; fall back to a token
+    # estimate if usage_metadata was absent.
+    cc = _cost.last_call("note_synth")
+    if cc:
+        cost_krw = cc["cost_krw"]
+    else:
+        cost_krw = _cost._price_krw(
+            config.ANSWER_MODEL, len(user) // 4, len(out or "") // 4)
+    cost_krw = round(cost_krw, 2)
 
     sections = _split_sections(out or "")
     note_md = sections.get("NOTE", "").strip()
@@ -142,4 +155,6 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
         "source_ref": source_ref,
         "md": header + note_md + "\n",
         "questions": _parse_questions(sections.get("QUESTIONS", "")),
+        "cost_krw": cost_krw,
+        "gen_seconds": gen_seconds,
     }

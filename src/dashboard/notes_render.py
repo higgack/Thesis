@@ -163,7 +163,8 @@ def _head(title: str) -> str:
 
 
 def _render_index(token: str, notes: list[dict], due: list[dict],
-                  st: dict) -> str:
+                  st: dict, cost: dict | None = None) -> str:
+    cost = cost or {}
     rows = []
     if due:
         rows.append("<div class='sec-title'>🔁 오늘 복습할 노트 "
@@ -201,6 +202,15 @@ def _render_index(token: str, notes: list[dict], due: list[dict],
         f"<div class='value'>{st.get('due_today',0):,}개</div></div>",
         f"<div class='card'><div class='label'>✅ 누적 복습</div>"
         f"<div class='value'>{st.get('total_reviews',0):,}회</div></div>",
+        f"<div class='card'><div class='label'>💰 오늘 비용</div>"
+        f"<div class='value'>₩{cost.get('today_krw',0):,.0f}</div>"
+        f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
+        f"{cost.get('today_calls',0)}콜</div></div>",
+        f"<div class='card'><div class='label'>📅 이번 달 비용 "
+        f"({cost.get('mtd_year','')}년 {cost.get('mtd_month','')}월)</div>"
+        f"<div class='value'>₩{cost.get('mtd_krw',0):,.0f}</div>"
+        f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
+        f"{cost.get('mtd_day','')}일차</div></div>",
         "</div>",
         "\n".join(rows),
         "<div class='footer'>채점은 텔레그램 <code>/review</code>에서 · "
@@ -224,9 +234,12 @@ def _render_note(token: str, note: dict) -> str:
         q_html = ("<div class='q-sec'><div class='sec-title'>❓ 복습 질문 "
                   "(능동 회상)</div>" + "\n".join(qs) + "</div>")
     srs = note.get("srs") or {}
+    cost = float(note.get("cost_krw") or 0)
+    gsec = float(note.get("gen_seconds") or 0)
     meta = (f"다음복습 {_esc(srs.get('next_due') or '—')} · "
             f"복습 {_esc(srs.get('reps') or 0)}회 · "
-            f"마지막 {_esc((srs.get('last_reviewed') or '—')[:10])}")
+            f"마지막 {_esc((srs.get('last_reviewed') or '—')[:10])} · "
+            f"💰 ₩{cost:,.2f} · ⏱ {gsec:.0f}초")
     return "\n".join([
         _head(note.get("title") or "노트"), _CDN,
         "</head><body><main>",
@@ -251,9 +264,20 @@ def render_notes(token: str) -> int:
         return 0
     try:
         from ..notes import store, recall
+        from ..store import cost as cost_store
         notes = store.list_notes()
         due = store.due_notes()
         st = recall.stats()
+        _today = cost_store.today_krw()
+        _mtd = cost_store.month_to_date_krw()
+        cost = {
+            "today_krw": _today.get("total_krw", 0),
+            "today_calls": _today.get("calls", 0),
+            "mtd_krw": _mtd.get("total_krw", 0),
+            "mtd_year": _mtd.get("year", ""),
+            "mtd_month": _mtd.get("month", ""),
+            "mtd_day": _mtd.get("day", ""),
+        }
     except Exception:
         log.exception("notes_render: store read failed")
         return 0
@@ -272,7 +296,8 @@ def render_notes(token: str) -> int:
 
     written = 0
     try:
-        _atomic(base / "index.html", _render_index(token, notes, due, st))
+        _atomic(base / "index.html",
+                _render_index(token, notes, due, st, cost))
         written += 1
         for n in notes:
             full = store.get_note(n["id"])
