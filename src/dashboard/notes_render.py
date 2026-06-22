@@ -25,6 +25,7 @@ import html
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 from .. import config
@@ -34,6 +35,16 @@ log = logging.getLogger(__name__)
 
 def _esc(s) -> str:
     return html.escape(str(s) if s is not None else "")
+
+
+def _plain(md: str) -> str:
+    """Markdown → searchable plain text for the index full-text haystack
+    (drops fenced code/mermaid + markdown symbols, collapses space)."""
+    s = md or ""
+    s = re.sub(r"```.*?```", " ", s, flags=re.S)
+    s = re.sub(r"[#>*`|]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:4000]
 
 
 _THEME_JS = """
@@ -74,11 +85,25 @@ padding:16px 18px;box-shadow:var(--shadow)}
 .card .label{font-size:11px;color:var(--muted);margin-bottom:8px;font-weight:500}
 .card .value{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
 .sec-title{font-size:13px;color:var(--muted);margin:24px 4px 10px;font-weight:600}
+.controls{display:flex;gap:10px;margin:6px 0 4px}
+.controls input{flex:1;background:var(--panel);border:1px solid var(--border);
+color:var(--text);padding:10px 14px;border-radius:8px;font-size:14px;outline:none;
+transition:.15s}
+.controls input:focus{border-color:var(--primary);
+box-shadow:0 0 0 3px rgba(16,185,129,.15)}
+.controls .reset{background:var(--primary);border:0;color:#fff;padding:8px 18px;
+border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
+.controls .reset:hover{opacity:.9}
 .note-row{background:var(--panel);border:1px solid var(--border);
 border-radius:10px;padding:13px 16px;margin-bottom:8px;box-shadow:var(--shadow);
-display:flex;align-items:center;gap:12px}
+display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .note-row .t{font-weight:600;flex:1;word-break:break-word}
 .note-row .meta{font-size:11px;color:var(--muted);white-space:nowrap}
+.note-row .snippet{flex-basis:100%;font-size:12.5px;line-height:1.55;
+color:var(--muted);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;
+-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+mark.kw{background:#fef08a;color:inherit;padding:0 2px;border-radius:2px}
+[data-theme=dark] mark.kw{background:#fbbf24;color:#0f172a}
 .ndel{cursor:pointer;background:rgba(148,163,184,.18);
 border:1px solid rgba(148,163,184,.32);color:var(--muted);font-size:15px;
 line-height:1;padding:5px 9px;border-radius:8px;transition:.12s}
@@ -188,6 +213,43 @@ _CDN = (
 _INDEX_JS = r"""
 (function(){
   var token = location.pathname.split('/').filter(Boolean)[0] || '';
+  // Live filter: typing narrows the note list by title (no bot query).
+  var q = document.getElementById('q');
+  var reset = document.getElementById('reset');
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function rx(s){return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
+  function snippet(text, query){
+    if(!text||!query) return '';
+    var i = text.toLowerCase().indexOf(query.toLowerCase());
+    if(i<0) return '';
+    var s=Math.max(0,i-80), e=Math.min(text.length,i+query.length+80);
+    var slice=(s>0?'…':'')+text.slice(s,e)+(e<text.length?'…':'');
+    return esc(slice).replace(new RegExp(rx(query),'gi'),
+      function(m){return '<mark class="kw">'+m+'</mark>';});
+  }
+  // Full-text filter: matches note title + body (data-text); shows a
+  // highlighted snippet when the hit is in the body. No bot query.
+  function applyFilter(){
+    var t=(q?q.value:'').trim(), tl=t.toLowerCase(), shown=0;
+    document.querySelectorAll('.note-row').forEach(function(row){
+      var hay=row.dataset.text||'';
+      var a=row.querySelector('.t'); var title=(a?a.textContent:'');
+      var inTitle = !tl || title.toLowerCase().indexOf(tl)!==-1;
+      var inBody  = !tl || hay.toLowerCase().indexOf(tl)!==-1;
+      var ok = !tl || inTitle || inBody;
+      row.style.display = ok ? '' : 'none';
+      var old=row.querySelector('.snippet'); if(old) old.remove();
+      if(ok && tl && inBody){
+        var h=snippet(hay,t);
+        if(h){ var d=document.createElement('div'); d.className='snippet';
+               d.innerHTML=h; row.appendChild(d); }
+      }
+      if(ok) shown++;
+    });
+    var c=document.getElementById('note-count'); if(c) c.textContent=shown;
+  }
+  if(q) q.addEventListener('input', applyFilter);
+  if(reset) reset.addEventListener('click', function(){ q.value=''; applyFilter(); });
   document.querySelectorAll('.ndel').forEach(function(btn){
     btn.addEventListener('click', function(e){
       e.preventDefault(); e.stopPropagation();
@@ -218,17 +280,22 @@ def _head(title: str) -> str:
 
 
 def _render_index(token: str, notes: list[dict],
-                  st: dict, cost: dict | None = None) -> str:
+                  st: dict, cost: dict | None = None,
+                  bodies: dict | None = None) -> str:
     cost = cost or {}
+    bodies = bodies or {}
     rows = []
-    rows.append(f"<div class='sec-title'>📒 전체 노트 ({len(notes)})</div>")
+    rows.append("<div class='sec-title'>📒 전체 노트 "
+                f"(<span id='note-count'>{len(notes)}</span>)</div>")
     if not notes:
         rows.append("<div class='empty'>아직 노트가 없어요. 학습 채널에 "
                     "자료를 올리면 여기에 노트로 쌓입니다.</div>")
     for n in notes:
         learned = (n.get("updated") or "")[:10]
+        hay = _plain((bodies.get(n["id"]) or {}).get("md") or "")
         rows.append(
-            f"<div class='note-row' data-id=\"{_esc(n['id'])}\">"
+            f"<div class='note-row' data-id=\"{_esc(n['id'])}\" "
+            f"data-text=\"{_esc(hay)}\">"
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
             f"<span class='stype'>{_esc(n.get('source_type') or '')}</span>"
             f"<span class='meta'>학습 {_esc(learned)}</span>"
@@ -254,6 +321,9 @@ def _render_index(token: str, notes: list[dict],
         f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
         f"{cost.get('mtd_count',0)}회 합성</div></div>",
         "</div>",
+        "<div class='controls'><input id='q' type='text' "
+        "placeholder='노트 제목 검색...' autocomplete='off'>"
+        "<button id='reset' type='button' class='reset'>초기화</button></div>",
         "\n".join(rows),
         "<div class='footer'>대시보드는 읽기 전용 · 🗑 = 노트 삭제</div>",
         f"<script>{_INDEX_JS}</script>",
@@ -330,13 +400,21 @@ def render_notes(token: str) -> int:
         tmp.write_text(content, encoding="utf-8")
         os.replace(tmp, path)
 
+    # Read every note once: bodies feed both the index full-text search
+    # haystack and the per-note pages (one get_note per note, not two).
+    full_map = {}
+    for n in notes:
+        f = store.get_note(n["id"])
+        if f:
+            full_map[n["id"]] = f
+
     written = 0
     try:
         _atomic(base / "index.html",
-                _render_index(token, notes, st, cost))
+                _render_index(token, notes, st, cost, full_map))
         written += 1
         for n in notes:
-            full = store.get_note(n["id"])
+            full = full_map.get(n["id"])
             if not full:
                 continue
             _atomic(base / f"note-{n['id']}.html", _render_note(token, full))
