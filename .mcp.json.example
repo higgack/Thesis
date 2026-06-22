@@ -1,0 +1,9 @@
+{
+  "_comment": "OPTIONAL. Copy to .mcp.json to let Claude Code in this repo use Google NotebookLM via the notebooklm-mcp server. First run launches `npx notebooklm-mcp@latest`, which needs Node >= 18 and Chrome, and a one-time interactive Google login (persisted in a Chrome profile). Review https://github.com/PleasePrompto/notebooklm-mcp before enabling. See docs/tooling/notebooklm-mcp.md.",
+  "mcpServers": {
+    "notebooklm": {
+      "command": "npx",
+      "args": ["notebooklm-mcp@latest"]
+    }
+  }
+}

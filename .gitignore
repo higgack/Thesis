@@ -26,3 +26,8 @@ rag/rag_storage/
 rag/output/
 rag/sources/*
 !rag/sources/.gitkeep
+
+# Optional tooling (opt-in, see docs/tooling/): keep their local config/assets
+# out of the repo. Enable by copying the matching .example / installing the skill.
+.mcp.json
+.claude/skills/ppt-master/

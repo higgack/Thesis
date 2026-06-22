@@ -6,8 +6,10 @@ with Claude Code. It bundles three building blocks:
 | Component | Role | How it's integrated |
 |-----------|------|---------------------|
 | **[Academic Research Skills](https://github.com/Imbad0202/academic-research-skills)** | 4 skills / 27 modes: research → write → review → revise → finalize | **vendored** (CC-BY-NC-4.0) — auto-discovered from `.claude/` |
-| **[RAG-Anything](https://github.com/HKUDS/RAG-Anything)** | Multimodal RAG over your reference PDFs/docs (text, tables, equations, images) | **pip dependency + scaffold** in `rag/` |
-| **[rtk](https://github.com/rtk-ai/rtk)** | Token-saving CLI proxy (60–90% output compression) for cheaper AI sessions | **optional install** — see `docs/tooling/rtk.md` |
+| **[RAG-Anything](https://github.com/HKUDS/RAG-Anything)** | Multimodal RAG over your reference PDFs/docs (text, tables, equations, images) | **pip dependency + scaffold** in `rag/` (with PyMuPDF page triage) |
+| **[rtk](https://github.com/rtk-ai/rtk)** | Token-saving CLI proxy (60–90% output compression) for cheaper AI sessions | **optional install** — `docs/tooling/rtk.md` |
+| **[notebooklm-mcp](https://github.com/PleasePrompto/notebooklm-mcp)** | Google NotebookLM via MCP — grounded Q&A + audio overviews (complements `rag/`) | **optional MCP config** — `docs/tooling/notebooklm-mcp.md` |
+| **[ppt-master](https://github.com/hugohe3/ppt-master)** | Editable `.pptx` defense/conference slides from your paper | **optional skill install** — `docs/tooling/ppt-master.md` |
 
 > AI is your copilot, not the pilot. Every stage keeps a human in the loop.
 
@@ -47,7 +49,8 @@ python rag/query.py "your question"
 
 See `rag/README.md` for details and how the skills consume the index.
 
-**Save tokens (optional):** install rtk — `docs/tooling/rtk.md`.
+**Optional tooling** (`docs/tooling/`): rtk (token savings), notebooklm-mcp
+(Google NotebookLM grounded Q&A), ppt-master (slides from the paper).
 
 ## Notes on integration choices
 
