@@ -66,13 +66,13 @@
 
 ## 2.3 기술융합과 산업경계의 흐려짐
 
-기술융합(technological convergence)은 서로 구분되던 기술·산업 영역의 경계가 점진적으로 흐려지며 재결합을 통해 새로운 영역을 형성하는 과정으로 정의된다(Curran & Leker, 2011 ★확인). 특허 데이터는 이러한 융합을 측정하는 유력한 수단으로, 특허 공동분류(co-classification)와 동시출현(co-occurrence) 네트워크, 중심성·중개성(brokerage) 분석, 링크 예측 등을 통해 산업 간 기술 관계와 융합의 진전을 포착한다(Kim et al., 2019 ★확인).
+기술융합(technological convergence)은 서로 구분되던 기술·산업 영역의 경계가 점진적으로 흐려지며 재결합을 통해 새로운 영역을 형성하는 과정으로 정의된다(Curran & Leker, 2011). 특허 데이터는 이러한 융합을 측정하는 유력한 수단으로, 특허 공동분류(co-classification)와 동시출현(co-occurrence) 네트워크, 중심성·중개성(brokerage) 분석, 링크 예측 등을 통해 산업 간 기술 관계와 융합의 진전을 포착한다(Kwon et al., 2020).
 
 본 연구의 핵심 주제인 "전/후공정 경계의 흐려짐"은 이 융합 개념의 구체적 사례로 볼 수 있다. 후공정 기술인 하이브리드 본딩이 전공정 영역(H01L21)으로 청구범위를 확장한다면, 이는 전·후공정이라는 전통적 산업 분업 구조의 융합을 의미한다.
 
 ## 2.4 특허 기반 정량분석 방법론
 
-**(1) 특허 인용 기반 질적 지표.** Narin과 동료들(Narin, Noma, & Perry, 1987 ★확인)을 비롯한 CHI Research 계열의 연구는 특허 인용을 기업 기술력의 지표로 활용하는 체계를 제시하였다. 대표적으로 현재영향력지수(Current Impact Index, CII)는 기대 대비 피인용 빈도를, 과학연계성(Science Linkage, SLI)은 특허가 과학 논문을 인용하는 정도를, 기술수명주기(Technology Cycle Time, TCT)는 인용된 특허의 중위 연령을 측정한다. 본 연구는 여기에 시장확보지수(PFS) 등을 더해 생태계의 질적 속성을 진단한다.
+**(1) 특허 인용 기반 질적 지표.** Narin과 동료들(Narin, Noma, & Perry, 1987)을 비롯한 CHI Research 계열의 연구는 특허 인용을 기업 기술력의 지표로 활용하는 체계를 제시하였다. 대표적으로 현재영향력지수(Current Impact Index, CII)는 기대 대비 피인용 빈도를, 과학연계성(Science Linkage, SLI)은 특허가 과학 논문을 인용하는 정도를, 기술수명주기(Technology Cycle Time, TCT)는 인용된 특허의 중위 연령을 측정한다. 본 연구는 여기에 시장확보지수(PFS) 등을 더해 생태계의 질적 속성을 진단한다.
 
 **(2) 카운트 데이터 계량.** 특허·인용처럼 음이 아닌 정수로 표현되는 결과변수는 선형회귀(OLS)가 부적합하며, Poisson 및 음이항(negative binomial) 모형이 표준으로 사용된다. Hausman, Hall과 Griliches(1984)는 특허–R&D 관계 분석에서 카운트 데이터 계량의 기초를 확립하였고, Cameron과 Trivedi(2013)는 과산포(overdispersion)가 존재할 때 음이항이 Poisson보다 적합함을 체계적으로 정리하였다. 본 연구의 기술범위(breadth)는 전형적 카운트 변수로서 이 계열의 모형이 적용된다.
 
@@ -241,13 +241,13 @@
 ## 영문
 - Cameron, A. C., & Trivedi, P. K. (2013). *Regression analysis of count data* (2nd ed.). Cambridge University Press.
 - Clancy, M. S. (2021). The burden of knowledge and ideas getting harder to find. *New Things Under the Sun*. ★확인
-- Curran, C.-S., & Leker, J. (2011). Patent indicators for monitoring convergence – Examples from NFF and ICT. *Technological Forecasting and Social Change*. ★확인
+- Curran, C.-S., & Leker, J. (2011). Patent indicators for monitoring convergence – Examples from NFF and ICT. *Technological Forecasting and Social Change, 78*(2), 256–273.
 - European Patent Office. (2025). *PATSTAT Global* [Database]. EPO.
 - Furman, J. L., Porter, M. E., & Stern, S. (2000). *The determinants of national innovative capacity* (NBER Working Paper No. 7876). ★확인
-- Hall, B. H., & Trajtenberg, M. (2004). *Uncovering GPTs with patent data* (NBER Working Paper No. 10901). National Bureau of Economic Research. ★확인
+- Hall, B. H., & Trajtenberg, M. (2004). *Uncovering GPTs with patent data* (NBER Working Paper No. 10901). National Bureau of Economic Research.
 - Hausman, J., Hall, B. H., & Griliches, Z. (1984). Econometric models for count data with an application to the patents–R&D relationship. *Econometrica, 52*(4), 909–938.
-- Kim, J., et al. (2019). Anticipating technology-driven industry convergence: Evidence from large-scale patent analysis. *Technology Analysis & Strategic Management, 32*(4). ★확인
-- Narin, F., Noma, E., & Perry, R. (1987). Patents as indicators of corporate technological strength. *Research Policy, 16*(2–4), 143–155. ★확인
+- Kwon, O., An, Y., Kim, M., & Lee, C. (2020). Anticipating technology-driven industry convergence: Evidence from large-scale patent analysis. *Technology Analysis & Strategic Management, 32*(4), 363–378.
+- Narin, F., Noma, E., & Perry, R. (1987). Patents as indicators of corporate technological strength. *Research Policy, 16*(2–4), 143–155.
 - Tidd, J., & Bessant, J. (2020). *Managing innovation: Integrating technological, market and organizational change* (7th ed.). Wiley.
 - Yoon, B., & Park, Y. (2004). A text-mining-based patent network: Analytical tool for high-technology trend. *The Journal of High Technology Management Research, 15*(1), 37–50.
 - *State-of-the-art and outlooks of chiplets heterogeneous integration and hybrid bonding.* (2021). *Journal of Microelectronics and Electronic Packaging, 18*(4), 145. ★확인
