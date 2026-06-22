@@ -1193,6 +1193,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "<h1>🧠 Second Brain Archive</h1>",
         "<div class='sub'>카드 클릭 시 전체 리포트 · "
         f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a> "
+        f"<a href='/{token}/notes/' class='nav-shortcut'>📒 학습 노트</a> "
         f"<a href='/{token}/commands/' class='nav-shortcut'>📋 Commands</a>"
         "</div>",
         "</header>",
@@ -1636,6 +1637,7 @@ def _render_commands_page(token: str, lookup_guide: str,
         "<h1>📋 명령어 레퍼런스</h1>",
         "<div class='sub'>전체 명령어 상세 가이드 · "
         f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a> "
+        f"<a href='/{token}/notes/' class='nav-shortcut'>📒 학습 노트</a> "
         f"<a href='/{token}/' class='nav-shortcut'>🧠 Archive</a>"
         "</div>",
         "</header>",
