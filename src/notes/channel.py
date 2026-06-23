@@ -90,7 +90,8 @@ async def ingest_url(url: str) -> str | None:
     if not (body or "").strip():
         log.info("study ingest_url: empty body for %s", url)
         return None
-    return await ingest_text("web", url, body, title)
+    stype = "blog" if loaders.is_blog(url) else "web"
+    return await ingest_text(stype, url, body, title)
 
 
 async def ingest_youtube(url: str, video_id: str | None = None) -> str | None:

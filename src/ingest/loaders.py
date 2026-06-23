@@ -20,6 +20,25 @@ def is_youtube(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+# Blog platforms whose URLs we tag as source_type "blog" (vs generic
+# "web") so the study-notes dashboard can filter them separately. Host
+# substring match — covers the common KR/global blog hosts.
+_BLOG_HOST_SUBSTR = (
+    "blog.naver.com", "tistory.com", "brunch.co.kr", "velog.io",
+    "medium.com", "blogspot.com", "blogger.com", "wordpress.com",
+    "post.naver.com", "brunchstory.co",
+)
+
+
+def is_blog(url: str) -> bool:
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc.lower()
+    except Exception:
+        return False
+    return any(h in host for h in _BLOG_HOST_SUBSTR)
+
+
 _JS_PLACEHOLDER_PATTERNS = (
     "javascript is not available",
     "please enable javascript",
