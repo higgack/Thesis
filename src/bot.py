@@ -13080,15 +13080,32 @@ def main():
             _startup_smoke, when=180, name="startup_smoke",
         )
 
-        # One-shot: backfill 종류별 category (주식/공부/그외) for notes that
-        # predate the field. New notes get it inline from synth; this only
-        # touches the existing handful (cheap Flash-Lite, one call each).
+        # One-shot: backfill/refresh 종류별 category (주식/공부/그외).
+        # New notes get it inline from synth. Notes missing a category are
+        # always classified. _NOTES_CAT_VERSION gates a *full* re-classify:
+        # bump it whenever the classifier prompt changes and every note is
+        # re-classified once on the next boot (cheap Flash-Lite, one call
+        # each), then a marker file suppresses repeats.
+        _NOTES_CAT_VERSION = 2  # v2: broadened 주식 (finance/investing-wide)
         async def _notes_category_backfill(_ctx):
             try:
+                import json as _json
                 from pathlib import Path as _P
                 from .notes import store as _nstore, synth as _nsynth
-                missing = _nstore.notes_missing_category()
-                for m in missing:
+                marker = config.DATA_DIR / "notes_cat_version.json"
+                cur = 0
+                try:
+                    cur = int(_json.loads(
+                        marker.read_text(encoding="utf-8")).get("v", 0))
+                except Exception:
+                    cur = 0
+                if cur < _NOTES_CAT_VERSION:
+                    targets = _nstore.all_note_paths()       # classifier improved
+                    mode = "reclassify-all"
+                else:
+                    targets = _nstore.notes_missing_category()  # fill gaps only
+                    mode = "fill-missing"
+                for m in targets:
                     md = ""
                     try:
                         md = _P(m["md_path"]).read_text(encoding="utf-8")
@@ -13097,9 +13114,17 @@ def main():
                     cat = await _nsynth.classify_category(
                         m.get("title") or "", md)
                     _nstore.set_category(m["id"], cat)
-                if missing:
-                    log.info("notes category backfill: classified %d note(s)",
-                             len(missing))
+                if targets:
+                    log.info("notes category backfill (%s): %d note(s)",
+                             mode, len(targets))
+                if cur < _NOTES_CAT_VERSION:
+                    try:
+                        tmp = marker.with_suffix(".tmp")
+                        tmp.write_text(_json.dumps({"v": _NOTES_CAT_VERSION}),
+                                       encoding="utf-8")
+                        os.replace(tmp, marker)
+                    except Exception:
+                        log.warning("notes cat version marker write failed")
             except Exception:
                 log.exception("notes category backfill failed (non-fatal)")
         app.job_queue.run_once(
