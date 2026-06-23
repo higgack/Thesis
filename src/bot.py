@@ -1404,7 +1404,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /reset · /deep &lt;질문&gt;(Pro 강제)
 
 🚨 <b>장애 / 큐</b>
-  /failed(건별 [🔁]/[🗑]·drop=영구) · /failed_retry · /failed_clear
+  /failed(건별 [🔁]/[🗑]·drop=영구) · /failed_retry · /failed_clear · /unignore
   /queue · /queue_to_failed · /queue_panic · /queue_cancel_all
   /audit · /blocked_hosts · /reset_blocked_hosts
 
@@ -1472,7 +1472,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【11.】</b> 본문비어→차단 · 막힘→/queue_panic · /reset
 
-<b>【12. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS 14건 활용신청 + NTIS 5건 추가신청 승인 대기"""
+<b>【12. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS 14건+NTIS 5건 승인대기"""
 
 
 # Detailed multi-section guide for the patent suite. Kept separate
@@ -4312,6 +4312,53 @@ async def cmd_reset_blocked_hosts(update: Update, ctx: ContextTypes.DEFAULT_TYPE
         f"✅ 자동 차단 host 초기화 — {n}건 정리됨.\n"
         f"이제 모든 host가 다시 추출 시도 가능."
     )
+
+
+async def cmd_unignore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Revive permanently-ignored URLs/filenames so they can be learned
+    again. Match by substring — a YouTube video id (e.g. KMgS3TubGes)
+    catches the URL in any form. This is the inverse of /failed_clear &
+    [🗑]; block-era false ignores (IP-blocked YouTube videos that got
+    🗑'd) are revived here without a JSON hand-edit + restart. The
+    in-memory set is updated immediately, so no restart is needed.
+    Usage: /unignore <url|조각>  ·  /unignore all (전체 URL 해제)."""
+    if not _is_owner(update):
+        return
+    global _IGNORED_URLS, _IGNORED_FILENAMES
+    arg = " ".join(ctx.args).strip() if ctx.args else ""
+    if not arg:
+        await update.message.reply_text(
+            "사용법: <code>/unignore &lt;url 또는 조각&gt;</code>\n"
+            "예: <code>/unignore KMgS3TubGes</code> · "
+            "<code>/unignore all</code>(전체 URL 해제)\n"
+            f"현재 영구 무시: URL {len(_IGNORED_URLS)}건 · "
+            f"파일 {len(_IGNORED_FILENAMES)}건",
+            parse_mode="HTML")
+        return
+    if arg.lower() == "all":
+        removed_u = sorted(_IGNORED_URLS)
+        removed_f = []
+        _IGNORED_URLS = set()
+    else:
+        removed_u = sorted(u for u in _IGNORED_URLS if arg in u)
+        removed_f = sorted(f for f in _IGNORED_FILENAMES if arg in f)
+        _IGNORED_URLS -= set(removed_u)
+        _IGNORED_FILENAMES -= set(removed_f)
+    if not removed_u and not removed_f:
+        await update.message.reply_text(
+            f"해당 없음: '{arg}' 와 일치하는 영구 무시 항목이 없어.\n"
+            f"남은 영구 무시: URL {len(_IGNORED_URLS)}건 · "
+            f"파일 {len(_IGNORED_FILENAMES)}건")
+        return
+    _persist_permanently_ignored()
+    lines = [f"✅ 영구 무시 해제: URL {len(removed_u)}건 · 파일 {len(removed_f)}건"]
+    for u in removed_u[:10]:
+        lines.append(f"  • {u}")
+    if len(removed_u) > 10:
+        lines.append(f"  … 외 {len(removed_u) - 10}건")
+    lines.append("이제 다시 올리면 학습 시도함.")
+    await update.message.reply_text(
+        "\n".join(lines), disable_web_page_preview=True)
 
 
 async def cmd_audit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -12866,6 +12913,7 @@ def main():
     app.add_handler(CommandHandler("audit", cmd_audit))
     app.add_handler(CommandHandler("blocked_hosts", cmd_blocked_hosts))
     app.add_handler(CommandHandler("reset_blocked_hosts", cmd_reset_blocked_hosts))
+    app.add_handler(CommandHandler("unignore", cmd_unignore))
     app.add_handler(CommandHandler("orphans", cmd_orphans))
     app.add_handler(CommandHandler("recover_orphans", cmd_recover_orphans))
     app.add_handler(CommandHandler("pending", cmd_pending))
