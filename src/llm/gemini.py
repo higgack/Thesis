@@ -89,6 +89,7 @@ async def complete(
     temperature: float = 0.2,
     purpose: str = "unknown",
     thinking_budget: int | None = 0,
+    timeout: float = 60,
 ) -> str:
     chain = _chain_for(model)
     last_err: BaseException | None = None
@@ -96,11 +97,12 @@ async def complete(
     for m in chain:
         for attempt in range(3):
             try:
-                # Per-call 60s timeout: without it, a network-stalled
-                # generate_content can block forever and pin a
-                # semaphore slot for hours (a forwarded text-only
+                # Per-call timeout (default 60s): without it, a
+                # network-stalled generate_content can block forever and
+                # pin a semaphore slot for hours (a forwarded text-only
                 # message sat at '처리 중 20초' for 1h+ because the
-                # underlying Gemini call had no upper bound).
+                # underlying Gemini call had no upper bound). Long-output
+                # callers (note synthesis) raise it via timeout=.
                 resp = await asyncio.wait_for(
                     _client.aio.models.generate_content(
                         model=m,
@@ -109,7 +111,7 @@ async def complete(
                             system, max_tokens, temperature,
                             thinking_budget, m),
                     ),
-                    timeout=60,
+                    timeout=timeout,
                 )
                 cost.record_resp(m, resp, purpose=purpose)
                 if m != model:
