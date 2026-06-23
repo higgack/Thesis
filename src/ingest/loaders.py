@@ -216,6 +216,7 @@ async def load_url(url: str) -> tuple[str, str, str | None, list[str]]:
         headers["Referer"] = url
     title, body, hint = "", "", None
     links: list[str] = []
+    html = ""
     try:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True,
                                      headers=headers) as c:
@@ -232,6 +233,17 @@ async def load_url(url: str) -> tuple[str, str, str | None, list[str]]:
     except Exception:
         pass
 
+    # trafilatura routinely misses SmartEditor / many blog & news CMS
+    # layouts, so when the body comes back thin, pull the largest article
+    # container straight from the DOM before the flaky JS renderer. Helps
+    # Naver(.se-main-container), Tistory, brunch, news sites, etc. — and
+    # since load_url is shared, this improves BOTH study notes and the
+    # main RAG ingest.
+    if _is_js_placeholder(body) and html:
+        dom = await asyncio.to_thread(_extract_dom_body, html)
+        if dom:
+            body = dom
+
     if _is_js_placeholder(body):
         try:
             # Use the rewritten URL (e.g. Naver PostView) so Jina renders
@@ -245,6 +257,50 @@ async def load_url(url: str) -> tuple[str, str, str | None, list[str]]:
             pass
 
     return title or url[:200], body, hint, links
+
+
+# Article/body containers across common blog & CMS platforms, in rough
+# priority order. Naver SmartEditor first (its wrapper is unmistakable),
+# then generic article roots. Used only as a fallback when trafilatura
+# returns a thin/placeholder body, and gated on _MIN_BODY_CHARS, so a bad
+# match can't override a good trafilatura extraction.
+_ARTICLE_SELECTORS = (
+    ".se-main-container",            # Naver SmartEditor ONE (current)
+    "#postViewArea", "div.post_ct",  # Naver legacy editors
+    "div.se_component_wrap",
+    "#article-view-content-div",     # many KR news CMS
+    "[itemprop='articleBody']",
+    "article",
+    ".article-body", ".article_body", ".article-content", ".articleView",
+    ".entry-content", ".post-content", ".post-body", ".tt_article_useless_p_margin",
+    ".contents_style", ".news-content", ".view-content", ".board-view",
+)
+
+
+def _extract_dom_body(html: str) -> str:
+    """Fallback body extraction from raw HTML for blog/CMS layouts that
+    trafilatura misses (Naver SmartEditor, Tistory skins, news CMS, …).
+    Strips obvious chrome, then returns the largest matching content
+    container's text (or '' when nothing substantial is found)."""
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception:
+        return ""
+    for tag in soup(["script", "style", "nav", "header", "footer",
+                     "aside", "form", "noscript"]):
+        tag.decompose()
+    best = ""
+    for sel in _ARTICLE_SELECTORS:
+        try:
+            nodes = soup.select(sel)
+        except Exception:
+            continue
+        for node in nodes:
+            txt = node.get_text("\n", strip=True)
+            if len(txt) > len(best):
+                best = txt
+    return best if len(best) >= _MIN_BODY_CHARS else ""
 
 
 def _is_js_placeholder(body: str) -> bool:
