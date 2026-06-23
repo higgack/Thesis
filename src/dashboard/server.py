@@ -59,6 +59,9 @@ def _eq(a: str, b: str) -> bool:
 _DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/q-(\d+)/?$")
 # Study-note delete: id is a (url-encoded) slug, so capture the rest.
 _NOTE_DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+?)/?$")
+# Study-note 종류별 manual override: POST /<token>/notes/<id>/category
+_NOTE_CAT_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+)/category/?$")
+_NOTE_CATS = ("주식", "공부", "그외")
 _ASK_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/?$")
 _ASK_GET_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/(\d+)/?$")
 
@@ -116,11 +119,65 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self):
         if not self._check_basic_auth():
             return
+        mc = _NOTE_CAT_RE.match(self.path)
+        if mc:
+            self._set_note_category(mc.group(1), unquote(mc.group(2)))
+            return
         m = _ASK_RE.match(self.path)
         if m:
             self._handle_ask_post(m.group(1))
             return
         self.send_error(404)
+
+    def _set_note_category(self, token: str, nid: str):
+        """Manual 종류별 override from the dashboard badge. Sets category +
+        category_locked=1 so the bot's version-gated auto-reclassify won't
+        overwrite the user's choice. Runs in the 200MB container → sqlite
+        only (mirrors _delete_note)."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self.send_error(403, "forbidden")
+            return
+        try:
+            length = int(self.headers.get("content-length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 1000:
+            self._send_json({"error": "빈 요청"}, 400)
+            return
+        try:
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+            cat = (data.get("cat") or "").strip()
+        except Exception:
+            self._send_json({"error": "잘못된 요청"}, 400)
+            return
+        if cat not in _NOTE_CATS:
+            self._send_json({"error": "허용되지 않은 종류"}, 400)
+            return
+        try:
+            with sqlite3.connect(str(_NOTES_DB), timeout=30) as c:
+                # Defensive: the column normally exists (bot init_db adds
+                # it), but ensure it so a fresh DB can't 500 the click.
+                cols = {r[1] for r in c.execute("PRAGMA table_info(notes)")}
+                if "category_locked" not in cols:
+                    c.execute("ALTER TABLE notes ADD COLUMN "
+                              "category_locked INTEGER DEFAULT 0")
+                n = c.execute(
+                    "UPDATE notes SET category=?, category_locked=1 "
+                    "WHERE id=?", (cat, nid)).rowcount
+            if not n:
+                self.send_error(404)
+                return
+            log.info("note %s category → %s (locked)", nid, cat)
+        except Exception as e:
+            log.exception("note category set failed")
+            self.send_error(500, f"set failed: {e}")
+            return
+        body = json.dumps({"ok": True, "category": cat}).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _handle_ask_post(self, token: str):
         """Park a dashboard search-box query for the bot to run. Returns
