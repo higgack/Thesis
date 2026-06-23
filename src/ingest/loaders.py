@@ -372,15 +372,13 @@ async def _fetch_youtube_subs_yt_dlp(video_id: str) -> str:
         "writesubtitles": False,
         "writeautomaticsub": False,
         "subtitleslangs": ["ko", "en"],
-        # GCP datacenter IPs hit YouTube's "Sign in to confirm you're not
-        # a bot" wall on the default `web` client. The android/ios/tv
-        # InnerTube clients use different endpoints that *sometimes* skip
-        # that challenge from server IPs. Not a guaranteed fix (a hard IP
-        # ban still blocks all clients), but strictly no worse than web —
-        # yt-dlp tries each in order and falls back. Free, no cookies/proxy.
-        "extractor_args": {
-            "youtube": {"player_client": ["android", "ios", "tv", "web"]}
-        },
+        # NOTE: tried extractor_args player_client=[android,ios,tv,web] to
+        # dodge the GCP-IP "Sign in to confirm you're not a bot" wall —
+        # verified ineffective (YouTube now blocks all InnerTube clients
+        # from this datacenter IP). Reverted: the multi-client try only
+        # multiplied requests against the banned IP for no benefit. A hard
+        # IP ban can't be bypassed in code; it self-clears in hours, and
+        # urgent videos go via manual transcript paste.
     }
 
     def _extract() -> dict | None:
