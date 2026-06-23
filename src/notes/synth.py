@@ -132,7 +132,8 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
     try:
         out = await gemini.complete(
             config.ANSWER_MODEL, _SYSTEM, user,
-            max_tokens=8192, temperature=0.3, purpose="note_synth")
+            max_tokens=32768, temperature=0.3, purpose="note_synth",
+            timeout=300)
     except Exception as e:
         log.warning("note synth call failed: %s", str(e)[:160])
         return None
