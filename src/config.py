@@ -49,6 +49,13 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "files").mkdir(exist_ok=True)
 (DATA_DIR / "chroma").mkdir(exist_ok=True)
 
+# YouTube cookies (burner account) to dodge the GCP-IP "not a bot" wall.
+# Drop a Netscape-format cookies.txt at data/yt_cookies.txt (or point
+# YT_COOKIES_FILE elsewhere); yt-dlp uses it when present. Absent → normal
+# (cookie-less) fetch, so this is a no-op until the file exists.
+YT_COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "").strip() or str(
+    DATA_DIR / "yt_cookies.txt")
+
 SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "gemini-2.5-flash-lite")
 ANSWER_MODEL = os.getenv("ANSWER_MODEL", "gemini-2.5-flash")
 DEEP_MODEL = os.getenv("DEEP_MODEL", "gemini-2.5-pro")

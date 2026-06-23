@@ -10805,8 +10805,64 @@ async def _check_yt_dlp_health(ctx: ContextTypes.DEFAULT_TYPE):
     try:
         if not await asyncio.to_thread(yt_dlp_health.is_unhealthy):
             return
-        # Check existing alert state for the stable id.
-        stable_id = "yt_dlp_health"
+
+        # Cookie-specific branch: if a burner-cookie file is configured AND
+        # we recently hit the bot wall *despite* it, the cookies are
+        # expired/banned → tell the user to refresh them (a totally
+        # different action than the generic IP-block message).
+        ck = (getattr(config, "YT_COOKIES_FILE", "") or "")
+        cookies_present = bool(ck and os.path.exists(ck))
+        cookie_dead = cookies_present and await asyncio.to_thread(
+            yt_dlp_health.cookie_botwall_recent)
+
+        if cookie_dead:
+            stable_id = "yt_cookie_dead"
+            msg = (
+                "🍪 <b>YouTube 쿠키 만료/차단</b>\n"
+                "버너 계정 쿠키로도 \"not a bot\" 벽에 막히고 있어 — 쿠키가 "
+                "만료됐거나 그 계정이 차단된 거야. <b>쿠키를 갱신해줘.</b>\n\n"
+                "1) 버너 계정으로 YouTube 로그인 → 새 시크릿 창에서 "
+                "youtube.com 한 번 접속\n"
+                "2) 'Get cookies.txt LOCALLY' 확장으로 Export → "
+                "cookies.txt 다운로드 → 시크릿 창 바로 닫기\n"
+                "3) VM에 덮어쓰기: <code>nano ~/Thesis/data/yt_cookies.txt</code> "
+                "(전체 지우고 붙여넣기 → Ctrl+O, Enter, Ctrl+X)\n"
+                "4) 계정까지 막혔으면 새 버너 계정으로 다시 추출\n\n"
+                "그 사이 유튜브는 /failed 로 빠지고, 꼭 필요한 영상은 "
+                "⋯→'스크립트 표시'로 자막 복사해 붙여넣으면 돼."
+            )
+        else:
+            stable_id = "yt_dlp_health"
+            summary = await asyncio.to_thread(yt_dlp_health.status_summary)
+            rate_pct = int(summary["rate"] * 100)
+            cookie_hint = (
+                "\n\n💡 버너 쿠키가 설정돼 있는데도 막히면 위 '쿠키 갱신' "
+                "안내대로 cookies.txt를 갱신해봐."
+                if cookies_present else
+                "\n\n💡 자동 우회를 원하면 버너 계정 쿠키를 "
+                "<code>data/yt_cookies.txt</code>에 두면 돼."
+            )
+            msg = (
+                f"⚠️ <b>yt-dlp 작동 이상</b>\n"
+                f"최근 24시간 yt-dlp 실패율: <b>{rate_pct}%</b> "
+                f"({summary['total']}회 시도 중)\n\n"
+                f"<b>가장 흔한 원인 = YouTube의 데이터센터 IP 차단</b> "
+                f"(\"Sign in to confirm you're not a bot\"). 이 VM은 GCP IP라 "
+                f"YouTube가 봇으로 보고 막는 경우가 잦음. 이건 yt-dlp/Deno 문제가 "
+                f"아니라 IP 문제라 <b>재배포해도 안 풀림</b>.\n\n"
+                f"확인: <code>docker logs --tail 40 thesis-bot-1 | grep -i \"not a bot\\|cloud provider\"</code>\n"
+                f"→ 위 문구가 보이면 IP 차단. 보통 수 시간~하루 뒤 자동 해제됨."
+                f"{cookie_hint}\n\n"
+                f"드물게 진짜 추출기 문제일 때: 아무 커밋이나 푸시하면 auto_pull "
+                f"재빌드가 최신 yt-dlp nightly를 끌어옴(EJS+Deno). 위 grep에 IP "
+                f"차단 문구가 <b>없을 때만</b> 효과 있음.\n\n"
+                f"그 사이 YouTube는 transcript_api 가 가끔 성공할 때만 학습되고, "
+                f"실패분은 /failed 로 빠짐(stub 안 만듦). 꼭 필요한 영상은 "
+                f"⋯→'스크립트 표시'로 자막 복사해 봇에 붙여넣으면 IP 차단과 무관하게 학습됨."
+            )
+
+        # Shared ack/re-arm: suppress while acked, re-fire after the
+        # re-arm window if the condition is still bad.
         existing = await asyncio.to_thread(notify_acks.get, stable_id)
         if existing and existing.get("acked"):
             ack_at = existing.get("ack_at") or ""
@@ -10816,36 +10872,11 @@ async def _check_yt_dlp_health(ctx: ContextTypes.DEFAULT_TYPE):
                 ack_dt = None
             if ack_dt and (datetime.utcnow() - ack_dt
                            < timedelta(days=_YT_DLP_RE_ARM_DAYS)):
-                # Acked recently — suppress.
                 return
-            # Acked long ago and condition still bad → re-arm.
             await asyncio.to_thread(notify_acks.delete, stable_id)
-            log.info("yt_dlp_health: re-arming alert (acked %s ago)",
-                     ack_at)
+            log.info("%s: re-arming alert (acked %s ago)", stable_id, ack_at)
 
-        summary = await asyncio.to_thread(yt_dlp_health.status_summary)
-        rate_pct = int(summary["rate"] * 100)
-        msg = (
-            f"⚠️ <b>yt-dlp 작동 이상</b>\n"
-            f"최근 24시간 yt-dlp 실패율: <b>{rate_pct}%</b> "
-            f"({summary['total']}회 시도 중)\n\n"
-            f"<b>가장 흔한 원인 = YouTube의 데이터센터 IP 차단</b> "
-            f"(\"Sign in to confirm you're not a bot\"). 이 VM은 GCP IP라 "
-            f"YouTube가 봇으로 보고 막는 경우가 잦음. 이건 yt-dlp/Deno 문제가 "
-            f"아니라 IP 문제라 <b>재배포해도 안 풀림</b>.\n\n"
-            f"확인: <code>docker logs --tail 40 thesis-bot-1 | grep -i \"not a bot\\|cloud provider\"</code>\n"
-            f"→ 위 문구가 보이면 IP 차단. 보통 수 시간~하루 뒤 자동 해제됨. "
-            f"근본 해결은 주거용 프록시/쿠키 인증(계정 ban 위험)뿐 — 권장 안 함.\n\n"
-            f"드물게 진짜 추출기 문제일 때: 아무 커밋이나 푸시하면 auto_pull "
-            f"재빌드가 최신 yt-dlp nightly를 끌어옴(EJS+Deno). 위 grep에 IP "
-            f"차단 문구가 <b>없을 때만</b> 효과 있음.\n\n"
-            f"그 사이 YouTube는 transcript_api 가 가끔 성공할 때만 학습되고, "
-            f"실패분은 /failed 로 빠짐(stub 안 만듦). 꼭 필요한 영상은 "
-            f"⋯→'스크립트 표시'로 자막 복사해 봇에 붙여넣으면 IP 차단과 무관하게 학습됨."
-        )
-        await _send_actionable_alert(
-            ctx, stable_id, msg, parse_mode="HTML",
-        )
+        await _send_actionable_alert(ctx, stable_id, msg, parse_mode="HTML")
     except Exception:
         log.exception("yt_dlp_health check failed")
 
