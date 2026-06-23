@@ -268,12 +268,15 @@ _ARTICLE_SELECTORS = (
     ".se-main-container",            # Naver SmartEditor ONE (current)
     "#postViewArea", "div.post_ct",  # Naver legacy editors
     "div.se_component_wrap",
-    "#article-view-content-div",     # many KR news CMS
+    "#dic_area", "#articleBodyContents", "#newsct_article",  # Naver News
+    "#article-view-content-div", ".article_view", "#articeBody",  # KR news CMS
+    "#news_body_area", ".news_end", "#CmAdContent",
     "[itemprop='articleBody']",
     "article",
     ".article-body", ".article_body", ".article-content", ".articleView",
     ".entry-content", ".post-content", ".post-body", ".tt_article_useless_p_margin",
     ".contents_style", ".news-content", ".view-content", ".board-view",
+    ".story-body", ".content__body", ".article__body", "main",
 )
 
 
@@ -329,7 +332,17 @@ async def _load_via_jina(url: str) -> tuple[str, str, str | None]:
 
 
 def _parse_html(url: str, html: str) -> tuple[str, str, str | None]:
-    extracted = trafilatura.extract(html, include_comments=False) or ""
+    # Recall-favoring extraction: news/blog pages with mixed markup often
+    # get under-extracted by the default precision mode. favor_recall +
+    # tables pulls the full article (and financial/data tables) without the
+    # comment sections. Fall back to defaults if the installed trafilatura
+    # predates these kwargs so the call can never break.
+    try:
+        extracted = trafilatura.extract(
+            html, url=url, include_comments=False, include_tables=True,
+            favor_recall=True) or ""
+    except TypeError:
+        extracted = trafilatura.extract(html, include_comments=False) or ""
     meta = trafilatura.extract_metadata(html)
     title = (meta.title if meta and meta.title else url)[:200]
     hint = (meta.description if meta and meta.description else None)
