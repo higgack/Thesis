@@ -1388,9 +1388,10 @@ async def _await_interactive_idle(
 
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
-<b>【1. 대시보드】</b> Basic Auth(.env) · 60s 갱신·다크 19~07
+<b>【1. 대시보드】</b> Basic Auth · 60s 갱신·다크 19~07
 📊 Q&amp;A http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html
 📚 Wiki http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/index.html
+📒 학습 http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/notes/index.html
 
 <b>【2. 명령어】</b>
 
@@ -1459,7 +1460,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【8. 메타데이터】</b> Flash-Lite 요약+메타 1콜 · 🏢회사 🏷태그 📅YYYY.MM · 📊브로커리지·애널리스트(리포트 자동 추출, 회사 분석에 활용)
 
-<b>【9. 답변 품질】</b> 시점 필수 · brain 재검색 · web [도메인]·인용 [N] · 숫자 audit · _verify
+<b>【9. 답변 품질】</b> 시점 필수 · brain 재검색 · web [도메인]·인용 [N] · 숫자 audit
 
 <b>【10. 운영】</b> 영속(atomic+.bak) · 메모리 5분 · 질문＞학습
 
