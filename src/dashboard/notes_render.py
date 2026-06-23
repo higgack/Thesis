@@ -56,6 +56,8 @@ def _type_bucket(source_type: str) -> str:
         return "유튜브"
     if st == "web":
         return "웹"
+    if st == "text":
+        return "텍스트"
     return "문서"
 
 
@@ -482,7 +484,8 @@ def _render_index(token: str, notes: list[dict],
         "<button class='fbtn ftype active' data-type='all'>전체</button>"
         "<button class='fbtn ftype' data-type='문서'>📄 문서</button>"
         "<button class='fbtn ftype' data-type='유튜브'>▶ 유튜브</button>"
-        "<button class='fbtn ftype' data-type='웹'>🌐 웹</button></div>",
+        "<button class='fbtn ftype' data-type='웹'>🌐 웹</button>"
+        "<button class='fbtn ftype' data-type='텍스트'>📝 텍스트</button></div>",
         "<div class='fbar'><span class='flabel'>종류별</span>"
         "<button class='fbtn fcat active' data-cat='all'>전체</button>"
         "<button class='fbtn fcat' data-cat='주식'>📈 주식</button>"
