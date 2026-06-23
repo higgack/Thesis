@@ -130,7 +130,18 @@ font-size:12px}
 .note-body blockquote{border-left:3px solid var(--border);margin:8px 0;
 padding-left:14px;color:var(--muted)}
 .note-body .mermaid{text-align:center;margin:18px 0;background:var(--panel-alt);
-border:1px solid var(--border-soft);border-radius:8px;padding:12px}
+border:1px solid var(--border-soft);border-radius:8px;padding:12px;cursor:zoom-in}
+.note-body .mermaid svg{max-width:100%;height:auto}
+.mmd-overlay{position:fixed;inset:0;z-index:1000;display:none;
+background:rgba(0,0,0,.82);cursor:zoom-out;padding:2vh 2vw;
+align-items:center;justify-content:center;overflow:auto}
+.mmd-overlay.open{display:flex}
+.mmd-overlay .mmd-stage{background:#fff;border-radius:10px;padding:18px;
+max-width:96vw;max-height:94vh;overflow:auto;box-shadow:0 8px 40px rgba(0,0,0,.5)}
+.mmd-overlay .mmd-stage svg{width:auto;height:auto;
+max-width:none;min-width:70vw}
+.mmd-hint{position:fixed;top:14px;right:18px;z-index:1001;color:#fff;
+font-size:12px;opacity:.85;font-family:-apple-system,BlinkMacSystemFont,sans-serif}
 .q-sec{margin-top:24px}
 .q-card{background:var(--panel);border:1px solid var(--border);
 border-left:3px solid var(--primary);border-radius:10px;padding:14px 16px;
@@ -153,6 +164,35 @@ color:var(--muted);border-top:1px solid var(--border-soft)}
 # until clicked (active recall).
 _NOTE_JS = r"""
 (function(){
+  // Shared fullscreen lightbox: concept maps render small inline, so a
+  // click blows the diagram up to a readable size. Click anywhere (or
+  // Esc) to close.
+  var _ov = null;
+  function ensureOverlay(){
+    if(_ov) return _ov;
+    _ov = document.createElement('div');
+    _ov.className = 'mmd-overlay';
+    _ov.innerHTML = '<div class="mmd-hint">클릭/Esc로 닫기</div>'
+      + '<div class="mmd-stage"></div>';
+    document.body.appendChild(_ov);
+    _ov.addEventListener('click', closeOverlay);
+    return _ov;
+  }
+  function openOverlay(svgHTML){
+    var ov = ensureOverlay();
+    ov.querySelector('.mmd-stage').innerHTML = svgHTML;
+    ov.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeOverlay(){
+    if(!_ov) return;
+    _ov.classList.remove('open');
+    document.body.style.overflow = '';
+  }
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape') closeOverlay();
+  });
+
   function renderMD(){
     var el = document.getElementById('md');
     if(!el || !window.marked) return;
@@ -175,6 +215,8 @@ _NOTE_JS = r"""
         var src = node.textContent;
         window.mermaid.render('mmd'+Date.now()+'_'+i, src).then(function(res){
           node.innerHTML = res.svg;
+          node.title = '클릭하면 크게 보기';
+          node.addEventListener('click', function(){ openOverlay(node.innerHTML); });
         }).catch(function(){
           var pre = document.createElement('pre');
           pre.style.whiteSpace = 'pre-wrap';
