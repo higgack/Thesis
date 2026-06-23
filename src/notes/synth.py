@@ -31,11 +31,18 @@ _SYSTEM = """너는 사용자의 개인 학습 노트를 만드는 조수다. �
 공부한 자료의 본문이다. 이걸 '검색용 요약'이 아니라 '나중에 다시 열어
 되새김질하는 노트'로 재구성한다.
 
-원칙:
-- 요약하지 말고 구조화한다. 핵심 논리·정의·예시를 보존한다.
-- ⭐ 자료가 길수록 정리를 더 풍부하게: 자료의 모든 주요 섹션/주제를
-  빠짐없이 다루고, 각 섹션을 충분한 분량으로 설명한다. 한두 문단으로
-  압축하지 말 것. 69쪽짜리면 그에 걸맞은 깊이의 노트를 만든다.
+원칙(가장 중요 — 신뢰가 최우선):
+- ⛔ 자료에 명시적으로 있는 내용만 쓴다. 일반 지식·배경 설명·추측을 절대
+  덧붙이지 마라. 숫자·고유명사·날짜·통계·주장·인용을 지어내지 않는다.
+  자료에 근거가 없으면 그냥 쓰지 않는다.
+- ⛔ 분량을 채우려고 부풀리거나 추측하지 마라. 자료가 짧거나 빈약하면
+  노트도 짧아야 한다. '풍부함'은 오직 자료에 실제로 있는 내용에서만 나온다.
+  없는 내용을 보태는 것은 신뢰를 깨는 가장 큰 잘못이다.
+- 자료의 내용이 많을 때는 그것을 빠짐없이 구조화한다(없는 걸 보태라는
+  뜻이 절대 아니다). 요약하지 말고 핵심 논리·정의·예시를 보존한다.
+- ⚠️ 원문이 유튜브 자동 자막처럼 깨졌거나 불명확하면, 추정해서 매끄럽게
+  만들지 마라. 불확실한 부분은 그대로 두거나 "(원문 불명확)"으로 표시하고,
+  확실히 알 수 있는 것만 정리한다.
 - 원문의 표는 반드시 올바른 마크다운 표(헤더행 + |---|---| 구분선행 + 데이터행)로
   재현한다. 구분선 빠진 깨진 표 금지. 수식은 $...$(인라인)/$$...$$(블록)으로 보존.
   숫자·기호·표 값을 임의로 바꾸지 않는다.
@@ -43,8 +50,8 @@ _SYSTEM = """너는 사용자의 개인 학습 노트를 만드는 조수다. �
   ⚠️ Mermaid는 **flowchart만** 사용한다. xychart-beta·pie·graph 등 차트 문법은
   오류가 잦으니 절대 쓰지 말 것 — 수치·추세·비교 데이터는 반드시 **마크다운 표**로
   제시한다. flowchart 한글 라벨은 "큰따옴표"로 감싸고, 화살표는 --> 만 쓰며,
-  노드 id는 영문/숫자로 한다(예: A["주도주"] --> B["소외주"]).
-- 자료에 없는 내용을 지어내지 않는다. 불확실하면 적지 않는다.
+  노드 id는 영문/숫자로 한다(예: A["주도주"] --> B["소외주"]). 개념 지도도
+  자료에 실제로 나온 개념·관계만으로 그린다.
 - 한국어로 쓴다(원문 용어/고유명사는 원어 병기 가능).
 
 ⚠️ 출력은 정확히 아래 형식만(JSON 금지, 전체를 코드펜스로 감싸지 말 것, 마커
@@ -74,14 +81,51 @@ TYPE: recall
 Q: ...
 A: ...
 TYPE: concept
+===CATEGORY===
+주식
 
 질문은 3~5개. recall/concept/application 유형을 섞고, 답은 노트 본문으로
-검증 가능해야 한다. NOTE 본문 안에는 ===마커=== 문자열을 절대 쓰지 마라."""
+검증 가능해야 한다. NOTE 본문 안에는 ===마커=== 문자열을 절대 쓰지 마라.
+CATEGORY는 이 노트 내용의 종류를 '주식'/'공부'/'그외' 중 하나로만 적는다
+(주식=증시·투자·종목·경제 시장 관련, 공부=그 외 학습·지식·기술, 그외=애매하거나
+기타). 단어 하나만, 설명 없이."""
 
 _MAX_INPUT_CHARS = 200000  # ~50K tokens; covers a full long report
                            # (flash has a 1M-token context). 60K truncated
                            # 69-page PDFs to their first ~25 pages → thin notes.
-_MARKER_RE = re.compile(r"(?m)^===(TITLE|NOTE|QUESTIONS)===\s*$")
+_MARKER_RE = re.compile(r"(?m)^===(TITLE|NOTE|QUESTIONS|CATEGORY)===\s*$")
+
+_CATS = ("주식", "공부", "그외")
+
+
+def _norm_cat(raw: str) -> str:
+    """Coerce model output to one of the three categories; default 그외."""
+    s = (raw or "").strip()
+    for cat in _CATS:
+        if cat in s:
+            return cat
+    return "그외"
+
+
+async def classify_category(title: str, text: str) -> str:
+    """Cheap Flash-Lite classification for backfilling notes that predate
+    the category field (new notes get it inline from synthesize()). One
+    word: 주식 / 공부 / 그외."""
+    body = (text or "").strip()[:3000]
+    if not body:
+        return "그외"
+    system = ("학습 노트의 종류를 한 단어로만 답하라: 주식 / 공부 / 그외. "
+              "주식=증시·투자·종목·경제 시장 관련, 공부=그 외 학습·지식·기술, "
+              "그외=애매하거나 기타. 다른 말 없이 단어 하나만.")
+    user = f"[제목] {title}\n[본문 일부]\n{body}"
+    try:
+        out = await gemini.complete(
+            config.SUMMARY_MODEL, system, user,
+            max_tokens=8, temperature=0.0, purpose="note_classify")
+    except Exception as e:
+        log.warning("note classify failed: %s", str(e)[:120])
+        return "그외"
+    return _norm_cat(out)
 
 
 def _split_sections(raw: str) -> dict[str, str]:
@@ -132,7 +176,7 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
     try:
         out = await gemini.complete(
             config.ANSWER_MODEL, _SYSTEM, user,
-            max_tokens=32768, temperature=0.3, purpose="note_synth",
+            max_tokens=32768, temperature=0.1, purpose="note_synth",
             timeout=300)
     except Exception as e:
         log.warning("note synth call failed: %s", str(e)[:160])
@@ -172,6 +216,7 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
         "source_ref": source_ref,
         "md": header + note_md + "\n",
         "questions": _parse_questions(sections.get("QUESTIONS", "")),
+        "category": _norm_cat(sections.get("CATEGORY", "")),
         "cost_krw": cost_krw,
         "gen_seconds": gen_seconds,
     }

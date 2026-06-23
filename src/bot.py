@@ -13079,6 +13079,32 @@ def main():
         app.job_queue.run_once(
             _startup_smoke, when=180, name="startup_smoke",
         )
+
+        # One-shot: backfill 종류별 category (주식/공부/그외) for notes that
+        # predate the field. New notes get it inline from synth; this only
+        # touches the existing handful (cheap Flash-Lite, one call each).
+        async def _notes_category_backfill(_ctx):
+            try:
+                from pathlib import Path as _P
+                from .notes import store as _nstore, synth as _nsynth
+                missing = _nstore.notes_missing_category()
+                for m in missing:
+                    md = ""
+                    try:
+                        md = _P(m["md_path"]).read_text(encoding="utf-8")
+                    except Exception:
+                        pass
+                    cat = await _nsynth.classify_category(
+                        m.get("title") or "", md)
+                    _nstore.set_category(m["id"], cat)
+                if missing:
+                    log.info("notes category backfill: classified %d note(s)",
+                             len(missing))
+            except Exception:
+                log.exception("notes category backfill failed (non-fatal)")
+        app.job_queue.run_once(
+            _notes_category_backfill, when=90, name="notes_category_backfill",
+        )
         # One-shot Telegram flood-ban release notification. Today's
         # 22207s ban (logged at 2026-05-14 01:28:56 UTC) lifts at
         # 2026-05-14 07:39:03 UTC. Schedule a single send_message at
