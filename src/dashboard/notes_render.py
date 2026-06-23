@@ -483,9 +483,9 @@ def _render_index(token: str, notes: list[dict],
         "<div class='fbar'><span class='flabel'>유형별</span>"
         "<button class='fbtn ftype active' data-type='all'>전체</button>"
         "<button class='fbtn ftype' data-type='문서'>📄 문서</button>"
-        "<button class='fbtn ftype' data-type='유튜브'>▶ 유튜브</button>"
+        "<button class='fbtn ftype' data-type='텍스트'>📝 텍스트</button>"
         "<button class='fbtn ftype' data-type='웹'>🌐 웹</button>"
-        "<button class='fbtn ftype' data-type='텍스트'>📝 텍스트</button></div>",
+        "<button class='fbtn ftype' data-type='유튜브'>▶ 유튜브</button></div>",
         "<div class='fbar'><span class='flabel'>종류별</span>"
         "<button class='fbtn fcat active' data-cat='all'>전체</button>"
         "<button class='fbtn fcat' data-cat='주식'>📈 주식</button>"
