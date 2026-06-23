@@ -261,6 +261,15 @@ def notes_missing_category() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def all_note_paths() -> list[dict]:
+    """Every note's id/title/md_path — used to re-classify all notes when
+    the classifier prompt improves (version-gated, not every boot)."""
+    init_db()
+    with _conn() as c:
+        rows = c.execute("SELECT id,title,md_path FROM notes").fetchall()
+    return [dict(r) for r in rows]
+
+
 def due_notes(on: date | None = None) -> list[dict]:
     """Notes whose next_due <= today — the review queue."""
     init_db()
