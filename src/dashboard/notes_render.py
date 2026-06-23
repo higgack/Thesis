@@ -167,9 +167,10 @@ background:rgba(0,0,0,.82);cursor:zoom-out;padding:2vh 2vw;
 align-items:center;justify-content:center;overflow:auto}
 .mmd-overlay.open{display:flex}
 .mmd-overlay .mmd-stage{background:#fff;border-radius:10px;padding:18px;
-max-width:96vw;max-height:94vh;overflow:auto;box-shadow:0 8px 40px rgba(0,0,0,.5)}
-.mmd-overlay .mmd-stage svg{width:auto;height:auto;
-max-width:none;min-width:70vw}
+max-width:96vw;max-height:94vh;overflow:auto;cursor:grab;
+box-shadow:0 8px 40px rgba(0,0,0,.5)}
+.mmd-overlay .mmd-stage svg{width:auto !important;height:85vh !important;
+max-width:none !important;max-height:none !important;display:block}
 .mmd-hint{position:fixed;top:14px;right:18px;z-index:1001;color:#fff;
 font-size:12px;opacity:.85;font-family:-apple-system,BlinkMacSystemFont,sans-serif}
 .q-sec{margin-top:24px}
@@ -195,22 +196,57 @@ color:var(--muted);border-top:1px solid var(--border-soft)}
 _NOTE_JS = r"""
 (function(){
   // Shared fullscreen lightbox: concept maps render small inline, so a
-  // click blows the diagram up to a readable size. Click anywhere (or
-  // Esc) to close.
+  // click blows the diagram up to a readable size (height-driven so wide
+  // maps get big + horizontal scroll), and the wheel zooms further.
+  // Click the dark backdrop (or Esc) to close.
   var _ov = null;
   function ensureOverlay(){
     if(_ov) return _ov;
     _ov = document.createElement('div');
     _ov.className = 'mmd-overlay';
-    _ov.innerHTML = '<div class="mmd-hint">클릭/Esc로 닫기</div>'
+    _ov.innerHTML = '<div class="mmd-hint">휠=확대/축소 · 드래그/스크롤=이동 · 바깥클릭/Esc=닫기</div>'
       + '<div class="mmd-stage"></div>';
     document.body.appendChild(_ov);
     _ov.addEventListener('click', closeOverlay);
+    var stage = _ov.querySelector('.mmd-stage');
+    // Clicks/drag inside the diagram must NOT close the lightbox.
+    stage.addEventListener('click', function(e){ e.stopPropagation(); });
+    // Drag-to-pan (in addition to scrollbars / trackpad scroll).
+    var down=false, sx=0, sy=0, sl=0, st=0;
+    stage.addEventListener('mousedown', function(e){
+      down=true; sx=e.clientX; sy=e.clientY;
+      sl=stage.scrollLeft; st=stage.scrollTop;
+      stage.style.cursor='grabbing'; e.preventDefault();
+    });
+    window.addEventListener('mousemove', function(e){
+      if(!down) return;
+      stage.scrollLeft = sl-(e.clientX-sx);
+      stage.scrollTop  = st-(e.clientY-sy);
+    });
+    window.addEventListener('mouseup', function(){
+      down=false; stage.style.cursor='';
+    });
     return _ov;
   }
   function openOverlay(svgHTML){
     var ov = ensureOverlay();
-    ov.querySelector('.mmd-stage').innerHTML = svgHTML;
+    var stage = ov.querySelector('.mmd-stage');
+    stage.innerHTML = svgHTML;
+    var svg = stage.querySelector('svg');
+    var zoom = 1;
+    if(svg){
+      svg.style.width = 'auto';
+      svg.style.maxWidth = 'none';
+      svg.style.height = '85vh';
+      // Wheel to zoom: scale the svg height; the stage (overflow:auto)
+      // provides scroll/pan for whatever overflows.
+      stage.onwheel = function(e){
+        e.preventDefault();
+        zoom *= (e.deltaY < 0 ? 1.15 : 0.87);
+        zoom = Math.max(0.3, Math.min(zoom, 8));
+        svg.style.height = (85 * zoom) + 'vh';
+      };
+    }
     ov.classList.add('open');
     document.body.style.overflow = 'hidden';
   }
