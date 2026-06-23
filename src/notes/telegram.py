@@ -120,6 +120,7 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception:
         progress = None
 
+    urls = _URL_RE.findall(text)
     note_ids: list[str] = []
     err: str | None = None
     try:
@@ -131,13 +132,17 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             nid = await channel.ingest_file(dest)
             if nid:
                 note_ids.append(nid)
-        # 2) URLs in the body (web/youtube/arxiv).
-        for url in _URL_RE.findall(text):
+        # 2) URLs in the body (blog/web/youtube/arxiv) → learn the LINKED
+        #    content (the actual article), not the message text.
+        for url in urls:
             nid = await channel.ingest_url(url)
             if nid:
                 note_ids.append(nid)
-        # 3) Plain text only (no doc, no url) → note from the text.
-        if not note_ids and text.strip() and not doc:
+        # 3) Plain text only — ONLY when there is no doc AND no URL. A URL
+        #    that failed extraction must NOT fall back to the message text:
+        #    that built a misleading note from the Telegram link preview
+        #    snippet instead of the real article (blog/news divergence bug).
+        if not note_ids and text.strip() and not doc and not urls:
             nid = await channel.ingest_text("text", "study-text", text)
             if nid:
                 note_ids.append(nid)
@@ -156,6 +161,13 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         out = "\n".join(lines)
     elif err:
         out = f"⚠️ 노트 생성 실패: {err}"
+    elif urls:
+        # A link was given but its content couldn't be extracted — say so
+        # honestly rather than fabricating a note from the link preview.
+        out = (f"⚠️ 링크 본문을 못 가져왔어 ({src_label})\n"
+               "JS 렌더링/로그인 전용/차단 페이지일 수 있어. 잠시 후 다시 "
+               "시도하거나, 원문 본문을 복사해서 텍스트로 붙여넣어줘. "
+               "(미리보기 요약으로 가짜 노트를 만들지 않으려고 일부러 중단함)")
     else:
         out = (f"⚠️ 노트를 못 만들었어 ({src_label})\n"
                "본문이 너무 짧거나 추출 실패 — 스캔 PDF/이미지거나 차단 호스트일 수 "
