@@ -380,12 +380,26 @@ async def _fetch_youtube_subs_yt_dlp(video_id: str) -> str:
         # IP ban can't be bypassed in code; it self-clears in hours, and
         # urgent videos go via manual transcript paste.
     }
+    # Burner-account cookies are the one automated way past the bot wall on
+    # a datacenter IP. Used only when the file exists → no-op otherwise.
+    # (os/config are lazy-imported here — neither is a module-level import.)
+    try:
+        import os as _osc
+        from .. import config as _cfg
+        _ck = getattr(_cfg, "YT_COOKIES_FILE", "") or ""
+        if _ck and _osc.path.exists(_ck):
+            opts["cookiefile"] = _ck
+    except Exception:
+        pass
+
+    _err = {"msg": ""}
 
     def _extract() -> dict | None:
         try:
             with YoutubeDL(opts) as ydl:
                 return ydl.extract_info(url, download=False)
         except Exception as e:
+            _err["msg"] = str(e)
             log.info("yt-dlp extract_info failed: %s", e)
             return None
 
@@ -405,6 +419,12 @@ async def _fetch_youtube_subs_yt_dlp(video_id: str) -> str:
     if not info:
         # Real yt-dlp / extractor / runtime failure.
         yt_dlp_health.record_attempt(success=False)
+        # Cookies configured but STILL bot-walled → they're expired/banned.
+        # Flag it so the hourly health check fires a "refresh cookies" alert.
+        if opts.get("cookiefile"):
+            em = (_err["msg"] or "").lower()
+            if "not a bot" in em or "sign in to confirm" in em:
+                yt_dlp_health.record_cookie_botwall()
         return ""
     # extract_info worked → yt-dlp itself is healthy. Record success up
     # front; caption availability below doesn't change this verdict.

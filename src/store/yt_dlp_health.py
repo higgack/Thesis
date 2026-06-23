@@ -129,6 +129,32 @@ def is_unhealthy() -> bool:
     return total >= _MIN_SAMPLES and rate >= _FAIL_RATE_THRESHOLD
 
 
+def record_cookie_botwall() -> None:
+    """Mark that yt-dlp hit the 'not a bot' wall *despite* a cookie file
+    being configured → the (burner-account) cookies are expired/banned
+    and need refreshing. The hourly health check turns this into a
+    cookie-specific 'refresh cookies' alert."""
+    try:
+        d = _load()
+        d["last_cookie_botwall"] = datetime.utcnow().isoformat(
+            timespec="seconds")
+        _atomic_write(d)
+    except Exception:
+        log.exception("yt_dlp_health record_cookie_botwall failed")
+
+
+def cookie_botwall_recent(minutes: int = 360) -> bool:
+    """True if a cookie-botwall was recorded within the window (default
+    6h) — i.e. cookies are configured but no longer getting through."""
+    d = _load()
+    ts = d.get("last_cookie_botwall") or ""
+    try:
+        return datetime.fromisoformat(ts) >= (
+            datetime.utcnow() - timedelta(minutes=minutes))
+    except Exception:
+        return False
+
+
 def status_summary() -> dict:
     """Return current health info for /audit or debugging."""
     rate, total = failure_rate()
