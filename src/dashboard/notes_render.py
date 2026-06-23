@@ -47,6 +47,18 @@ def _plain(md: str) -> str:
     return s[:4000]
 
 
+# 유형별 buckets: documents (pdf/ppt/word/excel/pasted text) all collapse to
+# 문서; youtube and web stand alone — mirrors the three buttons the user asked
+# for (PDF · 유튜브 · 웹).
+def _type_bucket(source_type: str) -> str:
+    st = (source_type or "").lower()
+    if st == "youtube":
+        return "유튜브"
+    if st == "web":
+        return "웹"
+    return "문서"
+
+
 _THEME_JS = """
 (function(){
   function apply(){
@@ -85,6 +97,14 @@ padding:16px 18px;box-shadow:var(--shadow)}
 .card .label{font-size:11px;color:var(--muted);margin-bottom:8px;font-weight:500}
 .card .value{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
 .sec-title{font-size:13px;color:var(--muted);margin:24px 4px 10px;font-weight:600}
+.fbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0 2px}
+.fbar .flabel{font-size:11px;color:var(--muted);font-weight:700;
+margin-right:4px;min-width:38px}
+.fbtn{background:var(--panel);border:1px solid var(--border);color:var(--text);
+font-size:12.5px;padding:5px 12px;border-radius:16px;cursor:pointer;
+transition:.12s;font-weight:500}
+.fbtn:hover{border-color:var(--primary)}
+.fbtn.active{background:var(--primary);border-color:var(--primary);color:#fff}
 .controls{display:flex;gap:10px;margin:6px 0 4px}
 .controls input{flex:1;background:var(--panel);border:1px solid var(--border);
 color:var(--text);padding:10px 14px;border-radius:8px;font-size:14px;outline:none;
@@ -114,6 +134,16 @@ border-color:rgba(100,116,139,.55);color:#cbd5e1}
 .note-row.removing{opacity:0;transform:scale(.97);transition:.2s}
 .stype{font-size:10px;color:var(--muted);border:1px solid var(--border);
 border-radius:8px;padding:1px 6px}
+.cat{font-size:10px;font-weight:700;border-radius:8px;padding:1px 7px;
+white-space:nowrap}
+.cat-주식{background:rgba(16,185,129,.15);color:#059669;
+border:1px solid rgba(16,185,129,.4)}
+.cat-공부{background:rgba(59,130,246,.15);color:#2563eb;
+border:1px solid rgba(59,130,246,.4)}
+.cat-그외{background:rgba(148,163,184,.15);color:var(--muted);
+border:1px solid var(--border)}
+[data-theme=dark] .cat-주식{color:#34d399}
+[data-theme=dark] .cat-공부{color:#60a5fa}
 .empty{text-align:center;padding:60px 20px;color:var(--muted)}
 .back{color:var(--muted);font-size:13px;display:inline-block;margin-bottom:16px}
 .note-body{background:var(--panel);border:1px solid var(--border);
@@ -269,8 +299,9 @@ _INDEX_JS = r"""
     return esc(slice).replace(new RegExp(rx(query),'gi'),
       function(m){return '<mark class="kw">'+m+'</mark>';});
   }
-  // Full-text filter: matches note title + body (data-text); shows a
-  // highlighted snippet when the hit is in the body. No bot query.
+  // Combined filter: 유형별(data-tbucket) AND 종류별(data-cat) AND
+  // full-text(title + body). Body hits get a highlighted snippet. No bot query.
+  var curType='all', curCat='all';
   function applyFilter(){
     var t=(q?q.value:'').trim(), tl=t.toLowerCase(), shown=0;
     document.querySelectorAll('.note-row').forEach(function(row){
@@ -278,7 +309,10 @@ _INDEX_JS = r"""
       var a=row.querySelector('.t'); var title=(a?a.textContent:'');
       var inTitle = !tl || title.toLowerCase().indexOf(tl)!==-1;
       var inBody  = !tl || hay.toLowerCase().indexOf(tl)!==-1;
-      var ok = !tl || inTitle || inBody;
+      var okText = !tl || inTitle || inBody;
+      var okType = curType==='all' || (row.dataset.tbucket||'')===curType;
+      var okCat  = curCat==='all'  || (row.dataset.cat||'')===curCat;
+      var ok = okText && okType && okCat;
       row.style.display = ok ? '' : 'none';
       var old=row.querySelector('.snippet'); if(old) old.remove();
       if(ok && tl && inBody){
@@ -290,8 +324,23 @@ _INDEX_JS = r"""
     });
     var c=document.getElementById('note-count'); if(c) c.textContent=shown;
   }
+  function wireGroup(sel, attr, set){
+    var btns=document.querySelectorAll(sel);
+    btns.forEach(function(b){ b.addEventListener('click', function(){
+      btns.forEach(function(x){ x.classList.remove('active'); });
+      b.classList.add('active'); set(b.getAttribute(attr)); applyFilter();
+    }); });
+  }
+  wireGroup('.ftype','data-type',function(v){ curType=v; });
+  wireGroup('.fcat','data-cat',function(v){ curCat=v; });
   if(q) q.addEventListener('input', applyFilter);
-  if(reset) reset.addEventListener('click', function(){ q.value=''; applyFilter(); });
+  if(reset) reset.addEventListener('click', function(){
+    q.value=''; curType='all'; curCat='all';
+    document.querySelectorAll('.fbtn').forEach(function(x){
+      x.classList.toggle('active', x.getAttribute('data-type')==='all'
+        || x.getAttribute('data-cat')==='all'); });
+    applyFilter();
+  });
   document.querySelectorAll('.ndel').forEach(function(btn){
     btn.addEventListener('click', function(e){
       e.preventDefault(); e.stopPropagation();
@@ -327,7 +376,7 @@ def _render_index(token: str, notes: list[dict],
     cost = cost or {}
     bodies = bodies or {}
     rows = []
-    rows.append("<div class='sec-title'>📒 전체 노트 "
+    rows.append("<div class='sec-title'>전체 노트 "
                 f"(<span id='note-count'>{len(notes)}</span>)</div>")
     if not notes:
         rows.append("<div class='empty'>아직 노트가 없어요. 학습 채널에 "
@@ -335,23 +384,27 @@ def _render_index(token: str, notes: list[dict],
     for n in notes:
         learned = (n.get("updated") or "")[:10]
         hay = _plain((bodies.get(n["id"]) or {}).get("md") or "")
+        tbucket = _type_bucket(n.get("source_type") or "")
+        cat = (n.get("category") or "").strip() or "그외"
         rows.append(
             f"<div class='note-row' data-id=\"{_esc(n['id'])}\" "
-            f"data-text=\"{_esc(hay)}\">"
+            f"data-text=\"{_esc(hay)}\" data-tbucket=\"{_esc(tbucket)}\" "
+            f"data-cat=\"{_esc(cat)}\">"
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
+            f"<span class='cat cat-{_esc(cat)}'>{_esc(cat)}</span>"
             f"<span class='stype'>{_esc(n.get('source_type') or '')}</span>"
             f"<span class='meta'>학습 {_esc(learned)}</span>"
             f"<button class='ndel' type='button' title='노트 삭제'>🗑</button>"
             f"</div>"
         )
     return "\n".join([
-        _head("📒 학습 노트"), "</head><body><div class='layout'>",
-        "<header><h1>📒 학습 노트</h1>",
+        _head("학습 노트"), "</head><body><div class='layout'>",
+        "<header><h1>학습 노트</h1>",
         f"<div class='sub'><a class='nav' href='/{_esc(token)}/'>🧠 Archive</a> "
         f"<a class='nav' href='/{_esc(token)}/wiki/'>📚 Wiki</a> "
         f"<a class='nav' href='/{_esc(token)}/commands/'>📋 Commands</a></div></header>",
         "<div class='stats'>",
-        f"<div class='card'><div class='label'>📒 총 노트</div>"
+        f"<div class='card'><div class='label'>총 노트</div>"
         f"<div class='value'>{st.get('notes',0):,}개</div></div>",
         f"<div class='card'><div class='label'>💰 오늘 노트 비용</div>"
         f"<div class='value'>₩{cost.get('today_krw',0):,.1f}</div>"
@@ -363,8 +416,18 @@ def _render_index(token: str, notes: list[dict],
         f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
         f"{cost.get('mtd_count',0)}회 합성</div></div>",
         "</div>",
+        "<div class='fbar'><span class='flabel'>유형별</span>"
+        "<button class='fbtn ftype active' data-type='all'>전체</button>"
+        "<button class='fbtn ftype' data-type='문서'>📄 문서</button>"
+        "<button class='fbtn ftype' data-type='유튜브'>▶ 유튜브</button>"
+        "<button class='fbtn ftype' data-type='웹'>🌐 웹</button></div>",
+        "<div class='fbar'><span class='flabel'>종류별</span>"
+        "<button class='fbtn fcat active' data-cat='all'>전체</button>"
+        "<button class='fbtn fcat' data-cat='주식'>📈 주식</button>"
+        "<button class='fbtn fcat' data-cat='공부'>📚 공부</button>"
+        "<button class='fbtn fcat' data-cat='그외'>🗂 그 외</button></div>",
         "<div class='controls'><input id='q' type='text' "
-        "placeholder='노트 제목 검색...' autocomplete='off'>"
+        "placeholder='노트 제목·본문 검색...' autocomplete='off'>"
         "<button id='reset' type='button' class='reset'>초기화</button></div>",
         "\n".join(rows),
         "<div class='footer'>대시보드는 읽기 전용 · 🗑 = 노트 삭제</div>",

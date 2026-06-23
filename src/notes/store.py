@@ -59,7 +59,8 @@ def init_db() -> None:
               created TEXT,
               updated TEXT,
               cost_krw REAL DEFAULT 0,
-              gen_seconds REAL DEFAULT 0
+              gen_seconds REAL DEFAULT 0,
+              category TEXT DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS note_srs (
               note_id TEXT PRIMARY KEY,
@@ -96,6 +97,8 @@ def init_db() -> None:
             c.execute("ALTER TABLE notes ADD COLUMN cost_krw REAL DEFAULT 0")
         if "gen_seconds" not in cols:
             c.execute("ALTER TABLE notes ADD COLUMN gen_seconds REAL DEFAULT 0")
+        if "category" not in cols:
+            c.execute("ALTER TABLE notes ADD COLUMN category TEXT DEFAULT ''")
 
 
 # ------------------------------------------------------------- vault ---
@@ -150,11 +153,13 @@ def save_note(note: dict) -> str:
     with _conn() as c:
         c.execute(
             "INSERT INTO notes(id,title,source_type,source_ref,md_path,"
-            "created,updated,cost_krw,gen_seconds) VALUES(?,?,?,?,?,?,?,?,?)",
+            "created,updated,cost_krw,gen_seconds,category) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?)",
             (note_id, note.get("title") or note_id, note.get("source_type"),
              note.get("source_ref"), str(md_path), now, now,
              float(note.get("cost_krw") or 0.0),
-             float(note.get("gen_seconds") or 0.0)),
+             float(note.get("gen_seconds") or 0.0),
+             note.get("category") or "그외"),
         )
         c.execute(
             "INSERT INTO note_srs(note_id,ease,interval_days,reps,lapses,"
@@ -232,9 +237,27 @@ def list_notes() -> list[dict]:
     with _conn() as c:
         rows = c.execute(
             "SELECT n.id,n.title,n.source_type,n.source_ref,n.updated,"
-            "s.last_reviewed,s.next_due,s.reps "
+            "n.category,s.last_reviewed,s.next_due,s.reps "
             "FROM notes n LEFT JOIN note_srs s ON s.note_id=n.id "
             "ORDER BY n.updated DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_category(note_id: str, category: str) -> None:
+    """Backfill / correct a note's 종류별 category (주식/공부/그외)."""
+    init_db()
+    with _conn() as c:
+        c.execute("UPDATE notes SET category=? WHERE id=?",
+                  (category, note_id))
+
+
+def notes_missing_category() -> list[dict]:
+    """Notes with no category yet — fed to the one-time LLM backfill."""
+    init_db()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id,title,md_path FROM notes "
+            "WHERE category IS NULL OR category=''").fetchall()
     return [dict(r) for r in rows]
 
 
