@@ -135,7 +135,8 @@ border-color:rgba(100,116,139,.55);color:#cbd5e1}
 .stype{font-size:10px;color:var(--muted);border:1px solid var(--border);
 border-radius:8px;padding:1px 6px}
 .cat{font-size:10px;font-weight:700;border-radius:8px;padding:1px 7px;
-white-space:nowrap}
+white-space:nowrap;cursor:pointer;user-select:none}
+.cat:hover{filter:brightness(1.08);outline:1px solid currentColor}
 .cat-주식{background:rgba(16,185,129,.15);color:#059669;
 border:1px solid rgba(16,185,129,.4)}
 .cat-공부{background:rgba(59,130,246,.15);color:#2563eb;
@@ -393,6 +394,31 @@ _INDEX_JS = r"""
         .catch(function(err){ alert('삭제 실패: '+err.message); });
     });
   });
+  // 종류별 manual override: click the badge to cycle 주식→공부→그외.
+  // Optimistic update; POST locks it server-side so auto-reclassify
+  // won't overwrite. Revert on failure.
+  var CATS = ['주식','공부','그외'];
+  function setCat(row, badge, cat){
+    row.dataset.cat = cat;
+    badge.textContent = cat;
+    badge.className = 'cat cat-'+cat;
+    applyFilter();
+  }
+  document.querySelectorAll('.note-row .cat').forEach(function(badge){
+    badge.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      var row = badge.closest('.note-row');
+      var id = row && row.dataset.id; if(!id) return;
+      var prev = row.dataset.cat || '그외';
+      var next = CATS[(CATS.indexOf(prev)+1) % CATS.length];
+      setCat(row, badge, next);
+      fetch('/'+token+'/notes/'+encodeURIComponent(id)+'/category',
+        {method:'POST', headers:{'content-type':'application/json'},
+         body: JSON.stringify({cat: next})})
+        .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .catch(function(err){ setCat(row, badge, prev); alert('변경 실패: '+err.message); });
+    });
+  });
 })();
 """
 
@@ -427,7 +453,7 @@ def _render_index(token: str, notes: list[dict],
             f"data-text=\"{_esc(hay)}\" data-tbucket=\"{_esc(tbucket)}\" "
             f"data-cat=\"{_esc(cat)}\">"
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
-            f"<span class='cat cat-{_esc(cat)}'>{_esc(cat)}</span>"
+            f"<span class='cat cat-{_esc(cat)}' title='클릭: 종류 변경 (주식↔공부↔그외)'>{_esc(cat)}</span>"
             f"<span class='stype'>{_esc(n.get('source_type') or '')}</span>"
             f"<span class='meta'>학습 {_esc(learned)}</span>"
             f"<button class='ndel' type='button' title='노트 삭제'>🗑</button>"

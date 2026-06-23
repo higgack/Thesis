@@ -13166,7 +13166,7 @@ def main():
         # bump it whenever the classifier prompt changes and every note is
         # re-classified once on the next boot (cheap Flash-Lite, one call
         # each), then a marker file suppresses repeats.
-        _NOTES_CAT_VERSION = 2  # v2: broadened 주식 (finance/investing-wide)
+        _NOTES_CAT_VERSION = 3  # v3: 주식=종목/회사분석 중심, 부동산·거시→그외
         async def _notes_category_backfill(_ctx):
             try:
                 import json as _json
@@ -13180,7 +13180,9 @@ def main():
                 except Exception:
                     cur = 0
                 if cur < _NOTES_CAT_VERSION:
-                    targets = _nstore.all_note_paths()       # classifier improved
+                    # Classifier improved → re-classify all EXCEPT manual
+                    # overrides (category_locked) so user picks survive.
+                    targets = _nstore.notes_for_reclass()
                     mode = "reclassify-all"
                 else:
                     targets = _nstore.notes_missing_category()  # fill gaps only

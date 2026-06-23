@@ -60,7 +60,8 @@ def init_db() -> None:
               updated TEXT,
               cost_krw REAL DEFAULT 0,
               gen_seconds REAL DEFAULT 0,
-              category TEXT DEFAULT ''
+              category TEXT DEFAULT '',
+              category_locked INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS note_srs (
               note_id TEXT PRIMARY KEY,
@@ -99,6 +100,9 @@ def init_db() -> None:
             c.execute("ALTER TABLE notes ADD COLUMN gen_seconds REAL DEFAULT 0")
         if "category" not in cols:
             c.execute("ALTER TABLE notes ADD COLUMN category TEXT DEFAULT ''")
+        if "category_locked" not in cols:
+            c.execute("ALTER TABLE notes ADD COLUMN category_locked "
+                      "INTEGER DEFAULT 0")
 
 
 # ------------------------------------------------------------- vault ---
@@ -243,12 +247,18 @@ def list_notes() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def set_category(note_id: str, category: str) -> None:
-    """Backfill / correct a note's 종류별 category (주식/공부/그외)."""
+def set_category(note_id: str, category: str, locked: bool = False) -> None:
+    """Set a note's 종류별 category (주식/공부/그외). `locked=True` marks it
+    a manual override so the version-gated auto-reclassify won't overwrite
+    it (LLM classification is fallible; the user's choice wins)."""
     init_db()
     with _conn() as c:
-        c.execute("UPDATE notes SET category=? WHERE id=?",
-                  (category, note_id))
+        if locked:
+            c.execute("UPDATE notes SET category=?, category_locked=1 "
+                      "WHERE id=?", (category, note_id))
+        else:
+            c.execute("UPDATE notes SET category=? WHERE id=?",
+                      (category, note_id))
 
 
 def notes_missing_category() -> list[dict]:
@@ -261,12 +271,15 @@ def notes_missing_category() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def all_note_paths() -> list[dict]:
-    """Every note's id/title/md_path — used to re-classify all notes when
-    the classifier prompt improves (version-gated, not every boot)."""
+def notes_for_reclass() -> list[dict]:
+    """Notes eligible for a full LLM re-classification (classifier prompt
+    improved). Excludes manual overrides (category_locked=1) so the user's
+    hand-set categories survive a version bump."""
     init_db()
     with _conn() as c:
-        rows = c.execute("SELECT id,title,md_path FROM notes").fetchall()
+        rows = c.execute(
+            "SELECT id,title,md_path FROM notes "
+            "WHERE COALESCE(category_locked,0)=0").fetchall()
     return [dict(r) for r in rows]
 
 
