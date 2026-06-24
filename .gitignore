@@ -31,3 +31,6 @@ rag/sources/*
 # out of the repo. Enable by copying the matching .example / installing the skill.
 .mcp.json
 .claude/skills/ppt-master/
+# kg-gen / OpenKB local outputs (opt-in tools)
+rag/kg_output/
+rag/openkb/
