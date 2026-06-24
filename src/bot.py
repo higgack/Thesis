@@ -4423,8 +4423,15 @@ async def cmd_kg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     edges = await asyncio.to_thread(_kg.neighbors, ent, 40)
     if not edges:
-        await update.message.reply_text(
-            f"'{ent}' 관련 트리플 없음.\n/kg_extract 로 먼저 추출해봐.")
+        st = await asyncio.to_thread(_kg.stats)
+        if st["edges"]:
+            msg = (f"'{ent}' 관련 트리플 없음 (그래프엔 엣지 {st['edges']}개 있음).\n"
+                   "• 어떤 개체가 있는지: <code>/kg</code> (인자 없이) → 목록에서 골라 조회\n"
+                   "• 그 개체가 든 문서를 더 추출: <code>/kg_extract 30</code>")
+        else:
+            msg = ("그래프가 비어 있어. 먼저 <code>/kg_extract 10</code> 으로 "
+                   "최근 문서에서 관계를 추출해줘.")
+        await update.message.reply_text(msg, parse_mode="HTML")
         return
     lines = [f"🕸 <b>{html.escape(ent)}</b> 관계 ({len(edges)})"]
     for e in edges:
