@@ -77,3 +77,10 @@ PY
 ```
 > 자동 추출 KG는 **환각 가능** → 엔티티·관계를 원문과 대조한 뒤에만 논문에 반영(무결성 게이트).
 > 본 결정론 KG는 그 대조의 **기준선(ground truth)** 으로도 쓸 수 있다.
+
+
+## 렌더 이미지
+- 영문판: `tech_network_rich.png`
+- 한글판: `tech_network_rich_ko.png` (NanumGothic)
+
+![기술 네트워크(한글)](tech_network_rich_ko.png)
