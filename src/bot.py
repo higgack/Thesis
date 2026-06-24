@@ -1390,6 +1390,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【1. 대시보드】</b> Basic Auth · 60s 갱신·다크 19~07
 📊 Q&amp;A http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html
+🕸 KG http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/kg/index.html
 📚 Wiki http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/index.html
 📒 학습 http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/notes/index.html
 
@@ -1426,7 +1427,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
   🕸 KG(시범): /kg_extract · /kg
 
-📚 <b>위키</b>(매시 정시 학습·요약알림 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
+📚 <b>위키</b>(매시 정시·요약 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
 📒 <b>학습 노트</b>: /notes · 상세: /notes_guide
 
@@ -1437,19 +1438,19 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   NTIS: /kr_rnd_projects · /kr_related
         /kr_outcomes · /kr_govt_reports · /kr_agency_rnd · /kr_rnd_issues
 
-ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup · /wiki_guide
+ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup
 
 <b>【3. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
 
 <b>【4. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS · ⚖️ patents EPO · 🌐 web · 📥 ingest · 한국어번역
 
-<b>【4-1. 회사 분석】</b> "회사명+실적/매출" → 본문 + 신사업 + 📌 실적 표(A./F.·YoY·QoQ) + 가이던스 + brain/web 분리. 숫자 audit.
+<b>【4-1. 회사 분석】</b> "회사명+실적/매출" → 본문 + 신사업 + 📌 실적 표(A./F.·YoY·QoQ) + 가이던스 + brain/web 분리.
 
 <b>【5. 자연어 트리거】</b>
 🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL"
 
 <b>【6. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 전송
-• PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · 캡션≥80자 OCR skip · [OCR] 강제 · 음성=Gemini STT · YouTube=자막→Jina · <b>.txt/.md/.csv 학습 제외</b>
+• PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · [OCR] 강제 · 음성=Gemini STT · YouTube=자막→Jina · <b>.txt/.md/.csv 학습 제외</b>
 차단: LinkedIn/FB/IG · Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
 <b>【7. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
@@ -1459,15 +1460,15 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 [제목필터] insidertracking: "미국 레딧 게시물 분석"만 forward
 백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
 
-<b>【8. 메타데이터】</b> Flash-Lite 요약+메타 1콜 · 🏢회사 🏷태그 📅YYYY.MM · 📊브로커리지·애널리스트(리포트 자동 추출, 회사 분석에 활용)
+<b>【8. 메타데이터】</b> Flash-Lite 요약+메타 1콜 · 🏢회사 🏷태그 📅YYYY.MM · 📊브로커리지·애널리스트(자동 추출)
 
-<b>【9. 답변 품질】</b> 시점 필수 · brain 재검색 · web [도메인]·인용 [N] · 숫자 audit
+<b>【9. 답변 품질】</b> 시점 필수 · brain 재검색 · 인용 [N] · 숫자 audit
 
 <b>【10. 운영】</b> 영속(atomic+.bak) · 메모리 5분 · 질문＞학습
 
 <b>【10-1. 모델】</b> Embed gemini-embedding-001 · Lite flash-lite · 답변 flash · /deep pro · 캐시 1h
 
-<b>【10-2. 비용】</b> 6단 dedup · 청크 1000 · DPI 100 · OCR 0p · 캐시 · 메타 gating
+<b>【10-2. 비용】</b> 6단 dedup · 청크 1000 · DPI 100 · OCR 0p · 메타 gating
 
 <b>【10-3. Retry】</b> 자동1회→/failed(🔁3회후폐기) · in_flight→자동재개
 
