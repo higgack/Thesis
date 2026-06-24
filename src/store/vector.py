@@ -308,10 +308,14 @@ def delete_docs(doc_ids: list[str]) -> int:
 
 def fts_backfill(force: bool = False) -> int:
     """Populate / self-heal the FTS5 keyword index from the full Chroma
-    snapshot. Streams in batches so we never hold the whole corpus in RAM
-    (8GB VM shared with other bots). Skips when already in sync (FTS row
-    count within ~2% of the corpus) unless force=True. Returns rows
-    indexed, or -1 when FTS5 is unavailable / no rebuild needed."""
+    snapshot, INCREMENTALLY. Streams in batches, skips cids already indexed
+    (an interrupted run RESUMES instead of wiping + restarting), and sleeps
+    briefly between batches so this daemon thread yields the GIL + releases
+    the meta.db write lock — never starving the asyncio loop on the 2-vCPU
+    VM. (2026-06-24: the old clear()+full-rebuild re-ran on every restart;
+    repeated redeploys kept interrupting it, so each boot re-churned 176k
+    chunks → meta.db 'database is locked' + a 10-min event-loop freeze.)
+    Returns rows added, or -1 when FTS5 is unavailable / already in sync."""
     from . import meta as _meta
     try:
         corpus_n = _collection.count()
@@ -322,10 +326,9 @@ def fts_backfill(force: bool = False) -> int:
         return -1  # FTS5 unavailable in this SQLite build
     if not force and fts_n > 0 and abs(fts_n - corpus_n) <= max(50, corpus_n // 50):
         return -1  # already in sync — nothing to do
-    _meta.fts_clear()
     total = 0
     offset = 0
-    BATCH = 1000
+    BATCH = 500
     while True:
         res = _collection.get(include=["documents", "metadatas"],
                               limit=BATCH, offset=offset)
@@ -334,14 +337,18 @@ def fts_backfill(force: bool = False) -> int:
             break
         docs = res.get("documents") or []
         metas = res.get("metadatas") or []
+        have = _meta.fts_existing_cids(ids)   # resume: skip already-indexed
         rows = [(ids[i], (metas[i] or {}).get("doc_id"), docs[i])
-                for i in range(len(ids))]
-        _meta.fts_insert(rows)
-        total += len(ids)
+                for i in range(len(ids)) if ids[i] not in have]
+        if rows:
+            _meta.fts_insert(rows)
+            total += len(rows)
         if len(ids) < BATCH:
             break
         offset += BATCH
-    log.info("fts backfill: indexed %d chunks (corpus=%d)", total, corpus_n)
+        time.sleep(0.1)   # yield GIL + release meta.db lock between batches
+    log.info("fts backfill: added %d chunks (corpus=%d, fts≈%d)",
+             total, corpus_n, fts_n + total)
     return total
 
 

@@ -218,6 +218,23 @@ def fts_count() -> int:
             return -1
 
 
+def fts_existing_cids(cids: list[str]) -> set:
+    """Subset of `cids` already present in the FTS index. Lets the streaming
+    backfill skip re-indexing rows it already has, so an interrupted run
+    resumes instead of wiping + rebuilding the whole corpus each restart."""
+    if not cids:
+        return set()
+    with _conn() as c:
+        try:
+            qs = ",".join("?" * len(cids))
+            rows = c.execute(
+                f"SELECT cid FROM chunk_fts WHERE cid IN ({qs})", cids
+            ).fetchall()
+            return {r[0] for r in rows}
+        except sqlite3.OperationalError:
+            return set()
+
+
 def fts_search(query: str, k: int = 50) -> list[dict]:
     """Keyword hits ranked by FTS5 bm25(). Returns
     [{id, doc_id, text, score}] with score flipped so higher = better
