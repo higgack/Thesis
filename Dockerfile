@@ -24,8 +24,12 @@ COPY pyproject.toml ./
 # Install torch CPU-only first so sentence-transformers' transitive
 # dependency doesn't drag in 1-2GB of nvidia-cuda-* wheels we can't
 # use on this CPU-only VM. The CPU index has the same torch API.
+# Generous --retries/--timeout: this layer cache-busts on every code push
+# (COPY src below), so the torch download re-runs each deploy and a single
+# transient pytorch.org hiccup must not fail the whole build.
 RUN pip install --upgrade pip && \
-    pip install --index-url https://download.pytorch.org/whl/cpu torch && \
+    pip install --retries 10 --timeout 180 \
+        --index-url https://download.pytorch.org/whl/cpu torch && \
     pip install .
 
 COPY src ./src
