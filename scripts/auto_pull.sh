@@ -148,6 +148,29 @@ fi
 
 [ "$QUIET" -eq 1 ] || notify "🚀 배포 시작: ${SUBJECT}"
 
+# Disk guard. The torch layer (line 30 of Dockerfile) cache-busts on every
+# code push, so each deploy re-downloads a multi-GB wheel + new image
+# layers + build cache. Left unchecked this fills the 58G boot disk and the
+# build dies mid-`pip install` with `[Errno 28] No space left on device`
+# (happened 2026-06-24 — three back-to-back rebuilds → 100%). When the root
+# fs is tight, reclaim build cache + dangling images BEFORE building so the
+# build has room. Running containers' images are protected; data/ bind mount
+# + named volumes are never touched by builder/image prune. No-op when there's
+# plenty of headroom (keeps the warm build cache for fast rebuilds).
+free_disk_if_needed() {
+    local use
+    use=$(df --output=pcent / 2>/dev/null | tail -1 | tr -dc '0-9')
+    [ -n "$use" ] || return 0
+    if [ "$use" -ge 85 ]; then
+        echo "disk ${use}% ≥85% — pruning build cache + dangling images" >>"$LOG"
+        docker builder prune -af >>"$LOG" 2>&1 || true
+        docker image prune -f >>"$LOG" 2>&1 || true
+        local after
+        after=$(df --output=pcent / 2>/dev/null | tail -1 | tr -dc '0-9')
+        echo "disk after prune: ${after:-?}%" >>"$LOG"
+    fi
+}
+
 compose_up() {
     docker compose --profile local-api up -d --build --remove-orphans \
         "$@" >>"$LOG" 2>&1
@@ -155,6 +178,7 @@ compose_up() {
 
 if git pull --ff-only origin "$BRANCH" >>"$LOG" 2>&1; then
     rm -f "$FAIL_LATCH"
+    free_disk_if_needed
     if ! compose_up; then
         echo "compose up failed, removing stale containers and retrying" >>"$LOG"
         docker rm -f thesis-bot-1 thesis-forward-listener-1 \
@@ -166,6 +190,11 @@ if git pull --ff-only origin "$BRANCH" >>"$LOG" 2>&1; then
             exit 1
         }
     fi
+    # Each --build retags the image and leaves the PREVIOUS one dangling
+    # (untagged). Reap it now so old bot/dashboard images don't accumulate
+    # and refill the disk over successive deploys. Dangling-only (-f, no -a)
+    # → never removes an image a running container still references.
+    docker image prune -f >>"$LOG" 2>&1 || true
     sleep 5
     STATUS=$(docker inspect -f '{{.State.Status}}' thesis-bot-1 2>/dev/null || echo missing)
     if [ "$STATUS" = "running" ]; then

@@ -1637,10 +1637,10 @@ def _render_commands_page(token: str, lookup_guide: str,
         "<header>",
         "<h1>📋 명령어 레퍼런스</h1>",
         "<div class='sub'>전체 명령어 상세 가이드 · "
+        f"<a href='/{token}/' class='nav-shortcut'>🧠 Archive</a> "
         f"<a href='/{token}/kg/' class='nav-shortcut'>🕸 KG</a> "
         f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a> "
-        f"<a href='/{token}/notes/' class='nav-shortcut'>학습 노트</a> "
-        f"<a href='/{token}/' class='nav-shortcut'>🧠 Archive</a>"
+        f"<a href='/{token}/notes/' class='nav-shortcut'>학습 노트</a>"
         "</div>",
         "</header>",
         "<div class='toc'>",
