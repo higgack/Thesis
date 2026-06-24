@@ -286,35 +286,34 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
 
     dense = {h["id"]: (1.0 - h["distance"], h) for h in summary_hits + chunk_hits}
 
-    bundle = await asyncio.to_thread(_ensure_bm25)
-    if bundle is not None and bundle["index"] is not None:
-        index = bundle["index"]
-        ids = bundle["ids"]
-        docs = bundle["docs"]
-        metas = bundle["metas"]
-        scores = await asyncio.to_thread(index.get_scores, _tokenize(query))
-        max_s = float(scores.max()) if len(scores) else 0.0
-        for i, (cid, s) in enumerate(zip(ids, scores)):
-            n = (s / max_s) if max_s else 0
+    # Keyword half: FTS5 (persistent, scales past BM25_MAX_CHUNKS, ~0 RAM).
+    # Supersedes the in-memory rank_bm25, which disabled itself above 50k
+    # chunks → dense-only at our corpus size. Fuse normalized keyword
+    # scores into the dense map; an FTS-only hit (keyword match outside the
+    # dense top) is added with metadata reconstructed from the chunk id
+    # ("<doc_id>:<idx>", idx=-1 → summary). FTS unavailable/empty → the
+    # loop is simply skipped (dense-only = prior behavior).
+    fts_hits = await asyncio.to_thread(meta.fts_search, query, over)
+    if fts_hits:
+        max_s = max((h["score"] for h in fts_hits), default=0.0)
+        for h in fts_hits:
+            cid = h["id"]
+            n = (h["score"] / max_s) if max_s else 0
             if cid in dense:
                 old, hit = dense[cid]
                 dense[cid] = (old + 0.4 * n, hit)
             elif n > 0.55:
+                try:
+                    idx = int(cid.rsplit(":", 1)[1])
+                except Exception:
+                    idx = 0
                 dense[cid] = (0.4 * n, {
-                    "id": cid, "text": docs[i],
-                    "metadata": metas[i], "distance": 1.0 - n,
+                    "id": cid, "text": h["text"],
+                    "metadata": {"doc_id": h["doc_id"],
+                                 "kind": "summary" if idx == -1 else "chunk",
+                                 "idx": idx},
+                    "distance": 1.0 - n,
                 })
-    else:
-        # At >BM25_MAX_CHUNKS this is the PERMANENT state, not a cold
-        # start — log once at info, then debug, instead of misleading
-        # "index cold" noise on every query.
-        global _BM25_OFF_LOGGED
-        if not _BM25_OFF_LOGGED:
-            _BM25_OFF_LOGGED = True
-            log.info("bm25 unavailable (cold start or corpus > "
-                     "BM25_MAX_CHUNKS) — dense-only retrieval")
-        else:
-            log.debug("bm25 off — dense-only retrieval this turn")
 
     # Batch-fetch parent doc metadata in one query (offloaded to thread
     # so we never block the event loop on SQLite).
