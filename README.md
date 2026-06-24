@@ -12,6 +12,7 @@ with Claude Code. It bundles three building blocks:
 | **[ppt-master](https://github.com/hugohe3/ppt-master)** | Editable `.pptx` defense/conference slides from your paper | **optional skill install** — `docs/tooling/ppt-master.md` |
 | **[kg-gen](https://github.com/stair-lab/kg-gen)** | Text→knowledge-graph extraction (boosts the thesis's technology-network section) | **optional dependency** — `docs/tooling/kg-gen.md` |
 | **[OpenKB](https://github.com/VectifyAI/OpenKB)** | Vectorless wiki-style knowledge base — lightweight alternative to `rag/` | **optional dependency** — `docs/tooling/openkb.md` |
+| **[Unlimited-OCR](https://huggingface.co/baidu/Unlimited-OCR)** | One-shot long-PDF OCR (R-SWA) — OCR backend for triage's `OCR_NEEDED` pages (GPU + scanned docs only) | **optional, conditional** — `docs/tooling/unlimited-ocr.md` |
 
 > AI is your copilot, not the pilot. Every stage keeps a human in the loop.
 
@@ -53,7 +54,8 @@ See `rag/README.md` for details and how the skills consume the index.
 
 **Optional tooling** (`docs/tooling/`): rtk (token savings), notebooklm-mcp
 (Google NotebookLM grounded Q&A), ppt-master (slides from the paper), kg-gen
-(knowledge-graph extraction), OpenKB (vectorless lightweight KB). See also
+(knowledge-graph extraction), OpenKB (vectorless lightweight KB), Unlimited-OCR
+(one-shot long-PDF OCR, GPU-only). See also
 `docs/tooling/rag-kb-tools-eval-2026-06.md` for the full RAG/KB/KG tool review.
 
 ## Notes on integration choices
