@@ -13332,6 +13332,17 @@ def main():
     async def _on_handler_error(update_obj, context):
         err = context.error
         log.error("handler error: %s", err, exc_info=err)
+        # Benign, non-actionable errors — log but DON'T alert the owner.
+        # "Query is too old / query id is invalid": the callback-answer ack
+        # arrived >15s after the tap (loop was busy, or a restart happened
+        # mid-tap) — the button action itself is unaffected. "Message is not
+        # modified" / "to edit|delete not found": harmless edit/delete races.
+        # These are noise; surfacing them as ⚠️ alerts just alarms the user.
+        _benign = ("query is too old", "query id is invalid",
+                   "message is not modified", "message to edit not found",
+                   "message to delete not found", "message can't be deleted")
+        if any(b in str(err).lower() for b in _benign):
+            return
         try:
             import time as _time
             now = _time.time()
