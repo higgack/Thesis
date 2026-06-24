@@ -115,6 +115,20 @@ def render_kg(token: str) -> int:
     except Exception:
         log.exception("kg_render: store read failed")
         return 0
+    # KG-specific spend (purpose=kg_extract) — same persistent cost.db
+    # source the notes/archive cards use, so deleting kg.db never changes it.
+    try:
+        from ..store import cost as _cost
+        nc = _cost.purpose_today_month("kg_extract")
+    except Exception:
+        nc = {"today_krw": 0, "today_calls": 0, "mtd_krw": 0,
+              "month_krw": 0, "month_calls": 0, "year": "", "month": ""}
+    today_krw = nc.get("today_krw", 0)
+    today_calls = nc.get("today_calls", 0)
+    mtd_krw = nc.get("month_krw", nc.get("mtd_krw", 0))
+    mtd_calls = nc.get("month_calls", 0)
+    mtd_y = nc.get("year", "")
+    mtd_m = nc.get("month", "")
 
     chips = "".join(
         f"<span class='chip' data-name=\"{_esc(t['name'])}\">"
@@ -153,6 +167,15 @@ def render_kg(token: str) -> int:
         f"<div class='value'>{st['entities']:,}</div></div>",
         f"<div class='card'><div class='label'>📄 문서</div>"
         f"<div class='value'>{st['docs']:,}</div></div>",
+        f"<div class='card'><div class='label'>💰 오늘 KG 비용</div>"
+        f"<div class='value'>₩{today_krw:,.1f}</div>"
+        f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
+        f"{today_calls}콜 추출</div></div>",
+        f"<div class='card'><div class='label'>📅 이번 달 KG 비용"
+        f"{f' ({mtd_y}년 {mtd_m}월)' if mtd_y else ''}</div>"
+        f"<div class='value'>₩{mtd_krw:,.1f}</div>"
+        f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
+        f"{mtd_calls}콜 추출</div></div>",
         "</div>",
         "<div class='sec'>주요 개체 (연결수) — 클릭하면 필터</div>",
         f"<div class='chips'>{chips}</div>",

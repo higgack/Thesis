@@ -13372,6 +13372,16 @@ def main():
     # ready without blocking startup. Skips fast when already in sync.
     import threading as _fts_th
     _fts_th.Thread(target=vector.fts_backfill, daemon=True).start()
+    # One-time KG junk purge: drop edges added before the stoplist filter
+    # (Claude/agent metadata, generic terms). Cheap local delete; no-op once
+    # clean. Background so it never delays startup.
+    def _kg_purge():
+        try:
+            from .store import kg as _kg
+            _kg.purge_junk()
+        except Exception:
+            log.debug("kg purge_junk failed (ignored)")
+    _fts_th.Thread(target=_kg_purge, daemon=True).start()
     log.info("bot starting")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

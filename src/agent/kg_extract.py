@@ -6,22 +6,12 @@ Delimiter output (not JSON) for robustness, and fidelity-first prompting
 text, no invented relations. Each line: `주어|관계|목적어|신뢰도`.
 """
 import logging
-import re
 
 from .. import config
 from ..llm import gemini
+from ..store.kg import is_junk_entity as _is_junk_entity
 
 log = logging.getLogger(__name__)
-
-# Junk entities to drop: pure numbers / percentages / punctuation
-# ("0.0%", "12.3", "-", "+5%"), and 1-char fragments. These slipped in as
-# subjects/objects and clutter the graph (e.g. the "0.0% (11)" top entity).
-_JUNK_ENT_RE = re.compile(r"^[\d.,%\-+~/()\s]+$")
-
-
-def _is_junk_entity(e: str) -> bool:
-    e = (e or "").strip()
-    return len(e) < 2 or bool(_JUNK_ENT_RE.match(e))
 
 _SYSTEM = """입력 자료에서 '사실 트리플'을 추출한다. 각 트리플은
 (주어 | 관계 | 목적어) 형식의 원자적 사실이다.
