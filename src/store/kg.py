@@ -16,6 +16,27 @@ from .. import config
 
 _TOK_RE = re.compile(r"[\w가-힣]+", re.UNICODE)
 
+# Junk-entity check (kept here, in the dependency-light store, so both the
+# extractor and purge_junk share ONE definition without importing the
+# heavy gemini stack). Drops: pure numbers/% ("0.0%"), Claude/agent
+# metadata (anything containing "claude"), and generic standalone terms
+# (exact-match — specific multiword names like "미국 달러 지수" survive).
+_JUNK_ENT_RE = re.compile(r"^[\d.,%\-+~/()\s]+$")
+_ENT_STOP = {
+    "claude", "claude tag", "claudetag", "@claude", "tag", "ai", "llm",
+    "gpt", "정부", "중국", "미국", "유럽", "한국", "일본", "세계", "전세계",
+    "글로벌", "시장", "기업", "회사", "업계", "산업", "국가", "지역",
+    "전체", "기타", "관련", "내용",
+}
+
+
+def is_junk_entity(e: str) -> bool:
+    e = (e or "").strip()
+    if len(e) < 2 or _JUNK_ENT_RE.match(e):
+        return True
+    low = e.lower()
+    return "claude" in low or low in _ENT_STOP
+
 log = logging.getLogger(__name__)
 
 _KST = timezone(timedelta(hours=9))
@@ -79,6 +100,25 @@ def clear_doc(doc_id: str) -> None:
     init()
     with _conn() as c:
         c.execute("DELETE FROM edges WHERE doc_id=?", (doc_id,))
+
+
+def purge_junk() -> int:
+    """Delete edges whose subject/object is a junk entity (Claude/agent
+    metadata, generic terms, numbers) per the extractor's stoplist —
+    one-time cleanup of edges added before the filter. Returns rows removed."""
+    init()
+    with _conn() as c:
+        rows = c.execute("SELECT id, src, dst FROM edges").fetchall()
+        bad = [r["id"] for r in rows
+               if is_junk_entity(r["src"]) or is_junk_entity(r["dst"])]
+        for i in range(0, len(bad), 500):
+            ids = bad[i:i + 500]
+            c.execute(
+                f"DELETE FROM edges WHERE id IN ({','.join('?' * len(ids))})",
+                ids)
+    if bad:
+        log.info("kg purge_junk: removed %d junk edges", len(bad))
+    return len(bad)
 
 
 def docs_with_edges() -> set:

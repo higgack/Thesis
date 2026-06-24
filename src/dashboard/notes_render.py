@@ -466,9 +466,9 @@ def _render_index(token: str, notes: list[dict],
     return "\n".join([
         _head("학습 노트"), "</head><body><div class='layout'>",
         "<header><h1>학습 노트</h1>",
-        f"<div class='sub'><a class='nav' href='/{_esc(token)}/'>🧠 Archive</a> "
+        f"<div class='sub'><a class='nav' href='/{_esc(token)}/kg/'>🕸 KG</a> "
+        f"<a class='nav' href='/{_esc(token)}/'>🧠 Archive</a> "
         f"<a class='nav' href='/{_esc(token)}/wiki/'>📚 Wiki</a> "
-        f"<a class='nav' href='/{_esc(token)}/kg/'>🕸 KG</a> "
         f"<a class='nav' href='/{_esc(token)}/commands/'>📋 Commands</a></div></header>",
         "<div class='stats'>",
         f"<div class='card'><div class='label'>총 노트</div>"
