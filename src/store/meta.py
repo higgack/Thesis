@@ -3,16 +3,11 @@ import json
 import logging
 import re
 import sqlite3
-import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from .. import config
 
 log = logging.getLogger(__name__)
-
-# Serializes all meta.db access in this process (see _conn). Reentrant so a
-# nested _conn() on the same thread doesn't self-deadlock.
-_LOCK = threading.RLock()
 
 
 _TITLE_NORMALIZE_RE = re.compile(r"[\s\-_.,;:()\[\]/\\!?'\"`~@#%^&*+=<>{}|]+")
@@ -142,26 +137,14 @@ def init():
 
 @contextmanager
 def _conn():
-    # Process-global serialization. SQLite allows only ONE writer at a
-    # time; under concurrent auto-forward ingestion (INGEST_SEM=4 +
-    # summary-cache + FTS writes) the writers raced at the SQLite layer and
-    # blew past the 30s busy-timeout → 'database is locked', and because
-    # those writes run on the event loop the 30s busy-wait also froze jobs
-    # for ~40s (2026-06-25). Serializing every meta.db connection in-process
-    # turns that race into a brief in-process queue: writes never contend at
-    # the SQLite level (no lock error) and each completes in ms (loop barely
-    # blocks). Reentrant so a nested _conn() on the same thread can't
-    # self-deadlock. Reads are fast/short so serializing them too is fine at
-    # this scale and removes any chance of missing a writer.
-    with _LOCK:
-        conn = sqlite3.connect(_DB_PATH, timeout=30)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        finally:
-            conn.close()
+    conn = sqlite3.connect(_DB_PATH, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ----------------------------------------------------------- FTS5 ------
