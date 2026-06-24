@@ -1424,6 +1424,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 🛠️ <b>도구</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
+  🕸 KG(시범): /kg_extract · /kg
 
 📚 <b>위키</b>(매시 정시 학습·요약알림 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
@@ -1442,7 +1443,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【4. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS · ⚖️ patents EPO · 🌐 web · 📥 ingest · 한국어번역
 
-<b>【4-1. 회사 분석】</b> "회사명+실적/매출" → 본문 + 신사업(·합의 N건) + 📌 실적 표(A./F.·YoY·QoQ) + xychart + 분석가 가이던스 + brain/web 분리. 숫자 audit 자동.
+<b>【4-1. 회사 분석】</b> "회사명+실적/매출" → 본문 + 신사업 + 📌 실적 표(A./F.·YoY·QoQ) + 가이던스 + brain/web 분리. 숫자 audit.
 
 <b>【5. 자연어 트리거】</b>
 🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL"
@@ -4359,6 +4360,81 @@ async def cmd_unignore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines.append("이제 다시 올리면 학습 시도함.")
     await update.message.reply_text(
         "\n".join(lines), disable_web_page_preview=True)
+
+
+async def cmd_kg_extract(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """KG trial: extract atomic fact triples from the N most recent docs
+    (default 5, max 20) into the isolated kg.db. Skips docs already
+    extracted. Cheap (Flash-Lite, one call/doc)."""
+    if not _is_owner(update):
+        return
+    from .store import kg as _kg, cost as _cost
+    from .agent import kg_extract as _kgx
+    n = 5
+    if ctx.args:
+        try:
+            n = max(1, min(int(ctx.args[0]), 20))
+        except Exception:
+            n = 5
+    async with _SustainedTyping(update, ctx):
+        docs = await asyncio.to_thread(meta.docs_since, None, n)
+        already = await asyncio.to_thread(_kg.docs_with_edges)
+        processed = 0
+        added_total = 0
+        for d in docs:
+            if d["id"] in already:
+                continue
+            body = (d.get("summary") or "").strip()
+            if len(body) < 40:
+                continue
+            triples = await _kgx.extract(d.get("title") or "", body)
+            added_total += await asyncio.to_thread(_kg.add_edges, d["id"], triples)
+            processed += 1
+        st = await asyncio.to_thread(_kg.stats)
+        nc = await asyncio.to_thread(_cost.purpose_today_month, "kg_extract")
+    await update.message.reply_text(
+        "🕸 <b>KG 추출 완료</b> (시범)\n"
+        f"• 처리 문서: {processed}개 (최근 {n} 중 미추출분)\n"
+        f"• 추가 트리플: {added_total}\n"
+        f"• 누적: 엣지 {st['edges']} · 엔티티 {st['entities']} · 문서 {st['docs']}\n"
+        f"• 오늘 KG 비용: ₩{nc['today_krw']:.1f} ({nc['today_calls']}콜)\n"
+        "ℹ️ <code>/kg &lt;개체명&gt;</code> 로 관계 조회",
+        parse_mode="HTML")
+
+
+async def cmd_kg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """KG trial: show the triples around an entity, or overview + top
+    entities when called bare."""
+    if not _is_owner(update):
+        return
+    from .store import kg as _kg
+    ent = " ".join(ctx.args).strip()
+    if not ent:
+        st = await asyncio.to_thread(_kg.stats)
+        tops = await asyncio.to_thread(_kg.top_entities, 15)
+        lines = ["🕸 <b>지식그래프</b> (시범)",
+                 f"엣지 {st['edges']} · 엔티티 {st['entities']} · "
+                 f"문서 {st['docs']}",
+                 "사용: <code>/kg 삼성전기</code> · 채우기: /kg_extract [N]"]
+        if tops:
+            lines.append("\n<b>주요 개체</b> (연결수):")
+            lines += [f"• {html.escape(t['name'])} ({t['deg']})" for t in tops]
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        return
+    edges = await asyncio.to_thread(_kg.neighbors, ent, 40)
+    if not edges:
+        await update.message.reply_text(
+            f"'{ent}' 관련 트리플 없음.\n/kg_extract 로 먼저 추출해봐.")
+        return
+    lines = [f"🕸 <b>{html.escape(ent)}</b> 관계 ({len(edges)})"]
+    for e in edges:
+        c = e.get("confidence") or 0
+        lines.append(
+            f"• {html.escape(e['src'])} —<i>{html.escape(e['rel'])}</i>→ "
+            f"{html.escape(e['dst'])} <span>({c:.2f})</span>")
+    await update.message.reply_text(
+        "\n".join(lines[:45]), parse_mode="HTML",
+        disable_web_page_preview=True)
 
 
 async def cmd_audit(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -12914,6 +12990,8 @@ def main():
     app.add_handler(CommandHandler("blocked_hosts", cmd_blocked_hosts))
     app.add_handler(CommandHandler("reset_blocked_hosts", cmd_reset_blocked_hosts))
     app.add_handler(CommandHandler("unignore", cmd_unignore))
+    app.add_handler(CommandHandler("kg_extract", cmd_kg_extract))
+    app.add_handler(CommandHandler("kg", cmd_kg))
     app.add_handler(CommandHandler("orphans", cmd_orphans))
     app.add_handler(CommandHandler("recover_orphans", cmd_recover_orphans))
     app.add_handler(CommandHandler("pending", cmd_pending))
