@@ -183,7 +183,21 @@ async def search_my_brain(query: str, k: int = 10) -> dict:
             out = out[:k]
     except Exception:
         pass
-    return {"hits": out, "count": len(out), "variants": variants}
+
+    # KG backend (additive): high-confidence relationships for the query's
+    # entities, so the agent can answer with relationship context
+    # ("A는 B의 경쟁사"). ₩0 local lookup, self-guarded; empty until the
+    # graph has coverage, so it can never reduce answer quality.
+    kg_facts: list[str] = []
+    try:
+        from ..store import kg as _kg
+        edges = await asyncio.to_thread(_kg.context_for, query, 12)
+        kg_facts = [f"{e['src']} —{e['rel']}→ {e['dst']}" for e in edges]
+    except Exception:
+        pass
+
+    return {"hits": out, "count": len(out), "variants": variants,
+            "kg_facts": kg_facts}
 
 
 async def search_papers(query: str, limit: int = 15) -> dict:

@@ -146,6 +146,12 @@ go here; never push to a different branch without explicit permission.
   wiki→wiki (all if it spans multiple).
 - `.env` (VM) holds secrets (bot token, Google key, GitHub PAT, dashboard
   creds). Never echo it; if the user pastes it, warn + recommend rotation.
+- **Dashboard ⇄ Telegram parity (user request, 2026-06-24):** a new
+  *user-facing knowledge/lookup feature* (search, notes, wiki, KG — things
+  you *view/query*) must be surfaced on BOTH Telegram and the dashboard,
+  not Telegram-only. Wire a dashboard render + nav link in the same change.
+  Pure ops/admin commands (`/failed`, `/queue`, ack flows, etc.) are
+  Telegram-only — no dashboard view needed.
 
 ## /failed_clear & [🗑] = permanent delete (never re-queue)
 

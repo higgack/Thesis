@@ -885,6 +885,7 @@ def _topbar(token: str, current: str = "") -> str:
         'placeholder="Search topics...">'
         f'<a href="/{token}/" class="nav-link">Q&A Archive</a>'
         f'<a href="/{token}/notes/" class="nav-link">학습 노트</a>'
+        f'<a href="/{token}/kg/" class="nav-link">🕸 KG</a>'
         f'<a href="/{token}/commands/" class="nav-link">Commands</a>'
         "</div>"
     )
@@ -1257,7 +1258,7 @@ def render_wiki(token: str) -> int:
     # _TPL_VERSION: bump on ANY template/CSS/JS change in this file —
     # the incremental skip means already-rendered topic pages would
     # otherwise keep old markup forever (their .md never changes).
-    _TPL_VERSION = "5"  # bumped: index full-text search (data-text + snippet)
+    _TPL_VERSION = "6"  # bumped: 🕸 KG nav link in topbar
     cache_path = config.DATA_DIR / "wiki_render_cache.json"
     fp = hashlib.sha1(
         ("|".join(all_topics) + "\x00" + token + "\x00" + _TPL_VERSION
