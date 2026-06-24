@@ -267,6 +267,16 @@ _NOTE_JS = r"""
   function renderMD(){
     var el = document.getElementById('md');
     if(!el || !window.marked) return;
+    // Disable GFM strikethrough. Korean number ranges use the tilde
+    // (예: "15~17GWh"), and GFM treats ONE-or-two tildes as strikethrough,
+    // so "6.5~8.0 ... 18~22" struck out everything between the tildes.
+    // Notes never legitimately use strikethrough (synth forbids it), so
+    // turn the del tokenizer off → tildes render as literal range text.
+    if(window.marked.use && !window._delOff){
+      try{ window.marked.use({tokenizer:{del:function(){return false;}}}); }
+      catch(e){}
+      window._delOff = true;
+    }
     el.innerHTML = window.marked.parse(el.textContent);
     // ```mermaid code blocks → <div class="mermaid"> for diagram render
     el.querySelectorAll('pre code.language-mermaid').forEach(function(c){
