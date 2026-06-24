@@ -677,6 +677,30 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
     except Exception:
         log.exception("wiki enqueue hook failed (ignored)")
 
+    # Knowledge-graph backend (additive, env-gated KG_AUTO): extract fact
+    # triples from this doc's summary in the background — never blocks or
+    # breaks ingest. One cheap Flash-Lite call/doc, capped by a daily
+    # budget so a bulk import can't run up a surprise bill.
+    if config.KG_AUTO:
+        try:
+            async def _kg_hook(did=doc_id, t=title, s=summary):
+                try:
+                    from ..store import cost as _cost, kg as _kg
+                    from ..agent import kg_extract as _kgx
+                    spent = (await asyncio.to_thread(
+                        _cost.purpose_today_month, "kg_extract"
+                    )).get("today_krw", 0.0)
+                    if spent >= config.KG_DAILY_BUDGET_KRW:
+                        return  # daily cap reached → skip until KST midnight
+                    triples = await _kgx.extract(t, s)
+                    if triples:
+                        await asyncio.to_thread(_kg.add_edges, did, triples)
+                except Exception:
+                    log.debug("kg auto-extract failed (ignored)")
+            asyncio.create_task(_kg_hook())
+        except Exception:
+            log.debug("kg hook schedule failed (ignored)")
+
     return {
         "status": "ok",
         "doc_id": doc_id,
