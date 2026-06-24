@@ -1,0 +1,310 @@
+{
+ "triples": [
+  {
+   "s": "Hybrid Bonding",
+   "r": "requires",
+   "o": "TSV"
+  },
+  {
+   "s": "Hybrid Bonding",
+   "r": "requires",
+   "o": "CMP"
+  },
+  {
+   "s": "Hybrid Bonding",
+   "r": "requires",
+   "o": "Dicing"
+  },
+  {
+   "s": "Hybrid Bonding",
+   "r": "realized_in",
+   "o": "H01L24 (bonding)"
+  },
+  {
+   "s": "Hybrid Bonding",
+   "r": "reaches_into",
+   "o": "H01L21 (front-end)"
+  },
+  {
+   "s": "Hybrid Bonding",
+   "r": "enables",
+   "o": "Chiplet"
+  },
+  {
+   "s": "Hybrid Bonding",
+   "r": "enables",
+   "o": "BSPDN"
+  },
+  {
+   "s": "Hybrid Bonding",
+   "r": "enables",
+   "o": "CPO"
+  },
+  {
+   "s": "Hybrid Bonding",
+   "r": "applies_to",
+   "o": "HBM"
+  },
+  {
+   "s": "Hybrid Bonding",
+   "r": "applies_to",
+   "o": "AI Accelerator"
+  },
+  {
+   "s": "Hybrid Bonding",
+   "r": "applies_to",
+   "o": "CPU"
+  },
+  {
+   "s": "Hybrid Bonding",
+   "r": "applies_to",
+   "o": "SiC/GaN"
+  },
+  {
+   "s": "Hybrid Bonding",
+   "r": "applies_to",
+   "o": "MicroLED"
+  },
+  {
+   "s": "Chiplet",
+   "r": "forms",
+   "o": "AI Accelerator"
+  },
+  {
+   "s": "BSPDN",
+   "r": "extends_to",
+   "o": "H01L21 (front-end)"
+  },
+  {
+   "s": "CPO",
+   "r": "couples",
+   "o": "G02B (optics)"
+  },
+  {
+   "s": "Adeia",
+   "r": "strategy",
+   "o": "IP-origin"
+  },
+  {
+   "s": "Adeia",
+   "r": "focuses_on",
+   "o": "H01L24 (bonding)"
+  },
+  {
+   "s": "TSMC",
+   "r": "strategy",
+   "o": "SoIC (front-end internalize)"
+  },
+  {
+   "s": "TSMC",
+   "r": "focuses_on",
+   "o": "H01L21 (front-end)"
+  },
+  {
+   "s": "TSMC",
+   "r": "focuses_on",
+   "o": "CMP"
+  },
+  {
+   "s": "YMTC",
+   "r": "strategy",
+   "o": "X-Stacking"
+  },
+  {
+   "s": "YMTC",
+   "r": "focuses_on",
+   "o": "H01L21 (front-end)"
+  },
+  {
+   "s": "Samsung",
+   "r": "focuses_on",
+   "o": "H01L25 (stacking)"
+  },
+  {
+   "s": "Intel",
+   "r": "focuses_on",
+   "o": "G02B (optics)"
+  },
+  {
+   "s": "Tokyo Electron",
+   "r": "focuses_on",
+   "o": "Dicing"
+  },
+  {
+   "s": "Applied Materials",
+   "r": "focuses_on",
+   "o": "CMP"
+  },
+  {
+   "s": "TSMC",
+   "r": "files_at",
+   "o": "Taiwan"
+  },
+  {
+   "s": "YMTC",
+   "r": "files_at",
+   "o": "China"
+  },
+  {
+   "s": "Samsung",
+   "r": "files_at",
+   "o": "Korea"
+  },
+  {
+   "s": "Tokyo Electron",
+   "r": "files_at",
+   "o": "Japan"
+  },
+  {
+   "s": "Adeia",
+   "r": "files_at",
+   "o": "US"
+  },
+  {
+   "s": "China",
+   "r": "tends",
+   "o": "H01L21 (front-end)"
+  },
+  {
+   "s": "Japan",
+   "r": "tends",
+   "o": "H01L24 (bonding)"
+  },
+  {
+   "s": "SoIC (front-end internalize)",
+   "r": "internalizes",
+   "o": "CMP"
+  },
+  {
+   "s": "X-Stacking",
+   "r": "internalizes",
+   "o": "H01L21 (front-end)"
+  }
+ ],
+ "nodes": [
+  {
+   "id": "Hybrid Bonding",
+   "category": "core"
+  },
+  {
+   "id": "TSV",
+   "category": "proc"
+  },
+  {
+   "id": "CMP",
+   "category": "proc"
+  },
+  {
+   "id": "Dicing",
+   "category": "proc"
+  },
+  {
+   "id": "H01L24 (bonding)",
+   "category": "cpc"
+  },
+  {
+   "id": "H01L21 (front-end)",
+   "category": "cpc"
+  },
+  {
+   "id": "Chiplet",
+   "category": "struct"
+  },
+  {
+   "id": "BSPDN",
+   "category": "struct"
+  },
+  {
+   "id": "CPO",
+   "category": "struct"
+  },
+  {
+   "id": "HBM",
+   "category": "prod"
+  },
+  {
+   "id": "AI Accelerator",
+   "category": "prod"
+  },
+  {
+   "id": "CPU",
+   "category": "prod"
+  },
+  {
+   "id": "SiC/GaN",
+   "category": "prod"
+  },
+  {
+   "id": "MicroLED",
+   "category": "prod"
+  },
+  {
+   "id": "G02B (optics)",
+   "category": "cpc"
+  },
+  {
+   "id": "Adeia",
+   "category": "firm"
+  },
+  {
+   "id": "IP-origin",
+   "category": "strat"
+  },
+  {
+   "id": "TSMC",
+   "category": "firm"
+  },
+  {
+   "id": "SoIC (front-end internalize)",
+   "category": "strat"
+  },
+  {
+   "id": "YMTC",
+   "category": "firm"
+  },
+  {
+   "id": "X-Stacking",
+   "category": "strat"
+  },
+  {
+   "id": "Samsung",
+   "category": "firm"
+  },
+  {
+   "id": "H01L25 (stacking)",
+   "category": "cpc"
+  },
+  {
+   "id": "Intel",
+   "category": "firm"
+  },
+  {
+   "id": "Tokyo Electron",
+   "category": "firm"
+  },
+  {
+   "id": "Applied Materials",
+   "category": "firm"
+  },
+  {
+   "id": "Taiwan",
+   "category": "juris"
+  },
+  {
+   "id": "China",
+   "category": "juris"
+  },
+  {
+   "id": "Korea",
+   "category": "juris"
+  },
+  {
+   "id": "Japan",
+   "category": "juris"
+  },
+  {
+   "id": "US",
+   "category": "juris"
+  }
+ ]
+}
