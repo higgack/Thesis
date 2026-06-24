@@ -22,7 +22,7 @@
 
 ## Abstract
 
-The rapid rise of data-centric industries—artificial intelligence, autonomous driving, and cloud computing—has elevated high-performance semiconductors to the status of strategic national assets. As Moore's Law slows under physical and economic limits, value creation in the semiconductor industry is shifting structurally from front-end fabrication to back-end packaging, with heterogeneous integration of chiplets at its core. This thesis examines **hybrid bonding**, the key unit process enabling sub-micron interconnect, through a **multi-level (macro–micro) analysis** of EPO PATSTAT 2025 patent data. At the macro level, within a Process–Structure–Product framework, it diagnoses ecosystem structure and firm/jurisdiction strategy via filing dynamics, technological concentration, clusters, networks, and quality indicators (PFS, SLI, CII, citation decay). At the micro level, using 928 applications, it estimates technological breadth with negative binomial regression and strategic orientation with binary and multinomial logit. The results show an explosive 66% year-on-year surge in hybrid-bonding filings from 2021, strong IP-based entry barriers (Adeia lineage), and clearly differentiated firm strategies; at the patent level, breadth widens over time and is ~21% narrower at the Chinese office, while process orientation declines over time yet remains pronounced in China and nearly absent in Japan. The macro proposition (front-to-back value migration) and the micro evidence (back-end patents reaching into front-end) converge on a single phenomenon: the **blurring of the front/back-end boundary**, suggesting hybrid bonding bears the hallmarks of a general purpose technology warranting strategic national investment.
+The rapid rise of data-centric industries—artificial intelligence, autonomous driving, and cloud computing—has elevated high-performance semiconductors to the status of strategic national assets. As Moore's Law slows under physical and economic limits, value creation in the semiconductor industry is shifting structurally from front-end fabrication to back-end packaging, with heterogeneous integration of chiplets at its core. This thesis examines **hybrid bonding**, the key unit process enabling sub-micron interconnect, through a **multi-level (macro–micro) analysis** of EPO PATSTAT 2025 patent data. At the macro level, within a Process–Structure–Product framework, it diagnoses ecosystem structure and firm/jurisdiction strategy via filing dynamics, technological concentration, clusters, networks, and quality indicators (PFS, SLI, CII, citation decay). At the micro level, using 928 applications, it estimates technological breadth with negative binomial regression and strategic orientation with binary and multinomial logit. The results show an explosive 66% year-on-year surge in hybrid-bonding filings from 2021, strong IP-based entry barriers (Adeia lineage), and clearly differentiated firm strategies; at the patent level, breadth widens over time and is about 21% narrower at the Chinese office, while process orientation declines over time yet remains pronounced in China and nearly absent in Japan. The macro proposition (front-to-back value migration) and the micro evidence (back-end patents reaching into front-end) converge on a single phenomenon: the **blurring of the front/back-end boundary**, suggesting hybrid bonding bears the hallmarks of a general purpose technology warranting strategic national investment.
 
 ---
 
@@ -74,11 +74,11 @@ The rapid rise of data-centric industries—artificial intelligence, autonomous 
 
 ### 2.1.2 적층 기술과 TSV, 그리고 마이크로범프의 한계
 
-첨단 패키징의 핵심은 칩을 평면(2D)이 아니라 수직(3D)으로 쌓는 적층 기술에 있으며, 이를 가능케 하는 인프라가 실리콘 관통 전극(TSV, Through-Silicon Via)이다. TSV는 칩 내부에 미세 구멍을 뚫고 전도성 물질을 채워 칩들을 전기적으로 직결함으로써 와이어 본딩 대비 신호 경로를 획기적으로 단축하며, HBM과 같은 3D 메모리 적층은 물론 로직과 메모리를 인터포저 위에서 연결하는 2.5D 패키징(CoWoS)의 핵심 요소로 자리잡았다(김기윤·이성주, 2024). 그러나 칩 간 연결 밀도(I/O density) 요구가 높아지면서, TSV와 칩을 잇는 마이크로범프의 피치 축소가 새로운 병목으로 대두되었다. 마이크로범프는 약 10~20µm 피치 이하에서 접합 시 쇼트 위험과 저항 증가 문제가 발생하기 때문이다.
+첨단 패키징의 핵심은 칩을 평면(2D)이 아니라 수직(3D)으로 쌓는 적층 기술에 있으며, 이를 가능케 하는 인프라가 실리콘 관통 전극(TSV, Through-Silicon Via)이다. TSV는 칩 내부에 미세 구멍을 뚫고 전도성 물질을 채워 칩들을 전기적으로 직결함으로써 와이어 본딩 대비 신호 경로를 획기적으로 단축하며, HBM과 같은 3D 메모리 적층은 물론 로직과 메모리를 인터포저 위에서 연결하는 2.5D 패키징(CoWoS)의 핵심 요소로 자리잡았다(김기윤·이성주, 2024). 그러나 칩 간 연결 밀도(I/O density) 요구가 높아지면서, TSV와 칩을 잇는 마이크로범프의 피치 축소가 새로운 병목으로 대두되었다. 마이크로범프는 약 10–20µm 피치 이하에서 접합 시 쇼트 위험과 저항 증가 문제가 발생하기 때문이다.
 
 ### 2.1.3 게임 체인저로서의 하이브리드 본딩
 
-범프 기반 기술의 한계를 극복하기 위해 등장한 혁신이 하이브리드 본딩이며, 선행 연구들은 이를 기존 패키징 공정의 판도를 뒤집는 파괴적 혁신(disruptive innovation)으로 규정한다(이승환, 2025; 김민규 외, 2025). 하이브리드 본딩은 솔더 매개체 없이 구리 전극과 절연막을 동시에 직접 맞붙여 범프 높이만큼의 공간을 제거함으로써 초박형 패키징을 가능하게 하고, 전기 저항과 발열을 최소화하여 전력 효율을 극대화한다. 특히 상온(약 20~25℃) 접합이 가능하여 고온 솔더링(약 200~300℃)에서 발생하던 웨이퍼 휘어짐(warpage)과 정렬 틀어짐(misalignment)을 차단하는데, 이는 칩 적층의 필수 조건이다. 기술 발전 단계는 동일 크기 웨이퍼를 적층하는 W2W(이미지센서·3D NAND)에서, 서로 다른 크기·기능의 칩을 연결하는 D2W(HBM4·고성능 로직)로 중심축이 이동하고 있으며, 그 성공을 위해 플라즈마 다이싱, 초정밀 CMP, 하이브리드 본더 등 전용 장비·소재의 동반 성장이 요구된다(금연욱·김의석, 2023). 공정상으로 전공정(H01L21)과 접합·인터커넥트(H01L24)가 함께 구현된다는 점에서, 하이브리드 본딩은 전·후공정의 기술적 경계에 위치한다.
+범프 기반 기술의 한계를 극복하기 위해 등장한 혁신이 하이브리드 본딩이며, 선행 연구들은 이를 기존 패키징 공정의 판도를 뒤집는 파괴적 혁신(disruptive innovation)으로 규정한다(이승환, 2025; 김민규 외, 2025). 하이브리드 본딩은 솔더 매개체 없이 구리 전극과 절연막을 동시에 직접 맞붙여 범프 높이만큼의 공간을 제거함으로써 초박형 패키징을 가능하게 하고, 전기 저항과 발열을 최소화하여 전력 효율을 극대화한다. 특히 상온(약 20–25℃) 접합이 가능하여 고온 솔더링(약 200–300℃)에서 발생하던 웨이퍼 휘어짐(warpage)과 정렬 틀어짐(misalignment)을 차단하는데, 이는 칩 적층의 필수 조건이다. 기술 발전 단계는 동일 크기 웨이퍼를 적층하는 W2W(이미지센서·3D NAND)에서, 서로 다른 크기·기능의 칩을 연결하는 D2W(HBM4·고성능 로직)로 중심축이 이동하고 있으며, 그 성공을 위해 플라즈마 다이싱, 초정밀 CMP, 하이브리드 본더 등 전용 장비·소재의 동반 성장이 요구된다(금연욱·김의석, 2023). 공정상으로 전공정(H01L21)과 접합·인터커넥트(H01L24)가 함께 구현된다는 점에서, 하이브리드 본딩은 전·후공정의 기술적 경계에 위치한다.
 
 ### 2.1.4 적용 제품과 산업적 파급
 
@@ -434,7 +434,7 @@ RQ4의 "수렴"을 측정 가능한 형태로 정리하면 [표 6-1]과 같다. 
 
 # 부록. 표·그림 목록
 
-> 회귀 표(표 5-1~5-3, 6-1, 6-2)는 본문에 수치로 삽입됨. 아래 그림·원자료 표는 원본(①②)의 이미지/표로, 학교 양식 변환 시 해당 위치에 삽입 예정.
+> 회귀 표(표 5-1–5-3, 6-1, 6-2)는 본문에 수치로 삽입됨. 아래 그림·원자료 표는 원본(①②)의 이미지/표로, 학교 양식 변환 시 해당 위치에 삽입 예정.
 
 - **본문 삽입(수치 표):** 표 1(변수), 표 5-1(breadth), 표 5-2(이항 로짓), 표 5-3(다항 로짓), 표 6-1(수렴), 표 6-2(전략↔관할권)
 - **삽입 예정(그림, 자료①):** [그림 2] 출원연도, [그림 3] OLS 잔차, [그림 4] 관할권별 예측 범위, [그림 5] ROC, [그림 6] process-only 예측
