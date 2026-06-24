@@ -141,6 +141,12 @@ async def add_chunks(doc_id: str, chunks: list[dict]) -> None:
             metadatas=[{"doc_id": doc_id, "kind": c["kind"], "idx": c["idx"]} for c in chunks],
         )
 
+    # Mirror into the FTS5 keyword index (hybrid retrieval's keyword half).
+    # No-op when FTS5 is unavailable; off the loop like the Chroma write.
+    await asyncio.to_thread(
+        _meta.fts_upsert,
+        [(c["id"], doc_id, c["text"]) for c in chunks])
+
     # Step 6: remember newly-embedded chunks for future reuse. Only
     # the freshly-embedded ones — the cached hits already had a row.
     new_pairs = [
@@ -273,10 +279,12 @@ def warm_bm25_cache() -> None:
 
 
 def delete_doc(doc_id: str) -> int:
+    from . import meta as _meta
     res = _collection.get(where={"doc_id": doc_id})
     if not res["ids"]:
         return 0
     _collection.delete(ids=res["ids"])
+    _meta.fts_delete_doc(doc_id)   # keep the keyword index in sync
     return len(res["ids"])
 
 
@@ -286,13 +294,55 @@ def delete_docs(doc_ids: list[str]) -> int:
     metadata scan, so deleting a few-hundred-doc batch one at a time is
     as slow as the scan bug we just fixed elsewhere. This collapses it to
     a single scan (collect ids) + one delete. Returns total chunks removed."""
+    from . import meta as _meta
     if not doc_ids:
         return 0
     res = _collection.get(where={"doc_id": {"$in": list(doc_ids)}})
     ids = res.get("ids") or []
     if ids:
         _collection.delete(ids=ids)
+    for did in doc_ids:           # keep the keyword index in sync
+        _meta.fts_delete_doc(did)
     return len(ids)
+
+
+def fts_backfill(force: bool = False) -> int:
+    """Populate / self-heal the FTS5 keyword index from the full Chroma
+    snapshot. Streams in batches so we never hold the whole corpus in RAM
+    (8GB VM shared with other bots). Skips when already in sync (FTS row
+    count within ~2% of the corpus) unless force=True. Returns rows
+    indexed, or -1 when FTS5 is unavailable / no rebuild needed."""
+    from . import meta as _meta
+    try:
+        corpus_n = _collection.count()
+    except Exception:
+        return -1
+    fts_n = _meta.fts_count()
+    if fts_n < 0:
+        return -1  # FTS5 unavailable in this SQLite build
+    if not force and fts_n > 0 and abs(fts_n - corpus_n) <= max(50, corpus_n // 50):
+        return -1  # already in sync — nothing to do
+    _meta.fts_clear()
+    total = 0
+    offset = 0
+    BATCH = 1000
+    while True:
+        res = _collection.get(include=["documents", "metadatas"],
+                              limit=BATCH, offset=offset)
+        ids = res.get("ids") or []
+        if not ids:
+            break
+        docs = res.get("documents") or []
+        metas = res.get("metadatas") or []
+        rows = [(ids[i], (metas[i] or {}).get("doc_id"), docs[i])
+                for i in range(len(ids))]
+        _meta.fts_insert(rows)
+        total += len(ids)
+        if len(ids) < BATCH:
+            break
+        offset += BATCH
+    log.info("fts backfill: indexed %d chunks (corpus=%d)", total, corpus_n)
+    return total
 
 
 def get_doc_chunks(doc_id: str) -> list[dict]:

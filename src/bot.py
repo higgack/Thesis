@@ -13282,7 +13282,11 @@ def main():
     _stamp_heartbeat()
     _cleanup_stale_bubbles_at_startup(app)
     _recover_orphan_files_at_startup(app)
-    vector.warm_bm25_cache()  # background scan; first query stays fast
+    # Build / self-heal the FTS5 keyword index (hybrid retrieval's keyword
+    # half) in the background so the first query and keyword recall are
+    # ready without blocking startup. Skips fast when already in sync.
+    import threading as _fts_th
+    _fts_th.Thread(target=vector.fts_backfill, daemon=True).start()
     log.info("bot starting")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

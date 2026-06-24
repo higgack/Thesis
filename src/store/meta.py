@@ -113,6 +113,26 @@ def init():
             " metadata_json TEXT NOT NULL,"
             " ts TEXT NOT NULL)"
         )
+        # Chunk keyword index (FTS5) — keyword retrieval that scales past
+        # BM25_MAX_CHUNKS. The in-memory rank_bm25 disables itself above
+        # 50k chunks (→ dense-only) and pegs RAM/CPU rebuilding the whole
+        # corpus; FTS5 is persistent + incremental, so keyword search stays
+        # on at full corpus scale for far less RAM. trigram tokenizer gives
+        # Korean/CJK substring matching the whitespace BM25 lacked. If FTS5
+        # or the tokenizer is unavailable in this SQLite build, we log and
+        # skip — retrieval degrades to dense-only (current behavior), never
+        # crashes. Tokenizer is env-tunable (FTS_TOKENIZER) for disk-tight
+        # setups (trigram index is ~3× unicode61).
+        import os as _os
+        _tok = (_os.getenv("FTS_TOKENIZER", "trigram") or "trigram").strip()
+        try:
+            c.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5("
+                " cid UNINDEXED, doc_id UNINDEXED, text,"
+                f" tokenize='{_tok}')"
+            )
+        except sqlite3.OperationalError as e:
+            log.warning("FTS5 unavailable (%s) — keyword search dense-only", e)
 
 
 @contextmanager
@@ -125,6 +145,96 @@ def _conn():
         conn.commit()
     finally:
         conn.close()
+
+
+# ----------------------------------------------------------- FTS5 ------
+# Keyword half of hybrid retrieval. Every function swallows
+# sqlite3.OperationalError so a SQLite build without FTS5 (or a tokenizer
+# mismatch) degrades to dense-only retrieval instead of crashing ingest
+# or search. cid is the Chroma chunk id ("<doc_id>:<idx>").
+
+_FTS_TOKEN_RE = re.compile(r"[\w가-힣]+", re.UNICODE)
+
+
+def _fts_query(text: str) -> str:
+    """Build an FTS5 MATCH expression from a natural-language query:
+    quote each token (so FTS5 never parses an operator out of user text)
+    and OR them for recall. Tokens shorter than 2 chars are dropped."""
+    toks = [t for t in _FTS_TOKEN_RE.findall(text or "") if len(t) >= 2][:20]
+    if not toks:
+        return ""
+    return " OR ".join('"' + t.replace('"', "") + '"' for t in toks)
+
+
+def fts_upsert(rows: list[tuple[str, str | None, str]]) -> None:
+    """Incremental upsert on ingest. rows = [(cid, doc_id, text)]."""
+    if not rows:
+        return
+    with _conn() as c:
+        try:
+            c.executemany("DELETE FROM chunk_fts WHERE cid=?",
+                          [(r[0],) for r in rows])
+            c.executemany(
+                "INSERT INTO chunk_fts(cid, doc_id, text) VALUES(?,?,?)", rows)
+        except sqlite3.OperationalError:
+            pass
+
+
+def fts_insert(rows: list[tuple[str, str | None, str]]) -> None:
+    """Plain insert (no delete) — used by the streaming backfill which
+    already cleared the table."""
+    if not rows:
+        return
+    with _conn() as c:
+        try:
+            c.executemany(
+                "INSERT INTO chunk_fts(cid, doc_id, text) VALUES(?,?,?)", rows)
+        except sqlite3.OperationalError:
+            pass
+
+
+def fts_clear() -> None:
+    with _conn() as c:
+        try:
+            c.execute("DELETE FROM chunk_fts")
+        except sqlite3.OperationalError:
+            pass
+
+
+def fts_delete_doc(doc_id: str) -> None:
+    with _conn() as c:
+        try:
+            c.execute("DELETE FROM chunk_fts WHERE doc_id=?", (doc_id,))
+        except sqlite3.OperationalError:
+            pass
+
+
+def fts_count() -> int:
+    """Row count, or -1 when FTS5 is unavailable (signals 'skip keyword')."""
+    with _conn() as c:
+        try:
+            return c.execute("SELECT count(*) FROM chunk_fts").fetchone()[0]
+        except sqlite3.OperationalError:
+            return -1
+
+
+def fts_search(query: str, k: int = 50) -> list[dict]:
+    """Keyword hits ranked by FTS5 bm25(). Returns
+    [{id, doc_id, text, score}] with score flipped so higher = better
+    (bm25() returns more-negative = better). Empty on no match / no FTS5."""
+    q = _fts_query(query)
+    if not q:
+        return []
+    with _conn() as c:
+        try:
+            rows = c.execute(
+                "SELECT cid, doc_id, text, bm25(chunk_fts) AS s "
+                "FROM chunk_fts WHERE chunk_fts MATCH ? "
+                "ORDER BY s LIMIT ?", (q, k)).fetchall()
+        except sqlite3.OperationalError:
+            return []
+    return [{"id": r["cid"], "doc_id": r["doc_id"], "text": r["text"],
+             "score": -float(r["s"])} for r in rows]
 
 
 def upsert_doc(doc_id: str, source: str, doc_type: str, title: str,
