@@ -12,6 +12,14 @@ TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID", "").strip() or None
 STUDY_CHANNEL_ID = os.getenv("STUDY_CHANNEL_ID", "").strip() or None
 TELEGRAM_BASE_URL = os.getenv("TELEGRAM_BASE_URL", "").strip() or None
 
+# Knowledge-graph backend (kg.db). KG_AUTO=1 → each ingested doc's summary
+# is extracted into fact triples in the background (one cheap Flash-Lite
+# call/doc). KG_DAILY_BUDGET_KRW caps the daily auto-extract spend so a
+# bulk channel import can't run up a surprise bill — past the cap, the
+# hook skips silently until KST midnight. Manual /kg_extract is unaffected.
+KG_AUTO = os.getenv("KG_AUTO", "1") == "1"
+KG_DAILY_BUDGET_KRW = float(os.getenv("KG_DAILY_BUDGET_KRW", "300"))
+
 # Optional now: only used when GEMINI_BACKEND=aistudio (the default).
 # A Vertex deployment authenticates via ADC, so a vertex-only .env
 # without GOOGLE_API_KEY must still import cleanly.
