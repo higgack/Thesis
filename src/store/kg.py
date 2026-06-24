@@ -7,11 +7,14 @@ fact-table. SQLite-only, no GPU, no new heavy deps — extraction reuses the
 existing Gemini stack (see agent/kg_extract.py).
 """
 import logging
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from .. import config
+
+_TOK_RE = re.compile(r"[\w가-힣]+", re.UNICODE)
 
 log = logging.getLogger(__name__)
 
@@ -107,6 +110,40 @@ def top_entities(limit: int = 15) -> list[dict]:
             "SELECT e AS name, count(*) AS deg FROM ("
             " SELECT src AS e FROM edges UNION ALL SELECT dst AS e FROM edges"
             ") GROUP BY e ORDER BY deg DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def all_edges(limit: int = 3000) -> list[dict]:
+    """Every edge (confidence-desc) for the dashboard KG view."""
+    init()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT src,rel,dst,confidence,doc_id FROM edges "
+            "ORDER BY confidence DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def context_for(query: str, limit: int = 12) -> list[dict]:
+    """High-confidence edges whose subject/object overlaps the query's
+    tokens — injected into answers so the LLM sees relevant relationships.
+    Returns [] when the graph is empty or nothing matches (₩0, local)."""
+    init()
+    toks = [t for t in _TOK_RE.findall(query or "") if len(t) >= 2][:8]
+    if not toks:
+        return []
+    clause = " OR ".join(["src LIKE ? OR dst LIKE ?"] * len(toks))
+    params: list = []
+    for t in toks:
+        params += [f"%{t}%", f"%{t}%"]
+    params.append(int(limit))
+    with _conn() as c:
+        try:
+            rows = c.execute(
+                f"SELECT src,rel,dst,confidence FROM edges WHERE ({clause}) "
+                "AND confidence >= 0.6 ORDER BY confidence DESC LIMIT ?",
+                params).fetchall()
+        except sqlite3.OperationalError:
+            return []
     return [dict(r) for r in rows]
 
 

@@ -1194,6 +1194,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "<div class='sub'>카드 클릭 시 전체 리포트 · "
         f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a> "
         f"<a href='/{token}/notes/' class='nav-shortcut'>학습 노트</a> "
+        f"<a href='/{token}/kg/' class='nav-shortcut'>🕸 KG</a> "
         f"<a href='/{token}/commands/' class='nav-shortcut'>📋 Commands</a>"
         "</div>",
         "</header>",
@@ -1638,6 +1639,7 @@ def _render_commands_page(token: str, lookup_guide: str,
         "<div class='sub'>전체 명령어 상세 가이드 · "
         f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a> "
         f"<a href='/{token}/notes/' class='nav-shortcut'>학습 노트</a> "
+        f"<a href='/{token}/kg/' class='nav-shortcut'>🕸 KG</a> "
         f"<a href='/{token}/' class='nav-shortcut'>🧠 Archive</a>"
         "</div>",
         "</header>",
@@ -1833,6 +1835,12 @@ def regenerate() -> None:
                 log.info("dashboard: wrote %d note page(s)", note_pages)
         except Exception:
             log.exception("dashboard notes render failed (non-fatal)")
+        try:
+            from .kg_render import render_kg
+            if render_kg(token):
+                log.info("dashboard: wrote KG view")
+        except Exception:
+            log.exception("dashboard kg render failed (non-fatal)")
         try:
             import sys
             bot_mod = sys.modules.get("src.bot")
