@@ -56,11 +56,38 @@ async def _triaged_pdf_extract(p: Path) -> tuple[str, str | None]:
                 page_text[i] = await loaders.ocr_image_async(png, "image/png") or ""
             except Exception:
                 page_text[i] = ""
+        # Table/chart-dense pages: native get_text garbles tables, so render
+        # the page and let Gemini Vision rebuild it (markdown tables + the
+        # surrounding prose) — the PixelRAG "see the page" insight, done
+        # cheaply with our existing flash-lite Vision. Targets only real
+        # table pages (PyMuPDF find_tables), capped to bound cost. Replaces
+        # that page's garbled get_text only when Vision returns something.
+        table_pages = sorted(
+            r.page_number for r in report.results
+            if r.bucket is triage.Bucket.LLM_NEEDED and r.has_tables)
+        vcap = getattr(loaders, "VISION_TABLE_CAP", 8)
+        n_table_vis = 0
+        if len(table_pages) > vcap:
+            log.info("notes pdf triage: capping table-vision %d→%d pages (%s)",
+                     len(table_pages), vcap, p.name)
+            table_pages = table_pages[:vcap]
+        for i in table_pages:
+            try:
+                png = await asyncio.to_thread(
+                    lambda idx=i: doc[idx].get_pixmap(dpi=dpi).tobytes("png"))
+                vis = await loaders.ocr_image_async(png, "image/png")
+                if vis and vis.strip():
+                    page_text[i] = vis.strip()
+                    n_table_vis += 1
+            except Exception:
+                pass  # keep the get_text already captured for this page
     finally:
         doc.close()
-    log.info("notes pdf triage %s: %d pages → text=%d ocr=%d llm=%d skip=%d",
+    log.info("notes pdf triage %s: %d pages → text=%d ocr=%d llm=%d skip=%d "
+             "(table-vision=%d)",
              p.name, report.page_count, len(routes["text"]),
-             len(routes["ocr"]), len(routes["llm"]), len(routes["skip"]))
+             len(routes["ocr"]), len(routes["llm"]), len(routes["skip"]),
+             n_table_vis)
     body = "\n\n".join(page_text[i] for i in sorted(page_text)
                        if page_text[i].strip())
     return body.strip(), title

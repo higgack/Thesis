@@ -718,6 +718,10 @@ _OCR_PROGRESSIVE_PROBE_PAGES = int(_os.getenv("OCR_PROBE_PAGES", "3"))
 _OCR_PROGRESSIVE_MIN_TEXT = int(_os.getenv("OCR_PROBE_MIN_TEXT", "300"))
 OCR_DPI = int(_os.getenv("OCR_DPI", "100"))  # render DPI
 OCR_SPARSE_THRESHOLD = int(_os.getenv("OCR_SPARSE_THRESHOLD", "800"))  # chars/page
+# Study-notes triage: table/chart-dense pages get rendered and sent to
+# Gemini Vision (which reconstructs markdown tables) instead of trusting
+# get_text, which garbles tables. Capped to bound per-note Vision spend.
+VISION_TABLE_CAP = int(_os.getenv("VISION_TABLE_CAP", "8"))  # pages/note
 
 
 # Generic app-default titles that get baked into PDF metadata when a
