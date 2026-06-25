@@ -633,6 +633,25 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
 .wiki-card[data-important="1"] { border-color: rgba(245,158,11,0.55);
   background: rgba(245,158,11,0.06); }
 .wiki-filter.wstarfilter.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+.topic-memo { max-width: 760px; margin: 18px auto 0; padding: 12px 14px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.topic-memo .memo-h { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+.topic-memo textarea { width: 100%; min-height: 64px; background: var(--bg);
+  border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 9px;
+  font-size: 13.5px; outline: none; resize: vertical; box-sizing: border-box; }
+.topic-memo textarea:focus { border-color: var(--accent); }
+.topic-memo .memo-row { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+.topic-memo .memo-save { background: var(--accent); border: 0; color: #fff; padding: 6px 16px;
+  border-radius: 7px; cursor: pointer; font-size: 12.5px; font-weight: 600; }
+.topic-memo .memo-status { font-size: 11px; color: var(--muted); }
+.topic-memo .alarm-row { display: flex; align-items: center; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.topic-memo .alarm-time { background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+.topic-memo .alarm-set, .topic-memo .alarm-clear { border: 0; border-radius: 6px; cursor: pointer;
+  font-size: 11.5px; padding: 5px 10px; font-weight: 600; }
+.topic-memo .alarm-set { background: #6366f1; color: #fff; }
+.topic-memo .alarm-clear { background: rgba(148,163,184,.25); color: var(--muted); }
+.topic-memo .alarm-status { font-size: 11px; color: #818cf8; }
 .wiki-card .card-meta {
   font: 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--muted); margin-bottom: 8px;
@@ -852,6 +871,39 @@ _WIKI_STAR_JS = """
 })();
 """
 
+# 📝 위키 토픽 페이지 메모 저장 — POST /<token>/memo {kind:'wiki', id:topic}
+_TOPIC_MEMO_JS = """
+(function(){
+  var box=document.querySelector('.topic-memo'); if(!box)return;
+  var ta=box.querySelector('textarea'), btn=box.querySelector('.memo-save');
+  var st=box.querySelector('.memo-status'), id=box.dataset.id;
+  var token=location.pathname.split('/').filter(Boolean)[0]||'';
+  if(!ta||!btn||!id)return;
+  btn.addEventListener('click',function(){
+    btn.disabled=true; if(st)st.textContent='저장 중…';
+    fetch('/'+token+'/memo',{method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({kind:'wiki',id:id,text:ta.value})})
+      .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+      .then(function(){if(st)st.textContent='저장됨 ✓';})
+      .catch(function(err){if(st)st.textContent='실패: '+err.message;})
+      .finally(function(){btn.disabled=false;});
+  });
+  var atime=box.querySelector('.alarm-time'), aset=box.querySelector('.alarm-set');
+  var aclr=box.querySelector('.alarm-clear'), ast=box.querySelector('.alarm-status');
+  function postAlarm(hhmm){
+    fetch('/'+token+'/alarm',{method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({kind:'wiki',id:id,hhmm:hhmm})})
+      .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+      .then(function(){if(ast)ast.textContent=hhmm?('매일 '+hhmm+' KST'):'해제됨';})
+      .catch(function(e){if(ast)ast.textContent='실패: '+e.message;});
+  }
+  if(aset)aset.addEventListener('click',function(){if(atime&&atime.value)postAlarm(atime.value);});
+  if(aclr)aclr.addEventListener('click',function(){if(atime)atime.value='';postAlarm('');});
+})();
+"""
+
 # Restore the index page's window scroll on back-navigation. Must run
 # AFTER the search/filter restores above (visible-card set changes the
 # page height). scrollRestoration='manual' stops the browser's own
@@ -1036,6 +1088,25 @@ def _render_topic_page(topic: str, page_md: str, meta: dict,
         )
     sidebar_nav = f'<ul class="wiki-nav">{"".join(nav_items)}</ul>'
 
+    try:
+        from ..store import marks as _marks
+        _wmemo = _marks.memo("wiki", topic)
+        _walarm = _marks.alarm("wiki", topic)
+    except Exception:
+        _wmemo, _walarm = "", ""
+    memo_box = (
+        f'<div class="topic-memo" data-id="{html.escape(topic)}">'
+        '<div class="memo-h">📝 내 메모</div>'
+        f'<textarea placeholder="이 페이지에 대한 내 생각…">{html.escape(_wmemo)}</textarea>'
+        '<div class="memo-row"><button type="button" class="memo-save">저장</button>'
+        '<span class="memo-status"></span></div>'
+        f'<div class="alarm-row"><input type="time" class="alarm-time" value="{html.escape(_walarm)}">'
+        '<button type="button" class="alarm-set">⏰ 알람</button>'
+        '<button type="button" class="alarm-clear">해제</button>'
+        f'<span class="alarm-status">{("매일 "+html.escape(_walarm)+" KST") if _walarm else ""}</span>'
+        '</div></div>'
+    )
+
     return (
         f"{_head(topic)}<body>"
         f"{_topbar(token, topic)}"
@@ -1045,9 +1116,12 @@ def _render_topic_page(topic: str, page_md: str, meta: dict,
         f'<article class="wiki-article">'
         f"<h1>{html.escape(topic)}</h1>"
         f"{infobox}{toc_html}{body_html}{fn_html}"
-        "</article></div></div>"
+        "</article>"
+        f"{memo_box}"
+        "</div></div>"
         f"<script>{_SEARCH_JS}</script>"
         f"<script>{_SIDEBAR_SCROLL_JS}</script>"
+        f"<script>{_TOPIC_MEMO_JS}</script>"
         "</body></html>"
     )
 
@@ -1309,7 +1383,7 @@ def render_wiki(token: str) -> int:
     # _TPL_VERSION: bump on ANY template/CSS/JS change in this file —
     # the incremental skip means already-rendered topic pages would
     # otherwise keep old markup forever (their .md never changes).
-    _TPL_VERSION = "9"  # bumped: 페이지 ★ 중요 표시 + 중요만 필터
+    _TPL_VERSION = "11"  # bumped: 페이지 ★ + 중요만 + 📝 메모 + ⏰ 알람
     cache_path = config.DATA_DIR / "wiki_render_cache.json"
     fp = hashlib.sha1(
         ("|".join(all_topics) + "\x00" + token + "\x00" + _TPL_VERSION

@@ -10916,6 +10916,97 @@ async def _resend_unacked_alerts(ctx: ContextTypes.DEFAULT_TYPE):
             log.exception("alert resend failed (id=%s)", notify_id)
 
 
+def _alarm_card_text(kind: str, item_id: str) -> tuple[str, str]:
+    """(title, body_snippet) for an alarm's card. Best-effort per kind;
+    safe fallback to the id so a store hiccup never blocks the alarm."""
+    try:
+        if kind == "qna":
+            from .store import qna
+            r = qna.get(int(item_id))
+            if r:
+                return (r.get("question") or "Q&A", (r.get("answer") or "")[:600])
+        elif kind == "note":
+            from .notes import store as _ns
+            n = _ns.get_note(item_id)
+            if n:
+                return (n.get("title") or item_id, (n.get("md") or "")[:600])
+        elif kind == "kg_entity":
+            from .store import kg as _kg
+            edges = _kg.neighbors(item_id, 8)
+            body = "\n".join(f"{e['src']} —{e['rel']}→ {e['dst']}" for e in edges)
+            return (item_id, body[:600])
+        elif kind == "wiki":
+            return (item_id, "")  # topic title; full page is too long to push
+    except Exception:
+        log.debug("alarm card text failed (%s/%s)", kind, item_id)
+    return (item_id, "")
+
+
+async def _memo_alarm_tick(ctx: ContextTypes.DEFAULT_TYPE):
+    """Every minute (KST): fire any item alarm whose HH:MM == now and that
+    hasn't been acked or already fired today. Sends the memo + card content
+    with a [✅ 확인 / 알람 정지] button; repeats daily at the same KST time
+    until the user taps 확인 (on_memo_alarm_ack flips it off)."""
+    from .store import marks
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone(timedelta(hours=9)))
+    hhmm = now.strftime("%H:%M")
+    today = now.strftime("%Y-%m-%d")
+    try:
+        due = await asyncio.to_thread(marks.alarms_due, hhmm, today)
+    except Exception:
+        log.exception("alarms_due failed")
+        return
+    import html as _h
+    for kind, item_id in due:
+        try:
+            memo = await asyncio.to_thread(marks.memo, kind, item_id)
+            title, body = await asyncio.to_thread(_alarm_card_text, kind, item_id)
+            lines = [f"⏰ <b>알람</b> — {_h.escape(title)}"]
+            if (memo or "").strip():
+                lines.append("\n📝 <b>내 메모</b>\n" + _h.escape(memo.strip()))
+            if (body or "").strip():
+                lines.append("\n🗂 <b>카드</b>\n" + _h.escape(body.strip()))
+            text = "\n".join(lines)[:3500]
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(
+                "✅ 확인 / 알람 정지",
+                callback_data=f"malarm:{marks.alarm_token(kind, item_id)}")]])
+            await ctx.bot.send_message(
+                chat_id=config.TELEGRAM_OWNER_ID, text=text,
+                parse_mode="HTML", reply_markup=kb,
+                disable_web_page_preview=True)
+            await asyncio.to_thread(marks.mark_alarm_fired, kind, item_id, today)
+        except Exception:
+            log.exception("alarm fire failed (%s/%s)", kind, item_id)
+
+
+async def on_memo_alarm_ack(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """[✅ 확인 / 알람 정지] for memo alarms → stop future daily fires."""
+    q = update.callback_query
+    if not q:
+        return
+    user = q.from_user
+    if not user or user.id != config.TELEGRAM_OWNER_ID:
+        await q.answer("권한 없음")
+        return
+    await q.answer()
+    parts = (q.data or "").split(":", 1)
+    if len(parts) != 2 or parts[0] != "malarm":
+        return
+    from .store import marks
+    pair = await asyncio.to_thread(marks.alarm_by_token, parts[1])
+    flipped = False
+    if pair:
+        flipped = await asyncio.to_thread(marks.ack_alarm, pair[0], pair[1])
+    suffix = "\n\n→ ✅ 확인됨, 알람 중단" if flipped else "\n\n→ (이미 확인됨)"
+    try:
+        await q.edit_message_text(
+            (q.message.text or "") + suffix, parse_mode=None,
+            disable_web_page_preview=True)
+    except Exception:
+        log.exception("memo alarm ack edit failed")
+
+
 _YT_DLP_RE_ARM_DAYS = int(os.getenv("YTDLP_HEALTH_REARM_DAYS", "7"))
 
 
@@ -12986,6 +13077,9 @@ def main():
     app.add_handler(CallbackQueryHandler(
         on_ack_callback, pattern=r"^ack:"
     ))
+    app.add_handler(CallbackQueryHandler(
+        on_memo_alarm_ack, pattern=r"^malarm:"
+    ))
     # Study-notes (체화) subsystem: /notes, /review + grade callbacks.
     # Dormant until STUDY_CHANNEL_ID is set, but the commands work now.
     try:
@@ -13092,6 +13186,12 @@ def main():
             interval=_RETRY_INTERVAL_SECONDS,
             first=30,
             name="retry_pending",
+        )
+        app.job_queue.run_repeating(
+            _memo_alarm_tick,
+            interval=60,          # per-minute KST tick → exact HH:MM fire
+            first=20,
+            name="memo_alarm_tick",
         )
         app.job_queue.run_repeating(
             _retry_pending_ingest_batch,
