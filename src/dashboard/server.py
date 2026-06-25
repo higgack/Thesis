@@ -57,11 +57,18 @@ def _eq(a: str, b: str) -> bool:
 
 
 _DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/q-(\d+)/?$")
+# Q&A 중요 표시 토글: POST /<token>/q-<id>/important {important:bool}
+_QNA_IMPORTANT_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/q-(\d+)/important/?$")
+# 공용 중요 표시(위키 페이지·KG 엣지): POST /<token>/mark {kind,id,important}
+_MARK_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/mark/?$")
+_MARK_KINDS = ("wiki", "kg_edge")
 # Study-note delete: id is a (url-encoded) slug, so capture the rest.
 _NOTE_DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+?)/?$")
 # Study-note 종류별 manual override: POST /<token>/notes/<id>/category
 _NOTE_CAT_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+)/category/?$")
 _NOTE_CATS = ("주식", "공부", "그외")
+# Study-note 중요 표시 토글: POST /<token>/notes/<id>/important {important:bool}
+_NOTE_IMPORTANT_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+)/important/?$")
 _ASK_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/?$")
 _ASK_GET_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/(\d+)/?$")
 
@@ -123,6 +130,18 @@ class Handler(SimpleHTTPRequestHandler):
         if mc:
             self._set_note_category(mc.group(1), unquote(mc.group(2)))
             return
+        mi = _NOTE_IMPORTANT_RE.match(self.path)
+        if mi:
+            self._set_note_important(mi.group(1), unquote(mi.group(2)))
+            return
+        mq = _QNA_IMPORTANT_RE.match(self.path)
+        if mq:
+            self._set_qna_important(mq.group(1), int(mq.group(2)))
+            return
+        mk = _MARK_RE.match(self.path)
+        if mk:
+            self._set_mark(mk.group(1))
+            return
         m = _ASK_RE.match(self.path)
         if m:
             self._handle_ask_post(m.group(1))
@@ -173,6 +192,125 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(500, f"set failed: {e}")
             return
         body = json.dumps({"ok": True, "category": cat}).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _set_note_important(self, token: str, nid: str):
+        """Toggle a note's 중요(important) flag from the dashboard ✓ button.
+        sqlite-only (mirrors _set_note_category), persisted so it survives
+        the static re-render."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self.send_error(403, "forbidden")
+            return
+        try:
+            length = int(self.headers.get("content-length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 1000:
+            self._send_json({"error": "빈 요청"}, 400)
+            return
+        try:
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+            important = 1 if data.get("important") else 0
+        except Exception:
+            self._send_json({"error": "잘못된 요청"}, 400)
+            return
+        try:
+            with sqlite3.connect(str(_NOTES_DB), timeout=30) as c:
+                cols = {r[1] for r in c.execute("PRAGMA table_info(notes)")}
+                if "important" not in cols:
+                    c.execute("ALTER TABLE notes ADD COLUMN "
+                              "important INTEGER DEFAULT 0")
+                n = c.execute("UPDATE notes SET important=? WHERE id=?",
+                              (important, nid)).rowcount
+            if not n:
+                self.send_error(404)
+                return
+            log.info("note %s important → %d", nid, important)
+        except Exception as e:
+            log.exception("note important set failed")
+            self.send_error(500, f"set failed: {e}")
+            return
+        body = json.dumps({"ok": True, "important": bool(important)}).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _set_mark(self, token: str):
+        """Generic 중요 표시 토글 for wiki pages / KG edges via the shared
+        marks store. Body: {kind, id, important}."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self.send_error(403, "forbidden")
+            return
+        try:
+            length = int(self.headers.get("content-length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 2000:
+            self._send_json({"error": "빈 요청"}, 400)
+            return
+        try:
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+            kind = (data.get("kind") or "").strip()
+            item_id = (data.get("id") or "").strip()
+            important = bool(data.get("important"))
+        except Exception:
+            self._send_json({"error": "잘못된 요청"}, 400)
+            return
+        if kind not in _MARK_KINDS or not item_id:
+            self._send_json({"error": "허용되지 않은 대상"}, 400)
+            return
+        try:
+            from ..store import marks
+            marks.set_mark(kind, item_id, important)
+            log.info("mark %s/%s → %s", kind, item_id[:60], important)
+        except Exception as e:
+            log.exception("mark set failed")
+            self.send_error(500, f"set failed: {e}")
+            return
+        self._send_json({"ok": True, "important": important})
+
+    def _set_qna_important(self, token: str, qid: int):
+        """Toggle a Q&A row's 중요 flag from the dashboard ★ button.
+        sqlite-only (mirrors _set_note_important)."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self.send_error(403, "forbidden")
+            return
+        try:
+            length = int(self.headers.get("content-length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 1000:
+            self._send_json({"error": "빈 요청"}, 400)
+            return
+        try:
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+            important = 1 if data.get("important") else 0
+        except Exception:
+            self._send_json({"error": "잘못된 요청"}, 400)
+            return
+        try:
+            with sqlite3.connect(str(_QNA_DB), timeout=30) as c:
+                cols = {r[1] for r in c.execute("PRAGMA table_info(qna)")}
+                if "important" not in cols:
+                    c.execute("ALTER TABLE qna ADD COLUMN "
+                              "important INTEGER DEFAULT 0")
+                n = c.execute("UPDATE qna SET important=? WHERE id=?",
+                              (important, qid)).rowcount
+            if not n:
+                self.send_error(404)
+                return
+            log.info("qna #%d important → %d", qid, important)
+        except Exception as e:
+            log.exception("qna important set failed")
+            self.send_error(500, f"set failed: {e}")
+            return
+        body = json.dumps({"ok": True, "important": bool(important)}).encode()
         self.send_response(200)
         self.send_header("content-type", "application/json; charset=utf-8")
         self.send_header("content-length", str(len(body)))

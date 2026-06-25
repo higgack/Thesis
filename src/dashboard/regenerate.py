@@ -386,6 +386,19 @@ header .sub { color: var(--muted); font-size: 13px; }
   opacity: 0; transform: scale(0.95);
   transition: opacity 0.25s, transform 0.25s;
 }
+.star-btn {
+  cursor: pointer; background: transparent; border: 0; color: var(--muted);
+  font-size: 16px; line-height: 1; padding: 2px 5px; border-radius: 6px;
+  transition: 0.12s;
+}
+.star-btn:hover { color: #f59e0b; transform: scale(1.15); }
+.star-btn.on { color: #f59e0b; }
+.qna-card[data-important="1"] {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.06);
+}
+.controls button.impfilter { background: var(--panel); border: 1px solid var(--border); color: var(--muted); }
+.controls button.impfilter.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
 
 .dash-cmd-link {
   color: var(--primary) !important; cursor: pointer;
@@ -595,6 +608,7 @@ _INDEX_JS = r"""
   var counter = document.getElementById('count');
 
   var activeTools = new Set();
+  var curImportant = false;
 
   function escapeRegex(s){
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -693,7 +707,8 @@ _INDEX_JS = r"""
       var matchesQuery = !qLower || text.indexOf(qLower) !== -1;
       var matchesTool = activeTools.size === 0 ||
         tools.some(function(t){ return activeTools.has(t); });
-      var show = matchesQuery && matchesTool;
+      var matchesImp = !curImportant || (c.dataset.important === '1');
+      var show = matchesQuery && matchesTool && matchesImp;
       c.classList.toggle('hidden', !show);
       // Clear stale highlights + snippet preview from previous query.
       clearHighlights(c);
@@ -737,10 +752,18 @@ _INDEX_JS = r"""
   }
 
   search.addEventListener('input', apply);
+  var impFilterBtn = document.getElementById('impfilter');
+  if (impFilterBtn) impFilterBtn.addEventListener('click', function(){
+    curImportant = !curImportant;
+    impFilterBtn.classList.toggle('active', curImportant);
+    apply();
+  });
   resetBtn.addEventListener('click', function(){
     search.value = '';
     activeTools.clear();
     chips.forEach(function(c){ c.classList.remove('active'); });
+    curImportant = false;
+    if (impFilterBtn) impFilterBtn.classList.remove('active');
     apply();
   });
   chips.forEach(function(c){
@@ -799,6 +822,31 @@ _INDEX_JS = r"""
         })
         .catch(function(err){
           alert('삭제 실패: ' + err.message);
+        });
+    });
+  });
+
+  // ★ 중요 표시 토글 — optimistic, POST persists server-side, revert on fail.
+  document.querySelectorAll('.star-btn').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      var id = btn.dataset.id; if (!id) return;
+      var card = btn.closest('.qna-card'); if (!card) return;
+      var now = card.dataset.important !== '1';
+      card.dataset.important = now ? '1' : '0';
+      btn.textContent = now ? '★' : '☆';
+      btn.classList.toggle('on', now);
+      apply();
+      fetch('/' + token + '/q-' + id + '/important',
+        {method:'POST', headers:{'content-type':'application/json'},
+         body: JSON.stringify({important: now})})
+        .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .catch(function(err){
+          card.dataset.important = now ? '0' : '1';
+          btn.textContent = now ? '☆' : '★';
+          btn.classList.toggle('on', !now);
+          apply();
+          alert('중요 표시 변경 실패: ' + err.message);
         });
     });
   });
@@ -1225,6 +1273,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "<div class='controls'>",
         "<div class='search-row'>",
         "<input id='q' type='text' placeholder='질문 / 답변 / 출처 검색...  (Enter = 봇에게 질문 · /명령어 가능)' autocomplete='off'>",
+        "<button id='impfilter' class='reset impfilter' type='button'>★ 중요만</button>",
         "<button id='reset' class='reset' type='button'>초기화</button>",
         "</div>",
         "<div class='ask-hint'>타이핑 = 기록 필터 · <b>Enter = 봇에게 질문</b> "
@@ -1308,12 +1357,19 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
                     f"<button type='button' class='del-btn' "
                     f"data-id='{int(it['id'])}' title='이 Q&A 삭제'>🗑</button>"
                 )
+                imp = 1 if it.get("important") else 0
+                star_btn = (
+                    f"<button type='button' class='star-btn{' on' if imp else ''}' "
+                    f"data-id='{int(it['id'])}' title='중요 표시 토글'>"
+                    f"{'★' if imp else '☆'}</button>"
+                )
                 parts.append(
-                    f"<div class='qna-card{acc}' data-text=\"{data_text}\" data-tools=\"{data_tools}\">"
+                    f"<div class='qna-card{acc}' data-text=\"{data_text}\" "
+                    f"data-tools=\"{data_tools}\" data-important=\"{imp}\">"
                     "<details><summary>"
                     "<div class='row1'>"
                     f"<span>{_esc(_kst_hhmm(it['ts']))}</span>"
-                    f"{tool_chips}{model_chip}{del_btn}"
+                    f"{tool_chips}{model_chip}{star_btn}{del_btn}"
                     "</div>"
                     "<div class='question'>"
                     f"<a href='q-{int(it['id'])}.html'>Q. {_esc(it['question'])}</a>"
