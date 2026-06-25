@@ -62,6 +62,15 @@ flex-wrap:wrap}
 .edge .s,.edge .o{font-weight:600}
 .edge .r{color:var(--muted);font-style:italic;font-size:13px}
 .edge .c{margin-left:auto;font-size:11px;color:var(--muted)}
+.estar{cursor:pointer;background:transparent;border:0;color:var(--muted);
+font-size:15px;line-height:1;padding:0 2px;transition:.12s}
+.estar:hover{color:#f59e0b;transform:scale(1.15)}
+.estar.on{color:#f59e0b}
+.edge[data-important="1"]{border-color:rgba(245,158,11,.55);
+background:rgba(245,158,11,.07)}
+.controls .impfilter{background:var(--panel);border:1px solid var(--border);
+color:var(--muted)}
+.controls .impfilter.active{background:#f59e0b;border-color:#f59e0b;color:#fff}
 .arrow{color:var(--muted)}
 mark.kw{background:#fef08a;color:inherit;border-radius:2px;padding:0 1px}
 [data-theme=dark] mark.kw{background:#fbbf24;color:#0f172a}
@@ -77,23 +86,46 @@ a();setInterval(a,60000);})();"""
 _JS = r"""
 (function(){
   var q=document.getElementById('q'), reset=document.getElementById('reset');
-  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-  function rx(s){return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
+  var impf=document.getElementById('impfilter');
+  var token=location.pathname.split('/').filter(Boolean)[0]||'';
+  var curImp=false;
   function apply(){
     var t=(q?q.value:'').trim(), tl=t.toLowerCase(), shown=0;
     document.querySelectorAll('.edge').forEach(function(e){
       var hay=(e.dataset.text||'').toLowerCase();
-      var ok=!tl||hay.indexOf(tl)>=0;
+      var ok=(!tl||hay.indexOf(tl)>=0)&&(!curImp||e.dataset.important==='1');
       e.style.display=ok?'':'none'; if(ok)shown++;
     });
     var c=document.getElementById('cnt'); if(c)c.textContent=shown;
   }
   if(q)q.addEventListener('input',apply);
-  if(reset)reset.addEventListener('click',function(){q.value='';apply();});
+  if(impf)impf.addEventListener('click',function(){
+    curImp=!curImp; impf.classList.toggle('active',curImp); apply();});
+  if(reset)reset.addEventListener('click',function(){
+    q.value=''; curImp=false; if(impf)impf.classList.remove('active'); apply();});
   document.querySelectorAll('.chip').forEach(function(ch){
     ch.addEventListener('click',function(){
       if(q){q.value=ch.dataset.name||ch.textContent.trim();apply();
         q.scrollIntoView({block:'center'});}
+    });
+  });
+  document.querySelectorAll('.estar').forEach(function(btn){
+    btn.addEventListener('click',function(ev){
+      ev.preventDefault(); ev.stopPropagation();
+      var row=btn.closest('.edge'); if(!row)return;
+      var id=row.dataset.edgeid; if(!id)return;
+      var now=row.dataset.important!=='1';
+      row.dataset.important=now?'1':'0';
+      btn.textContent=now?'★':'☆'; btn.classList.toggle('on',now); apply();
+      fetch('/'+token+'/mark',{method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({kind:'kg_edge',id:id,important:now})})
+        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+        .catch(function(err){
+          row.dataset.important=now?'0':'1';
+          btn.textContent=now?'☆':'★'; btn.classList.toggle('on',!now); apply();
+          alert('중요 표시 변경 실패: '+err.message);
+        });
     });
   });
 })();
@@ -135,12 +167,23 @@ def render_kg(token: str) -> int:
         f"{_esc(t['name'])} <span class='deg'>{t['deg']}</span></span>"
         for t in tops)
 
+    try:
+        from ..store import marks as _marks
+        _kg_imp = _marks.marked("kg_edge")
+    except Exception:
+        _kg_imp = set()
+
     rows = []
     for e in edges:
         hay = f"{e['src']} {e['rel']} {e['dst']}"
         c = e.get("confidence") or 0
+        eid = str(e.get("id") or "")
+        imp = 1 if eid in _kg_imp else 0
         rows.append(
-            f"<div class='edge' data-text=\"{_esc(hay)}\">"
+            f"<div class='edge' data-text=\"{_esc(hay)}\" "
+            f"data-edgeid=\"{_esc(eid)}\" data-important=\"{imp}\">"
+            f"<button type='button' class='estar{' on' if imp else ''}' "
+            f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
             f"<span class='s'>{_esc(e['src'])}</span>"
             f"<span class='arrow'>—</span>"
             f"<span class='r'>{_esc(e['rel'])}</span>"
@@ -181,6 +224,8 @@ def render_kg(token: str) -> int:
         f"<div class='chips'>{chips}</div>",
         "<div class='controls'><input id='q' type='text' "
         "placeholder='개체·관계 검색...' autocomplete='off'>"
+        "<button id='impfilter' type='button' class='reset impfilter'>"
+        "★ 중요만</button>"
         "<button id='reset' type='button' class='reset'>초기화</button></div>",
         f"<div class='sec'>관계 (<span id='cnt'>{len(edges)}</span>)</div>",
         "\n".join(rows),

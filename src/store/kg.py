@@ -158,7 +158,7 @@ def all_edges(limit: int = 3000) -> list[dict]:
     init()
     with _conn() as c:
         rows = c.execute(
-            "SELECT src,rel,dst,confidence,doc_id FROM edges "
+            "SELECT id,src,rel,dst,confidence,doc_id FROM edges "
             "ORDER BY confidence DESC LIMIT ?", (limit,)).fetchall()
     return [dict(r) for r in rows]
 

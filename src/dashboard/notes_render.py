@@ -136,6 +136,16 @@ color:#ef4444;transform:translateY(-1px)}
 [data-theme=dark] .ndel{background:rgba(71,85,105,.45);
 border-color:rgba(100,116,139,.55);color:#cbd5e1}
 .note-row.removing{opacity:0;transform:scale(.97);transition:.2s}
+.nstar{cursor:pointer;background:transparent;border:0;color:var(--muted);
+font-size:17px;line-height:1;padding:2px 4px;border-radius:6px;transition:.12s}
+.nstar:hover{color:#f59e0b;transform:scale(1.15)}
+.nstar.on{color:#f59e0b}
+.note-row[data-important="1"]{border-color:rgba(245,158,11,.55);
+background:rgba(245,158,11,.06)}
+[data-theme=dark] .note-row[data-important="1"]{background:rgba(245,158,11,.10)}
+.controls .impfilter{background:var(--panel);border:1px solid var(--border);
+color:var(--muted)}
+.controls .impfilter.active{background:#f59e0b;border-color:#f59e0b;color:#fff}
 .stype{font-size:10px;color:var(--muted);border:1px solid var(--border);
 border-radius:8px;padding:1px 6px}
 .cat{font-size:10px;font-weight:700;border-radius:8px;padding:1px 7px;
@@ -352,7 +362,7 @@ _INDEX_JS = r"""
   }
   // Combined filter: 유형별(data-tbucket) AND 종류별(data-cat) AND
   // full-text(title + body). Body hits get a highlighted snippet. No bot query.
-  var curType='all', curCat='all';
+  var curType='all', curCat='all', curImportant=false;
   function applyFilter(){
     var t=(q?q.value:'').trim(), tl=t.toLowerCase(), shown=0;
     document.querySelectorAll('.note-row').forEach(function(row){
@@ -363,7 +373,8 @@ _INDEX_JS = r"""
       var okText = !tl || inTitle || inBody;
       var okType = curType==='all' || (row.dataset.tbucket||'')===curType;
       var okCat  = curCat==='all'  || (row.dataset.cat||'')===curCat;
-      var ok = okText && okType && okCat;
+      var okImp  = !curImportant || (row.dataset.important==='1');
+      var ok = okText && okType && okCat && okImp;
       row.style.display = ok ? '' : 'none';
       var old=row.querySelector('.snippet'); if(old) old.remove();
       if(ok && tl && inBody){
@@ -385,12 +396,44 @@ _INDEX_JS = r"""
   wireGroup('.ftype','data-type',function(v){ curType=v; });
   wireGroup('.fcat','data-cat',function(v){ curCat=v; });
   if(q) q.addEventListener('input', applyFilter);
+  var impf = document.getElementById('impfilter');
+  if(impf) impf.addEventListener('click', function(){
+    curImportant = !curImportant;
+    impf.classList.toggle('active', curImportant);
+    applyFilter();
+  });
   if(reset) reset.addEventListener('click', function(){
-    q.value=''; curType='all'; curCat='all';
+    q.value=''; curType='all'; curCat='all'; curImportant=false;
+    if(impf) impf.classList.remove('active');
     document.querySelectorAll('.fbtn').forEach(function(x){
       x.classList.toggle('active', x.getAttribute('data-type')==='all'
         || x.getAttribute('data-cat')==='all'); });
     applyFilter();
+  });
+  // ★ 중요 표시 토글 — optimistic update, POST persists server-side,
+  // revert on failure (mirrors the category badge).
+  document.querySelectorAll('.nstar').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      var row = btn.closest('.note-row'); var id = row && row.dataset.id;
+      if(!id) return;
+      var now = row.dataset.important !== '1';   // toggle target state
+      row.dataset.important = now ? '1' : '0';
+      btn.textContent = now ? '★' : '☆';
+      btn.classList.toggle('on', now);
+      applyFilter();
+      fetch('/'+token+'/notes/'+encodeURIComponent(id)+'/important',
+        {method:'POST', headers:{'content-type':'application/json'},
+         body: JSON.stringify({important: now})})
+        .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .catch(function(err){
+          row.dataset.important = now ? '0' : '1';
+          btn.textContent = now ? '☆' : '★';
+          btn.classList.toggle('on', !now);
+          applyFilter();
+          alert('중요 표시 변경 실패: '+err.message);
+        });
+    });
   });
   document.querySelectorAll('.ndel').forEach(function(btn){
     btn.addEventListener('click', function(e){
@@ -462,10 +505,13 @@ def _render_index(token: str, notes: list[dict],
         hay = _plain((bodies.get(n["id"]) or {}).get("md") or "")
         tbucket = _type_bucket(n.get("source_type") or "")
         cat = (n.get("category") or "").strip() or "그외"
+        imp = 1 if n.get("important") else 0
         rows.append(
             f"<div class='note-row' data-id=\"{_esc(n['id'])}\" "
             f"data-text=\"{_esc(hay)}\" data-tbucket=\"{_esc(tbucket)}\" "
-            f"data-cat=\"{_esc(cat)}\">"
+            f"data-cat=\"{_esc(cat)}\" data-important=\"{imp}\">"
+            f"<button class='nstar{' on' if imp else ''}' type='button' "
+            f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
             f"<span class='cat cat-{_esc(cat)}' title='클릭: 종류 변경 (주식↔공부↔그외)'>{_esc(cat)}</span>"
             f"<span class='stype'>{_esc(n.get('source_type') or '')}</span>"
@@ -507,6 +553,8 @@ def _render_index(token: str, notes: list[dict],
         "<button class='fbtn fcat' data-cat='그외'>🗂 그 외</button></div>",
         "<div class='controls'><input id='q' type='text' "
         "placeholder='노트 제목·본문 검색...' autocomplete='off'>"
+        "<button id='impfilter' type='button' class='reset impfilter'>"
+        "★ 중요만</button>"
         "<button id='reset' type='button' class='reset'>초기화</button></div>",
         "\n".join(rows),
         "<div class='footer'>대시보드는 읽기 전용 · 🗑 = 노트 삭제</div>",

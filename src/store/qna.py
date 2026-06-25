@@ -31,11 +31,16 @@ def _conn() -> sqlite3.Connection:
             sources TEXT NOT NULL DEFAULT '[]',
             tools TEXT NOT NULL DEFAULT '[]',
             model TEXT,
-            warning TEXT
+            warning TEXT,
+            important INTEGER DEFAULT 0
         )
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_qna_ts ON qna(ts)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_qna_chat ON qna(chat_id)")
+    # Migrate older DBs that predate the important flag.
+    cols = {r[1] for r in c.execute("PRAGMA table_info(qna)")}
+    if "important" not in cols:
+        c.execute("ALTER TABLE qna ADD COLUMN important INTEGER DEFAULT 0")
     return c
 
 
@@ -69,7 +74,7 @@ def record(chat_id: int, question: str, answer: str,
 
 def _row_to_dict(row: tuple) -> dict:
     cols = ("id", "ts", "question", "answer", "sources",
-            "tools", "model", "warning")
+            "tools", "model", "warning", "important")
     d = dict(zip(cols, row))
     try:
         d["sources"] = json.loads(d["sources"] or "[]")
@@ -91,7 +96,7 @@ def recent(limit: int = 100, offset: int = 0,
             like = f"%{search}%"
             cur = c.execute(
                 "SELECT id, ts, question, answer, sources, tools, "
-                "model, warning FROM qna "
+                "model, warning, important FROM qna "
                 "WHERE question LIKE ? OR answer LIKE ? "
                 "ORDER BY ts DESC LIMIT ? OFFSET ?",
                 (like, like, int(limit), int(offset)),
@@ -99,7 +104,7 @@ def recent(limit: int = 100, offset: int = 0,
         else:
             cur = c.execute(
                 "SELECT id, ts, question, answer, sources, tools, "
-                "model, warning FROM qna "
+                "model, warning, important FROM qna "
                 "ORDER BY ts DESC LIMIT ? OFFSET ?",
                 (int(limit), int(offset)),
             )
@@ -110,7 +115,7 @@ def get(qna_id: int) -> dict | None:
     with _conn() as c:
         cur = c.execute(
             "SELECT id, ts, question, answer, sources, tools, "
-            "model, warning FROM qna WHERE id = ?",
+            "model, warning, important FROM qna WHERE id = ?",
             (int(qna_id),),
         )
         row = cur.fetchone()
@@ -131,6 +136,19 @@ def delete(qna_id: int) -> int:
             return cur.rowcount
     except Exception:
         log.exception("qna delete failed")
+        return 0
+
+
+def set_important(qna_id: int, important: bool) -> int:
+    """Toggle a Q&A row's 중요(important) flag — dashboard ✓ curation.
+    Returns rows affected."""
+    try:
+        with _conn() as c:
+            cur = c.execute("UPDATE qna SET important=? WHERE id=?",
+                            (1 if important else 0, int(qna_id)))
+            return cur.rowcount
+    except Exception:
+        log.exception("qna set_important failed")
         return 0
 
 

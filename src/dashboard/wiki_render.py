@@ -625,6 +625,14 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
 .wiki-card h3 { margin: 0 0 6px 0; font-size: 17px; }
 .wiki-card h3 a { color: var(--text); }
 .wiki-card h3 a:hover { color: var(--accent); }
+.wiki-card .wstar { cursor: pointer; background: transparent; border: 0;
+  color: var(--muted); font-size: 16px; line-height: 1; padding: 0 4px;
+  margin-left: 6px; transition: 0.12s; }
+.wiki-card .wstar:hover { color: #f59e0b; transform: scale(1.15); }
+.wiki-card .wstar.on { color: #f59e0b; }
+.wiki-card[data-important="1"] { border-color: rgba(245,158,11,0.55);
+  background: rgba(245,158,11,0.06); }
+.wiki-filter.wstarfilter.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
 .wiki-card .card-meta {
   font: 12px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--muted); margin-bottom: 8px;
@@ -762,7 +770,9 @@ _FILTER_JS = """
       var cr = c.getAttribute('data-created');
       var up = c.getAttribute('data-updated');
       var show;
-      if (f === 'new') {
+      if (f === 'important') {
+        show = c.getAttribute('data-important') === '1';
+      } else if (f === 'new') {
         show = cr && cr >= cutoff;
       } else {
         // New wins for its whole 7-day window: a still-New topic is
@@ -810,6 +820,35 @@ _FILTER_JS = """
   var savedF = null;
   try { savedF = sessionStorage.getItem(KEY); } catch(e){}
   if (savedF) applyFilter(savedF);
+})();
+"""
+
+# ★ 중요 표시 토글 — POST /<token>/mark {kind:'wiki', id:topic}. Optimistic,
+# revert on failure (mirrors the notes/Q&A star).
+_WIKI_STAR_JS = """
+(function(){
+  var token = location.pathname.split('/').filter(Boolean)[0] || '';
+  document.querySelectorAll('.wiki-card .wstar').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      var card = btn.closest('.wiki-card'); if(!card) return;
+      var topic = card.getAttribute('data-topic'); if(!topic) return;
+      var now = card.getAttribute('data-important') !== '1';
+      card.setAttribute('data-important', now ? '1' : '0');
+      btn.textContent = now ? '★' : '☆';
+      btn.classList.toggle('on', now);
+      fetch('/'+token+'/mark', {method:'POST',
+        headers:{'content-type':'application/json'},
+        body: JSON.stringify({kind:'wiki', id:topic, important:now})})
+        .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .catch(function(err){
+          card.setAttribute('data-important', now ? '0' : '1');
+          btn.textContent = now ? '☆' : '★';
+          btn.classList.toggle('on', !now);
+          alert('중요 표시 변경 실패: '+err.message);
+        });
+    });
+  });
 })();
 """
 
@@ -1059,9 +1098,16 @@ def _render_index_page(topics_data: list[dict], token: str,
     _kst = timezone(timedelta(hours=9))
     _7d_ago = (datetime.now(_kst) - timedelta(days=7)).isoformat()
 
+    try:
+        from ..store import marks as _marks
+        _important = _marks.marked("wiki")
+    except Exception:
+        _important = set()
+
     cards = []
     for td in topics_data:
         topic = td["topic"]
+        imp = 1 if topic in _important else 0
         display = td.get("title") or topic
         excerpt = html.escape(td.get("excerpt", "")[:200])
         search_text = html.escape(td.get("search_text", "")[:4000])
@@ -1080,9 +1126,12 @@ def _render_index_page(topics_data: list[dict], token: str,
         cards.append(
             f'<div class="wiki-card" data-created="{html.escape(created_iso)}"'
             f' data-updated="{html.escape(updated_iso)}"'
+            f' data-topic="{html.escape(topic)}" data-important="{imp}"'
             f' data-text="{search_text}">'
             f'<h3><a href="{_topic_filename(topic)}">'
-            f"{html.escape(display)}</a>{badge}</h3>"
+            f"{html.escape(display)}</a>{badge}"
+            f"<button type='button' class='wstar{' on' if imp else ''}' "
+            f"title='중요 표시 토글'>{'★' if imp else '☆'}</button></h3>"
             f'<div class="card-meta">'
             f"{doc_count} sources · {updated}</div>"
             f'<div class="card-excerpt">{excerpt}</div>'
@@ -1099,6 +1148,7 @@ def _render_index_page(topics_data: list[dict], token: str,
         '<button class="wiki-filter active" data-filter="all">All</button>'
         '<button class="wiki-filter" data-filter="new">New</button>'
         '<button class="wiki-filter" data-filter="recent">Recent</button>'
+        '<button class="wiki-filter wstarfilter" data-filter="important">★ 중요만</button>'
         '</div></div>'
         f"{stats_html}"
         f"{_render_lint_panel(token)}"
@@ -1106,6 +1156,7 @@ def _render_index_page(topics_data: list[dict], token: str,
         "</div>"
         f"<script>{_SEARCH_JS}</script>"
         f"<script>{_FILTER_JS}</script>"
+        f"<script>{_WIKI_STAR_JS}</script>"
         f"<script>{_INDEX_SCROLL_JS}</script>"
         "</body></html>"
     )
@@ -1258,7 +1309,7 @@ def render_wiki(token: str) -> int:
     # _TPL_VERSION: bump on ANY template/CSS/JS change in this file —
     # the incremental skip means already-rendered topic pages would
     # otherwise keep old markup forever (their .md never changes).
-    _TPL_VERSION = "8"  # bumped: nav order 메인→KG→위키→노트
+    _TPL_VERSION = "9"  # bumped: 페이지 ★ 중요 표시 + 중요만 필터
     cache_path = config.DATA_DIR / "wiki_render_cache.json"
     fp = hashlib.sha1(
         ("|".join(all_topics) + "\x00" + token + "\x00" + _TPL_VERSION
