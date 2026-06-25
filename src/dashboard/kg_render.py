@@ -66,8 +66,15 @@ flex-wrap:wrap}
 font-size:15px;line-height:1;padding:0 2px;transition:.12s}
 .estar:hover{color:#f59e0b;transform:scale(1.15)}
 .estar.on{color:#f59e0b}
+.ememo{cursor:pointer;background:transparent;border:0;opacity:.45;
+font-size:14px;line-height:1;padding:0 2px;transition:.12s}
+.ememo:hover{opacity:1;transform:scale(1.15)}
+.ememo.on{opacity:1}
 .edge[data-important="1"]{border-color:rgba(245,158,11,.55);
 background:rgba(245,158,11,.07)}
+.edge-editor{margin:-2px 0 8px;padding:10px 12px;background:var(--panel);
+border:1px solid var(--border);border-radius:10px}
+.edge-editor .ent-memo{background:transparent;border:0;padding:0}
 .ent-memos{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
 gap:10px}
 .ent-memo{background:var(--panel);border:1px solid var(--border);
@@ -94,6 +101,9 @@ padding:5px 10px;font-weight:600}
 .controls .impfilter{background:var(--panel);border:1px solid var(--border);
 color:var(--muted)}
 .controls .impfilter.active{background:#f59e0b;border-color:#f59e0b;color:#fff}
+.controls .memofilter{background:var(--panel);border:1px solid var(--border);
+color:var(--muted)}
+.controls .memofilter.active{background:#10b981;border-color:#10b981;color:#fff}
 .arrow{color:var(--muted)}
 mark.kw{background:#fef08a;color:inherit;border-radius:2px;padding:0 1px}
 [data-theme=dark] mark.kw{background:#fbbf24;color:#0f172a}
@@ -110,13 +120,15 @@ _JS = r"""
 (function(){
   var q=document.getElementById('q'), reset=document.getElementById('reset');
   var impf=document.getElementById('impfilter');
+  var memof=document.getElementById('memofilter');
   var token=location.pathname.split('/').filter(Boolean)[0]||'';
-  var curImp=false;
+  var curImp=false, curMemo=false;
   function apply(){
     var t=(q?q.value:'').trim(), tl=t.toLowerCase(), shown=0;
     document.querySelectorAll('.edge').forEach(function(e){
       var hay=(e.dataset.text||'').toLowerCase();
-      var ok=(!tl||hay.indexOf(tl)>=0)&&(!curImp||e.dataset.important==='1');
+      var ok=(!tl||hay.indexOf(tl)>=0)&&(!curImp||e.dataset.important==='1')
+        &&(!curMemo||e.dataset.hasmemo==='1');
       e.style.display=ok?'':'none'; if(ok)shown++;
     });
     var c=document.getElementById('cnt'); if(c)c.textContent=shown;
@@ -124,8 +136,12 @@ _JS = r"""
   if(q)q.addEventListener('input',apply);
   if(impf)impf.addEventListener('click',function(){
     curImp=!curImp; impf.classList.toggle('active',curImp); apply();});
+  if(memof)memof.addEventListener('click',function(){
+    curMemo=!curMemo; memof.classList.toggle('active',curMemo); apply();});
   if(reset)reset.addEventListener('click',function(){
-    q.value=''; curImp=false; if(impf)impf.classList.remove('active'); apply();});
+    q.value=''; curImp=false; curMemo=false;
+    if(impf)impf.classList.remove('active');
+    if(memof)memof.classList.remove('active'); apply();});
   // Chip click = filter the relation list by that entity name.
   document.querySelectorAll('.chip').forEach(function(ch){
     ch.addEventListener('click',function(){
@@ -154,7 +170,8 @@ _JS = r"""
     });
   });
   // 관계 메모 저장 (kg_edge) — 알람은 공용 ALARM_JS가 처리.
-  document.querySelectorAll('.ent-memo').forEach(function(box){
+  function wireMemo(box){
+    if(box.__wired)return; box.__wired=true;
     var ta=box.querySelector('textarea'), btn=box.querySelector('.memo-save');
     var del=box.querySelector('.memo-del');
     var st=box.querySelector('.memo-status'), id=box.dataset.id;
@@ -165,12 +182,37 @@ _JS = r"""
         headers:{'content-type':'application/json'},
         body:JSON.stringify({kind:'kg_edge',id:id,text:text})})
         .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-        .then(function(){ if(st)st.textContent=msg; })
+        .then(function(){ if(st)st.textContent=msg;
+          var ed=box.closest('.edge-editor'); var row=ed&&ed.__row;
+          if(row){ row.dataset.hasmemo=text?'1':'0';
+            var mb=row.querySelector('.ememo'); if(mb)mb.classList.toggle('on',!!text); } })
         .catch(function(err){ if(st)st.textContent='실패: '+err.message; })
         .finally(function(){ btn.disabled=false; if(del)del.disabled=false; });
     }
     btn.addEventListener('click',function(){ save(ta.value,'저장됨 ✓'); });
     if(del)del.addEventListener('click',function(){ ta.value=''; save('','삭제됨'); });
+  }
+  document.querySelectorAll('.ent-memo').forEach(wireMemo);
+  // 📝 버튼: 관계 행 바로 아래에 메모·알람 입력칸을 펼친다(필요할 때만 생성).
+  var tpl=document.getElementById('eetpl');
+  document.querySelectorAll('.edge .ememo').forEach(function(btn){
+    btn.addEventListener('click',function(ev){
+      ev.preventDefault(); ev.stopPropagation();
+      var row=btn.closest('.edge'); if(!row||!tpl)return;
+      var eid=row.dataset.edgeid; if(!eid)return;
+      var ed=row.nextSibling;
+      if(ed&&ed.classList&&ed.classList.contains('edge-editor')){
+        ed.style.display=ed.style.display==='none'?'':'none'; return;
+      }
+      ed=document.createElement('div'); ed.className='edge-editor'; ed.__row=row;
+      ed.innerHTML=tpl.innerHTML.replace(/__EID__/g,eid);
+      var ta=ed.querySelector('textarea'); if(ta)ta.value=row.dataset.memo||'';
+      row.parentNode.insertBefore(ed,row.nextSibling);
+      var mbox=ed.querySelector('.ent-memo'); if(mbox)wireMemo(mbox);
+      var arow=ed.querySelector('.alarm-row');
+      if(arow&&window.wireAlarmRow)window.wireAlarmRow(arow);
+      if(ta)ta.focus();
+    });
   });
 })();
 """
@@ -229,12 +271,17 @@ def render_kg(token: str) -> int:
         c = e.get("confidence") or 0
         eid = str(e.get("id") or "")
         imp = 1 if eid in _edge_imp else 0
+        _memo_txt = (_edge_memos.get(eid) or "").strip()
+        hasmemo = 1 if _memo_txt else 0
         _edge_text[eid] = f"{e['src']} —{e['rel']}→ {e['dst']}"
         rows.append(
             f"<div class='edge' data-edgeid=\"{_esc(eid)}\" "
-            f"data-text=\"{_esc(hay)}\" data-important=\"{imp}\">"
+            f"data-text=\"{_esc(hay)}\" data-important=\"{imp}\" "
+            f"data-hasmemo=\"{hasmemo}\" data-memo=\"{_esc(_memo_txt)}\">"
             f"<button type='button' class='estar{' on' if imp else ''}' "
             f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
+            f"<button type='button' class='ememo{' on' if hasmemo else ''}' "
+            f"title='메모·알람'>📝</button>"
             f"<span class='s'>{_esc(e['src'])}</span>"
             f"<span class='arrow'>—</span>"
             f"<span class='r'>{_esc(e['rel'])}</span>"
@@ -301,9 +348,20 @@ def render_kg(token: str) -> int:
         "placeholder='개체·관계 검색...' autocomplete='off'>"
         "<button id='impfilter' type='button' class='reset impfilter'>"
         "★ 중요만</button>"
+        "<button id='memofilter' type='button' class='reset memofilter'>"
+        "📝 메모만</button>"
         "<button id='reset' type='button' class='reset'>초기화</button></div>",
-        f"<div class='sec'>관계 (<span id='cnt'>{len(edges)}</span>) — ☆ 중요 표시 → 아래 '중요 관계'에 메모·알람</div>",
+        f"<div class='sec'>관계 (<span id='cnt'>{len(edges)}</span>) — "
+        "☆ 중요 표시 · 📝 눌러 메모·알람 작성</div>",
         "\n".join(rows),
+        "<template id='eetpl'>"
+        "<div class='ent-memo' data-id=\"__EID__\">"
+        "<textarea placeholder='이 관계에 대한 내 생각…'></textarea>"
+        "<div class='memo-row'><button type='button' class='memo-save'>저장</button>"
+        "<button type='button' class='memo-del'>삭제</button>"
+        "<span class='memo-status'></span></div>"
+        + _widgets.alarm_row("kg_edge", "__EID__", {})
+        + "</div></template>",
         "<div class='footer'>읽기 전용 · 텔레그램 /kg 와 동일 데이터 · "
         "백그라운드 자동 축적</div>",
         f"<script>{_JS}</script>",

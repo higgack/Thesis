@@ -419,6 +419,8 @@ header .sub { color: var(--muted); font-size: 13px; }
 .alarm-status { font-size: 11px; color: #818cf8; }
 .controls button.impfilter { background: var(--panel); border: 1px solid var(--border); color: var(--muted); }
 .controls button.impfilter.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+.controls button.memofilter { background: var(--panel); border: 1px solid var(--border); color: var(--muted); }
+.controls button.memofilter.active { background: #10b981; border-color: #10b981; color: #fff; }
 
 .dash-cmd-link {
   color: var(--primary) !important; cursor: pointer;
@@ -629,6 +631,7 @@ _INDEX_JS = r"""
 
   var activeTools = new Set();
   var curImportant = false;
+  var curMemo = false;
 
   function escapeRegex(s){
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -728,7 +731,8 @@ _INDEX_JS = r"""
       var matchesTool = activeTools.size === 0 ||
         tools.some(function(t){ return activeTools.has(t); });
       var matchesImp = !curImportant || (c.dataset.important === '1');
-      var show = matchesQuery && matchesTool && matchesImp;
+      var matchesMemo = !curMemo || (c.dataset.hasmemo === '1');
+      var show = matchesQuery && matchesTool && matchesImp && matchesMemo;
       c.classList.toggle('hidden', !show);
       // Clear stale highlights + snippet preview from previous query.
       clearHighlights(c);
@@ -778,12 +782,20 @@ _INDEX_JS = r"""
     impFilterBtn.classList.toggle('active', curImportant);
     apply();
   });
+  var memoFilterBtn = document.getElementById('memofilter');
+  if (memoFilterBtn) memoFilterBtn.addEventListener('click', function(){
+    curMemo = !curMemo;
+    memoFilterBtn.classList.toggle('active', curMemo);
+    apply();
+  });
   resetBtn.addEventListener('click', function(){
     search.value = '';
     activeTools.clear();
     chips.forEach(function(c){ c.classList.remove('active'); });
     curImportant = false;
+    curMemo = false;
     if (impFilterBtn) impFilterBtn.classList.remove('active');
+    if (memoFilterBtn) memoFilterBtn.classList.remove('active');
     apply();
   });
   chips.forEach(function(c){
@@ -1323,6 +1335,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "<div class='search-row'>",
         "<input id='q' type='text' placeholder='질문 / 답변 / 출처 검색...  (Enter = 봇에게 질문 · /명령어 가능)' autocomplete='off'>",
         "<button id='impfilter' class='reset impfilter' type='button'>★ 중요만</button>",
+        "<button id='memofilter' class='reset memofilter' type='button'>📝 메모만</button>",
         "<button id='reset' class='reset' type='button'>초기화</button>",
         "</div>",
         "<div class='ask-hint'>타이핑 = 기록 필터 · <b>Enter = 봇에게 질문</b> "
@@ -1407,6 +1420,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
                     f"data-id='{int(it['id'])}' title='이 Q&A 삭제'>🗑</button>"
                 )
                 imp = 1 if it.get("important") else 0
+                hasmemo = 1 if (_qmemos.get(str(it['id'])) or "").strip() else 0
                 star_btn = (
                     f"<button type='button' class='star-btn{' on' if imp else ''}' "
                     f"data-id='{int(it['id'])}' title='중요 표시 토글'>"
@@ -1414,7 +1428,8 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
                 )
                 parts.append(
                     f"<div class='qna-card{acc}' data-text=\"{data_text}\" "
-                    f"data-tools=\"{data_tools}\" data-important=\"{imp}\">"
+                    f"data-tools=\"{data_tools}\" data-important=\"{imp}\" "
+                    f"data-hasmemo=\"{hasmemo}\">"
                     "<details><summary>"
                     "<div class='row1'>"
                     f"<span>{_esc(_kst_hhmm(it['ts']))}</span>"
