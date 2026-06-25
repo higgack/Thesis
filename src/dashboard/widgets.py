@@ -41,6 +41,7 @@ def alarm_row(kind: str, item_id: str, cur: dict | None = None) -> str:
         "<span class='alm-l'>⏰ 매일</span>"
         f"<input type='time' class='alarm-time' value='{daily_v}'>"
         "<button type='button' class='alarm-set'>설정</button>"
+        "<button type='button' class='alarm-clear'>해제</button>"
         "<span class='alm-l'>· 📅 특정일</span>"
         f"<input type='text' class='alarm-dt' placeholder='06.26.04:30' maxlength='11' value='{dt_v}'>"
         "<button type='button' class='alarm-setdt'>설정</button>"
@@ -61,12 +62,13 @@ ALARM_JS = r"""
     if(cand.getTime() < now.getTime()-60000) yr+=1;
     return {date:yr+'-'+m[1]+'-'+m[2], hhmm:m[3]+':'+m[4]};
   }
-  document.querySelectorAll('.alarm-row').forEach(function(row){
+  function wire(row){
     var kind=row.dataset.kind, id=row.dataset.id;
-    if(!kind||!id)return;
+    if(!kind||!id||row.__wired)return;
+    row.__wired=true;
     var atime=row.querySelector('.alarm-time'), aset=row.querySelector('.alarm-set');
     var adt=row.querySelector('.alarm-dt'), asetd=row.querySelector('.alarm-setdt');
-    var aclr=row.querySelector('.alarm-clear'), ast=row.querySelector('.alarm-status');
+    var aclrs=row.querySelectorAll('.alarm-clear'), ast=row.querySelector('.alarm-status');
     function post(hhmm,date){
       fetch('/'+token+'/alarm',{method:'POST',
         headers:{'content-type':'application/json'},
@@ -82,9 +84,12 @@ ALARM_JS = r"""
       var p=parseDT(adt&&adt.value);
       if(p)post(p.hhmm,p.date);
       else if(ast)ast.textContent='형식 확인 (예 06.26.04:30)';});
-    if(aclr)aclr.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();
-      if(atime)atime.value=''; if(adt)adt.value=''; post('','');});
-  });
+    aclrs.forEach(function(aclr){aclr.addEventListener('click',function(e){
+      e.preventDefault();e.stopPropagation();
+      if(atime)atime.value=''; if(adt)adt.value=''; post('','');});});
+  }
+  window.wireAlarmRow=wire;
+  document.querySelectorAll('.alarm-row').forEach(wire);
 })();
 """
 

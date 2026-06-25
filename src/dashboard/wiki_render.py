@@ -633,6 +633,7 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
 .wiki-card[data-important="1"] { border-color: rgba(245,158,11,0.55);
   background: rgba(245,158,11,0.06); }
 .wiki-filter.wstarfilter.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+.wiki-filter.wmemofilter.active { background: #10b981; border-color: #10b981; color: #fff; }
 .topic-memo { max-width: 760px; margin: 18px auto 0; padding: 12px 14px;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
 .topic-memo .memo-h { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
@@ -793,6 +794,8 @@ _FILTER_JS = """
       var show;
       if (f === 'important') {
         show = c.getAttribute('data-important') === '1';
+      } else if (f === 'memo') {
+        show = c.getAttribute('data-hasmemo') === '1';
       } else if (f === 'new') {
         show = cr && cr >= cutoff;
       } else {
@@ -1169,13 +1172,16 @@ def _render_index_page(topics_data: list[dict], token: str,
     try:
         from ..store import marks as _marks
         _important = _marks.marked("wiki")
+        _wmemos = _marks.memos("wiki")
     except Exception:
         _important = set()
+        _wmemos = {}
 
     cards = []
     for td in topics_data:
         topic = td["topic"]
         imp = 1 if topic in _important else 0
+        hasmemo = 1 if (_wmemos.get(topic) or "").strip() else 0
         display = td.get("title") or topic
         excerpt = html.escape(td.get("excerpt", "")[:200])
         search_text = html.escape(td.get("search_text", "")[:4000])
@@ -1195,6 +1201,7 @@ def _render_index_page(topics_data: list[dict], token: str,
             f'<div class="wiki-card" data-created="{html.escape(created_iso)}"'
             f' data-updated="{html.escape(updated_iso)}"'
             f' data-topic="{html.escape(topic)}" data-important="{imp}"'
+            f' data-hasmemo="{hasmemo}"'
             f' data-text="{search_text}">'
             f'<h3><a href="{_topic_filename(topic)}">'
             f"{html.escape(display)}</a>{badge}"
@@ -1217,6 +1224,7 @@ def _render_index_page(topics_data: list[dict], token: str,
         '<button class="wiki-filter" data-filter="new">New</button>'
         '<button class="wiki-filter" data-filter="recent">Recent</button>'
         '<button class="wiki-filter wstarfilter" data-filter="important">★ 중요만</button>'
+        '<button class="wiki-filter wmemofilter" data-filter="memo">📝 메모만</button>'
         '</div></div>'
         f"{stats_html}"
         f"{_render_lint_panel(token)}"
@@ -1377,7 +1385,7 @@ def render_wiki(token: str) -> int:
     # _TPL_VERSION: bump on ANY template/CSS/JS change in this file —
     # the incremental skip means already-rendered topic pages would
     # otherwise keep old markup forever (their .md never changes).
-    _TPL_VERSION = "13"  # bumped: 알람 MM.DD.HH:MM 입력 + 메모 삭제 버튼
+    _TPL_VERSION = "14"  # bumped: 매일 알람 옆 해제 버튼 추가
     cache_path = config.DATA_DIR / "wiki_render_cache.json"
     fp = hashlib.sha1(
         ("|".join(all_topics) + "\x00" + token + "\x00" + _TPL_VERSION

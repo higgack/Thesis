@@ -167,6 +167,9 @@ background:rgba(245,158,11,.06)}
 .controls .impfilter{background:var(--panel);border:1px solid var(--border);
 color:var(--muted)}
 .controls .impfilter.active{background:#f59e0b;border-color:#f59e0b;color:#fff}
+.controls .memofilter{background:var(--panel);border:1px solid var(--border);
+color:var(--muted)}
+.controls .memofilter.active{background:#10b981;border-color:#10b981;color:#fff}
 .stype{font-size:10px;color:var(--muted);border:1px solid var(--border);
 border-radius:8px;padding:1px 6px}
 .cat{font-size:10px;font-weight:700;border-radius:8px;padding:1px 7px;
@@ -404,7 +407,7 @@ _INDEX_JS = r"""
   }
   // Combined filter: 유형별(data-tbucket) AND 종류별(data-cat) AND
   // full-text(title + body). Body hits get a highlighted snippet. No bot query.
-  var curType='all', curCat='all', curImportant=false;
+  var curType='all', curCat='all', curImportant=false, curMemo=false;
   function applyFilter(){
     var t=(q?q.value:'').trim(), tl=t.toLowerCase(), shown=0;
     document.querySelectorAll('.note-row').forEach(function(row){
@@ -416,7 +419,8 @@ _INDEX_JS = r"""
       var okType = curType==='all' || (row.dataset.tbucket||'')===curType;
       var okCat  = curCat==='all'  || (row.dataset.cat||'')===curCat;
       var okImp  = !curImportant || (row.dataset.important==='1');
-      var ok = okText && okType && okCat && okImp;
+      var okMemo = !curMemo || (row.dataset.hasmemo==='1');
+      var ok = okText && okType && okCat && okImp && okMemo;
       row.style.display = ok ? '' : 'none';
       var old=row.querySelector('.snippet'); if(old) old.remove();
       if(ok && tl && inBody){
@@ -444,9 +448,16 @@ _INDEX_JS = r"""
     impf.classList.toggle('active', curImportant);
     applyFilter();
   });
+  var memof = document.getElementById('memofilter');
+  if(memof) memof.addEventListener('click', function(){
+    curMemo = !curMemo;
+    memof.classList.toggle('active', curMemo);
+    applyFilter();
+  });
   if(reset) reset.addEventListener('click', function(){
-    q.value=''; curType='all'; curCat='all'; curImportant=false;
+    q.value=''; curType='all'; curCat='all'; curImportant=false; curMemo=false;
     if(impf) impf.classList.remove('active');
+    if(memof) memof.classList.remove('active');
     document.querySelectorAll('.fbtn').forEach(function(x){
       x.classList.toggle('active', x.getAttribute('data-type')==='all'
         || x.getAttribute('data-cat')==='all'); });
@@ -536,6 +547,11 @@ def _render_index(token: str, notes: list[dict],
                   bodies: dict | None = None) -> str:
     cost = cost or {}
     bodies = bodies or {}
+    try:
+        from ..store import marks as _marks
+        _nmemos = _marks.memos("note")
+    except Exception:
+        _nmemos = {}
     rows = []
     rows.append("<div class='sec-title'>전체 노트 "
                 f"(<span id='note-count'>{len(notes)}</span>)</div>")
@@ -548,10 +564,12 @@ def _render_index(token: str, notes: list[dict],
         tbucket = _type_bucket(n.get("source_type") or "")
         cat = (n.get("category") or "").strip() or "그외"
         imp = 1 if n.get("important") else 0
+        hasmemo = 1 if (_nmemos.get(str(n["id"])) or "").strip() else 0
         rows.append(
             f"<div class='note-row' data-id=\"{_esc(n['id'])}\" "
             f"data-text=\"{_esc(hay)}\" data-tbucket=\"{_esc(tbucket)}\" "
-            f"data-cat=\"{_esc(cat)}\" data-important=\"{imp}\">"
+            f"data-cat=\"{_esc(cat)}\" data-important=\"{imp}\" "
+            f"data-hasmemo=\"{hasmemo}\">"
             f"<button class='nstar{' on' if imp else ''}' type='button' "
             f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
@@ -597,6 +615,8 @@ def _render_index(token: str, notes: list[dict],
         "placeholder='노트 제목·본문 검색...' autocomplete='off'>"
         "<button id='impfilter' type='button' class='reset impfilter'>"
         "★ 중요만</button>"
+        "<button id='memofilter' type='button' class='reset memofilter'>"
+        "📝 메모만</button>"
         "<button id='reset' type='button' class='reset'>초기화</button></div>",
         "\n".join(rows),
         "<div class='footer'>대시보드는 읽기 전용 · 🗑 = 노트 삭제</div>",
