@@ -140,6 +140,25 @@ border-color:rgba(100,116,139,.55);color:#cbd5e1}
 font-size:17px;line-height:1;padding:2px 4px;border-radius:6px;transition:.12s}
 .nstar:hover{color:#f59e0b;transform:scale(1.15)}
 .nstar.on{color:#f59e0b}
+.note-memo{margin:16px 0;padding:12px 14px;background:var(--panel);
+border:1px solid var(--border);border-radius:10px}
+.note-memo .memo-h{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px}
+.note-memo textarea,.qa-memo textarea{width:100%;min-height:64px;background:var(--bg,#0f172a);
+border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px;
+font-size:13.5px;outline:none;resize:vertical;box-sizing:border-box}
+.note-memo textarea:focus{border-color:var(--primary)}
+.memo-row{display:flex;align-items:center;gap:8px;margin-top:7px}
+.memo-save{background:var(--primary);border:0;color:#fff;padding:6px 16px;
+border-radius:7px;cursor:pointer;font-size:12.5px;font-weight:600}
+.memo-status{font-size:11px;color:var(--muted)}
+.alarm-row{display:flex;align-items:center;gap:6px;margin-top:7px;flex-wrap:wrap}
+.alarm-time{background:var(--bg,#0f172a);border:1px solid var(--border);color:var(--text);
+border-radius:6px;padding:4px 6px;font-size:12px}
+.alarm-set,.alarm-clear{border:0;border-radius:6px;cursor:pointer;font-size:11.5px;
+padding:5px 10px;font-weight:600}
+.alarm-set{background:#6366f1;color:#fff}
+.alarm-clear{background:rgba(148,163,184,.25);color:var(--muted)}
+.alarm-status{font-size:11px;color:#818cf8}
 .note-row[data-important="1"]{border-color:rgba(245,158,11,.55);
 background:rgba(245,158,11,.06)}
 [data-theme=dark] .note-row[data-important="1"]{background:rgba(245,158,11,.10)}
@@ -327,6 +346,36 @@ _NOTE_JS = r"""
   document.querySelectorAll('.q-card .q').forEach(function(q){
     q.addEventListener('click',function(){q.closest('.q-card').classList.toggle('open');});
   });
+  // 📝 노트 메모 저장
+  (function(){
+    var box=document.querySelector('.note-memo'); if(!box)return;
+    var ta=box.querySelector('textarea'), btn=box.querySelector('.memo-save');
+    var st=box.querySelector('.memo-status'), id=box.dataset.id;
+    var token=location.pathname.split('/').filter(Boolean)[0]||'';
+    if(!ta||!btn||!id)return;
+    btn.addEventListener('click',function(){
+      btn.disabled=true; if(st)st.textContent='저장 중…';
+      fetch('/'+token+'/memo',{method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({kind:'note',id:id,text:ta.value})})
+        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+        .then(function(){ if(st)st.textContent='저장됨 ✓'; })
+        .catch(function(err){ if(st)st.textContent='실패: '+err.message; })
+        .finally(function(){ btn.disabled=false; });
+    });
+    var atime=box.querySelector('.alarm-time'), aset=box.querySelector('.alarm-set');
+    var aclr=box.querySelector('.alarm-clear'), ast=box.querySelector('.alarm-status');
+    function postAlarm(hhmm){
+      fetch('/'+token+'/alarm',{method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({kind:'note',id:id,hhmm:hhmm})})
+        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+        .then(function(){ if(ast)ast.textContent=hhmm?('매일 '+hhmm+' KST'):'해제됨'; })
+        .catch(function(e){ if(ast)ast.textContent='실패: '+e.message; });
+    }
+    if(aset)aset.addEventListener('click',function(){ if(atime&&atime.value)postAlarm(atime.value); });
+    if(aclr)aclr.addEventListener('click',function(){ if(atime)atime.value=''; postAlarm(''); });
+  })();
 })();
 """
 
@@ -581,6 +630,25 @@ def _render_note(token: str, note: dict) -> str:
     gsec = float(note.get("gen_seconds") or 0)
     learned = (note.get("created") or "")[:10]
     meta = f"학습 {_esc(learned)} · 💰 ₩{cost:,.2f} · ⏱ {gsec:.0f}초"
+    try:
+        from ..store import marks as _marks
+        _nid = note.get("id") or ""
+        _nmemo = _marks.memo("note", _nid)
+        _nalarm = _marks.alarm("note", _nid)
+    except Exception:
+        _nmemo, _nalarm = "", ""
+    memo_box = (
+        f"<div class='note-memo' data-id=\"{_esc(note.get('id') or '')}\">"
+        "<div class='memo-h'>📝 내 메모</div>"
+        f"<textarea placeholder='이 노트에 대한 내 생각…'>{_esc(_nmemo)}</textarea>"
+        "<div class='memo-row'><button type='button' class='memo-save'>저장</button>"
+        "<span class='memo-status'></span></div>"
+        f"<div class='alarm-row'><input type='time' class='alarm-time' value='{_esc(_nalarm)}'>"
+        "<button type='button' class='alarm-set'>⏰ 알람</button>"
+        "<button type='button' class='alarm-clear'>해제</button>"
+        f"<span class='alarm-status'>{('매일 '+_esc(_nalarm)+' KST') if _nalarm else ''}</span>"
+        "</div></div>"
+    )
     return "\n".join([
         _head(note.get("title") or "노트"), _CDN,
         "</head><body><main>",
@@ -588,6 +656,7 @@ def _render_note(token: str, note: dict) -> str:
         f"<div style='font-size:11px;color:var(--muted);margin-bottom:10px'>{meta}</div>",
         # marked parses the raw markdown held in #md (textContent).
         f"<div class='note-body' id='md'>{_esc(note.get('md') or '')}</div>",
+        memo_box,
         q_html,
         "</main>",
         f"<script>{_NOTE_JS}</script>",

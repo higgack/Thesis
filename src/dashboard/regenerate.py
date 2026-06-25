@@ -397,6 +397,24 @@ header .sub { color: var(--muted); font-size: 13px; }
   border-color: rgba(245, 158, 11, 0.5);
   background: rgba(245, 158, 11, 0.06);
 }
+.qa-memo { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.qa-memo-h { font-size: 11px; color: var(--muted); font-weight: 600; margin-bottom: 5px; }
+.qa-memo textarea { width: 100%; min-height: 54px; background: var(--bg);
+  border: 1px solid var(--border); color: var(--text); border-radius: 8px;
+  padding: 8px; font-size: 13px; outline: none; resize: vertical; box-sizing: border-box; }
+.qa-memo textarea:focus { border-color: var(--primary); }
+.memo-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.memo-save { background: var(--primary); border: 0; color: #fff; padding: 5px 14px;
+  border-radius: 7px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.memo-status { font-size: 11px; color: var(--muted); }
+.alarm-row { display: flex; align-items: center; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.alarm-time { background: var(--bg,#0f172a); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+.alarm-set, .alarm-clear { border: 0; border-radius: 6px; cursor: pointer; font-size: 11.5px;
+  padding: 5px 10px; font-weight: 600; }
+.alarm-set { background: #6366f1; color: #fff; }
+.alarm-clear { background: rgba(148,163,184,.25); color: var(--muted); }
+.alarm-status { font-size: 11px; color: #818cf8; }
 .controls button.impfilter { background: var(--panel); border: 1px solid var(--border); color: var(--muted); }
 .controls button.impfilter.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
 
@@ -851,6 +869,36 @@ _INDEX_JS = r"""
     });
   });
 
+  // 📝 Q&A 메모 저장 + ⏰ 알람
+  document.querySelectorAll('.qa-memo').forEach(function(box){
+    var ta=box.querySelector('textarea'), btn=box.querySelector('.memo-save');
+    var st=box.querySelector('.memo-status'), id=box.dataset.id;
+    if(!ta||!btn||!id)return;
+    btn.addEventListener('click',function(e){
+      e.preventDefault(); e.stopPropagation();
+      btn.disabled=true; if(st)st.textContent='저장 중…';
+      fetch('/'+token+'/memo',{method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({kind:'qna',id:id,text:ta.value})})
+        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+        .then(function(){ if(st)st.textContent='저장됨 ✓'; })
+        .catch(function(err){ if(st)st.textContent='실패: '+err.message; })
+        .finally(function(){ btn.disabled=false; });
+    });
+    var atime=box.querySelector('.alarm-time'), aset=box.querySelector('.alarm-set');
+    var aclr=box.querySelector('.alarm-clear'), ast=box.querySelector('.alarm-status');
+    function postAlarm(hhmm){
+      fetch('/'+token+'/alarm',{method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({kind:'qna',id:id,hhmm:hhmm})})
+        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+        .then(function(){ if(ast)ast.textContent=hhmm?('매일 '+hhmm+' KST'):'해제됨'; })
+        .catch(function(e){ if(ast)ast.textContent='실패: '+e.message; });
+    }
+    if(aset)aset.addEventListener('click',function(e){ e.preventDefault(); e.stopPropagation(); if(atime&&atime.value)postAlarm(atime.value); });
+    if(aclr)aclr.addEventListener('click',function(e){ e.preventDefault(); e.stopPropagation(); if(atime)atime.value=''; postAlarm(''); });
+  });
+
   // ── Keyboard navigation: j/k move between visible cards, Enter
   //    expands the focused card inline. Ignored while typing in the
   //    search box so it never fights the bot-query Enter handler.
@@ -1219,6 +1267,12 @@ def _kst_hhmm(ts_iso: str) -> str:
 
 
 def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
+    try:
+        from ..store import marks as _marks
+        _qmemos = _marks.memos("qna")
+        _qalarms = _marks.alarm_map("qna")
+    except Exception:
+        _qmemos, _qalarms = {}, {}
     grouped: dict[str, list[dict]] = {}
     for r in rows:
         day = _kst_day(r.get("ts") or "")
@@ -1377,6 +1431,20 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
                     f"{warn}"
                     f"<div class='answer'>{_format_bullets(_esc(it['answer']))}</div>"
                     f"{sources_html}"
+                    f"<div class='qa-memo' data-id='{int(it['id'])}'>"
+                    "<div class='qa-memo-h'>📝 내 메모</div>"
+                    "<textarea placeholder='이 Q&A에 대한 내 생각…'>"
+                    f"{_esc(_qmemos.get(str(it['id']), ''))}</textarea>"
+                    "<div class='memo-row'>"
+                    "<button type='button' class='memo-save'>저장</button>"
+                    "<span class='memo-status'></span></div>"
+                    "<div class='alarm-row'>"
+                    "<input type='time' class='alarm-time' value='"
+                    f"{_esc(_qalarms.get(str(it['id']), ''))}'>"
+                    "<button type='button' class='alarm-set'>⏰ 알람</button>"
+                    "<button type='button' class='alarm-clear'>해제</button>"
+                    f"<span class='alarm-status'>{('매일 '+_esc(_qalarms.get(str(it['id']), ''))+' KST') if _qalarms.get(str(it['id'])) else ''}</span>"
+                    "</div></div>"
                     "</details></div>"
                 )
             parts.append("</div></details>")  # close day-section

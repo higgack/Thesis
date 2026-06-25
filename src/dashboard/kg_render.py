@@ -62,12 +62,34 @@ flex-wrap:wrap}
 .edge .s,.edge .o{font-weight:600}
 .edge .r{color:var(--muted);font-style:italic;font-size:13px}
 .edge .c{margin-left:auto;font-size:11px;color:var(--muted)}
-.estar{cursor:pointer;background:transparent;border:0;color:var(--muted);
-font-size:15px;line-height:1;padding:0 2px;transition:.12s}
-.estar:hover{color:#f59e0b;transform:scale(1.15)}
-.estar.on{color:#f59e0b}
-.edge[data-important="1"]{border-color:rgba(245,158,11,.55);
-background:rgba(245,158,11,.07)}
+.cstar{cursor:pointer;background:transparent;border:0;color:var(--muted);
+font-size:14px;line-height:1;padding:0 4px 0 0;margin-right:1px;transition:.12s}
+.cstar:hover{color:#f59e0b;transform:scale(1.2)}
+.chip.impon{border-color:rgba(245,158,11,.6);background:rgba(245,158,11,.10)}
+.chip.impon .cstar{color:#f59e0b}
+.edge[data-important="1"]{border-color:rgba(245,158,11,.45);
+background:rgba(245,158,11,.06)}
+.ent-memos{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+gap:10px}
+.ent-memo{background:var(--panel);border:1px solid var(--border);
+border-radius:10px;padding:10px 12px}
+.ent-memo-h{font-weight:700;font-size:13px;margin-bottom:6px}
+.ent-memo textarea{width:100%;min-height:60px;background:var(--bg);
+border:1px solid var(--border);color:var(--text);border-radius:8px;
+padding:8px;font-size:13px;outline:none;resize:vertical;box-sizing:border-box}
+.ent-memo textarea:focus{border-color:var(--primary)}
+.memo-row{display:flex;align-items:center;gap:8px;margin-top:6px}
+.memo-save{background:var(--primary);border:0;color:#fff;padding:5px 14px;
+border-radius:7px;cursor:pointer;font-size:12px;font-weight:600}
+.memo-status{font-size:11px;color:var(--muted)}
+.alarm-row{display:flex;align-items:center;gap:6px;margin-top:7px;flex-wrap:wrap}
+.alarm-time{background:var(--bg);border:1px solid var(--border);color:var(--text);
+border-radius:6px;padding:4px 6px;font-size:12px}
+.alarm-set,.alarm-clear{border:0;border-radius:6px;cursor:pointer;font-size:11.5px;
+padding:5px 10px;font-weight:600}
+.alarm-set{background:#6366f1;color:#fff}
+.alarm-clear{background:rgba(148,163,184,.25);color:var(--muted)}
+.alarm-status{font-size:11px;color:#818cf8}
 .controls .impfilter{background:var(--panel);border:1px solid var(--border);
 color:var(--muted)}
 .controls .impfilter.active{background:#f59e0b;border-color:#f59e0b;color:#fff}
@@ -96,6 +118,9 @@ _JS = r"""
       var ok=(!tl||hay.indexOf(tl)>=0)&&(!curImp||e.dataset.important==='1');
       e.style.display=ok?'':'none'; if(ok)shown++;
     });
+    document.querySelectorAll('.chip').forEach(function(ch){
+      ch.style.display=(!curImp||ch.dataset.important==='1')?'':'none';
+    });
     var c=document.getElementById('cnt'); if(c)c.textContent=shown;
   }
   if(q)q.addEventListener('input',apply);
@@ -103,30 +128,62 @@ _JS = r"""
     curImp=!curImp; impf.classList.toggle('active',curImp); apply();});
   if(reset)reset.addEventListener('click',function(){
     q.value=''; curImp=false; if(impf)impf.classList.remove('active'); apply();});
+  // Chip body click = filter edges by entity name; star click is separate.
   document.querySelectorAll('.chip').forEach(function(ch){
-    ch.addEventListener('click',function(){
-      if(q){q.value=ch.dataset.name||ch.textContent.trim();apply();
+    ch.addEventListener('click',function(ev){
+      if(ev.target.closest('.cstar')) return;
+      if(q){q.value=ch.dataset.name||'';apply();
         q.scrollIntoView({block:'center'});}
     });
   });
-  document.querySelectorAll('.estar').forEach(function(btn){
+  // 개체 ★ 토글 (kg_entity). Edge importance is server-derived, so a
+  // freshly starred entity's edges update on the next render tick.
+  document.querySelectorAll('.chip .cstar').forEach(function(btn){
     btn.addEventListener('click',function(ev){
       ev.preventDefault(); ev.stopPropagation();
-      var row=btn.closest('.edge'); if(!row)return;
-      var id=row.dataset.edgeid; if(!id)return;
-      var now=row.dataset.important!=='1';
-      row.dataset.important=now?'1':'0';
-      btn.textContent=now?'★':'☆'; btn.classList.toggle('on',now); apply();
+      var ch=btn.closest('.chip'); if(!ch)return;
+      var name=ch.dataset.name; if(!name)return;
+      var now=ch.dataset.important!=='1';
+      ch.dataset.important=now?'1':'0';
+      btn.textContent=now?'★':'☆'; ch.classList.toggle('impon',now); apply();
       fetch('/'+token+'/mark',{method:'POST',
         headers:{'content-type':'application/json'},
-        body:JSON.stringify({kind:'kg_edge',id:id,important:now})})
+        body:JSON.stringify({kind:'kg_entity',id:name,important:now})})
         .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
         .catch(function(err){
-          row.dataset.important=now?'0':'1';
-          btn.textContent=now?'☆':'★'; btn.classList.toggle('on',!now); apply();
+          ch.dataset.important=now?'0':'1';
+          btn.textContent=now?'☆':'★'; ch.classList.toggle('impon',!now); apply();
           alert('중요 표시 변경 실패: '+err.message);
         });
     });
+  });
+  // 개체 메모 저장 (kg_entity)
+  document.querySelectorAll('.ent-memo').forEach(function(box){
+    var ta=box.querySelector('textarea'), btn=box.querySelector('.memo-save');
+    var st=box.querySelector('.memo-status'), name=box.dataset.name;
+    if(!ta||!btn||!name)return;
+    btn.addEventListener('click',function(){
+      btn.disabled=true; if(st)st.textContent='저장 중…';
+      fetch('/'+token+'/memo',{method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({kind:'kg_entity',id:name,text:ta.value})})
+        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+        .then(function(){ if(st)st.textContent='저장됨 ✓'; })
+        .catch(function(err){ if(st)st.textContent='실패: '+err.message; })
+        .finally(function(){ btn.disabled=false; });
+    });
+    var atime=box.querySelector('.alarm-time'), aset=box.querySelector('.alarm-set');
+    var aclr=box.querySelector('.alarm-clear'), ast=box.querySelector('.alarm-status');
+    function postAlarm(hhmm){
+      fetch('/'+token+'/alarm',{method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({kind:'kg_entity',id:name,hhmm:hhmm})})
+        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+        .then(function(){ if(ast)ast.textContent=hhmm?('매일 '+hhmm+' KST'):'해제됨'; })
+        .catch(function(e){ if(ast)ast.textContent='실패: '+e.message; });
+    }
+    if(aset)aset.addEventListener('click',function(){ if(atime&&atime.value)postAlarm(atime.value); });
+    if(aclr)aclr.addEventListener('click',function(){ if(atime)atime.value=''; postAlarm(''); });
   });
 })();
 """
@@ -162,34 +219,65 @@ def render_kg(token: str) -> int:
     mtd_y = nc.get("year", "")
     mtd_m = nc.get("month", "")
 
-    chips = "".join(
-        f"<span class='chip' data-name=\"{_esc(t['name'])}\">"
-        f"{_esc(t['name'])} <span class='deg'>{t['deg']}</span></span>"
-        for t in tops)
-
+    # 중요 표시(★)와 메모는 개체(entity) 기준 — 관계(엣지)보다 개체를 모아
+    # 보는 게 효과적이라(사용자 요청). 엣지는 개체의 중요도를 상속받아
+    # "★ 중요만" 필터에서 중요 개체에 닿는 관계만 보이게 한다.
     try:
         from ..store import marks as _marks
-        _kg_imp = _marks.marked("kg_edge")
+        _ent_imp = _marks.marked("kg_entity")
+        _ent_memos = _marks.memos("kg_entity")
+        _ent_alarms = _marks.alarm_map("kg_entity")
     except Exception:
-        _kg_imp = set()
+        _ent_imp, _ent_memos, _ent_alarms = set(), {}, {}
+
+    chips = "".join(
+        f"<span class='chip{' impon' if t['name'] in _ent_imp else ''}' "
+        f"data-name=\"{_esc(t['name'])}\" "
+        f"data-important=\"{1 if t['name'] in _ent_imp else 0}\">"
+        f"<button type='button' class='cstar' title='중요 개체 토글'>"
+        f"{'★' if t['name'] in _ent_imp else '☆'}</button>"
+        f"{_esc(t['name'])} <span class='deg'>{t['deg']}</span></span>"
+        for t in tops)
 
     rows = []
     for e in edges:
         hay = f"{e['src']} {e['rel']} {e['dst']}"
         c = e.get("confidence") or 0
-        eid = str(e.get("id") or "")
-        imp = 1 if eid in _kg_imp else 0
+        # Edge inherits importance from its endpoints' entity marks.
+        imp = 1 if (e['src'] in _ent_imp or e['dst'] in _ent_imp) else 0
         rows.append(
             f"<div class='edge' data-text=\"{_esc(hay)}\" "
-            f"data-edgeid=\"{_esc(eid)}\" data-important=\"{imp}\">"
-            f"<button type='button' class='estar{' on' if imp else ''}' "
-            f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
+            f"data-important=\"{imp}\">"
             f"<span class='s'>{_esc(e['src'])}</span>"
             f"<span class='arrow'>—</span>"
             f"<span class='r'>{_esc(e['rel'])}</span>"
             f"<span class='arrow'>→</span>"
             f"<span class='o'>{_esc(e['dst'])}</span>"
             f"<span class='c'>{c:.2f}</span></div>")
+
+    # 📝 중요 개체 메모 — ★ 표시했거나 메모가 있는 개체별 메모 박스.
+    memo_names = sorted(set(_ent_imp) | set(_ent_memos.keys())
+                        | set(_ent_alarms.keys()))
+    memo_boxes = []
+    for name in memo_names:
+        txt = _ent_memos.get(name, "")
+        al = _ent_alarms.get(name, "")
+        memo_boxes.append(
+            f"<div class='ent-memo' data-name=\"{_esc(name)}\">"
+            f"<div class='ent-memo-h'>📍 {_esc(name)}</div>"
+            f"<textarea placeholder='이 개체에 대한 내 생각…'>{_esc(txt)}</textarea>"
+            f"<div class='memo-row'><button type='button' class='memo-save'>"
+            f"저장</button><span class='memo-status'></span></div>"
+            f"<div class='alarm-row'><input type='time' class='alarm-time' "
+            f"value='{_esc(al)}'><button type='button' class='alarm-set'>"
+            f"⏰ 알람</button><button type='button' class='alarm-clear'>해제</button>"
+            f"<span class='alarm-status'>{('매일 '+_esc(al)+' KST') if al else ''}"
+            f"</span></div></div>")
+    memo_section = ""
+    if memo_boxes:
+        memo_section = (
+            "<div class='sec'>📝 중요 개체 메모</div>"
+            f"<div class='ent-memos'>{''.join(memo_boxes)}</div>")
 
     page = "\n".join([
         "<!DOCTYPE html><html lang='ko'><head><meta charset='utf-8'>",
@@ -220,8 +308,9 @@ def render_kg(token: str) -> int:
         f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
         f"{mtd_calls}콜 추출</div></div>",
         "</div>",
-        "<div class='sec'>주요 개체 (연결수) — 클릭하면 필터</div>",
+        "<div class='sec'>주요 개체 (연결수) — ☆ 중요 표시 · 이름 클릭=필터</div>",
         f"<div class='chips'>{chips}</div>",
+        memo_section,
         "<div class='controls'><input id='q' type='text' "
         "placeholder='개체·관계 검색...' autocomplete='off'>"
         "<button id='impfilter' type='button' class='reset impfilter'>"
