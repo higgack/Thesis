@@ -113,9 +113,23 @@ async def ingest_url(url: str) -> str | None:
     vid = loaders.is_youtube(url)
     if vid:
         return await ingest_youtube(url, vid)
-    body, title, _meta, _links = await loaders.load_url(url)
+    # JS-rendered pages (Notion/SPA) sometimes return an empty body on the
+    # first fetch and the real content a moment later. RAG survives this via
+    # its retry queue; the one-shot note path used to give up immediately and
+    # tell the user to re-send. Retry the fetch a few times with a short delay
+    # before declaring failure — only on the empty-body path, so normal pages
+    # (success on attempt 1) pay no delay. No locks/concurrency: safe.
+    body = title = ""
+    for attempt in range(3):
+        body, title, _meta, _links = await loaders.load_url(url)
+        if (body or "").strip():
+            break
+        if attempt < 2:
+            log.info("study ingest_url: empty body for %s (attempt %d/3) — retrying",
+                     url, attempt + 1)
+            await asyncio.sleep(4)
     if not (body or "").strip():
-        log.info("study ingest_url: empty body for %s", url)
+        log.info("study ingest_url: empty body for %s (after 3 attempts)", url)
         return None
     stype = "blog" if loaders.is_blog(url) else "web"
     return await ingest_text(stype, url, body, title)
