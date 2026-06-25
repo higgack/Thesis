@@ -163,6 +163,20 @@ def all_edges(limit: int = 3000) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def edge_by_id(edge_id) -> dict | None:
+    """Single edge by primary key (for dashboard memo/alarm cards)."""
+    init()
+    try:
+        eid = int(edge_id)
+    except (TypeError, ValueError):
+        return None
+    with _conn() as c:
+        r = c.execute(
+            "SELECT id,src,rel,dst,confidence,doc_id FROM edges WHERE id=?",
+            (eid,)).fetchone()
+    return dict(r) if r else None
+
+
 def context_for(query: str, limit: int = 12) -> list[dict]:
     """High-confidence edges whose subject/object overlaps the query's
     tokens — injected into answers so the LLM sees relevant relationships.

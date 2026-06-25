@@ -61,13 +61,14 @@ _DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/q-(\d+)/?$")
 _QNA_IMPORTANT_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/q-(\d+)/important/?$")
 # 공용 중요 표시(위키 페이지·KG 개체): POST /<token>/mark {kind,id,important}
 _MARK_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/mark/?$")
-_MARK_KINDS = ("wiki", "kg_entity")
-# 개인 메모(노트·Q&A·위키·KG 개체): POST /<token>/memo {kind,id,text}
+_MARK_KINDS = ("wiki", "kg_edge")
+# 개인 메모(노트·Q&A·위키·KG 관계): POST /<token>/memo {kind,id,text}
 _MEMO_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/memo/?$")
-_MEMO_KINDS = ("note", "qna", "wiki", "kg_entity")
+_MEMO_KINDS = ("note", "qna", "wiki", "kg_edge")
 # 알람(매일 HH:MM KST 텔레그램): POST /<token>/alarm {kind,id,hhmm}
 _ALARM_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/alarm/?$")
 _HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # Study-note delete: id is a (url-encoded) slug, so capture the rest.
 _NOTE_DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+?)/?$")
 # Study-note 종류별 manual override: POST /<token>/notes/<id>/category
@@ -341,6 +342,7 @@ class Handler(SimpleHTTPRequestHandler):
             kind = (data.get("kind") or "").strip()
             item_id = (data.get("id") or "").strip()
             hhmm = (data.get("hhmm") or "").strip()
+            sdate = (data.get("date") or "").strip()
         except Exception:
             self._send_json({"error": "잘못된 요청"}, 400)
             return
@@ -350,15 +352,19 @@ class Handler(SimpleHTTPRequestHandler):
         if hhmm and not _HHMM_RE.match(hhmm):
             self._send_json({"error": "시간 형식(HH:MM) 오류"}, 400)
             return
+        if sdate and not _DATE_RE.match(sdate):
+            self._send_json({"error": "날짜 형식(YYYY-MM-DD) 오류"}, 400)
+            return
         try:
             from ..store import marks
-            marks.set_alarm(kind, item_id, hhmm)
-            log.info("alarm %s/%s → %s", kind, item_id[:60], hhmm or "(해제)")
+            marks.set_alarm(kind, item_id, hhmm, sdate)
+            log.info("alarm %s/%s → %s%s", kind, item_id[:60],
+                     hhmm or "(해제)", f" @{sdate}" if sdate else "")
         except Exception as e:
             log.exception("alarm set failed")
             self.send_error(500, f"set failed: {e}")
             return
-        self._send_json({"ok": True, "hhmm": hhmm})
+        self._send_json({"ok": True, "hhmm": hhmm, "date": sdate})
 
     def _set_qna_important(self, token: str, qid: int):
         """Toggle a Q&A row's 중요 flag from the dashboard ★ button.

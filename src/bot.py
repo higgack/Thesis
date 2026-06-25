@@ -1944,6 +1944,19 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 WIKI_ENABLED=0(Chroma/meta.db 안 건드려 끄면 기존 RAG 그대로) · 상세 docs/WIKI.md
 
 ═══════════════════════════════════════
+<b>🕸 KG (지식그래프)</b>
+═══════════════════════════════════════
+
+수집 자료에서 <b>사실 트리플(개체—관계→개체)</b>을 자동 추출·누적하는
+지식그래프. 인입 시 Flash-Lite로 자동 추출(일일 예산 캡), 답변 시 관련
+관계를 컨텍스트로 주입. 대시보드 <b>🕸 KG</b> 뷰에서 개체·관계 탐색 +
+개체에 ★ 중요표시·📝 메모·⏰ 알람.
+
+<b>명령어</b>
+• <b>/kg_extract [N]</b> 아직 미추출 문서 N개(기본 30)에서 트리플 추출
+• <b>/kg [질의]</b> 그래프 조회 — 질의 개체의 관계, 또는 전체 요약(상위 개체)
+
+═══════════════════════════════════════
 <b>📒 14. 학습 노트</b>
 ═══════════════════════════════════════
 
@@ -10930,13 +10943,26 @@ def _alarm_card_text(kind: str, item_id: str) -> tuple[str, str]:
             n = _ns.get_note(item_id)
             if n:
                 return (n.get("title") or item_id, (n.get("md") or "")[:600])
+        elif kind == "kg_edge":
+            from .store import kg as _kg
+            e = _kg.edge_by_id(item_id)
+            if e:
+                rel = f"{e['src']} —{e['rel']}→ {e['dst']}"
+                return (rel, "")
         elif kind == "kg_entity":
             from .store import kg as _kg
             edges = _kg.neighbors(item_id, 8)
             body = "\n".join(f"{e['src']} —{e['rel']}→ {e['dst']}" for e in edges)
             return (item_id, body[:600])
         elif kind == "wiki":
-            return (item_id, "")  # topic title; full page is too long to push
+            from .store import wiki as _wiki
+            page = _wiki.read_page(item_id) or ""
+            # strip leading YAML front-matter so the snippet is real content
+            if page.startswith("---"):
+                end = page.find("\n---", 3)
+                if end != -1:
+                    page = page[end + 4:]
+            return (item_id, page.strip()[:600])
     except Exception:
         log.debug("alarm card text failed (%s/%s)", kind, item_id)
     return (item_id, "")

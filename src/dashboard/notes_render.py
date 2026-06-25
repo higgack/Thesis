@@ -150,6 +150,8 @@ font-size:13.5px;outline:none;resize:vertical;box-sizing:border-box}
 .memo-row{display:flex;align-items:center;gap:8px;margin-top:7px}
 .memo-save{background:var(--primary);border:0;color:#fff;padding:6px 16px;
 border-radius:7px;cursor:pointer;font-size:12.5px;font-weight:600}
+.memo-del{background:rgba(148,163,184,.25);border:0;color:var(--muted);padding:6px 14px;
+border-radius:7px;cursor:pointer;font-size:12.5px;font-weight:600}
 .memo-status{font-size:11px;color:var(--muted)}
 .alarm-row{display:flex;align-items:center;gap:6px;margin-top:7px;flex-wrap:wrap}
 .alarm-time{background:var(--bg,#0f172a);border:1px solid var(--border);color:var(--text);
@@ -350,31 +352,22 @@ _NOTE_JS = r"""
   (function(){
     var box=document.querySelector('.note-memo'); if(!box)return;
     var ta=box.querySelector('textarea'), btn=box.querySelector('.memo-save');
+    var del=box.querySelector('.memo-del');
     var st=box.querySelector('.memo-status'), id=box.dataset.id;
     var token=location.pathname.split('/').filter(Boolean)[0]||'';
     if(!ta||!btn||!id)return;
-    btn.addEventListener('click',function(){
-      btn.disabled=true; if(st)st.textContent='저장 중…';
+    function save(text,msg){
+      btn.disabled=true; if(del)del.disabled=true; if(st)st.textContent='저장 중…';
       fetch('/'+token+'/memo',{method:'POST',
         headers:{'content-type':'application/json'},
-        body:JSON.stringify({kind:'note',id:id,text:ta.value})})
+        body:JSON.stringify({kind:'note',id:id,text:text})})
         .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-        .then(function(){ if(st)st.textContent='저장됨 ✓'; })
+        .then(function(){ if(st)st.textContent=msg; })
         .catch(function(err){ if(st)st.textContent='실패: '+err.message; })
-        .finally(function(){ btn.disabled=false; });
-    });
-    var atime=box.querySelector('.alarm-time'), aset=box.querySelector('.alarm-set');
-    var aclr=box.querySelector('.alarm-clear'), ast=box.querySelector('.alarm-status');
-    function postAlarm(hhmm){
-      fetch('/'+token+'/alarm',{method:'POST',
-        headers:{'content-type':'application/json'},
-        body:JSON.stringify({kind:'note',id:id,hhmm:hhmm})})
-        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-        .then(function(){ if(ast)ast.textContent=hhmm?('매일 '+hhmm+' KST'):'해제됨'; })
-        .catch(function(e){ if(ast)ast.textContent='실패: '+e.message; });
+        .finally(function(){ btn.disabled=false; if(del)del.disabled=false; });
     }
-    if(aset)aset.addEventListener('click',function(){ if(atime&&atime.value)postAlarm(atime.value); });
-    if(aclr)aclr.addEventListener('click',function(){ if(atime)atime.value=''; postAlarm(''); });
+    btn.addEventListener('click',function(){ save(ta.value,'저장됨 ✓'); });
+    if(del)del.addEventListener('click',function(){ ta.value=''; save('','삭제됨'); });
   })();
 })();
 """
@@ -630,27 +623,27 @@ def _render_note(token: str, note: dict) -> str:
     gsec = float(note.get("gen_seconds") or 0)
     learned = (note.get("created") or "")[:10]
     meta = f"학습 {_esc(learned)} · 💰 ₩{cost:,.2f} · ⏱ {gsec:.0f}초"
+    from . import widgets as _widgets
     try:
         from ..store import marks as _marks
         _nid = note.get("id") or ""
         _nmemo = _marks.memo("note", _nid)
         _nalarm = _marks.alarm("note", _nid)
     except Exception:
-        _nmemo, _nalarm = "", ""
+        _nmemo, _nalarm, _nid = "", {}, note.get("id") or ""
     memo_box = (
         f"<div class='note-memo' data-id=\"{_esc(note.get('id') or '')}\">"
         "<div class='memo-h'>📝 내 메모</div>"
         f"<textarea placeholder='이 노트에 대한 내 생각…'>{_esc(_nmemo)}</textarea>"
         "<div class='memo-row'><button type='button' class='memo-save'>저장</button>"
+        "<button type='button' class='memo-del'>삭제</button>"
         "<span class='memo-status'></span></div>"
-        f"<div class='alarm-row'><input type='time' class='alarm-time' value='{_esc(_nalarm)}'>"
-        "<button type='button' class='alarm-set'>⏰ 알람</button>"
-        "<button type='button' class='alarm-clear'>해제</button>"
-        f"<span class='alarm-status'>{('매일 '+_esc(_nalarm)+' KST') if _nalarm else ''}</span>"
-        "</div></div>"
+        + _widgets.alarm_row("note", _nid, _nalarm)
+        + "</div>"
     )
     return "\n".join([
         _head(note.get("title") or "노트"), _CDN,
+        f"<style>{_widgets.ALARM_CSS}</style>",
         "</head><body><main>",
         f"<a class='back' href='index.html'>← 노트 목록</a>",
         f"<div style='font-size:11px;color:var(--muted);margin-bottom:10px'>{meta}</div>",
@@ -660,6 +653,7 @@ def _render_note(token: str, note: dict) -> str:
         q_html,
         "</main>",
         f"<script>{_NOTE_JS}</script>",
+        f"<script>{_widgets.ALARM_JS}</script>",
         "</body></html>",
     ])
 
