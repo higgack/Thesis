@@ -406,6 +406,8 @@ header .sub { color: var(--muted); font-size: 13px; }
 .memo-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .memo-save { background: var(--primary); border: 0; color: #fff; padding: 5px 14px;
   border-radius: 7px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.memo-del { background: rgba(148,163,184,.25); border: 0; color: var(--muted);
+  padding: 5px 12px; border-radius: 7px; cursor: pointer; font-size: 12px; font-weight: 600; }
 .memo-status { font-size: 11px; color: var(--muted); }
 .alarm-row { display: flex; align-items: center; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
 .alarm-time { background: var(--bg,#0f172a); border: 1px solid var(--border); color: var(--text);
@@ -872,31 +874,23 @@ _INDEX_JS = r"""
   // 📝 Q&A 메모 저장 + ⏰ 알람
   document.querySelectorAll('.qa-memo').forEach(function(box){
     var ta=box.querySelector('textarea'), btn=box.querySelector('.memo-save');
+    var del=box.querySelector('.memo-del');
     var st=box.querySelector('.memo-status'), id=box.dataset.id;
     if(!ta||!btn||!id)return;
-    btn.addEventListener('click',function(e){
-      e.preventDefault(); e.stopPropagation();
-      btn.disabled=true; if(st)st.textContent='저장 중…';
+    function save(text,msg){
+      btn.disabled=true; if(del)del.disabled=true; if(st)st.textContent='저장 중…';
       fetch('/'+token+'/memo',{method:'POST',
         headers:{'content-type':'application/json'},
-        body:JSON.stringify({kind:'qna',id:id,text:ta.value})})
+        body:JSON.stringify({kind:'qna',id:id,text:text})})
         .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-        .then(function(){ if(st)st.textContent='저장됨 ✓'; })
+        .then(function(){ if(st)st.textContent=msg; })
         .catch(function(err){ if(st)st.textContent='실패: '+err.message; })
-        .finally(function(){ btn.disabled=false; });
-    });
-    var atime=box.querySelector('.alarm-time'), aset=box.querySelector('.alarm-set');
-    var aclr=box.querySelector('.alarm-clear'), ast=box.querySelector('.alarm-status');
-    function postAlarm(hhmm){
-      fetch('/'+token+'/alarm',{method:'POST',
-        headers:{'content-type':'application/json'},
-        body:JSON.stringify({kind:'qna',id:id,hhmm:hhmm})})
-        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-        .then(function(){ if(ast)ast.textContent=hhmm?('매일 '+hhmm+' KST'):'해제됨'; })
-        .catch(function(e){ if(ast)ast.textContent='실패: '+e.message; });
+        .finally(function(){ btn.disabled=false; if(del)del.disabled=false; });
     }
-    if(aset)aset.addEventListener('click',function(e){ e.preventDefault(); e.stopPropagation(); if(atime&&atime.value)postAlarm(atime.value); });
-    if(aclr)aclr.addEventListener('click',function(e){ e.preventDefault(); e.stopPropagation(); if(atime)atime.value=''; postAlarm(''); });
+    btn.addEventListener('click',function(e){
+      e.preventDefault(); e.stopPropagation(); save(ta.value,'저장됨 ✓'); });
+    if(del)del.addEventListener('click',function(e){
+      e.preventDefault(); e.stopPropagation(); ta.value=''; save('','삭제됨'); });
   });
 
   // ── Keyboard navigation: j/k move between visible cards, Enter
@@ -1267,6 +1261,7 @@ def _kst_hhmm(ts_iso: str) -> str:
 
 
 def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
+    from . import widgets as _widgets
     try:
         from ..store import marks as _marks
         _qmemos = _marks.memos("qna")
@@ -1288,7 +1283,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "<meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
         "<title>🧠 Second Brain Archive</title>",
-        f"<style>{_INDEX_CSS}</style>",
+        f"<style>{_INDEX_CSS}{_widgets.ALARM_CSS}</style>",
         f"<script>{_THEME_SWITCHER_JS}</script>",
         "</head><body><div class='layout'>",
         "<header>",
@@ -1437,14 +1432,11 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
                     f"{_esc(_qmemos.get(str(it['id']), ''))}</textarea>"
                     "<div class='memo-row'>"
                     "<button type='button' class='memo-save'>저장</button>"
+                    "<button type='button' class='memo-del'>삭제</button>"
                     "<span class='memo-status'></span></div>"
-                    "<div class='alarm-row'>"
-                    "<input type='time' class='alarm-time' value='"
-                    f"{_esc(_qalarms.get(str(it['id']), ''))}'>"
-                    "<button type='button' class='alarm-set'>⏰ 알람</button>"
-                    "<button type='button' class='alarm-clear'>해제</button>"
-                    f"<span class='alarm-status'>{('매일 '+_esc(_qalarms.get(str(it['id']), ''))+' KST') if _qalarms.get(str(it['id'])) else ''}</span>"
-                    "</div></div>"
+                    + _widgets.alarm_row("qna", str(it['id']),
+                                         _qalarms.get(str(it['id']), {}))
+                    + "</div>"
                     "</details></div>"
                 )
             parts.append("</div></details>")  # close day-section
@@ -1456,11 +1448,66 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
     )
     parts.append(f"<script>{_INDEX_JS}</script>")
     parts.append(f"<script>{_LINKIFY_JS}</script>")
+    parts.append(f"<script>{_widgets.ALARM_JS}</script>")
     parts.append("</div></body></html>")
     return "\n".join(parts)
 
 
+_QA_MEMO_CSS = """
+.qa-memo { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.qa-memo-h { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+.qa-memo textarea { width: 100%; min-height: 60px; background: var(--bg);
+  border: 1px solid var(--border); color: var(--text); border-radius: 8px;
+  padding: 9px; font-size: 13px; outline: none; resize: vertical; box-sizing: border-box; }
+.qa-memo textarea:focus { border-color: var(--primary); }
+.memo-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.memo-save { background: var(--primary); border: 0; color: #fff; padding: 5px 14px;
+  border-radius: 7px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.memo-del { background: rgba(148,163,184,.25); border: 0; color: var(--muted);
+  padding: 5px 12px; border-radius: 7px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.memo-status { font-size: 11px; color: var(--muted); }
+"""
+
+
 def _render_detail(item: dict, token_dir: str) -> str:
+    from . import widgets as _widgets
+    _qid = str(item["id"])
+    try:
+        from ..store import marks as _marks
+        _dmemo = _marks.memo("qna", _qid)
+        _dalarm = _marks.alarm("qna", _qid)
+    except Exception:
+        _dmemo, _dalarm = "", {}
+    memo_box = (
+        f"<div class='qa-memo' data-id='{_qid}'>"
+        "<div class='qa-memo-h'>📝 내 메모</div>"
+        f"<textarea placeholder='이 Q&A에 대한 내 생각…'>{_esc(_dmemo)}</textarea>"
+        "<div class='memo-row'><button type='button' class='memo-save'>저장</button>"
+        "<button type='button' class='memo-del'>삭제</button>"
+        "<span class='memo-status'></span></div>"
+        + _widgets.alarm_row("qna", _qid, _dalarm)
+        + "</div>"
+    )
+    _memo_js = (
+        "(function(){var box=document.querySelector('.qa-memo');if(!box)return;"
+        "var ta=box.querySelector('textarea'),btn=box.querySelector('.memo-save'),"
+        "del=box.querySelector('.memo-del'),"
+        "st=box.querySelector('.memo-status'),id=box.dataset.id,"
+        "token=location.pathname.split('/').filter(Boolean)[0]||'';"
+        "if(!ta||!btn||!id)return;"
+        "function save(text,msg){btn.disabled=true;if(del)del.disabled=true;"
+        "if(st)st.textContent='저장 중…';"
+        "fetch('/'+token+'/memo',{method:'POST',"
+        "headers:{'content-type':'application/json'},"
+        "body:JSON.stringify({kind:'qna',id:id,text:text})})"
+        ".then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})"
+        ".then(function(){if(st)st.textContent=msg;})"
+        ".catch(function(e){if(st)st.textContent='실패: '+e.message;})"
+        ".finally(function(){btn.disabled=false;if(del)del.disabled=false;});}"
+        "btn.addEventListener('click',function(){save(ta.value,'저장됨 ✓');});"
+        "if(del)del.addEventListener('click',function(){ta.value='';save('','삭제됨');});"
+        "})();"
+    )
     tools = item.get("tools") or []
     tool_chips = "".join(
         f"<span class='tool'>{_tool_emoji(t)} {_esc(t)}</span>" for t in tools
@@ -1485,7 +1532,7 @@ def _render_detail(item: dict, token_dir: str) -> str:
         "<meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
         f"<title>Q&A · {int(item['id'])}</title>",
-        f"<style>{_DETAIL_CSS}</style>",
+        f"<style>{_DETAIL_CSS}{_widgets.ALARM_CSS}{_QA_MEMO_CSS}</style>",
         f"<script>{_THEME_SWITCHER_JS}</script>",
         "</head><body><main>",
         "<a class='back' href='index.html'>← 목록으로</a>",
@@ -1498,9 +1545,12 @@ def _render_detail(item: dict, token_dir: str) -> str:
         warn,
         f"<div class='answer'>{_format_bullets(_esc(item['answer']))}</div>",
         sources_html,
+        memo_box,
         "</main>",
         f"<script>{_DETAIL_JS}</script>",
         f"<script>{_LINKIFY_JS}</script>",
+        f"<script>{_memo_js}</script>",
+        f"<script>{_widgets.ALARM_JS}</script>",
         "</body></html>",
     ])
 

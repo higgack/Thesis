@@ -47,9 +47,14 @@ def _conn():
         c.execute(
             "CREATE TABLE IF NOT EXISTS alarms("
             " kind TEXT NOT NULL, item_id TEXT NOT NULL,"
-            " hhmm TEXT NOT NULL, acked INTEGER DEFAULT 0,"
+            " hhmm TEXT NOT NULL, start_date TEXT DEFAULT '',"
+            " acked INTEGER DEFAULT 0,"
             " last_fired TEXT, PRIMARY KEY(kind, item_id))"
         )
+        # Migrate alarms created before start_date (one-time date alarms).
+        acols = {r[1] for r in c.execute("PRAGMA table_info(alarms)")}
+        if "start_date" not in acols:
+            c.execute("ALTER TABLE alarms ADD COLUMN start_date TEXT DEFAULT ''")
         yield c
         c.commit()
     finally:
@@ -133,21 +138,23 @@ def memos(kind: str) -> dict:
 
 # ---- alarms (daily Telegram reminder until acked) -------------------------
 
-def set_alarm(kind: str, item_id: str, hhmm: str) -> None:
-    """Set/replace a daily KST alarm at HH:MM. Resets acked + last_fired so
-    it fires fresh. Empty hhmm clears it."""
+def set_alarm(kind: str, item_id: str, hhmm: str, start_date: str = "") -> None:
+    """Set/replace a KST alarm at HH:MM. start_date='' → fires daily.
+    start_date=YYYY-MM-DD → starts firing on that date (daily until acked).
+    Resets acked + last_fired so it fires fresh. Empty hhmm clears it."""
     if not kind or not item_id:
         return
     hhmm = (hhmm or "").strip()
+    start_date = (start_date or "").strip()
     try:
         with _conn() as c:
             if hhmm:
                 c.execute(
-                    "INSERT INTO alarms(kind,item_id,hhmm,acked,last_fired)"
-                    " VALUES(?,?,?,0,'')"
+                    "INSERT INTO alarms(kind,item_id,hhmm,start_date,acked,last_fired)"
+                    " VALUES(?,?,?,?,0,'')"
                     " ON CONFLICT(kind,item_id) DO UPDATE SET"
-                    " hhmm=?,acked=0,last_fired=''",
-                    (kind, item_id, hhmm, hhmm))
+                    " hhmm=?,start_date=?,acked=0,last_fired=''",
+                    (kind, item_id, hhmm, start_date, hhmm, start_date))
             else:
                 c.execute("DELETE FROM alarms WHERE kind=? AND item_id=?",
                           (kind, item_id))
@@ -160,27 +167,29 @@ def clear_alarm(kind: str, item_id: str) -> None:
 
 
 def alarm_map(kind: str) -> dict:
-    """item_id → hhmm for `kind` (to pre-fill the dashboard time input)."""
+    """item_id → {'hhmm','date'} for `kind` (to pre-fill the dashboard)."""
     try:
         with _conn() as c:
             rows = c.execute(
-                "SELECT item_id, hhmm FROM alarms WHERE kind=?", (kind,)).fetchall()
-        return {r[0]: r[1] for r in rows}
+                "SELECT item_id, hhmm, COALESCE(start_date,'') FROM alarms"
+                " WHERE kind=?", (kind,)).fetchall()
+        return {r[0]: {"hhmm": r[1], "date": r[2]} for r in rows}
     except Exception:
         return {}
 
 
-def alarm(kind: str, item_id: str) -> str:
-    """Current HH:MM for one item's alarm, '' if none."""
+def alarm(kind: str, item_id: str) -> dict:
+    """{'hhmm','date'} for one item's alarm; {'hhmm':'','date':''} if none."""
     if not kind or not item_id:
-        return ""
+        return {"hhmm": "", "date": ""}
     try:
         with _conn() as c:
-            r = c.execute("SELECT hhmm FROM alarms WHERE kind=? AND item_id=?",
-                          (kind, item_id)).fetchone()
-        return r[0] if r else ""
+            r = c.execute(
+                "SELECT hhmm, COALESCE(start_date,'') FROM alarms"
+                " WHERE kind=? AND item_id=?", (kind, item_id)).fetchone()
+        return {"hhmm": r[0], "date": r[1]} if r else {"hhmm": "", "date": ""}
     except Exception:
-        return ""
+        return {"hhmm": "", "date": ""}
 
 
 def alarms_due(now_hhmm: str, today: str) -> list:
@@ -193,7 +202,9 @@ def alarms_due(now_hhmm: str, today: str) -> list:
         with _conn() as c:
             rows = c.execute(
                 "SELECT kind,item_id FROM alarms WHERE hhmm<=? AND acked=0"
-                " AND COALESCE(last_fired,'')<>?", (now_hhmm, today)).fetchall()
+                " AND COALESCE(last_fired,'')<>?"
+                " AND COALESCE(start_date,'')<=?",
+                (now_hhmm, today, today)).fetchall()
         return [(r[0], r[1]) for r in rows]
     except Exception:
         log.exception("alarms_due failed")
