@@ -664,6 +664,12 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
   overflow: hidden; display: -webkit-box;
   -webkit-line-clamp: 3; -webkit-box-orient: vertical;
 }
+.wiki-card .memo-preview {
+  margin-top: 8px; padding: 8px 10px; font-size: 13px; line-height: 1.55;
+  color: var(--text); white-space: pre-wrap; word-break: break-word;
+  background: rgba(16,185,129,0.10); border: 1px solid rgba(16,185,129,0.4);
+  border-radius: 8px;
+}
 mark.kw {
   background: #fef08a; color: #202122; padding: 0 1px;
   border-radius: 2px;
@@ -788,6 +794,7 @@ _FILTER_JS = """
   function applyFilter(f){
     if (f === 'all') f = null;
     cards.forEach(function(c){
+      var omp = c.querySelector('.memo-preview'); if (omp) omp.remove();
       if (!f){ c.style.display = ''; return; }
       var cr = c.getAttribute('data-created');
       var up = c.getAttribute('data-updated');
@@ -804,6 +811,13 @@ _FILTER_JS = """
         show = up && up >= cutoff && !(cr && cr >= cutoff);
       }
       c.style.display = show ? '' : 'none';
+      // 메모만 필터 → 카드 밑에 메모 내용 미리보기.
+      if (show && f === 'memo' && c.getAttribute('data-memo')){
+        var mp = document.createElement('div');
+        mp.className = 'memo-preview';
+        mp.textContent = '📝 ' + c.getAttribute('data-memo');
+        c.appendChild(mp);
+      }
     });
     // Time order inside a filter: New sorts by creation date, Recent by
     // update date — newest on top, older pushed down. All restores the
@@ -1181,7 +1195,8 @@ def _render_index_page(topics_data: list[dict], token: str,
     for td in topics_data:
         topic = td["topic"]
         imp = 1 if topic in _important else 0
-        hasmemo = 1 if (_wmemos.get(topic) or "").strip() else 0
+        _wmemo_txt = (_wmemos.get(topic) or "").strip()
+        hasmemo = 1 if _wmemo_txt else 0
         display = td.get("title") or topic
         excerpt = html.escape(td.get("excerpt", "")[:200])
         search_text = html.escape(td.get("search_text", "")[:4000])
@@ -1201,7 +1216,7 @@ def _render_index_page(topics_data: list[dict], token: str,
             f'<div class="wiki-card" data-created="{html.escape(created_iso)}"'
             f' data-updated="{html.escape(updated_iso)}"'
             f' data-topic="{html.escape(topic)}" data-important="{imp}"'
-            f' data-hasmemo="{hasmemo}"'
+            f' data-hasmemo="{hasmemo}" data-memo="{html.escape(_wmemo_txt)}"'
             f' data-text="{search_text}">'
             f'<h3><a href="{_topic_filename(topic)}">'
             f"{html.escape(display)}</a>{badge}"
