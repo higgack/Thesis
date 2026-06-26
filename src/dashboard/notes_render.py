@@ -126,6 +126,10 @@ display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .note-row .snippet{flex-basis:100%;font-size:12.5px;line-height:1.55;
 color:var(--muted);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;
 -webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.note-row .memo-preview{flex-basis:100%;font-size:13px;line-height:1.55;
+color:var(--text);margin-top:6px;padding:8px 10px;white-space:pre-wrap;
+word-break:break-word;background:rgba(16,185,129,.08);
+border:1px solid rgba(16,185,129,.35);border-radius:8px}
 mark.kw{background:#fef08a;color:inherit;padding:0 2px;border-radius:2px}
 [data-theme=dark] mark.kw{background:#fbbf24;color:#0f172a}
 .ndel{cursor:pointer;background:rgba(148,163,184,.18);
@@ -423,6 +427,11 @@ _INDEX_JS = r"""
       var ok = okText && okType && okCat && okImp && okMemo;
       row.style.display = ok ? '' : 'none';
       var old=row.querySelector('.snippet'); if(old) old.remove();
+      var omp=row.querySelector('.memo-preview'); if(omp) omp.remove();
+      if(ok && curMemo && row.dataset.memo){
+        var mp=document.createElement('div'); mp.className='memo-preview';
+        mp.textContent='📝 '+row.dataset.memo; row.appendChild(mp);
+      }
       if(ok && tl && inBody){
         var h=snippet(hay,t);
         if(h){ var d=document.createElement('div'); d.className='snippet';
@@ -564,12 +573,13 @@ def _render_index(token: str, notes: list[dict],
         tbucket = _type_bucket(n.get("source_type") or "")
         cat = (n.get("category") or "").strip() or "그외"
         imp = 1 if n.get("important") else 0
-        hasmemo = 1 if (_nmemos.get(str(n["id"])) or "").strip() else 0
+        _memo_txt = (_nmemos.get(str(n["id"])) or "").strip()
+        hasmemo = 1 if _memo_txt else 0
         rows.append(
             f"<div class='note-row' data-id=\"{_esc(n['id'])}\" "
             f"data-text=\"{_esc(hay)}\" data-tbucket=\"{_esc(tbucket)}\" "
             f"data-cat=\"{_esc(cat)}\" data-important=\"{imp}\" "
-            f"data-hasmemo=\"{hasmemo}\">"
+            f"data-hasmemo=\"{hasmemo}\" data-memo=\"{_esc(_memo_txt)}\">"
             f"<button class='nstar{' on' if imp else ''}' type='button' "
             f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"

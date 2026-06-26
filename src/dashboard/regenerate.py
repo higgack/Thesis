@@ -397,6 +397,10 @@ header .sub { color: var(--muted); font-size: 13px; }
   border-color: rgba(245, 158, 11, 0.5);
   background: rgba(245, 158, 11, 0.06);
 }
+.qna-card .memo-preview { margin-top: 8px; padding: 8px 10px; font-size: 13px;
+  line-height: 1.55; color: var(--text); white-space: pre-wrap; word-break: break-word;
+  background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.35);
+  border-radius: 8px; }
 .qa-memo { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
 .qa-memo-h { font-size: 11px; color: var(--muted); font-weight: 600; margin-bottom: 5px; }
 .qa-memo textarea { width: 100%; min-height: 54px; background: var(--bg);
@@ -738,6 +742,15 @@ _INDEX_JS = r"""
       clearHighlights(c);
       var oldSnip = c.querySelector('.snippet');
       if (oldSnip) oldSnip.remove();
+      // 메모만 필터 ON → 카드 밑에 메모 내용 미리보기(안 열어봐도 보이게).
+      var oldMp = c.querySelector(':scope > .memo-preview');
+      if (oldMp) oldMp.remove();
+      if (show && curMemo && c.dataset.memo){
+        var mp = document.createElement('div');
+        mp.className = 'memo-preview';
+        mp.textContent = '📝 ' + c.dataset.memo;
+        c.appendChild(mp);
+      }
       if (show && regex){
         var qEl = c.querySelector('.question');
         var aEl = c.querySelector('.answer');
@@ -1420,7 +1433,8 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
                     f"data-id='{int(it['id'])}' title='이 Q&A 삭제'>🗑</button>"
                 )
                 imp = 1 if it.get("important") else 0
-                hasmemo = 1 if (_qmemos.get(str(it['id'])) or "").strip() else 0
+                _qmemo_txt = (_qmemos.get(str(it['id'])) or "").strip()
+                hasmemo = 1 if _qmemo_txt else 0
                 star_btn = (
                     f"<button type='button' class='star-btn{' on' if imp else ''}' "
                     f"data-id='{int(it['id'])}' title='중요 표시 토글'>"
@@ -1429,7 +1443,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
                 parts.append(
                     f"<div class='qna-card{acc}' data-text=\"{data_text}\" "
                     f"data-tools=\"{data_tools}\" data-important=\"{imp}\" "
-                    f"data-hasmemo=\"{hasmemo}\">"
+                    f"data-hasmemo=\"{hasmemo}\" data-memo=\"{_esc(_qmemo_txt)}\">"
                     "<details><summary>"
                     "<div class='row1'>"
                     f"<span>{_esc(_kst_hhmm(it['ts']))}</span>"
