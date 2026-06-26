@@ -218,7 +218,16 @@ _JS = r"""
       row.parentNode.insertBefore(ed,row.nextSibling);
       var mbox=ed.querySelector('.ent-memo'); if(mbox)wireMemo(mbox);
       var arow=ed.querySelector('.alarm-row');
-      if(arow&&window.wireAlarmRow)window.wireAlarmRow(arow);
+      if(arow){
+        var hh=row.dataset.ahhmm||'', dt=row.dataset.adate||'';
+        if(hh&&!dt){var ti=arow.querySelector('.alarm-time'); if(ti)ti.value=hh;}
+        if(hh&&dt&&dt.length===10){var di=arow.querySelector('.alarm-dt');
+          if(di)di.value=dt.slice(5,7)+'.'+dt.slice(8,10)+'.'+hh;}
+        var ast=arow.querySelector('.alarm-status');
+        if(ast)ast.textContent=hh?(dt?(dt.slice(5,7)+'.'+dt.slice(8,10)+' '+hh+' KST부터')
+          :('매일 '+hh+' KST')):'';
+        if(window.wireAlarmRow)window.wireAlarmRow(arow);
+      }
       if(ta)ta.focus();
     });
   });
@@ -272,7 +281,6 @@ def render_kg(token: str) -> int:
         f"{_esc(t['name'])} <span class='deg'>{t['deg']}</span></span>"
         for t in tops)
 
-    _edge_text = {}
     rows = []
     for e in edges:
         hay = f"{e['src']} {e['rel']} {e['dst']}"
@@ -281,11 +289,13 @@ def render_kg(token: str) -> int:
         imp = 1 if eid in _edge_imp else 0
         _memo_txt = (_edge_memos.get(eid) or "").strip()
         hasmemo = 1 if _memo_txt else 0
-        _edge_text[eid] = f"{e['src']} —{e['rel']}→ {e['dst']}"
+        _al = _edge_alarms.get(eid, {})
         rows.append(
             f"<div class='edge' data-edgeid=\"{_esc(eid)}\" "
             f"data-text=\"{_esc(hay)}\" data-important=\"{imp}\" "
-            f"data-hasmemo=\"{hasmemo}\" data-memo=\"{_esc(_memo_txt)}\">"
+            f"data-hasmemo=\"{hasmemo}\" data-memo=\"{_esc(_memo_txt)}\" "
+            f"data-ahhmm=\"{_esc(_al.get('hhmm','') or '')}\" "
+            f"data-adate=\"{_esc(_al.get('date','') or '')}\">"
             f"<button type='button' class='estar{' on' if imp else ''}' "
             f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
             f"<button type='button' class='ememo{' on' if hasmemo else ''}' "
@@ -297,28 +307,8 @@ def render_kg(token: str) -> int:
             f"<span class='o'>{_esc(e['dst'])}</span>"
             f"<span class='c'>{c:.2f}</span></div>")
 
-    # 📝 중요 관계 메모·알람 — ★ 했거나 메모/알람이 있는 관계별 박스.
-    memo_ids = sorted(set(_edge_imp) | set(_edge_memos.keys())
-                      | set(_edge_alarms.keys()))
-    memo_boxes = []
-    for eid in memo_ids:
-        label = _edge_text.get(eid, eid)
-        txt = _edge_memos.get(eid, "")
-        memo_boxes.append(
-            f"<div class='ent-memo' data-id=\"{_esc(eid)}\">"
-            f"<div class='ent-memo-h'>🔗 {_esc(label)}</div>"
-            f"<textarea placeholder='이 관계에 대한 내 생각…'>{_esc(txt)}</textarea>"
-            f"<div class='memo-row'><button type='button' class='memo-save'>"
-            f"저장</button><button type='button' class='memo-del'>삭제</button>"
-            f"<span class='memo-status'></span></div>"
-            + _widgets.alarm_row("kg_edge", eid, _edge_alarms.get(eid, {}))
-            + "</div>")
-    memo_section = ""
-    if memo_boxes:
-        memo_section = (
-            "<div class='sec'>📝 중요 관계 메모 · 알람</div>"
-            f"<div class='ent-memos'>{''.join(memo_boxes)}</div>")
-
+    # 메모·알람 편집은 각 관계 행의 📝 버튼으로 그 자리에서(인라인) 한다.
+    # 별도 그리드 섹션은 노트 화면처럼 '메모만' 필터 + 행 미리보기로 대체.
     page = "\n".join([
         "<!DOCTYPE html><html lang='ko'><head><meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
@@ -351,7 +341,6 @@ def render_kg(token: str) -> int:
         "</div>",
         "<div class='sec'>주요 개체 (연결수) — 클릭하면 관계 필터</div>",
         f"<div class='chips'>{chips}</div>",
-        memo_section,
         "<div class='controls'><input id='q' type='text' "
         "placeholder='개체·관계 검색...' autocomplete='off'>"
         "<button id='impfilter' type='button' class='reset impfilter'>"
