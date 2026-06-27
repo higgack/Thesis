@@ -78,6 +78,9 @@ _NOTE_CATS = ("주식", "공부", "그외")
 _NOTE_IMPORTANT_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+)/important/?$")
 _ASK_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/?$")
 _ASK_GET_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/(\d+)/?$")
+# GET /<token>/kg/entity?e=<name> → all edges for an entity (full degree set,
+# not just the top-3000-by-confidence the static KG page loads).
+_KG_ENTITY_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/kg/entity/?$")
 
 # Each natural-language ask is a real Gemini spend, so reject floods
 # before they ever reach the bot. Single-owner dashboard → generous.
@@ -119,11 +122,57 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self._check_basic_auth():
             return
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(self.path)
+        mke = _KG_ENTITY_RE.match(parsed.path)
+        if mke:
+            ename = (parse_qs(parsed.query).get("e") or [""])[0]
+            self._handle_kg_entity(mke.group(1), ename)
+            return
         m = _ASK_GET_RE.match(self.path)
         if m:
             self._handle_ask_get(m.group(1), int(m.group(2)))
             return
         super().do_GET()
+
+    def _handle_kg_entity(self, token: str, ename: str):
+        """Return every edge touching `ename` (full graph), enriched with
+        ★/memo/alarm state + source doc title/url, so the KG page can show
+        all of a chip's relations on click."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self.send_error(403, "forbidden")
+            return
+        ename = (ename or "").strip()
+        if not ename:
+            self._send_json({"edges": [], "count": 0})
+            return
+        try:
+            from ..store import kg as _kg, meta as _meta, marks as _marks
+            edges = _kg.edges_for_entity(ename, 1200)
+            doc_ids = list({e.get("doc_id") for e in edges if e.get("doc_id")})
+            docs = _meta.get_docs_batch(doc_ids) if doc_ids else {}
+            imp = _marks.marked("kg_edge")
+            memos = _marks.memos("kg_edge")
+            alarms = _marks.alarm_map("kg_edge")
+            out = []
+            for e in edges:
+                eid = str(e.get("id") or "")
+                d = docs.get(e.get("doc_id") or "") or {}
+                al = alarms.get(eid, {})
+                out.append({
+                    "id": eid, "src": e["src"], "rel": e["rel"], "dst": e["dst"],
+                    "c": round(e.get("confidence") or 0, 2),
+                    "important": 1 if eid in imp else 0,
+                    "memo": (memos.get(eid) or "").strip(),
+                    "src_title": (d.get("title") or "").strip(),
+                    "src_url": (d.get("source") or "").strip(),
+                    "ahhmm": al.get("hhmm", "") or "",
+                    "adate": al.get("date", "") or "",
+                })
+            self._send_json({"edges": out, "count": len(out)})
+        except Exception as e:
+            log.exception("kg entity lookup failed")
+            self.send_error(500, f"lookup failed: {e}")
 
     def do_HEAD(self):
         if not self._check_basic_auth():

@@ -136,8 +136,13 @@ _JS = r"""
   var q=document.getElementById('q'), reset=document.getElementById('reset');
   var impf=document.getElementById('impfilter');
   var memof=document.getElementById('memofilter');
+  var listEl=document.getElementById('kg-list');
+  var origList=listEl?listEl.innerHTML:'';
+  var tpl=document.getElementById('eetpl');
   var token=location.pathname.split('/').filter(Boolean)[0]||'';
   var curImp=false, curMemo=false;
+  function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function apply(){
     var t=(q?q.value:'').trim(), tl=t.toLowerCase(), shown=0;
     document.querySelectorAll('.edge').forEach(function(e){
@@ -153,42 +158,6 @@ _JS = r"""
     });
     var c=document.getElementById('cnt'); if(c)c.textContent=shown;
   }
-  if(q)q.addEventListener('input',apply);
-  if(impf)impf.addEventListener('click',function(){
-    curImp=!curImp; impf.classList.toggle('active',curImp); apply();});
-  if(memof)memof.addEventListener('click',function(){
-    curMemo=!curMemo; memof.classList.toggle('active',curMemo); apply();});
-  if(reset)reset.addEventListener('click',function(){
-    q.value=''; curImp=false; curMemo=false;
-    if(impf)impf.classList.remove('active');
-    if(memof)memof.classList.remove('active'); apply();});
-  // Chip click = filter the relation list by that entity name.
-  document.querySelectorAll('.chip').forEach(function(ch){
-    ch.addEventListener('click',function(){
-      if(q){q.value=ch.dataset.name||'';apply();
-        q.scrollIntoView({block:'center'});}
-    });
-  });
-  // 관계(엣지) ★ 토글 (kg_edge)
-  document.querySelectorAll('.edge .estar').forEach(function(btn){
-    btn.addEventListener('click',function(ev){
-      ev.preventDefault(); ev.stopPropagation();
-      var row=btn.closest('.edge'); if(!row)return;
-      var id=row.dataset.edgeid; if(!id)return;
-      var now=row.dataset.important!=='1';
-      row.dataset.important=now?'1':'0';
-      btn.textContent=now?'★':'☆'; btn.classList.toggle('on',now); apply();
-      fetch('/'+token+'/mark',{method:'POST',
-        headers:{'content-type':'application/json'},
-        body:JSON.stringify({kind:'kg_edge',id:id,important:now})})
-        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-        .catch(function(err){
-          row.dataset.important=now?'0':'1';
-          btn.textContent=now?'☆':'★'; btn.classList.toggle('on',!now); apply();
-          alert('중요 표시 변경 실패: '+err.message);
-        });
-    });
-  });
   // 관계 메모 저장 (kg_edge) — 알람은 공용 ALARM_JS가 처리.
   function wireMemo(box){
     if(box.__wired)return; box.__wired=true;
@@ -212,13 +181,30 @@ _JS = r"""
     btn.addEventListener('click',function(){ save(ta.value,'저장됨 ✓'); });
     if(del)del.addEventListener('click',function(){ ta.value=''; save('','삭제됨'); });
   }
-  document.querySelectorAll('.ent-memo').forEach(wireMemo);
-  // 📝 버튼: 관계 행 바로 아래에 메모·알람 입력칸을 펼친다(필요할 때만 생성).
-  var tpl=document.getElementById('eetpl');
-  document.querySelectorAll('.edge .ememo').forEach(function(btn){
-    btn.addEventListener('click',function(ev){
+  // 한 관계 행에 ★ 토글 + 📝 편집기 열기를 연결(초기 + 동적 추가 공용).
+  function wireEdge(row){
+    if(row.__wired)return; row.__wired=true;
+    var star=row.querySelector('.estar');
+    if(star)star.addEventListener('click',function(ev){
       ev.preventDefault(); ev.stopPropagation();
-      var row=btn.closest('.edge'); if(!row||!tpl)return;
+      var id=row.dataset.edgeid; if(!id)return;
+      var now=row.dataset.important!=='1';
+      row.dataset.important=now?'1':'0';
+      star.textContent=now?'★':'☆'; star.classList.toggle('on',now); apply();
+      fetch('/'+token+'/mark',{method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({kind:'kg_edge',id:id,important:now})})
+        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+        .catch(function(err){
+          row.dataset.important=now?'0':'1';
+          star.textContent=now?'☆':'★'; star.classList.toggle('on',!now); apply();
+          alert('중요 표시 변경 실패: '+err.message);
+        });
+    });
+    var mbtn=row.querySelector('.ememo');
+    if(mbtn)mbtn.addEventListener('click',function(ev){
+      ev.preventDefault(); ev.stopPropagation();
+      if(!tpl)return;
       var eid=row.dataset.edgeid; if(!eid)return;
       var ed=row.nextSibling;
       if(ed&&ed.classList&&ed.classList.contains('edge-editor')){
@@ -240,9 +226,6 @@ _JS = r"""
           :('매일 '+hh+' KST')):'';
         if(window.wireAlarmRow)window.wireAlarmRow(arow);
       }
-      // 삭제(메모)·해제(알람)를 눌렀는데 편집창에 아무 내용도 없으면
-      // (메모 빈칸 + 알람 미설정) 서버 호출 없이 창만 닫는다. 내용이
-      // 있으면 캡처에서 통과시켜 기존 삭제/해제가 정상 동작.
       function edEmpty(){
         var t=ed.querySelector('textarea');
         var at=ed.querySelector('.alarm-time'), adt=ed.querySelector('.alarm-dt');
@@ -258,7 +241,61 @@ _JS = r"""
       },true);
       if(ta)ta.focus();
     });
+  }
+  // JSON 엣지 → 행 HTML (Python 렌더와 동일 구조; 동적 로드용).
+  function renderEdge(e){
+    var eid=esc(e.id), imp=e.important?1:0;
+    var memo=e.memo||'', hm=memo.trim()?1:0;
+    var src_html='';
+    if(e.src_title){
+      var ttl=e.src_title.length>50?e.src_title.slice(0,50)+'…':e.src_title;
+      if((e.src_url||'').indexOf('http')===0)
+        src_html="<a class='esrc' href=\""+esc(e.src_url)+"\" target='_blank' rel='noopener' title='출처 문서 원문 열기'>📰 "+esc(ttl)+"</a>";
+      else src_html="<span class='esrc' title='출처 문서'>📰 "+esc(ttl)+"</span>";
+    }
+    var c=(typeof e.c==='number'?e.c:(parseFloat(e.c)||0)).toFixed(2);
+    return "<div class='edge' data-edgeid=\""+eid+"\" data-text=\""+esc(e.src+' '+e.rel+' '+e.dst)+"\""
+      +" data-important=\""+imp+"\" data-hasmemo=\""+hm+"\" data-memo=\""+esc(memo)+"\""
+      +" data-ahhmm=\""+esc(e.ahhmm||'')+"\" data-adate=\""+esc(e.adate||'')+"\">"
+      +"<button type='button' class='estar"+(imp?' on':'')+"' title='중요 표시 토글'>"+(imp?'★':'☆')+"</button>"
+      +"<button type='button' class='ememo"+(hm?' on':'')+"' title='메모·알람'>📝</button>"
+      +"<span class='s'>"+esc(e.src)+"</span><span class='arrow'>—</span>"
+      +"<span class='r'>"+esc(e.rel)+"</span><span class='arrow'>→</span>"
+      +"<span class='o'>"+esc(e.dst)+"</span><span class='c'>"+c+"</span>"+src_html+"</div>";
+  }
+  // 칩 클릭 = 그 개체의 전체 관계를 서버에서 받아와 표시(상위 3000 한계 우회).
+  function loadEntity(name){
+    if(!name||!listEl)return;
+    listEl.innerHTML="<div style='color:var(--muted);padding:14px'>불러오는 중…</div>";
+    fetch('/'+token+'/kg/entity?e='+encodeURIComponent(name))
+      .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+      .then(function(d){
+        var edges=d.edges||[];
+        listEl.innerHTML=edges.length?edges.map(renderEdge).join('')
+          :"<div style='color:var(--muted);padding:14px'>관계 없음</div>";
+        listEl.querySelectorAll('.edge').forEach(wireEdge);
+        if(q)q.value=name; apply();
+        if(listEl.scrollIntoView)listEl.scrollIntoView({block:'start'});
+      })
+      .catch(function(err){
+        listEl.innerHTML="<div style='color:var(--danger,#e5484d);padding:14px'>불러오기 실패: "+esc(err.message)+"</div>";});
+  }
+  if(q)q.addEventListener('input',apply);
+  if(impf)impf.addEventListener('click',function(){
+    curImp=!curImp; impf.classList.toggle('active',curImp); apply();});
+  if(memof)memof.addEventListener('click',function(){
+    curMemo=!curMemo; memof.classList.toggle('active',curMemo); apply();});
+  if(reset)reset.addEventListener('click',function(){
+    if(listEl){ listEl.innerHTML=origList;
+      listEl.querySelectorAll('.edge').forEach(wireEdge); }
+    if(q)q.value=''; curImp=false; curMemo=false;
+    if(impf)impf.classList.remove('active');
+    if(memof)memof.classList.remove('active'); apply();});
+  document.querySelectorAll('.chip').forEach(function(ch){
+    ch.addEventListener('click',function(){ loadEntity(ch.dataset.name||''); });
   });
+  document.querySelectorAll('.edge').forEach(wireEdge);
+  document.querySelectorAll('.ent-memo').forEach(wireMemo);
 })();
 """
 
@@ -392,7 +429,7 @@ def render_kg(token: str) -> int:
         f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
         f"{mtd_calls}콜 추출</div></div>",
         "</div>",
-        "<div class='sec'>주요 개체 (연결수) — 클릭하면 관계 필터</div>",
+        "<div class='sec'>주요 개체 (연결수) — 클릭하면 그 개체의 전체 관계</div>",
         f"<div class='chips'>{chips}</div>",
         "<div class='controls'><input id='q' type='text' "
         "placeholder='개체·관계 검색...' autocomplete='off'>"
@@ -403,7 +440,7 @@ def render_kg(token: str) -> int:
         "<button id='reset' type='button' class='reset'>초기화</button></div>",
         f"<div class='sec'>관계 (<span id='cnt'>{len(edges)}</span>) — "
         "☆ 중요 표시 · 📝 눌러 메모·알람 작성</div>",
-        "\n".join(rows),
+        f"<div id='kg-list'>{chr(10).join(rows)}</div>",
         "<template id='eetpl'>"
         "<div class='ent-memo' data-id=\"__EID__\">"
         "<textarea placeholder='이 관계에 대한 내 생각…'></textarea>"

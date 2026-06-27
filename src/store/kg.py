@@ -153,6 +153,21 @@ def top_entities(limit: int = 15) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def edges_for_entity(name: str, limit: int = 1200) -> list[dict]:
+    """All edges where src OR dst == name exactly (the chip's full degree
+    set), confidence-desc. Powers the dashboard 'click a 주요 개체 chip →
+    see ALL its relations' (not just the top-3000-by-confidence subset)."""
+    init()
+    if not name:
+        return []
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id,src,rel,dst,confidence,doc_id FROM edges "
+            "WHERE src=? OR dst=? ORDER BY confidence DESC LIMIT ?",
+            (name, name, int(limit))).fetchall()
+    return [dict(r) for r in rows]
+
+
 def all_edges(limit: int = 3000) -> list[dict]:
     """Every edge (confidence-desc) for the dashboard KG view."""
     init()
