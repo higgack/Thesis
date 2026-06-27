@@ -77,10 +77,11 @@ _THEME_JS = """
 _CSS = """
 :root{--bg:#f6f8fa;--panel:#fff;--panel-alt:#fafbfc;--border:#e5e7eb;
 --border-soft:#f0f2f5;--text:#1f2937;--muted:#6b7280;--accent:#3b82f6;
---primary:#10b981;--due:#f59e0b;--shadow:0 1px 3px rgba(0,0,0,.06);}
+--primary:#10b981;--due:#f59e0b;--important:#f59e0b;--memo:#10b981;
+--shadow:0 1px 3px rgba(0,0,0,.06);}
 [data-theme=dark]{--bg:#0f172a;--panel:#1e293b;--panel-alt:#172033;
 --border:#334155;--border-soft:#1e2738;--text:#f1f5f9;--muted:#cbd5e1;
---accent:#60a5fa;--primary:#10b981;--due:#fbbf24;
+--accent:#60a5fa;--primary:#10b981;--due:#fbbf24;--important:#fbbf24;--memo:#34d399;
 --shadow:0 1px 3px rgba(0,0,0,.4);}
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",
