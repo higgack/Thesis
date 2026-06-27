@@ -34,3 +34,4 @@ rag/sources/*
 # kg-gen / OpenKB local outputs (opt-in tools)
 rag/kg_output/
 rag/openkb/
+rag/hyper_extract_output/
