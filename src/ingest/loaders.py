@@ -82,7 +82,8 @@ _BLOCKED_HOSTS = (
     #     already strips these via _PLAIN_URL_STRIP_PATTERNS so
     #     blocking here has no downside.
     "finance.naver.com", "n.stock.naver.com", "stock.naver.com",
-    "dart.fss.or.kr",
+    # dart.fss.or.kr는 더 이상 하드블록하지 않음 — load_url이 OpenDART
+    # 원문 API(load_dart)로 라우팅하고, 키 없으면 일반 fetch로 폴백.
 )
 
 
@@ -205,6 +206,15 @@ async def load_url(url: str) -> tuple[str, str, str | None, list[str]]:
         rt, rb, rh = await _load_reddit(url)
         if rb and len(rb) >= _MIN_BODY_CHARS:
             return rt or url[:200], rb, rh, []
+    if "dart.fss.or.kr" in url:
+        # DART 공시: 뷰어 페이지는 본문이 JS/iframe이라 trafilatura가 TOC만
+        # 긁는다. OpenDART 원문 API(키 필요)로 전체 문서를 받는다. 키가
+        # 없거나 실패하면 일반 fetch 경로로 폴백(예전처럼 하드블록하지 않음).
+        m = _DART_RE.search(url)
+        if m:
+            dt, db, dh = await load_dart(m.group(1))
+            if db and len(db) >= _MIN_BODY_CHARS:
+                return dt or url[:200], db, dh, []
     try:
         from urllib.parse import urlparse
         host = urlparse(url).netloc.lower()
@@ -880,6 +890,61 @@ async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
     log.info("youtube: transcript_api + yt-dlp both failed for %s — %s",
              video_id, log_msg)
     return title, "", description
+
+
+_DART_RE = re.compile(r"(?:rcp_?[Nn]o|rcept_no)=(\d{14})")
+
+
+async def load_dart(rcp_no: str) -> tuple[str, str, str | None]:
+    """OpenDART 공시 원문(document.xml = XML들의 ZIP)을 텍스트로 변환.
+
+    `DART_API_KEY`(opendart.fss.or.kr 무료 발급)가 있어야 동작. 없거나
+    실패하면 ('', '', None)을 돌려 호출부(load_url)가 일반 fetch로 폴백.
+    추가 LLM 비용 없음(다운로드 + 태그 제거뿐)."""
+    import os as _os
+    key = _os.getenv("DART_API_KEY", "").strip()
+    if not key or not rcp_no:
+        return "", "", None
+    api = ("https://opendart.fss.or.kr/api/document.xml"
+           f"?crtfc_key={key}&rcept_no={rcp_no}")
+    try:
+        async with httpx.AsyncClient(timeout=40, follow_redirects=True) as c:
+            r = await c.get(api)
+            r.raise_for_status()
+            data = r.content
+    except Exception as e:
+        log.info("dart fetch failed (%s): %s", rcp_no, str(e)[:120])
+        return "", "", None
+    if data[:2] != b"PK":   # zip 매직이 아니면 에러 JSON(키 오류/문서 없음 등)
+        log.info("dart: non-zip response for %s (%s)", rcp_no,
+                 data[:120].decode("utf-8", "ignore"))
+        return "", "", None
+    import io
+    import zipfile
+    parts: list[str] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            for nm in z.namelist():
+                raw = z.read(nm)
+                for enc in ("utf-8", "cp949", "euc-kr"):
+                    try:
+                        parts.append(raw.decode(enc))
+                        break
+                    except Exception:
+                        continue
+    except Exception as e:
+        log.info("dart unzip failed (%s): %s", rcp_no, str(e)[:120])
+        return "", "", None
+    xml = "\n".join(parts)
+    title = ""
+    m = re.search(r"<DOCUMENT-NAME[^>]*>(.*?)</DOCUMENT-NAME>", xml, re.S)
+    if m:
+        title = re.sub(r"<[^>]+>", "", m.group(1)).strip()
+    body = re.sub(r"<[^>]+>", " ", xml)        # strip all tags
+    body = re.sub(r"&[a-zA-Z#0-9]+;", " ", body)
+    body = re.sub(r"[ \t]+", " ", body)
+    body = re.sub(r"\n\s*\n+", "\n\n", body).strip()
+    return (title or f"DART {rcp_no}"), body[:200000], None
 
 
 async def load_arxiv(arxiv_id: str) -> tuple[str, str, str | None]:
