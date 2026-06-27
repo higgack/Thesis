@@ -29,6 +29,11 @@ dependencies = [
     "yt-dlp[default]>=2026.3.17",
     "python-dotenv>=1.0.1",
     "httpx>=0.27.0",
+    # curl_cffi forges a real browser TLS/JA3 fingerprint (not just a UA
+    # string), so it clears Cloudflare/WAF 403s that plain httpx can't.
+    # Used only as a fallback rung in load_url when httpx returns empty/
+    # blocked, before the Jina render fallback. No API key.
+    "curl_cffi>=0.7.0",
     "tiktoken>=0.8.0",
     "rank-bm25>=0.2.2",
     "tenacity>=9.0.0",

@@ -198,6 +198,13 @@ async def load_url(url: str) -> tuple[str, str, str | None, list[str]]:
     if m := _ARXIV_RE.search(url):
         t, b, h = await load_arxiv(m.group(1))
         return t, b, h, []
+    if _is_reddit(url):
+        # Reddit's public .json endpoint returns the post + comments without
+        # JS/auth — Phase-0 style. Falls through to the normal fetch if it's
+        # rate-limited (403), so nothing is lost.
+        rt, rb, rh = await _load_reddit(url)
+        if rb and len(rb) >= _MIN_BODY_CHARS:
+            return rt or url[:200], rb, rh, []
     try:
         from urllib.parse import urlparse
         host = urlparse(url).netloc.lower()
@@ -244,11 +251,45 @@ async def load_url(url: str) -> tuple[str, str, str | None, list[str]]:
         if dom:
             body = dom
 
+    # Still thin → retry the fetch with curl_cffi's real browser TLS
+    # fingerprint. Clears Cloudflare/WAF 403s that the UA-only httpx call
+    # above can't (and covers the case where httpx raised, html == "").
+    if _is_js_placeholder(body):
+        cffi_html = await _fetch_html_impersonate(fetch_url, headers)
+        if cffi_html:
+            c_title, c_body, c_hint = await asyncio.to_thread(
+                _parse_html, fetch_url, cffi_html)
+            if _is_js_placeholder(c_body):
+                dom2 = await asyncio.to_thread(_extract_dom_body, cffi_html)
+                if dom2:
+                    c_body = dom2
+            if c_body and len(c_body) >= _MIN_BODY_CHARS:
+                title = c_title or title
+                body = c_body
+                hint = c_hint or hint
+                if not links:
+                    links = await asyncio.to_thread(
+                        _extract_content_links, cffi_html, str(fetch_url))
+
     if _is_js_placeholder(body):
         try:
             # Use the rewritten URL (e.g. Naver PostView) so Jina renders
             # the content endpoint, not the JS-only wrapper page.
             j_title, j_body, j_hint = await _load_via_jina(fetch_url)
+            if j_body and len(j_body) >= _MIN_BODY_CHARS:
+                title = j_title or title
+                body = j_body
+                hint = j_hint or hint
+        except Exception:
+            pass
+
+    # Last resort: Jina with its real headless-browser engine. Slower but
+    # renders stubborn SPA pages (e.g. notion.site) that the default Jina
+    # mode returns empty for.
+    if _is_js_placeholder(body):
+        try:
+            j_title, j_body, j_hint = await _load_via_jina(
+                fetch_url, engine="browser")
             if j_body and len(j_body) >= _MIN_BODY_CHARS:
                 title = j_title or title
                 body = j_body
@@ -313,11 +354,22 @@ def _is_js_placeholder(body: str) -> bool:
     return any(p in low for p in _JS_PLACEHOLDER_PATTERNS)
 
 
-async def _load_via_jina(url: str) -> tuple[str, str, str | None]:
-    """r.jina.ai renders JS and returns clean markdown. Free, no auth."""
+async def _load_via_jina(url: str,
+                         engine: str | None = None) -> tuple[str, str, str | None]:
+    """r.jina.ai renders JS and returns clean markdown. Free, no auth.
+
+    engine="browser" forces Jina's full headless-browser engine — slower,
+    but renders stubborn SPA pages (Notion etc.) the default mode misses.
+    """
     api_url = f"https://r.jina.ai/{url}"
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True,
-                                 headers={"Accept": "text/plain"}) as c:
+    headers = {"Accept": "text/plain"}
+    timeout = 60.0
+    if engine:
+        headers["X-Engine"] = engine          # "browser" = real headless render
+        headers["X-Timeout"] = "30"
+        timeout = 90.0
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True,
+                                 headers=headers) as c:
         r = await c.get(api_url)
         r.raise_for_status()
         text = r.text
@@ -329,6 +381,77 @@ async def _load_via_jina(url: str) -> tuple[str, str, str | None]:
         if "Title:" in head:
             title = head.split("Title:", 1)[1].split("\n", 1)[0].strip()
     return title, body, None
+
+
+async def _fetch_html_impersonate(url: str, headers: dict) -> str:
+    """Re-fetch with curl_cffi forging a real Chrome TLS/JA3 fingerprint.
+    Bypasses many Cloudflare/WAF 403s that the UA-only httpx call can't.
+    Returns html text, or '' on any failure / non-HTML / blocked status.
+    Best-effort: a missing curl_cffi dep just yields ''."""
+    def _go() -> str:
+        try:
+            from curl_cffi import requests as _cffi
+        except Exception:
+            return ""
+        try:
+            r = _cffi.get(url, headers=headers, impersonate="chrome",
+                          timeout=30, allow_redirects=True)
+        except Exception:
+            return ""
+        if r.status_code >= 400:
+            return ""
+        ct = (r.headers.get("content-type") or "").lower()
+        if ct and "html" not in ct and "text" not in ct:
+            return ""  # PDFs etc. are handled by the primary httpx path
+        try:
+            return r.text or ""
+        except Exception:
+            return ""
+    return await asyncio.to_thread(_go)
+
+
+_REDDIT_RE = re.compile(r"(?:^|\.)reddit\.com$")
+
+
+def _is_reddit(url: str) -> bool:
+    try:
+        from urllib.parse import urlparse
+        return bool(_REDDIT_RE.search(urlparse(url).netloc.lower()))
+    except Exception:
+        return False
+
+
+async def _load_reddit(url: str) -> tuple[str, str, str | None]:
+    """Reddit exposes any post at <url>.json (post + comments, no auth).
+    Returns (title, body, None); ('', '', None) on block/parse failure so
+    the caller falls back to the normal fetch path."""
+    base = url.split("?")[0].split("#")[0].rstrip("/")
+    api = base if base.endswith(".json") else base + ".json"
+    headers = {"User-Agent": _BROWSER_UA}
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True,
+                                     headers=headers) as c:
+            r = await c.get(api)
+            r.raise_for_status()
+            data = r.json()
+    except Exception:
+        return "", "", None
+    try:
+        post = data[0]["data"]["children"][0]["data"]
+        title = (post.get("title") or "").strip()
+        parts: list[str] = []
+        if (post.get("selftext") or "").strip():
+            parts.append(post["selftext"].strip())
+        if len(data) > 1:
+            for ch in data[1]["data"]["children"][:25]:
+                d = ch.get("data", {})
+                cbody = (d.get("body") or "").strip()
+                author = d.get("author") or ""
+                if cbody and author not in ("AutoModerator", "", "[deleted]"):
+                    parts.append(f"— {author}: {cbody}")
+        return title, "\n\n".join(parts).strip(), None
+    except Exception:
+        return "", "", None
 
 
 def _parse_html(url: str, html: str) -> tuple[str, str, str | None]:
