@@ -185,6 +185,35 @@ def save_note(note: dict) -> str:
     return note_id
 
 
+def resync_note(note_id: str, *, title: str, md: str, questions: list[dict],
+                cost_krw: float = 0.0, gen_seconds: float = 0.0) -> bool:
+    """Overwrite an existing note's content IN PLACE (same id) — used to
+    re-learn notes that were synthesised wrongly (the title/body bug).
+    Keeps the note id, SRS state, category, and 중요(important) flag so
+    dashboard memos/alarms keyed by id and review progress survive.
+    Returns False if the note id is unknown."""
+    init_db()
+    with _conn() as c:
+        row = c.execute("SELECT md_path FROM notes WHERE id=?",
+                        (note_id,)).fetchone()
+        if row is None:
+            return False
+        _atomic_write_text(Path(row["md_path"]), md or "")
+        now = _now()
+        c.execute("UPDATE notes SET title=?, updated=?, cost_krw=?, "
+                  "gen_seconds=? WHERE id=?",
+                  (title or note_id, now, float(cost_krw or 0.0),
+                   float(gen_seconds or 0.0), note_id))
+        c.execute("DELETE FROM questions WHERE note_id=?", (note_id,))
+        for q in questions or []:
+            c.execute("INSERT INTO questions(note_id,question,answer,q_type) "
+                      "VALUES(?,?,?,?)",
+                      (note_id, q.get("question", ""), q.get("answer", ""),
+                       q.get("q_type", "recall")))
+    log.info("note resynced in place: %s", note_id)
+    return True
+
+
 def record_review(note_id: str, grade: int) -> dict | None:
     """Apply a self-grade: advance SRS state, set timestamps, log the
     review. Returns the new SRS row (or None if the note is unknown)."""

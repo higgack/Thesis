@@ -4416,6 +4416,44 @@ async def cmd_kg_extract(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML")
 
 
+async def cmd_notes_resync(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Repair URL/YouTube study notes that were synthesised from the title
+    (the title/body unpack bug). Re-fetches + re-synthesises in place
+    (keeps id/SRS/중요/메모), capped at N (default 10, max 50)."""
+    if not _is_owner(update):
+        return
+    from .notes import store as _ns, channel as _nc
+    n = 10
+    if ctx.args:
+        try:
+            n = max(1, min(int(ctx.args[0]), 50))
+        except Exception:
+            n = 10
+    notes = await asyncio.to_thread(_ns.list_notes)
+    targets = [x for x in notes
+               if (x.get("source_type") in ("web", "blog", "youtube"))
+               and (x.get("source_ref") or "").startswith("http")][:n]
+    if not targets:
+        await update.message.reply_text("재학습할 URL/유튜브 노트가 없어.")
+        return
+    res = {"ok": 0, "empty": 0, "synthfail": 0, "skip": 0}
+    async with _SustainedTyping(update, ctx):
+        for t in targets:
+            try:
+                st = await _nc.resync_one(t)
+            except Exception:
+                log.exception("notes_resync failed for %s", t.get("id"))
+                st = "synthfail"
+            res[st] = res.get(st, 0) + 1
+    await update.message.reply_text(
+        "📒 <b>노트 재학습 완료</b>\n"
+        f"• 대상: {len(targets)}개 (web/blog/youtube, 최신순)\n"
+        f"• ✅ 갱신 {res['ok']} · ⚠️ 본문 못가져옴 {res['empty']} · "
+        f"❌ 합성 실패 {res['synthfail']}\n"
+        "ℹ️ 더 남았으면 <code>/notes_resync 50</code> 으로 추가 실행.",
+        parse_mode="HTML")
+
+
 async def cmd_kg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """KG trial: show the triples around an entity, or overview + top
     entities when called bare."""
@@ -13129,6 +13167,7 @@ def main():
     app.add_handler(CommandHandler("reset_blocked_hosts", cmd_reset_blocked_hosts))
     app.add_handler(CommandHandler("unignore", cmd_unignore))
     app.add_handler(CommandHandler("kg_extract", cmd_kg_extract))
+    app.add_handler(CommandHandler("notes_resync", cmd_notes_resync))
     app.add_handler(CommandHandler("kg", cmd_kg))
     app.add_handler(CommandHandler("orphans", cmd_orphans))
     app.add_handler(CommandHandler("recover_orphans", cmd_recover_orphans))

@@ -109,6 +109,32 @@ async def ingest_text(source_type: str, source_ref: str, raw_text: str,
     return nid
 
 
+async def resync_one(note: dict) -> str:
+    """Re-fetch + re-synthesise an existing URL/YouTube note IN PLACE.
+    Used to repair notes synthesised from the title (the title/body bug).
+    Returns: 'ok' | 'skip' (non-url) | 'empty' (fetch failed) |
+    'synthfail'. Non-destructive: the old note is kept on any failure."""
+    ref = (note.get("source_ref") or "").strip()
+    stype = note.get("source_type") or "web"
+    if not ref.startswith("http"):
+        return "skip"
+    vid = loaders.is_youtube(ref)
+    if vid:
+        title, body, _ = await loaders.load_youtube(vid, ref)
+    else:
+        title, body, _h, _l = await loaders.load_url(ref)
+    if not (body or "").strip() or len((body or "").strip()) < 40:
+        return "empty"
+    new = await synth.synthesize(stype, ref, body, title)
+    if not new:
+        return "synthfail"
+    ok = store.resync_note(
+        note["id"], title=new.get("title") or title or note.get("title") or "",
+        md=new.get("md") or "", questions=new.get("questions") or [],
+        cost_krw=new.get("cost_krw"), gen_seconds=new.get("gen_seconds"))
+    return "ok" if ok else "synthfail"
+
+
 async def ingest_url(url: str) -> str | None:
     vid = loaders.is_youtube(url)
     if vid:
