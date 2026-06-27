@@ -180,15 +180,24 @@ def edge_by_id(edge_id) -> dict | None:
 def context_for(query: str, limit: int = 12) -> list[dict]:
     """High-confidence edges whose subject/object overlaps the query's
     tokens — injected into answers so the LLM sees relevant relationships.
-    Returns [] when the graph is empty or nothing matches (₩0, local)."""
+    Returns [] when the graph is empty or nothing matches (₩0, local).
+
+    Matching is slug-insensitive (spaces stripped + lowercased on both
+    sides) so stored variants like "삼성 전기"/"SAMSUNG" still match a
+    "삼성전기"/"samsung" query — recall without touching stored data.
+    Read-time only; no entity canonicalization is written back (that would
+    risk over-merging distinct fine-grained entities)."""
     init()
     toks = [t for t in _TOK_RE.findall(query or "") if len(t) >= 2][:8]
     if not toks:
         return []
-    clause = " OR ".join(["src LIKE ? OR dst LIKE ?"] * len(toks))
+    clause = " OR ".join(
+        ["REPLACE(LOWER(src),' ','') LIKE ? "
+         "OR REPLACE(LOWER(dst),' ','') LIKE ?"] * len(toks))
     params: list = []
     for t in toks:
-        params += [f"%{t}%", f"%{t}%"]
+        s = "%" + t.lower().replace(" ", "") + "%"
+        params += [s, s]
     params.append(int(limit))
     with _conn() as c:
         try:
