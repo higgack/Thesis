@@ -731,6 +731,75 @@ def _parse_subtitle_payload(content: str) -> str:
     return "\n".join(out)
 
 
+# YouTube audio-transcription fallback: cap duration so a 3h livestream
+# can't run up cost/time, and so the re-encoded mp3 stays under Gemini's
+# ~20MB inline limit (60min @ 32kbps mono 16kHz ≈ 14MB).
+_YT_AUDIO_MAX_MIN = 60
+_YT_AUDIO_MAX_BYTES = 19_000_000
+
+
+async def _fetch_youtube_audio(video_id: str) -> tuple[bytes, str]:
+    """Download a caption-less video's audio as low-bitrate mono mp3 so it
+    fits Gemini's inline limit, for the transcription fallback. Returns
+    (bytes, mime) or (b'', '') on cap-exceeded / no-ffmpeg / any failure —
+    so load_youtube degrades to its existing empty-body path. Reuses the
+    burner cookies if present (same bot-wall workaround as subtitles)."""
+    try:
+        from yt_dlp import YoutubeDL
+    except Exception:
+        return b"", ""
+    import os as _os
+    import glob as _glob
+    import shutil as _shutil
+    import tempfile as _tempfile
+    url = f"https://www.youtube.com/watch?v={video_id}"
+
+    def _dl() -> tuple[bytes, str, str]:
+        tmpd = _tempfile.mkdtemp(prefix="ytaud_")
+        opts = {
+            "quiet": True, "no_warnings": True,
+            "format": "bestaudio/best",
+            "outtmpl": _os.path.join(tmpd, "%(id)s.%(ext)s"),
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "32",   # 32 kbps
+            }],
+            "postprocessor_args": ["-ac", "1", "-ar", "16000"],  # mono 16kHz
+        }
+        try:
+            from .. import config as _cfg
+            _ck = getattr(_cfg, "YT_COOKIES_FILE", "") or ""
+            if _ck and _os.path.exists(_ck):
+                opts["cookiefile"] = _ck
+        except Exception:
+            pass
+        try:
+            with YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                dur = (info or {}).get("duration") or 0
+                if dur and dur > _YT_AUDIO_MAX_MIN * 60:
+                    return b"", "", f"too_long({int(dur)}s)"
+                ydl.download([url])
+            mp3s = _glob.glob(_os.path.join(tmpd, "*.mp3"))
+            if not mp3s:
+                return b"", "", "no_output"
+            with open(mp3s[0], "rb") as f:
+                data = f.read()
+            if len(data) > _YT_AUDIO_MAX_BYTES:
+                return b"", "", f"too_big({len(data)}B)"
+            return data, "audio/mpeg", ""
+        except Exception as e:
+            return b"", "", str(e)[:160]
+        finally:
+            _shutil.rmtree(tmpd, ignore_errors=True)
+
+    data, mime, err = await asyncio.to_thread(_dl)
+    if err:
+        log.info("youtube audio fetch skipped/failed (%s): %s", video_id, err)
+    return data, mime
+
+
 async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
     title = f"YouTube {video_id}"
     description = None
@@ -775,6 +844,27 @@ async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
     yt_dlp_text = await _fetch_youtube_subs_yt_dlp(video_id)
     if yt_dlp_text:
         return title, yt_dlp_text, description
+
+    # Final fallback: no captions anywhere (the common reason a video lands
+    # here) → download the audio and let Gemini transcribe it on ANSWER_MODEL
+    # (flash) so the resulting note matches normal note quality. Fully
+    # guarded: any failure (cap, bot-walled download, no ffmpeg) falls back
+    # to the empty-body path below. Only fires when both caption fetchers
+    # missed, so it adds zero cost to the ~90% of videos that have captions.
+    try:
+        from .. import config as _cfg
+        audio, amime = await _fetch_youtube_audio(video_id)
+        if audio:
+            tx = await transcribe_audio_async(
+                audio, mime_type=amime, model=_cfg.ANSWER_MODEL,
+                max_tokens=32768, purpose="yt_transcribe")
+            if tx and tx.strip():
+                log.info("youtube: Gemini audio transcription ok for %s "
+                         "(%d chars)", video_id, len(tx))
+                return title, tx.strip(), description
+    except Exception as e:
+        log.info("youtube audio transcription fallback failed for %s: %s",
+                 video_id, str(e)[:160])
 
     # Both transcript fetchers failed. Previously we returned a stub
     # body with manual-paste instructions, but the pipeline ingested it
@@ -1278,10 +1368,16 @@ async def ocr_image_async(img_bytes: bytes, mime_type: str = "image/jpeg") -> st
     return await asyncio.to_thread(_ocr_image, img_bytes, mime_type)
 
 
-def _transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
+def _transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg",
+                      model: str | None = None, max_tokens: int = 8192,
+                      purpose: str = "ingest") -> str:
     """Gemini Audio STT. Used for Telegram voice notes and uploaded audio
     files. Cost ~₩50 per audio hour on gemini-2.5-flash-lite. Inline byte
-    limit is ~20MB; longer recordings should be split client-side."""
+    limit is ~20MB; longer recordings should be split client-side.
+
+    model/max_tokens/purpose let callers override the default (e.g. the
+    YouTube fallback transcribes on ANSWER_MODEL/flash for note-grade
+    quality with a higher output cap)."""
     try:
         from google.genai import types
         from .. import config
@@ -1289,6 +1385,7 @@ def _transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
     except Exception:
         return ""
     client = config.make_genai_client()
+    model = model or config.SUMMARY_MODEL
     prompt = (
         "이 오디오를 그대로 받아쓰기 하세요. 화자가 여럿이면 단락으로 "
         "구분하고, 들리는 언어 그대로(한국어/영어 등) 출력하세요. "
@@ -1296,24 +1393,27 @@ def _transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
     )
     try:
         resp = client.models.generate_content(
-            model=config.SUMMARY_MODEL,
+            model=model,
             contents=[
                 types.Part.from_bytes(data=audio_bytes, mime_type=mime_type),
                 types.Part.from_text(text=prompt),
             ],
             config=types.GenerateContentConfig(
                 temperature=0.0,
-                max_output_tokens=8192,
+                max_output_tokens=max_tokens,
             ),
         )
-        _cost.record_resp(config.SUMMARY_MODEL, resp, purpose="ingest")
+        _cost.record_resp(model, resp, purpose=purpose)
         return (resp.text or "").strip()
     except Exception:
         return ""
 
 
-async def transcribe_audio_async(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
-    return await asyncio.to_thread(_transcribe_audio, audio_bytes, mime_type)
+async def transcribe_audio_async(audio_bytes: bytes, mime_type: str = "audio/ogg",
+                                 model: str | None = None, max_tokens: int = 8192,
+                                 purpose: str = "ingest") -> str:
+    return await asyncio.to_thread(
+        _transcribe_audio, audio_bytes, mime_type, model, max_tokens, purpose)
 
 
 async def _load_pdf_from_bytes(data: bytes, source_url: str) -> tuple[str, str, str | None]:
