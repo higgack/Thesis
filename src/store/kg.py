@@ -55,7 +55,17 @@ def _conn():
         c.close()
 
 
+_inited = False
+
+
 def init() -> None:
+    # Run the DDL once per process. Every read path used to call init() →
+    # repeated CREATE…IF NOT EXISTS each grabs a brief write lock, which
+    # contends with concurrent ingest writes (and across processes) →
+    # 'database is locked'. After the first success it's a no-op.
+    global _inited
+    if _inited:
+        return
     with _conn() as c:
         c.execute(
             "CREATE TABLE IF NOT EXISTS edges("
@@ -69,6 +79,7 @@ def init() -> None:
         # Same triple from the same doc shouldn't pile up on re-extract.
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_kg_uniq "
                   "ON edges(src, rel, dst, doc_id)")
+    _inited = True
 
 
 def add_edges(doc_id: str, triples: list[dict]) -> int:
@@ -156,16 +167,24 @@ def top_entities(limit: int = 15) -> list[dict]:
 def edges_for_entity(name: str, limit: int = 1200) -> list[dict]:
     """All edges where src OR dst == name exactly (the chip's full degree
     set), confidence-desc. Powers the dashboard 'click a 주요 개체 chip →
-    see ALL its relations' (not just the top-3000-by-confidence subset)."""
-    init()
+    see ALL its relations' (not just the top-3000-by-confidence subset).
+
+    READ-ONLY — must NOT call init(). This runs in the dashboard SERVER
+    process; init()'s CREATE TABLE/INDEX is a write-lock that collides with
+    the bot writing kg.db during ingest → 'database is locked'. The table
+    already exists (created by the bot), so a plain SELECT is enough; if it
+    somehow doesn't, we return [] gracefully."""
     if not name:
         return []
-    with _conn() as c:
-        rows = c.execute(
-            "SELECT id,src,rel,dst,confidence,doc_id FROM edges "
-            "WHERE src=? OR dst=? ORDER BY confidence DESC LIMIT ?",
-            (name, name, int(limit))).fetchall()
-    return [dict(r) for r in rows]
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT id,src,rel,dst,confidence,doc_id FROM edges "
+                "WHERE src=? OR dst=? ORDER BY confidence DESC LIMIT ?",
+                (name, name, int(limit))).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
 
 
 def all_edges(limit: int = 3000) -> list[dict]:
