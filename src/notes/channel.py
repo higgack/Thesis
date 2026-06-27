@@ -97,6 +97,15 @@ async def ingest_text(source_type: str, source_ref: str, raw_text: str,
                       title: str | None = None) -> str | None:
     """Core path: synthesise a note from already-extracted text, persist
     it. Returns the note id or None."""
+    # RAG-style dedup: if this source (URL/file) already has a note, skip
+    # — no duplicate note, no wasted LLM synth. Plain-text shares the
+    # constant ref "study-text", so it's excluded (would collide).
+    if source_type != "text" and source_ref:
+        dup = await asyncio.to_thread(store.note_id_by_source, source_ref)
+        if dup:
+            log.info("notes ingest: duplicate source '%s' → skip (note %s)",
+                     source_ref, dup)
+            return dup
     log.info("notes ingest: %s '%s' (%d chars)",
              source_type, source_ref, len((raw_text or "")))
     note = await synth.synthesize(source_type, source_ref, raw_text, title)
