@@ -32,9 +32,14 @@
 ## 🛠 도구 검토 (docs/tooling/)
 - [전체 평가서 (RAG/KB/KG 7종)](tooling/rag-kb-tools-eval-2026-06.md)
 - 채택(opt-in): [kg-gen](tooling/kg-gen.md) · [OpenKB](tooling/openkb.md) · [rtk](tooling/rtk.md) · [notebooklm-mcp](tooling/notebooklm-mcp.md) · [ppt-master](tooling/ppt-master.md)
-- 조건부: [Unlimited-OCR](tooling/unlimited-ocr.md) (GPU+스캔)
+- 조건부: [Unlimited-OCR](tooling/unlimited-ocr.md) (GPU+스캔) · [Kami](tooling/kami.md) (부차 산출물 디자인)
 - 세션관리 선별도입: [sovereign-skills](tooling/sovereign-skills.md) (session-start/checkpoint)
-- 미채택(검토기록): [lat.md](tooling/lat-md.md)
+- 미채택(검토기록): [lat.md](tooling/lat-md.md) · [awesome-design-md](tooling/awesome-design-md.md) (UI용, 부적용)
+
+## 🧠 세션 연속성 (memory/ · tasks/)
+- [memory/session-handoff-LATEST.md](../memory/session-handoff-LATEST.md) — 다음 세션 우선순위·미결·블로커
+- [tasks/lessons.md](../tasks/lessons.md) — 교정 규칙 + 졸업 게이트
+- 사용: 세션 끝 "체크포인트" 저장 → 커밋 / 새 세션 "세션 시작"으로 복원
 
 ## 🗺 빠른 길잡이
 - **논문 읽기/제출** → rev4 (`.docx`)
