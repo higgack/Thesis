@@ -25,6 +25,7 @@
 
 ## 🧩 스킬 suite (academic-research-skills, vendored)
 - 스킬: `.claude/skills/` → deep-research · academic-paper · academic-paper-reviewer · academic-pipeline
+- 세션관리(sovereign-skills, MIT): **session-start** · **session-checkpoint** (핸드오프 → `memory/`·`tasks/`)
 - 커맨드/에이전트: `commands/` · `agents/` · 공유: `shared/` · 스크립트: `scripts/`
 - 상위 문서: [ACADEMIC_RESEARCH_SKILLS.md](../ACADEMIC_RESEARCH_SKILLS.md) · [QUICKSTART.md](../QUICKSTART.md)
 
@@ -32,6 +33,7 @@
 - [전체 평가서 (RAG/KB/KG 7종)](tooling/rag-kb-tools-eval-2026-06.md)
 - 채택(opt-in): [kg-gen](tooling/kg-gen.md) · [OpenKB](tooling/openkb.md) · [rtk](tooling/rtk.md) · [notebooklm-mcp](tooling/notebooklm-mcp.md) · [ppt-master](tooling/ppt-master.md)
 - 조건부: [Unlimited-OCR](tooling/unlimited-ocr.md) (GPU+스캔)
+- 세션관리 선별도입: [sovereign-skills](tooling/sovereign-skills.md) (session-start/checkpoint)
 - 미채택(검토기록): [lat.md](tooling/lat-md.md)
 
 ## 🗺 빠른 길잡이
