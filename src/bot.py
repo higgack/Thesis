@@ -10948,7 +10948,17 @@ def _alarm_card_text(kind: str, item_id: str) -> tuple[str, str]:
             e = _kg.edge_by_id(item_id)
             if e:
                 rel = f"{e['src']} —{e['rel']}→ {e['dst']}"
-                return (rel, "")
+                # 통일: 메모 없이 알람만 걸어도 출처 문서 본문이 오게.
+                body = ""
+                did = e.get("doc_id")
+                if did:
+                    from .store import meta as _meta
+                    d = _meta.get_doc(did) or {}
+                    stitle = (d.get("title") or "").strip()
+                    summ = (d.get("summary") or "").strip()
+                    if stitle or summ:
+                        body = ((stitle + "\n") if stitle else "") + summ[:600]
+                return (rel, body)
         elif kind == "kg_entity":
             from .store import kg as _kg
             edges = _kg.neighbors(item_id, 8)
