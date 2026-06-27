@@ -70,8 +70,8 @@ text-overflow:ellipsis;white-space:nowrap}
 a.esrc:hover{color:var(--primary);text-decoration:underline}
 .estar{cursor:pointer;background:transparent;border:0;color:var(--muted);
 font-size:15px;line-height:1;padding:0 2px;transition:.12s}
-.estar:hover{color:#f59e0b;transform:scale(1.15)}
-.estar.on{color:#f59e0b}
+.estar:hover{color:var(--important);transform:scale(1.15)}
+.estar.on{color:var(--important)}
 .ememo{cursor:pointer;background:transparent;border:0;opacity:.45;
 font-size:14px;line-height:1;padding:0 2px;transition:.12s}
 .ememo:hover{opacity:1;transform:scale(1.15)}
@@ -109,10 +109,10 @@ padding:5px 10px;font-weight:600}
 .alarm-status{font-size:11px;color:#818cf8}
 .controls .impfilter{background:var(--panel);border:1px solid var(--border);
 color:var(--muted)}
-.controls .impfilter.active{background:#f59e0b;border-color:#f59e0b;color:#fff}
+.controls .impfilter.active{background:var(--important);border-color:var(--important);color:#fff}
 .controls .memofilter{background:var(--panel);border:1px solid var(--border);
 color:var(--muted)}
-.controls .memofilter.active{background:#10b981;border-color:#10b981;color:#fff}
+.controls .memofilter.active{background:var(--memo);border-color:var(--memo);color:#fff}
 .arrow{color:var(--muted)}
 mark.kw{background:#fef08a;color:inherit;border-radius:2px;padding:0 1px}
 [data-theme=dark] mark.kw{background:#fbbf24;color:#0f172a}

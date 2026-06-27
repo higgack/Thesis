@@ -393,8 +393,8 @@ header .sub { color: var(--muted); font-size: 13px; }
   font-size: 16px; line-height: 1; padding: 2px 5px; border-radius: 6px;
   transition: 0.12s;
 }
-.star-btn:hover { color: #f59e0b; transform: scale(1.15); }
-.star-btn.on { color: #f59e0b; }
+.star-btn:hover { color: var(--important); transform: scale(1.15); }
+.star-btn.on { color: var(--important); }
 .qna-card[data-important="1"] {
   border-color: rgba(245, 158, 11, 0.5);
   background: rgba(245, 158, 11, 0.06);
@@ -424,9 +424,9 @@ header .sub { color: var(--muted); font-size: 13px; }
 .alarm-clear { background: rgba(148,163,184,.25); color: var(--muted); }
 .alarm-status { font-size: 11px; color: #818cf8; }
 .controls button.impfilter { background: var(--panel); border: 1px solid var(--border); color: var(--muted); }
-.controls button.impfilter.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+.controls button.impfilter.active { background: var(--important); border-color: var(--important); color: #fff; }
 .controls button.memofilter { background: var(--panel); border: 1px solid var(--border); color: var(--muted); }
-.controls button.memofilter.active { background: #10b981; border-color: #10b981; color: #fff; }
+.controls button.memofilter.active { background: var(--memo); border-color: var(--memo); color: #fff; }
 
 .dash-cmd-link {
   color: var(--primary) !important; cursor: pointer;
