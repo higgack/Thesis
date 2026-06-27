@@ -75,18 +75,23 @@ _THEME_JS = """
 """
 
 _CSS = """
-:root{--bg:#f6f8fa;--panel:#fff;--panel-alt:#fafbfc;--border:#e5e7eb;
---border-soft:#f0f2f5;--text:#1f2937;--muted:#6b7280;--accent:#3b82f6;
---primary:#10b981;--due:#f59e0b;--important:#f59e0b;--memo:#10b981;
---shadow:0 1px 3px rgba(0,0,0,.06);}
-[data-theme=dark]{--bg:#0f172a;--panel:#1e293b;--panel-alt:#172033;
---border:#334155;--border-soft:#1e2738;--text:#f1f5f9;--muted:#cbd5e1;
---accent:#60a5fa;--primary:#10b981;--due:#fbbf24;--important:#fbbf24;--memo:#34d399;
---shadow:0 1px 3px rgba(0,0,0,.4);}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+/* Linear-style (DESIGN.md): thin borders, indigo #5e6ad2, Inter. */
+:root{--bg:#f7f8f9;--panel:#fff;--panel-alt:#f0f1f3;--border:#e8e8ea;
+--border-input:#e0e1e4;--border-soft:#eef0f2;--text:#282a30;--heading:#16171a;
+--muted:#8a8f98;--accent:#5e6ad2;--accent-hover:#515dc4;
+--primary:#5e6ad2;--due:#f5a623;--important:#f5a623;--memo:#2faf6a;--danger:#e5484d;
+--shadow:0 1px 2px rgba(0,0,0,.03);}
+[data-theme=dark]{--bg:#0b0c0e;--panel:#141518;--panel-alt:#1c1d21;
+--border:#26272b;--border-input:#2a2c31;--border-soft:#1f2024;--text:#e2e3e6;
+--heading:#f7f8f8;--muted:#8a8f98;--accent:#7c84e8;--accent-hover:#9aa2f0;
+--primary:#5e6ad2;--due:#f5a623;--important:#f5a623;--memo:#3fbf7a;--danger:#f2555a;
+--shadow:none;}
 *{box-sizing:border-box}
-body{margin:0;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",
-"Apple SD Gothic Neo","Noto Sans KR",sans-serif;background:var(--bg);
-color:var(--text)}
+body{margin:0;font:15px/1.5 'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",
+"Apple SD Gothic Neo","Noto Sans KR",sans-serif;-webkit-font-smoothing:antialiased;
+background:var(--bg);color:var(--text);transition:background-color .3s,color .3s}
+h1,h2,h3{color:var(--heading);letter-spacing:-0.014em}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .layout{max-width:900px;margin:0 auto;padding:28px 22px 80px}
 main{max-width:820px;margin:0 auto;padding:28px 22px 80px}

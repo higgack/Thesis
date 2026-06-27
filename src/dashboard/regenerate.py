@@ -36,38 +36,45 @@ log = logging.getLogger(__name__)
 _LOCK = threading.Lock()
 
 _BASE_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+/* Linear-style: near-white/black surfaces, thin borders (minimal shadow),
+   indigo accent #5e6ad2, Inter, tight headings. (DESIGN.md) */
 :root {
-  --bg: #f6f8fa; --panel: #ffffff; --panel-alt: #fafbfc;
-  --border: #e5e7eb; --border-soft: #f0f2f5;
-  --text: #1f2937; --muted: #6b7280; --accent: #3b82f6;
-  --primary: #10b981;
-  --important: #f59e0b; --memo: #10b981;
-  --warning-text: #78350f;
+  --bg: #f7f8f9; --panel: #ffffff; --panel-alt: #f0f1f3;
+  --border: #e8e8ea; --border-input: #e0e1e4; --border-soft: #eef0f2;
+  --text: #282a30; --heading: #16171a; --muted: #8a8f98;
+  --accent: #5e6ad2; --accent-hover: #515dc4;
+  --primary: #5e6ad2;
+  --important: #f5a623; --memo: #2faf6a; --danger: #e5484d;
+  --warning-text: #92400e;
   --tool-brain: #ec4899; --tool-paper: #a855f7;
-  --tool-patent: #3b82f6; --tool-report: #14b8a6;
-  --tool-web: #10b981; --tool-ingest: #f59e0b;
-  --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.06);
+  --tool-patent: #5e6ad2; --tool-report: #14b8a6;
+  --tool-web: #2faf6a; --tool-ingest: #f5a623;
+  --shadow: 0 1px 2px rgba(0,0,0,0.03);
 }
 [data-theme="dark"] {
-  --bg: #0f172a; --panel: #1e293b; --panel-alt: #172033;
-  --border: #334155; --border-soft: #1e2738;
-  --text: #f1f5f9; --muted: #cbd5e1; --accent: #60a5fa;
-  --primary: #10b981;
-  --important: #fbbf24; --memo: #34d399;
+  --bg: #0b0c0e; --panel: #141518; --panel-alt: #1c1d21;
+  --border: #26272b; --border-input: #2a2c31; --border-soft: #1f2024;
+  --text: #e2e3e6; --heading: #f7f8f8; --muted: #8a8f98;
+  --accent: #7c84e8; --accent-hover: #9aa2f0;
+  --primary: #5e6ad2;
+  --important: #f5a623; --memo: #3fbf7a; --danger: #f2555a;
   --warning-text: #fcd34d;
   --tool-brain: #f472b6; --tool-paper: #c084fc;
-  --tool-patent: #60a5fa; --tool-report: #2dd4bf;
-  --tool-web: #34d399; --tool-ingest: #fbbf24;
-  --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 1px 3px rgba(0,0,0,0.4);
+  --tool-patent: #7c84e8; --tool-report: #2dd4bf;
+  --tool-web: #3fbf7a; --tool-ingest: #f5a623;
+  --shadow: none;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI",
+  font: 15px/1.5 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI",
         "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  -webkit-font-smoothing: antialiased;
   background: var(--bg); color: var(--text);
-  transition: background-color 0.2s, color 0.2s;
+  transition: background-color 0.3s, color 0.3s;
 }
+h1, h2, h3 { color: var(--heading); letter-spacing: -0.014em; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
