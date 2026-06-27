@@ -41,6 +41,7 @@ _BASE_CSS = """
   --border: #e5e7eb; --border-soft: #f0f2f5;
   --text: #1f2937; --muted: #6b7280; --accent: #3b82f6;
   --primary: #10b981;
+  --important: #f59e0b; --memo: #10b981;
   --warning-text: #78350f;
   --tool-brain: #ec4899; --tool-paper: #a855f7;
   --tool-patent: #3b82f6; --tool-report: #14b8a6;
@@ -52,6 +53,7 @@ _BASE_CSS = """
   --border: #334155; --border-soft: #1e2738;
   --text: #f1f5f9; --muted: #cbd5e1; --accent: #60a5fa;
   --primary: #10b981;
+  --important: #fbbf24; --memo: #34d399;
   --warning-text: #fcd34d;
   --tool-brain: #f472b6; --tool-paper: #c084fc;
   --tool-patent: #60a5fa; --tool-report: #2dd4bf;

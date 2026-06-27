@@ -370,6 +370,7 @@ _WIKI_CSS = """
   --bq-bg: #f0f4f8; --bq-border: #3366cc;
   --code-bg: #f5f5f5;
   --highlight: #fff8dc;
+  --important: #f59e0b; --memo: #10b981;
   --shadow: 0 1px 3px rgba(0,0,0,0.08);
   --header-border: #a2a9b1;
 }
@@ -382,6 +383,7 @@ _WIKI_CSS = """
   --bq-bg: #131920; --bq-border: #6cb6ff;
   --code-bg: #131920;
   --highlight: #263040;
+  --important: #fbbf24; --memo: #34d399;
   --shadow: 0 1px 4px rgba(0,0,0,0.5);
 }
 * { box-sizing: border-box; }
@@ -1400,7 +1402,7 @@ def render_wiki(token: str) -> int:
     # _TPL_VERSION: bump on ANY template/CSS/JS change in this file —
     # the incremental skip means already-rendered topic pages would
     # otherwise keep old markup forever (their .md never changes).
-    _TPL_VERSION = "14"  # bumped: 매일 알람 옆 해제 버튼 추가
+    _TPL_VERSION = "15"  # bumped: --important/--memo 시맨틱 토큰 추가
     cache_path = config.DATA_DIR / "wiki_render_cache.json"
     fp = hashlib.sha1(
         ("|".join(all_topics) + "\x00" + token + "\x00" + _TPL_VERSION
