@@ -22,7 +22,8 @@
 - 새 GitHub repo 생성/푸시 불가(환경 권한: higgack/Thesis만). 산출물은 tarball/PR로 전달.
 
 ## 컨텍스트 메모 (반복 방지)
-- 최신 논문본: `manuscript/draft_expanded_rev4.md` (+ `.docx`) — §4.5에 **한글 기술네트워크 그림**(`figures/tech_network_rich_ko.png`) 임베드. 버전: draft→expanded→rev1~rev4 모두 보존.
+- 최신 논문본: **`manuscript/draft_expanded_rev5.md`** (+ `.docx`) — §4.5 한글 기술네트워크 그림 임베드 + **하이퍼그래프 관점**(CPC동시분류=다대다) 방법론 단서·향후과제 7.3(f). 버전: draft→expanded→rev1~rev5 모두 보존.
+- 도구 검토 누계: rag-kb-tools-eval + rtk·notebooklm·ppt-master·kg-gen·OpenKB·unlimited-ocr·lat.md·sovereign-skills·kami·awesome-design-md·**hyper-extract(채택)**·im-not-ai·builderio-skills·_misc(agentic-prompt-research/elephant-agent).
 - 그림 라벨 규칙(유저 지정): 한국기업=한글(삼성전자), 외국 장비사/기업=영어, 공정/구조 일부 영어(Chiplet/Dicing/Surface Prep), 관할권=한글.
 - 도구 검토 누적: `docs/tooling/` (rtk·notebooklm-mcp·ppt-master·kg-gen·OpenKB·unlimited-ocr·lat.md·sovereign-skills·kami·awesome-design-md) + 평가서. 레포 지식맵: `docs/INDEX.md`.
 - 세션관리 스킬(session-start/checkpoint) 도입됨 → 다음 세션은 "세션 시작"으로 이 핸드오프 로드.
