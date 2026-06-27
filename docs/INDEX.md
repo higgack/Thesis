@@ -11,7 +11,8 @@
 | 심화 rev1 | [draft_expanded_rev1.md](../manuscript/draft_expanded_rev1.md) | 문헌·사례·논의 |
 | 심화 rev2 | [draft_expanded_rev2.md](../manuscript/draft_expanded_rev2.md) | 방법·해석 |
 | 심화 rev3 | [draft_expanded_rev3.md](../manuscript/draft_expanded_rev3.md) | 서론·비교·결론·표·전면부 |
-| **최신 rev4** | [draft_expanded_rev4.md](../manuscript/draft_expanded_rev4.md) · [.docx](../manuscript/draft_expanded_rev4.docx) | **§4.5 기술 네트워크 그림 삽입** |
+| 심화 rev4 | [draft_expanded_rev4.md](../manuscript/draft_expanded_rev4.md) · [.docx](../manuscript/draft_expanded_rev4.docx) | §4.5 기술 네트워크 그림 삽입 |
+| **최신 rev5** | [draft_expanded_rev5.md](../manuscript/draft_expanded_rev5.md) · [.docx](../manuscript/draft_expanded_rev5.docx) | **하이퍼그래프 관점 보강(§4.5·7.3)** |
 
 - 파이프라인 산출물: [stage1 연구브리프](../manuscript/stage1_research_brief.md) · [outline](../manuscript/outline.md) · [stage2.5 무결성](../manuscript/stage2_5_integrity_report.md) · [stage3 리뷰](../manuscript/stage3_review.md) · [stage4 응답](../manuscript/stage4_response.md) · [stage3' 재검토](../manuscript/stage3prime_rereview.md) · [stage4.5 최종무결성](../manuscript/stage4_5_final_integrity.md) · [stage6 과정기록](../manuscript/stage6_process_record.md)
 - 마감 안내: [FINALIZE_NOTES.md](../manuscript/FINALIZE_NOTES.md)
