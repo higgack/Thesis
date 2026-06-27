@@ -18,6 +18,8 @@ with Claude Code. It bundles three building blocks:
 
 ## Layout
 
+> 🗺 **Repo knowledge map: [`docs/INDEX.md`](docs/INDEX.md)** — one-file navigation of papers, RAG pipeline, skills, and tool reviews (lat.md-style, dependency-free).
+
 ```
 manuscript/          ← your actual paper: drafts, sections, data, figures, refs
 rag/                 ← RAG-Anything integration (ingest.py, query.py, triage.py, sources/)
