@@ -630,12 +630,12 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
 .wiki-card .wstar { cursor: pointer; background: transparent; border: 0;
   color: var(--muted); font-size: 16px; line-height: 1; padding: 0 4px;
   margin-left: 6px; transition: 0.12s; }
-.wiki-card .wstar:hover { color: #f59e0b; transform: scale(1.15); }
-.wiki-card .wstar.on { color: #f59e0b; }
+.wiki-card .wstar:hover { color: var(--important); transform: scale(1.15); }
+.wiki-card .wstar.on { color: var(--important); }
 .wiki-card[data-important="1"] { border-color: rgba(245,158,11,0.55);
   background: rgba(245,158,11,0.06); }
-.wiki-filter.wstarfilter.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
-.wiki-filter.wmemofilter.active { background: #10b981; border-color: #10b981; color: #fff; }
+.wiki-filter.wstarfilter.active { background: var(--important); border-color: var(--important); color: #fff; }
+.wiki-filter.wmemofilter.active { background: var(--memo); border-color: var(--memo); color: #fff; }
 .topic-memo { max-width: 760px; margin: 18px auto 0; padding: 12px 14px;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
 .topic-memo .memo-h { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
@@ -1402,7 +1402,7 @@ def render_wiki(token: str) -> int:
     # _TPL_VERSION: bump on ANY template/CSS/JS change in this file —
     # the incremental skip means already-rendered topic pages would
     # otherwise keep old markup forever (their .md never changes).
-    _TPL_VERSION = "15"  # bumped: --important/--memo 시맨틱 토큰 추가
+    _TPL_VERSION = "16"  # bumped: ★/메모 강조색 토큰화(var(--important)/--memo)
     cache_path = config.DATA_DIR / "wiki_render_cache.json"
     fp = hashlib.sha1(
         ("|".join(all_topics) + "\x00" + token + "\x00" + _TPL_VERSION
