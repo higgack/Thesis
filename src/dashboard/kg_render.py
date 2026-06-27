@@ -62,6 +62,10 @@ flex-wrap:wrap}
 .edge .s,.edge .o{font-weight:600}
 .edge .r{color:var(--muted);font-style:italic;font-size:13px}
 .edge .c{margin-left:auto;font-size:11px;color:var(--muted)}
+.edge .esrc{flex-basis:100%;font-size:11.5px;color:var(--muted);
+text-decoration:none;margin-top:2px;display:block;overflow:hidden;
+text-overflow:ellipsis;white-space:nowrap}
+a.esrc:hover{color:var(--primary);text-decoration:underline}
 .estar{cursor:pointer;background:transparent;border:0;color:var(--muted);
 font-size:15px;line-height:1;padding:0 2px;transition:.12s}
 .estar:hover{color:#f59e0b;transform:scale(1.15)}
@@ -276,6 +280,15 @@ def render_kg(token: str) -> int:
     except Exception:
         _edge_imp, _edge_memos, _edge_alarms = set(), {}, {}
 
+    # 출처 문서: 각 트리플은 추출 원본 문서(doc_id)를 안다 → 근거 확인용으로
+    # 관계 행에 "📄 제목"을 표시(URL이면 원문 링크). doc_id→문서 일괄 조회.
+    try:
+        from ..store import meta as _meta
+        _doc_ids = list({e.get("doc_id") for e in edges if e.get("doc_id")})
+        _docs = _meta.get_docs_batch(_doc_ids) if _doc_ids else {}
+    except Exception:
+        _docs = {}
+
     chips = "".join(
         f"<span class='chip' data-name=\"{_esc(t['name'])}\">"
         f"{_esc(t['name'])} <span class='deg'>{t['deg']}</span></span>"
@@ -290,6 +303,21 @@ def render_kg(token: str) -> int:
         _memo_txt = (_edge_memos.get(eid) or "").strip()
         hasmemo = 1 if _memo_txt else 0
         _al = _edge_alarms.get(eid, {})
+        # 출처 문서(있으면): URL이면 원문 링크, 아니면 제목만.
+        _doc = _docs.get(e.get("doc_id") or "")
+        src_html = ""
+        if _doc:
+            _dtitle = (_doc.get("title") or "").strip() or "출처 문서"
+            if len(_dtitle) > 50:
+                _dtitle = _dtitle[:50] + "…"
+            _dsrc = (_doc.get("source") or "").strip()
+            if _dsrc.startswith("http"):
+                src_html = (
+                    f"<a class='esrc' href=\"{_esc(_dsrc)}\" target='_blank' "
+                    f"rel='noopener' title='출처 문서 원문 열기'>📄 {_esc(_dtitle)}</a>")
+            else:
+                src_html = (
+                    f"<span class='esrc' title='출처 문서'>📄 {_esc(_dtitle)}</span>")
         rows.append(
             f"<div class='edge' data-edgeid=\"{_esc(eid)}\" "
             f"data-text=\"{_esc(hay)}\" data-important=\"{imp}\" "
@@ -305,7 +333,8 @@ def render_kg(token: str) -> int:
             f"<span class='r'>{_esc(e['rel'])}</span>"
             f"<span class='arrow'>→</span>"
             f"<span class='o'>{_esc(e['dst'])}</span>"
-            f"<span class='c'>{c:.2f}</span></div>")
+            f"<span class='c'>{c:.2f}</span>"
+            f"{src_html}</div>")
 
     # 메모·알람 편집은 각 관계 행의 📝 버튼으로 그 자리에서(인라인) 한다.
     # 별도 그리드 섹션은 노트 화면처럼 '메모만' 필터 + 행 미리보기로 대체.
