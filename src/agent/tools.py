@@ -191,7 +191,7 @@ async def search_my_brain(query: str, k: int = 10) -> dict:
     kg_facts: list[str] = []
     try:
         from ..store import kg as _kg
-        edges = await asyncio.to_thread(_kg.context_for, query, 12)
+        edges = await asyncio.to_thread(_kg.context_for, query, 24)
         kg_facts = [f"{e['src']} —{e['rel']}→ {e['dst']}" for e in edges]
     except Exception:
         pass
