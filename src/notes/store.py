@@ -268,6 +268,19 @@ def get_note(note_id: str) -> dict | None:
     return out
 
 
+def note_id_by_source(source_ref: str) -> str | None:
+    """Most recent note id for a given source_ref (URL/filename), or None.
+    Used for RAG-style dedup: re-sending the same source skips re-learning."""
+    if not source_ref:
+        return None
+    init_db()
+    with _conn() as c:
+        r = c.execute(
+            "SELECT id FROM notes WHERE source_ref=? "
+            "ORDER BY updated DESC LIMIT 1", (source_ref,)).fetchone()
+    return r["id"] if r else None
+
+
 def list_notes() -> list[dict]:
     init_db()
     with _conn() as c:
