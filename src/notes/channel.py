@@ -121,7 +121,7 @@ async def ingest_url(url: str) -> str | None:
     # (success on attempt 1) pay no delay. No locks/concurrency: safe.
     body = title = ""
     for attempt in range(3):
-        body, title, _meta, _links = await loaders.load_url(url)
+        title, body, _hint, _links = await loaders.load_url(url)
         if (body or "").strip():
             break
         if attempt < 2:
@@ -139,7 +139,7 @@ async def ingest_youtube(url: str, video_id: str | None = None) -> str | None:
     vid = video_id or loaders.is_youtube(url)
     if not vid:
         return None
-    body, title, _ = await loaders.load_youtube(vid, url)
+    title, body, _ = await loaders.load_youtube(vid, url)
     if not (body or "").strip():
         log.info("study ingest_youtube: no transcript for %s", url)
         return None
@@ -164,13 +164,13 @@ async def ingest_file(path: str | Path, source_type: str | None = None) -> str |
                 body = ""
                 title = None
             if not (body or "").strip():
-                body, title, _src, _ocr = await loaders.load_pdf_async(p)
+                title, body, _src, _ocr = await loaders.load_pdf_async(p)
         elif ext == "pptx":
-            body, title, _ = await loaders.load_pptx_async(p)
+            title, body, _ = await loaders.load_pptx_async(p)
         elif ext == "docx":
-            body, title, _ = await loaders.load_docx_async(p)
+            title, body, _ = await loaders.load_docx_async(p)
         elif ext in ("xlsx", "xls"):
-            body, title, _ = await loaders.load_xlsx_async(p)
+            title, body, _ = await loaders.load_xlsx_async(p)
         else:
             log.info("study ingest_file: unsupported ext '%s'", ext)
             return None
