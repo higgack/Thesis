@@ -212,8 +212,13 @@ async def load_url(url: str) -> tuple[str, str, str | None, list[str]]:
         # 없거나 실패하면 일반 fetch 경로로 폴백(예전처럼 하드블록하지 않음).
         m = _DART_RE.search(url)
         if m:
+            from ..store import dart_cap as _dcap
+            if _dcap.over_cap():
+                log.info("dart: daily cap reached — skip %s", m.group(1))
+                return "", "", None, []   # over cap → treated as empty body
             dt, db, dh = await load_dart(m.group(1))
             if db and len(db) >= _MIN_BODY_CHARS:
+                _dcap.record()
                 return dt or url[:200], db, dh, []
     try:
         from urllib.parse import urlparse

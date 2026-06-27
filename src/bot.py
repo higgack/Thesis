@@ -11023,6 +11023,20 @@ async def _memo_alarm_tick(ctx: ContextTypes.DEFAULT_TYPE):
     until the user taps 확인 (on_memo_alarm_ack flips it off)."""
     from .store import marks
     from datetime import datetime, timezone, timedelta
+    # DART 일일 인입 한도 도달 알림 (하루 1회만; should_alert가 one-shot)
+    try:
+        from .store import dart_cap as _dcap
+        fire, cnt, mx = await asyncio.to_thread(_dcap.should_alert)
+        if fire:
+            await ctx.bot.send_message(
+                config.TELEGRAM_OWNER_ID,
+                f"⚠️ DART 일일 인입 한도 도달 — 오늘 {cnt}/{mx}건.\n"
+                "이후 DART 자동 인입은 내일(KST 자정)까지 중단돼. 더 받으려면 "
+                "<code>.env</code>의 <code>DART_DAILY_MAX</code>를 올려 "
+                "force-recreate 하면 돼.",
+                parse_mode="HTML", disable_web_page_preview=True)
+    except Exception:
+        log.debug("dart cap alert check failed")
     now = datetime.now(timezone(timedelta(hours=9)))
     hhmm = now.strftime("%H:%M")
     today = now.strftime("%Y-%m-%d")
