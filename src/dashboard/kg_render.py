@@ -240,6 +240,22 @@ _JS = r"""
           :('매일 '+hh+' KST')):'';
         if(window.wireAlarmRow)window.wireAlarmRow(arow);
       }
+      // 삭제(메모)·해제(알람)를 눌렀는데 편집창에 아무 내용도 없으면
+      // (메모 빈칸 + 알람 미설정) 서버 호출 없이 창만 닫는다. 내용이
+      // 있으면 캡처에서 통과시켜 기존 삭제/해제가 정상 동작.
+      function edEmpty(){
+        var t=ed.querySelector('textarea');
+        var at=ed.querySelector('.alarm-time'), adt=ed.querySelector('.alarm-dt');
+        var hasMemo=t&&t.value.trim();
+        var hasAlarm=(at&&at.value)||(adt&&adt.value)||(row.dataset.ahhmm||'');
+        return !hasMemo && !hasAlarm;
+      }
+      ed.addEventListener('click',function(ev){
+        var t=ev.target; if(!t||!t.classList)return;
+        if(t.classList.contains('memo-del')||t.classList.contains('alarm-clear')){
+          if(edEmpty()){ ev.stopImmediatePropagation(); ev.preventDefault(); ed.remove(); }
+        }
+      },true);
       if(ta)ta.focus();
     });
   });
@@ -322,10 +338,10 @@ def render_kg(token: str) -> int:
             if _dsrc.startswith("http"):
                 src_html = (
                     f"<a class='esrc' href=\"{_esc(_dsrc)}\" target='_blank' "
-                    f"rel='noopener' title='출처 문서 원문 열기'>📄 {_esc(_dtitle)}</a>")
+                    f"rel='noopener' title='출처 문서 원문 열기'>📰 {_esc(_dtitle)}</a>")
             else:
                 src_html = (
-                    f"<span class='esrc' title='출처 문서'>📄 {_esc(_dtitle)}</span>")
+                    f"<span class='esrc' title='출처 문서'>📰 {_esc(_dtitle)}</span>")
         rows.append(
             f"<div class='edge' data-edgeid=\"{_esc(eid)}\" "
             f"data-text=\"{_esc(hay)}\" data-important=\"{imp}\" "
