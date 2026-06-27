@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Pre-push verification — automates the CLAUDE.md manual checklist so
 # push-time regressions (NameError from a missing lazy import, a
-# _HELP_TEXT over the 4000-char Telegram cap, a Python syntax slip)
-# are caught BEFORE the auto_pull rebuild ships them.
+# _HELP_TEXT over the 4000-char Telegram cap, a Python syntax slip,
+# an accidentally-committed credential) are caught BEFORE the auto_pull
+# rebuild ships them.
 #
 # Usage:
 #   bash scripts/preflight.sh            # check staged + changed .py
@@ -125,6 +126,54 @@ if missing:
 else:
     print("  \033[32mall %d handlers traceable\033[0m" % len(reg))
 PY
+
+# ---- 5. secret scan — BLOCKING --------------------------------------
+# Catches a credential accidentally pasted into a TRACKED/STAGED file
+# before it reaches the remote (the .env itself is gitignored, so the
+# real risk is a key landing in a .py/.md). High-signal token SHAPES
+# only — never the generic `API_KEY=...` form — so env-var *names* in
+# config.py/CLAUDE.md don't false-positive. This script excludes itself
+# (it contains the patterns).
+echo "── 5. secret scan (tracked/staged) ──"
+python3 - <<'PY'
+import re, subprocess, sys, os
+pats = {
+    "Telegram bot token": re.compile(r'\b\d{8,10}:[A-Za-z0-9_-]{33,46}'),
+    "Google API key":     re.compile(r'\bAIza[0-9A-Za-z_\-]{35}\b'),
+    "GitHub PAT (classic)": re.compile(r'\bghp_[A-Za-z0-9]{36}\b'),
+    "GitHub PAT (fine)":    re.compile(r'\bgithub_pat_[A-Za-z0-9_]{22,}\b'),
+    "Private key block":    re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----'),
+}
+def gl(*a):
+    try:
+        return subprocess.run(["git", *a], capture_output=True,
+                              text=True).stdout.split()
+    except Exception:
+        return []
+files = (set(gl("ls-files")) | set(gl("diff", "--cached", "--name-only"))
+         | set(gl("diff", "--name-only")))
+SELF = {"scripts/preflight.sh"}
+hits = []
+for f in sorted(files):
+    if f in SELF or not os.path.isfile(f):
+        continue
+    try:
+        with open(f, encoding="utf-8", errors="ignore") as fh:
+            for i, line in enumerate(fh, 1):
+                for name, pat in pats.items():
+                    if pat.search(line):
+                        hits.append((f, i, name))
+    except Exception:
+        continue
+if hits:
+    print("  \033[31mFAIL — possible secret(s) committed:\033[0m")
+    for f, i, name in hits:
+        print(f"      {f}:{i}  [{name}]")
+    print("  \033[31m→ remove + rotate the key before pushing.\033[0m")
+    sys.exit(1)
+print("  \033[32mno secrets detected\033[0m")
+PY
+[[ $? -ne 0 ]] && fail=1
 
 # ---- summary ----------------------------------------------------------
 echo
