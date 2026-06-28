@@ -22,8 +22,8 @@ def _esc(s) -> str:
 
 
 _CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-/* Linear-style (DESIGN.md): thin borders, indigo #5e6ad2, Inter. */
+/* Linear-style (DESIGN.md): thin borders, indigo #5e6ad2.
+   No web-font @import (렌더 차단 제거) — Inter 로컬 있으면 사용, 없으면 system. */
 :root{--bg:#f7f8f9;--panel:#fff;--panel-alt:#f0f1f3;--border:#e8e8ea;
 --border-input:#e0e1e4;--border-soft:#eef0f2;--text:#282a30;--heading:#16171a;
 --muted:#8a8f98;--accent:#5e6ad2;--accent-hover:#515dc4;
@@ -181,66 +181,60 @@ _JS = r"""
     btn.addEventListener('click',function(){ save(ta.value,'저장됨 ✓'); });
     if(del)del.addEventListener('click',function(){ ta.value=''; save('','삭제됨'); });
   }
-  // 한 관계 행에 ★ 토글 + 📝 편집기 열기를 연결(초기 + 동적 추가 공용).
-  function wireEdge(row){
-    if(row.__wired)return; row.__wired=true;
-    var star=row.querySelector('.estar');
-    if(star)star.addEventListener('click',function(ev){
-      ev.preventDefault(); ev.stopPropagation();
-      var id=row.dataset.edgeid; if(!id)return;
-      var now=row.dataset.important!=='1';
-      row.dataset.important=now?'1':'0';
-      star.textContent=now?'★':'☆'; star.classList.toggle('on',now); apply();
-      fetch('/'+token+'/mark',{method:'POST',
-        headers:{'content-type':'application/json'},
-        body:JSON.stringify({kind:'kg_edge',id:id,important:now})})
-        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-        .catch(function(err){
-          row.dataset.important=now?'0':'1';
-          star.textContent=now?'☆':'★'; star.classList.toggle('on',!now); apply();
-          alert('중요 표시 변경 실패: '+err.message);
-        });
-    });
-    var mbtn=row.querySelector('.ememo');
-    if(mbtn)mbtn.addEventListener('click',function(ev){
-      ev.preventDefault(); ev.stopPropagation();
-      if(!tpl)return;
-      var eid=row.dataset.edgeid; if(!eid)return;
-      var ed=row.nextSibling;
-      if(ed&&ed.classList&&ed.classList.contains('edge-editor')){
-        ed.style.display=ed.style.display==='none'?'':'none'; return;
+  // ★ 토글 (이벤트 위임에서 호출). 3000행에 리스너를 다는 대신 listEl 1개로.
+  function toggleStar(row, star){
+    var id=row.dataset.edgeid; if(!id)return;
+    var now=row.dataset.important!=='1';
+    row.dataset.important=now?'1':'0';
+    star.textContent=now?'★':'☆'; star.classList.toggle('on',now); apply();
+    fetch('/'+token+'/mark',{method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({kind:'kg_edge',id:id,important:now})})
+      .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+      .catch(function(err){
+        row.dataset.important=now?'0':'1';
+        star.textContent=now?'☆':'★'; star.classList.toggle('on',!now); apply();
+        alert('중요 표시 변경 실패: '+err.message);
+      });
+  }
+  // 📝 편집기 열기 (이벤트 위임에서 호출).
+  function openEditor(row){
+    if(!tpl)return;
+    var eid=row.dataset.edgeid; if(!eid)return;
+    var ed=row.nextSibling;
+    if(ed&&ed.classList&&ed.classList.contains('edge-editor')){
+      ed.style.display=ed.style.display==='none'?'':'none'; return;
+    }
+    ed=document.createElement('div'); ed.className='edge-editor'; ed.__row=row;
+    ed.innerHTML=tpl.innerHTML.replace(/__EID__/g,eid);
+    var ta=ed.querySelector('textarea'); if(ta)ta.value=row.dataset.memo||'';
+    row.parentNode.insertBefore(ed,row.nextSibling);
+    var mbox=ed.querySelector('.ent-memo'); if(mbox)wireMemo(mbox);
+    var arow=ed.querySelector('.alarm-row');
+    if(arow){
+      var hh=row.dataset.ahhmm||'', dt=row.dataset.adate||'';
+      if(hh&&!dt){var ti=arow.querySelector('.alarm-time'); if(ti)ti.value=hh;}
+      if(hh&&dt&&dt.length===10){var di=arow.querySelector('.alarm-dt');
+        if(di)di.value=dt.slice(5,7)+'.'+dt.slice(8,10)+'.'+hh;}
+      var ast=arow.querySelector('.alarm-status');
+      if(ast)ast.textContent=hh?(dt?(dt.slice(5,7)+'.'+dt.slice(8,10)+' '+hh+' KST부터')
+        :('매일 '+hh+' KST')):'';
+      if(window.wireAlarmRow)window.wireAlarmRow(arow);
+    }
+    function edEmpty(){
+      var t=ed.querySelector('textarea');
+      var at=ed.querySelector('.alarm-time'), adt=ed.querySelector('.alarm-dt');
+      var hasMemo=t&&t.value.trim();
+      var hasAlarm=(at&&at.value)||(adt&&adt.value)||(row.dataset.ahhmm||'');
+      return !hasMemo && !hasAlarm;
+    }
+    ed.addEventListener('click',function(ev){
+      var t=ev.target; if(!t||!t.classList)return;
+      if(t.classList.contains('memo-del')||t.classList.contains('alarm-clear')){
+        if(edEmpty()){ ev.stopImmediatePropagation(); ev.preventDefault(); ed.remove(); }
       }
-      ed=document.createElement('div'); ed.className='edge-editor'; ed.__row=row;
-      ed.innerHTML=tpl.innerHTML.replace(/__EID__/g,eid);
-      var ta=ed.querySelector('textarea'); if(ta)ta.value=row.dataset.memo||'';
-      row.parentNode.insertBefore(ed,row.nextSibling);
-      var mbox=ed.querySelector('.ent-memo'); if(mbox)wireMemo(mbox);
-      var arow=ed.querySelector('.alarm-row');
-      if(arow){
-        var hh=row.dataset.ahhmm||'', dt=row.dataset.adate||'';
-        if(hh&&!dt){var ti=arow.querySelector('.alarm-time'); if(ti)ti.value=hh;}
-        if(hh&&dt&&dt.length===10){var di=arow.querySelector('.alarm-dt');
-          if(di)di.value=dt.slice(5,7)+'.'+dt.slice(8,10)+'.'+hh;}
-        var ast=arow.querySelector('.alarm-status');
-        if(ast)ast.textContent=hh?(dt?(dt.slice(5,7)+'.'+dt.slice(8,10)+' '+hh+' KST부터')
-          :('매일 '+hh+' KST')):'';
-        if(window.wireAlarmRow)window.wireAlarmRow(arow);
-      }
-      function edEmpty(){
-        var t=ed.querySelector('textarea');
-        var at=ed.querySelector('.alarm-time'), adt=ed.querySelector('.alarm-dt');
-        var hasMemo=t&&t.value.trim();
-        var hasAlarm=(at&&at.value)||(adt&&adt.value)||(row.dataset.ahhmm||'');
-        return !hasMemo && !hasAlarm;
-      }
-      ed.addEventListener('click',function(ev){
-        var t=ev.target; if(!t||!t.classList)return;
-        if(t.classList.contains('memo-del')||t.classList.contains('alarm-clear')){
-          if(edEmpty()){ ev.stopImmediatePropagation(); ev.preventDefault(); ed.remove(); }
-        }
-      },true);
-      if(ta)ta.focus();
-    });
+    },true);
+    if(ta)ta.focus();
   }
   // JSON 엣지 → 행 HTML (Python 렌더와 동일 구조; 동적 로드용).
   function renderEdge(e){
@@ -273,7 +267,7 @@ _JS = r"""
         var edges=d.edges||[];
         listEl.innerHTML=edges.length?edges.map(renderEdge).join('')
           :"<div style='color:var(--muted);padding:14px'>관계 없음</div>";
-        listEl.querySelectorAll('.edge').forEach(wireEdge);
+        // 위임 리스너라 재-와이어링 불필요(listEl은 유지됨).
         if(q)q.value=name; apply();
         if(listEl.scrollIntoView)listEl.scrollIntoView({block:'start'});
       })
@@ -286,16 +280,23 @@ _JS = r"""
   if(memof)memof.addEventListener('click',function(){
     curMemo=!curMemo; memof.classList.toggle('active',curMemo); apply();});
   if(reset)reset.addEventListener('click',function(){
-    if(listEl){ listEl.innerHTML=origList;
-      listEl.querySelectorAll('.edge').forEach(wireEdge); }
+    if(listEl){ listEl.innerHTML=origList; }   // 위임이라 재-와이어링 불필요
     if(q)q.value=''; curImp=false; curMemo=false;
     if(impf)impf.classList.remove('active');
     if(memof)memof.classList.remove('active'); apply();});
   document.querySelectorAll('.chip').forEach(function(ch){
     ch.addEventListener('click',function(){ loadEntity(ch.dataset.name||''); });
   });
-  document.querySelectorAll('.edge').forEach(wireEdge);
-  document.querySelectorAll('.ent-memo').forEach(wireMemo);
+  // 이벤트 위임: 3000행마다 리스너 다는 대신 listEl 1개에서 ★/📝 클릭 처리.
+  if(listEl)listEl.addEventListener('click',function(ev){
+    var t=ev.target; if(!t||!t.closest)return;
+    var star=t.closest('.estar');
+    if(star&&listEl.contains(star)){var r=star.closest('.edge'); if(r){
+      ev.preventDefault(); ev.stopPropagation(); toggleStar(r,star);} return;}
+    var mbtn=t.closest('.ememo');
+    if(mbtn&&listEl.contains(mbtn)){var r2=mbtn.closest('.edge'); if(r2){
+      ev.preventDefault(); ev.stopPropagation(); openEditor(r2);} return;}
+  });
 })();
 """
 
@@ -311,7 +312,10 @@ def render_kg(token: str) -> int:
         if not st.get("edges"):
             return 0
         tops = kg.top_entities(30)
-        edges = kg.all_edges(3000)
+        # 초기엔 상위 1200개만(신뢰도순) 렌더 → DOM 경량화. 더 깊은 관계는
+        # 칩 클릭(개체 전체) / 검색으로. ★·메모·알람 표시된 엣지는 아래에서
+        # 합집합으로 항상 포함시켜 '중요만/메모만' 필터가 안 깨지게 한다.
+        edges = kg.all_edges(1200)
     except Exception:
         log.exception("kg_render: store read failed")
         return 0
@@ -340,6 +344,16 @@ def render_kg(token: str) -> int:
         _edge_alarms = _marks.alarm_map("kg_edge")
     except Exception:
         _edge_imp, _edge_memos, _edge_alarms = set(), {}, {}
+
+    # ★/메모/알람 표시된 엣지가 상위 1200 밖이면 합집합으로 추가(필터 보존).
+    try:
+        _present = {str(e.get("id")) for e in edges}
+        _extra = (set(_edge_imp) | set(_edge_memos.keys())
+                  | set(_edge_alarms.keys())) - _present
+        if _extra:
+            edges = edges + kg.edges_by_ids(_extra)
+    except Exception:
+        pass
 
     # 출처 문서: 각 트리플은 추출 원본 문서(doc_id)를 안다 → 근거 확인용으로
     # 관계 행에 "📄 제목"을 표시(URL이면 원문 링크). doc_id→문서 일괄 조회.

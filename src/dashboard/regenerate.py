@@ -36,9 +36,10 @@ log = logging.getLogger(__name__)
 _LOCK = threading.Lock()
 
 _BASE_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 /* Linear-style: near-white/black surfaces, thin borders (minimal shadow),
-   indigo accent #5e6ad2, Inter, tight headings. (DESIGN.md) */
+   indigo accent #5e6ad2, tight headings. (DESIGN.md)
+   Font: NO web-font @import (그게 매 페이지 렌더를 막아 느렸음) — Inter가
+   로컬에 있으면 쓰고, 없으면 system-ui로 폴백(다운로드 0, 즉시 렌더). */
 :root {
   --bg: #f7f8f9; --panel: #ffffff; --panel-alt: #f0f1f3;
   --border: #e8e8ea; --border-input: #e0e1e4; --border-soft: #eef0f2;

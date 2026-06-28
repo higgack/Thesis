@@ -187,6 +187,29 @@ def edges_for_entity(name: str, limit: int = 1200) -> list[dict]:
         return []
 
 
+def edges_by_ids(ids) -> list[dict]:
+    """Fetch specific edges by id (read-only, no init/DDL). Used to keep
+    ★/메모/알람-표시된 엣지를 초기 렌더 상위-N 밖이어도 포함시키기 위함
+    (그래야 '중요만/메모만' 필터가 안 깨짐)."""
+    iids = []
+    for i in ids:
+        try:
+            iids.append(int(i))
+        except (TypeError, ValueError):
+            continue
+    if not iids:
+        return []
+    try:
+        with _conn() as c:
+            ph = ",".join("?" * len(iids))
+            rows = c.execute(
+                f"SELECT id,src,rel,dst,confidence,doc_id FROM edges "
+                f"WHERE id IN ({ph})", iids).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
 def all_edges(limit: int = 3000) -> list[dict]:
     """Every edge (confidence-desc) for the dashboard KG view."""
     init()

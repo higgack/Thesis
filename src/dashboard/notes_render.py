@@ -75,8 +75,8 @@ _THEME_JS = """
 """
 
 _CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-/* Linear-style (DESIGN.md): thin borders, indigo #5e6ad2, Inter. */
+/* Linear-style (DESIGN.md): thin borders, indigo #5e6ad2.
+   No web-font @import (렌더 차단 제거) — Inter 로컬 있으면 사용, 없으면 system. */
 :root{--bg:#f7f8f9;--panel:#fff;--panel-alt:#f0f1f3;--border:#e8e8ea;
 --border-input:#e0e1e4;--border-soft:#eef0f2;--text:#282a30;--heading:#16171a;
 --muted:#8a8f98;--accent:#5e6ad2;--accent-hover:#515dc4;
@@ -332,26 +332,38 @@ _NOTE_JS = r"""
       var pre = c.closest('pre');
       if(pre) pre.replaceWith(d);
     });
-    if(window.mermaid){
-      var dark = document.documentElement.dataset.theme === 'dark';
-      window.mermaid.initialize({startOnLoad:false, securityLevel:'loose',
-        theme: dark ? 'dark' : 'default'});
-      // Render each diagram individually so a single bad one degrades to
-      // its source text instead of mermaid's "Syntax error" bomb.
-      el.querySelectorAll('.mermaid').forEach(function(node, i){
-        var src = node.textContent;
-        window.mermaid.render('mmd'+Date.now()+'_'+i, src).then(function(res){
-          node.innerHTML = res.svg;
-          node.title = '클릭하면 크게 보기';
-          node.addEventListener('click', function(){ openOverlay(node.innerHTML); });
-        }).catch(function(){
-          var pre = document.createElement('pre');
-          pre.style.whiteSpace = 'pre-wrap';
-          pre.style.textAlign = 'left';
-          pre.textContent = src;
-          node.replaceWith(pre);
+    // mermaid은 다이어그램이 실제로 있을 때만 ~2.8MB를 동적 로드(없는 노트는
+    // 받지 않음 → 페이지 로딩 빠름). 로드 후 각 다이어그램 개별 렌더.
+    var diagrams = el.querySelectorAll('.mermaid');
+    if(diagrams.length){
+      var renderDiagrams = function(){
+        if(!window.mermaid) return;
+        var dark = document.documentElement.dataset.theme === 'dark';
+        window.mermaid.initialize({startOnLoad:false, securityLevel:'loose',
+          theme: dark ? 'dark' : 'default'});
+        diagrams.forEach(function(node, i){
+          var src = node.textContent;
+          window.mermaid.render('mmd'+Date.now()+'_'+i, src).then(function(res){
+            node.innerHTML = res.svg;
+            node.title = '클릭하면 크게 보기';
+            node.addEventListener('click', function(){ openOverlay(node.innerHTML); });
+          }).catch(function(){
+            var pre = document.createElement('pre');
+            pre.style.whiteSpace = 'pre-wrap';
+            pre.style.textAlign = 'left';
+            pre.textContent = src;
+            node.replaceWith(pre);
+          });
         });
-      });
+      };
+      if(window.mermaid){ renderDiagrams(); }
+      else if(!window._mermaidLoading){
+        window._mermaidLoading = true;
+        var s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js';
+        s.onload = renderDiagrams;
+        document.head.appendChild(s);
+      }
     }
     if(window.renderMathInElement){
       window.renderMathInElement(el,{delimiters:[
@@ -391,7 +403,7 @@ _CDN = (
     "<link rel='stylesheet' "
     "href='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css'>"
     "<script src='https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js'></script>"
-    "<script src='https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js'></script>"
+    # mermaid(~2.8MB)는 다이어그램이 실제로 있을 때만 renderMD가 동적 로드한다.
     "<script defer src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js'></script>"
     "<script defer src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/"
     "auto-render.min.js' onload='window.renderMathInElement&&"
