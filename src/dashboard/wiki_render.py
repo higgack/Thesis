@@ -1150,6 +1150,7 @@ def _wiki_search_text(md: str) -> str:
 
 def _render_index_page(topics_data: list[dict], token: str,
                        wiki_stats: dict) -> str:
+    from . import widgets as _wgt
     total_pages = wiki_stats.get("pages", 0)
     total_docs = wiki_stats.get("docs", 0)
     queue = wiki_stats.get("queue", 0)
@@ -1251,6 +1252,7 @@ def _render_index_page(topics_data: list[dict], token: str,
         f"<script>{_FILTER_JS}</script>"
         f"<script>{_WIKI_STAR_JS}</script>"
         f"<script>{_INDEX_SCROLL_JS}</script>"
+        + _wgt.live_reload_js("wiki") +
         "</body></html>"
     )
 

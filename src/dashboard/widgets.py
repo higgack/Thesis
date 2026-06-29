@@ -19,6 +19,35 @@ from __future__ import annotations
 import html as _html
 
 
+def live_reload_js(page_key: str) -> str:
+    """A tiny <script> that makes an open dashboard page auto-update when
+    new content actually arrives — WITHOUT a manual refresh and WITHOUT a
+    blind timer. It polls /<token>/version (a cheap per-section count) and
+    reloads ONLY when this page's section count changed vs page-load time.
+    Scroll position is preserved across the auto-reload.
+
+    page_key ∈ {"qna","notes","kg","wiki"} — matches the /version JSON keys.
+    """
+    k = repr(str(page_key))
+    return (
+        "<script>(function(){"
+        "var token=location.pathname.split('/').filter(Boolean)[0]||'';"
+        "var KEY=" + k + ",cur=null,SK='dash_scroll_'+KEY;"
+        # restore scroll if THIS script triggered the last reload
+        "try{var s=sessionStorage.getItem(SK);"
+        "if(s!==null){window.scrollTo(0,parseInt(s,10)||0);"
+        "sessionStorage.removeItem(SK);}}catch(e){}"
+        "function chk(){fetch('/'+token+'/version',{cache:'no-store'})"
+        ".then(function(r){return r.ok?r.json():null;})"
+        ".then(function(d){if(!d||!(KEY in d))return;var v=d[KEY];"
+        "if(cur===null){cur=v;return;}"
+        "if(v!==cur){try{sessionStorage.setItem(SK,String(window.scrollY||window.pageYOffset||0));}catch(e){}"
+        "location.reload();}}).catch(function(){});}"
+        "setInterval(chk,12000);chk();"
+        "})();</script>"
+    )
+
+
 def alarm_row(kind: str, item_id: str, cur: dict | None = None) -> str:
     """HTML for the alarm setter. `cur` = {'hhmm','date'} (current alarm)."""
     cur = cur or {}
