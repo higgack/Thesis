@@ -83,9 +83,11 @@ font-size:15px;line-height:1;padding:0 2px;transition:.12s}
 font-size:14px;line-height:1;padding:0 2px;transition:.12s}
 .ememo:hover{opacity:1;transform:scale(1.15)}
 .ememo.on{opacity:1}
-.edel{cursor:pointer;background:transparent;border:0;opacity:.7;
-font-size:15px;line-height:1;padding:0 4px;transition:.12s;filter:grayscale(.2)}
-.edel:hover{opacity:1;color:var(--danger);transform:scale(1.2);filter:none}
+.edel{cursor:pointer;background:rgba(229,72,77,.12);border:1px solid rgba(229,72,77,.35);
+border-radius:6px;opacity:1;font-size:15px;line-height:1;padding:3px 7px;
+margin-left:2px;transition:.12s}
+.edel:hover{background:var(--danger);border-color:var(--danger);transform:scale(1.1);
+filter:drop-shadow(0 0 4px rgba(229,72,77,.6))}
 .edge.removing{opacity:0;transform:translateX(10px);transition:opacity .2s,transform .2s}
 .edge[data-important="1"]{border-color:rgba(245,158,11,.55);
 background:rgba(245,158,11,.07)}
