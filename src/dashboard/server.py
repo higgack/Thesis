@@ -293,9 +293,14 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(403, "forbidden")
             return
         try:
-            from ..store import kg, marks
-            ok = kg.delete_edge(edge_id)
-            if ok:
+            from ..store import kg, marks, kg_ignore
+            tri = kg.delete_edge(edge_id)
+            if tri:
+                # 영구 무시: 같은 (src,rel,dst)는 문서 재추출돼도 다시 안 들어감.
+                try:
+                    kg_ignore.add(tri.get("src"), tri.get("rel"), tri.get("dst"))
+                except Exception:
+                    log.warning("kg_ignore add failed", exc_info=True)
                 eid = str(edge_id)
                 try:
                     marks.set_mark("kg_edge", eid, False)
@@ -304,7 +309,7 @@ class Handler(SimpleHTTPRequestHandler):
                 except Exception:
                     log.warning("kg edge mark cleanup failed: %s", eid,
                                 exc_info=True)
-            self._send_ok(1 if ok else 0)
+            self._send_ok(1 if tri else 0)
         except Exception as e:
             log.exception("kg edge delete failed")
             self.send_error(500, f"delete failed: {e}")
