@@ -81,12 +81,22 @@ _ASK_GET_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/(\d+)/?$")
 # GET /<token>/kg/entity?e=<name> → all edges for an entity (full degree set,
 # not just the top-3000-by-confidence the static KG page loads).
 _KG_ENTITY_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/kg/entity/?$")
+# Browser-extension one-click ingest: POST /<token>/ingest {url,target}
+# (target = rag|note). Status poll: GET /<token>/ingest/<id>.
+_INGEST_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ingest/?$")
+_INGEST_STATUS_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ingest/(\d+)/?$")
 
 # Each natural-language ask is a real Gemini spend, so reject floods
 # before they ever reach the bot. Single-owner dashboard → generous.
 _ASK_FLOOD_WINDOW_SEC = 60
 _ASK_FLOOD_MAX = 20
 _ASK_MAX_LEN = 4000
+
+# Extension ingest is cheaper per call than a paid ask but still costs
+# (synth/embed). Generous single-owner cap so a digest paste doesn't 429.
+_INGEST_FLOOD_WINDOW_SEC = 300
+_INGEST_FLOOD_MAX = 60
+_INGEST_MAX_URL = 2000
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -111,19 +121,38 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(b"auth required")
         return False
 
-    def _send_json(self, obj, code: int = 200):
+    def _send_json(self, obj, code: int = 200, cors: bool = False):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("content-type", "application/json; charset=utf-8")
+        if cors:
+            self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
+    def do_OPTIONS(self):
+        # CORS preflight (browsers send no credentials here, so it must
+        # bypass basic auth). The actual ingest request is token-gated.
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "content-type")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("content-length", "0")
+        self.end_headers()
+
     def do_GET(self):
-        if not self._check_basic_auth():
-            return
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(self.path)
+        # Extension ingest-status poll is token-gated (no basic auth), so
+        # the extension only needs the token — handle before the gate.
+        mis = _INGEST_STATUS_RE.match(parsed.path)
+        if mis:
+            self._handle_ingest_status(mis.group(1), int(mis.group(2)))
+            return
+        if not self._check_basic_auth():
+            return
         mke = _KG_ENTITY_RE.match(parsed.path)
         if mke:
             ename = (parse_qs(parsed.query).get("e") or [""])[0]
@@ -175,12 +204,81 @@ class Handler(SimpleHTTPRequestHandler):
             log.exception("kg entity lookup failed")
             self.send_error(500, f"lookup failed: {e}")
 
+    def _handle_ingest_post(self, token: str):
+        """Park a one-click ingest from the browser extension. Token-gated
+        (the path token is the secret) + CORS-enabled so an HTTPS YouTube
+        page's background worker can POST cross-origin. Flood-capped
+        because each ingest is real Gemini spend. Returns {id} for polling."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self._send_json({"error": "forbidden"}, 403, cors=True)
+            return
+        try:
+            length = int(self.headers.get("content-length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 10_000:
+            self._send_json({"error": "빈 요청"}, 400, cors=True)
+            return
+        try:
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+            url = (data.get("url") or "").strip()
+            target = (data.get("target") or "rag").strip().lower()
+        except Exception:
+            self._send_json({"error": "잘못된 요청"}, 400, cors=True)
+            return
+        if not url.startswith(("http://", "https://")):
+            self._send_json({"error": "URL이 아님"}, 400, cors=True)
+            return
+        if len(url) > _INGEST_MAX_URL:
+            self._send_json({"error": "URL이 너무 깁니다"}, 400, cors=True)
+            return
+        if target not in ("rag", "note"):
+            target = "rag"
+        try:
+            from ..store import dash_ingest
+            if dash_ingest.recent_count(_INGEST_FLOOD_WINDOW_SEC) >= _INGEST_FLOOD_MAX:
+                self._send_json(
+                    {"error": "요청이 너무 많아요. 잠시 후 다시."}, 429, cors=True)
+                return
+            rid = dash_ingest.enqueue(url, target)
+        except Exception as e:
+            log.exception("ingest enqueue failed")
+            self._send_json({"error": f"큐 오류: {e}"}, 500, cors=True)
+            return
+        self._send_json({"id": rid, "target": target}, cors=True)
+
+    def _handle_ingest_status(self, token: str, rid: int):
+        """Poll one parked ingest's status/result (token-gated, CORS)."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self._send_json({"error": "forbidden"}, 403, cors=True)
+            return
+        try:
+            from ..store import dash_ingest
+            row = dash_ingest.get(rid)
+        except Exception as e:
+            log.exception("ingest status failed")
+            self._send_json({"status": "error", "error": str(e)}, cors=True)
+            return
+        if not row:
+            self._send_json({"status": "error", "error": "찾을 수 없음"}, cors=True)
+            return
+        self._send_json({
+            "status": row["status"], "target": row["target"],
+            "result": row["result"], "error": row["error"],
+        }, cors=True)
+
     def do_HEAD(self):
         if not self._check_basic_auth():
             return
         super().do_HEAD()
 
     def do_POST(self):
+        # Extension ingest is token-gated (the path token is the secret),
+        # so it bypasses basic auth — the extension carries only the token.
+        ming = _INGEST_RE.match(self.path)
+        if ming:
+            self._handle_ingest_post(ming.group(1))
+            return
         if not self._check_basic_auth():
             return
         mc = _NOTE_CAT_RE.match(self.path)
