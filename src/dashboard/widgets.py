@@ -20,11 +20,19 @@ import html as _html
 
 
 def live_reload_js(page_key: str) -> str:
-    """A tiny <script> that makes an open dashboard page auto-update when
-    new content actually arrives — WITHOUT a manual refresh and WITHOUT a
-    blind timer. It polls /<token>/version (a cheap per-section count) and
-    reloads ONLY when this page's section count changed vs page-load time.
-    Scroll position is preserved across the auto-reload.
+    """A tiny <script> that makes an open dashboard page surface new content
+    WITHOUT a manual refresh and WITHOUT disrupting active work.
+
+    It polls /<token>/version (a cheap per-section count) and reacts ONLY
+    when this page's section count actually changed. To avoid yanking the
+    page on high-churn sections (KG grows constantly from background
+    extraction), the reload is IDLE-GATED:
+      • auto-reload only when the user is idle (no scroll/key/click for
+        ~15s), no inline editor is open, and the tab is visible → so
+        stepping away still shows the latest with zero clicks;
+      • otherwise show a small "🔄 새 내용 — 보기" pill that reloads on
+        click, and auto-reload later once the user goes idle.
+    Scroll position is preserved across the reload.
 
     page_key ∈ {"qna","notes","kg","wiki"} — matches the /version JSON keys.
     """
@@ -32,18 +40,40 @@ def live_reload_js(page_key: str) -> str:
     return (
         "<script>(function(){"
         "var token=location.pathname.split('/').filter(Boolean)[0]||'';"
-        "var KEY=" + k + ",cur=null,SK='dash_scroll_'+KEY;"
+        "var KEY=" + k + ",cur=null,SK='dash_scroll_'+KEY,pending=false,"
+        "last=Date.now(),IDLE=15000;"
         # restore scroll if THIS script triggered the last reload
         "try{var s=sessionStorage.getItem(SK);"
         "if(s!==null){window.scrollTo(0,parseInt(s,10)||0);"
         "sessionStorage.removeItem(SK);}}catch(e){}"
+        "['scroll','keydown','mousedown','touchstart','wheel'].forEach("
+        "function(ev){window.addEventListener(ev,function(){last=Date.now();},"
+        "{passive:true});});"
+        # busy = actively reading/editing → don't yank the page
+        "function busy(){if(document.hidden)return true;"
+        "if(Date.now()-last<IDLE)return true;"
+        "if(document.querySelector('.edge-editor'))return true;"
+        "var a=document.activeElement;"
+        "if(a&&(a.tagName==='TEXTAREA'||a.tagName==='INPUT'))return true;"
+        "return false;}"
+        "function go(){try{sessionStorage.setItem(SK,String("
+        "window.scrollY||window.pageYOffset||0));}catch(e){}location.reload();}"
+        "function pill(){if(document.getElementById('dash-newpill'))return;"
+        "var b=document.createElement('div');b.id='dash-newpill';"
+        "b.textContent='\\uD83D\\uDD04 \\uC0C8 \\uB0B4\\uC6A9 \\u2014 \\uBCF4\\uAE30';"
+        "b.style.cssText='position:fixed;left:50%;bottom:24px;"
+        "transform:translateX(-50%);z-index:100000;background:#5e6ad2;"
+        "color:#fff;padding:9px 16px;border-radius:20px;cursor:pointer;"
+        "font:600 13px/1.2 -apple-system,BlinkMacSystemFont,sans-serif;"
+        "box-shadow:0 6px 20px rgba(0,0,0,.4)';"
+        "b.addEventListener('click',go);document.body.appendChild(b);}"
+        "function tick(){if(pending){if(!busy())go();else pill();}}"
         "function chk(){fetch('/'+token+'/version',{cache:'no-store'})"
         ".then(function(r){return r.ok?r.json():null;})"
         ".then(function(d){if(!d||!(KEY in d))return;var v=d[KEY];"
         "if(cur===null){cur=v;return;}"
-        "if(v!==cur){try{sessionStorage.setItem(SK,String(window.scrollY||window.pageYOffset||0));}catch(e){}"
-        "location.reload();}}).catch(function(){});}"
-        "setInterval(chk,12000);chk();"
+        "if(v!==cur){cur=v;pending=true;tick();}}).catch(function(){});}"
+        "setInterval(chk,12000);setInterval(tick,3000);chk();"
         "})();</script>"
     )
 
