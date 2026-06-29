@@ -32,16 +32,18 @@ document.getElementById("saveServer").addEventListener("click", () => {
   const raw = serverEl.value.trim().replace(/\/+$/, "");
   const token = tokenEl.value.trim();
   if (!raw || !token) { setStatus("서버 주소와 토큰을 모두 입력하세요", "err"); return; }
-  let origin;
-  try { origin = new URL(raw).origin; }
+  try { new URL(raw); }
   catch (e) { setStatus("서버 주소 형식이 올바르지 않습니다 (http://호스트:포트)", "err"); return; }
-  // Request host permission for the dashboard origin so the background
-  // worker can POST cross-origin (must be from this user gesture).
-  chrome.permissions.request({ origins: [origin + "/*"] }, (granted) => {
-    if (chrome.runtime.lastError) { setStatus("권한 요청 실패: " + chrome.runtime.lastError.message, "err"); return; }
-    if (!granted) { setStatus("호스트 권한이 거부되어 저장 기능이 동작하지 않습니다", "err"); return; }
-    chrome.storage.sync.set({ serverUrl: raw, token }, () => {
-      setStatus("✅ 저장됨 — 이제 영상 패널의 🧠/📒 버튼이 동작합니다", "ok");
-    });
+  // Host permission is declared in the manifest (install-time), so the
+  // background worker can already POST cross-origin — just persist the
+  // settings. (Earlier版 requested an optional permission with a port in
+  // the match pattern, which is invalid → request silently failed → the
+  // settings never saved. Fixed by granting host access at install.)
+  chrome.storage.sync.set({ serverUrl: raw, token }, () => {
+    if (chrome.runtime.lastError) {
+      setStatus("저장 실패: " + chrome.runtime.lastError.message, "err");
+      return;
+    }
+    setStatus("✅ 저장됨 — 이제 영상 패널의 🧠/📒 버튼이 동작합니다", "ok");
   });
 });
