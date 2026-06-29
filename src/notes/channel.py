@@ -148,13 +148,19 @@ async def ingest_url(url: str) -> str | None:
     vid = loaders.is_youtube(url)
     if vid:
         return await ingest_youtube(url, vid)
-    # load_url 자체가 강한 폴백 사다리(httpx→DOM→curl_cffi→Jina→Jina-browser)를
-    # 가져서 JS/Notion 페이지도 한 번에 처리한다. 예전의 3회 외부 재시도는 그
-    # 사다리를 통째로 3번 돌려 실패 URL 1건이 수 분씩 인입을 점유했음(학습 지연
-    # 주범) → 1회로. 정상 페이지는 어차피 1차 성공이라 영향 없음.
-    title, body, _hint, _links = await loaders.load_url(url)
+    # 재시도 사이클 1회(RAG와 동일): 처음 + 1회 재시도 = 총 2번. load_url이
+    # 내부 폴백 사다리를 가지므로 짧게만(이전 3회는 그 사다리를 통째로 3번
+    # 돌려 학습 지연 주범이었음). 정상 페이지는 1차 성공이라 영향 없음.
+    title = body = ""
+    for attempt in range(2):
+        title, body, _hint, _links = await loaders.load_url(url)
+        if (body or "").strip():
+            break
+        if attempt == 0:
+            log.info("study ingest_url: empty body for %s — 1회 재시도", url)
+            await asyncio.sleep(2)
     if not (body or "").strip():
-        log.info("study ingest_url: empty body for %s", url)
+        log.info("study ingest_url: empty body for %s (2회 시도 후)", url)
         return None
     stype = "blog" if loaders.is_blog(url) else "web"
     return await ingest_text(stype, url, body, title)
