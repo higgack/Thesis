@@ -67,6 +67,30 @@ def enqueue(url: str, target: str = "rag") -> int:
         return int(cur.lastrowid)
 
 
+def has_active(url: str, target: str = "rag") -> bool:
+    """True if an identical (url, target) is already pending or running —
+    lets the server skip duplicate enqueues from accidental multi-clicks
+    (the same video pressed 🧠/📒 several times)."""
+    target = target if target in TARGETS else "rag"
+    with _conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM ingests WHERE url=? AND target=? "
+            "AND status IN ('pending','running') LIMIT 1",
+            ((url or "").strip(), target)).fetchone()
+    return row is not None
+
+
+def reset_stale_running() -> int:
+    """On bot startup, flip orphaned 'running' rows (claimed just before a
+    crash/restart, never completed) back to 'pending' so the worker retries
+    them instead of leaving them stuck forever. Safe to call before the
+    worker job starts. Returns the number reset."""
+    with _conn() as c:
+        cur = c.execute(
+            "UPDATE ingests SET status='pending' WHERE status='running'")
+        return cur.rowcount
+
+
 def claim_pending(limit: int = 1) -> list[dict]:
     """Atomically flip up to `limit` pending rows to 'running' and return
     them. The conditional UPDATE makes the claim a no-double-run even if

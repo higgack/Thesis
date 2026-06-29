@@ -164,7 +164,8 @@
           return;
         }
         if (resp && resp.ok) {
-          toast("✅ " + label + " 학습 큐에 추가됨", true);
+          if (resp.duplicate) toast("ℹ️ " + label + " 이미 학습 큐에 있어요", true);
+          else toast("✅ " + label + " 학습 큐에 추가됨", true);
         } else {
           toast("⚠️ " + (resp && resp.error ? resp.error : "저장 실패"), false);
         }
