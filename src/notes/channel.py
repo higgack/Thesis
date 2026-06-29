@@ -148,23 +148,13 @@ async def ingest_url(url: str) -> str | None:
     vid = loaders.is_youtube(url)
     if vid:
         return await ingest_youtube(url, vid)
-    # JS-rendered pages (Notion/SPA) sometimes return an empty body on the
-    # first fetch and the real content a moment later. RAG survives this via
-    # its retry queue; the one-shot note path used to give up immediately and
-    # tell the user to re-send. Retry the fetch a few times with a short delay
-    # before declaring failure — only on the empty-body path, so normal pages
-    # (success on attempt 1) pay no delay. No locks/concurrency: safe.
-    body = title = ""
-    for attempt in range(3):
-        title, body, _hint, _links = await loaders.load_url(url)
-        if (body or "").strip():
-            break
-        if attempt < 2:
-            log.info("study ingest_url: empty body for %s (attempt %d/3) — retrying",
-                     url, attempt + 1)
-            await asyncio.sleep(4)
+    # load_url 자체가 강한 폴백 사다리(httpx→DOM→curl_cffi→Jina→Jina-browser)를
+    # 가져서 JS/Notion 페이지도 한 번에 처리한다. 예전의 3회 외부 재시도는 그
+    # 사다리를 통째로 3번 돌려 실패 URL 1건이 수 분씩 인입을 점유했음(학습 지연
+    # 주범) → 1회로. 정상 페이지는 어차피 1차 성공이라 영향 없음.
+    title, body, _hint, _links = await loaders.load_url(url)
     if not (body or "").strip():
-        log.info("study ingest_url: empty body for %s (after 3 attempts)", url)
+        log.info("study ingest_url: empty body for %s", url)
         return None
     stype = "blog" if loaders.is_blog(url) else "web"
     return await ingest_text(stype, url, body, title)
