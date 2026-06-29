@@ -87,6 +87,12 @@ def add_edges(doc_id: str, triples: list[dict]) -> int:
     (duplicates ignored via the unique index)."""
     init()
     now = datetime.now(_KST).isoformat(timespec="seconds")
+    # 영구 무시(대시보드 🗑) 처리된 트리플은 재추출돼도 다시 넣지 않음.
+    from . import kg_ignore
+    try:
+        _ignored = kg_ignore.all_sigs()
+    except Exception:
+        _ignored = set()
     n = 0
     with _conn() as c:
         for t in triples:
@@ -94,6 +100,8 @@ def add_edges(doc_id: str, triples: list[dict]) -> int:
             rel = (t.get("rel") or "").strip()
             dst = (t.get("dst") or "").strip()
             if not src or not rel or not dst:
+                continue
+            if kg_ignore.sig(src, rel, dst) in _ignored:
                 continue
             try:
                 cur = c.execute(
@@ -210,26 +218,29 @@ def edges_by_ids(ids) -> list[dict]:
         return []
 
 
-def delete_edge(edge_id) -> bool:
-    """Delete one edge by id — powers the dashboard 🗑 (jal-mot 추출된 관계
-    제거). READ/WRITE but does NOT call init(): this runs in the dashboard
-    SERVER process and init()'s CREATE TABLE/INDEX would grab a write-lock
-    that contends with the bot writing kg.db during ingest → 'database is
-    locked'. The table already exists. Returns True if a row was removed.
+def delete_edge(edge_id) -> dict | None:
+    """Delete one edge by id — powers the dashboard 🗑. READ/WRITE but does
+    NOT call init(): this runs in the dashboard SERVER process and init()'s
+    CREATE TABLE/INDEX would grab a write-lock that contends with the bot
+    writing kg.db during ingest → 'database is locked'. The table already
+    exists.
 
-    Note: if the source document is later FULLY re-extracted (only happens
-    when a doc has zero remaining edges) the same triple could reappear;
-    deleting one edge from a multi-edge doc is permanent in practice."""
+    Returns the deleted {src, rel, dst} (so the caller can add it to the
+    permanent-ignore list), or None if the id was bad / not found / error."""
     try:
         eid = int(edge_id)
     except (TypeError, ValueError):
-        return False
+        return None
     try:
         with _conn() as c:
-            cur = c.execute("DELETE FROM edges WHERE id=?", (eid,))
-        return cur.rowcount > 0
+            row = c.execute(
+                "SELECT src,rel,dst FROM edges WHERE id=?", (eid,)).fetchone()
+            if not row:
+                return None
+            c.execute("DELETE FROM edges WHERE id=?", (eid,))
+        return {"src": row["src"], "rel": row["rel"], "dst": row["dst"]}
     except Exception:
-        return False
+        return None
 
 
 def all_edges(limit: int = 3000) -> list[dict]:
