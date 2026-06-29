@@ -121,6 +121,15 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(b"auth required")
         return False
 
+    def end_headers(self):
+        # Static dashboard pages are regenerated in place every ~15s. Without
+        # forcing revalidation, the browser serves a cached copy so a
+        # just-deleted note/card looks like it "came back" until a hard
+        # refresh (Ctrl+Shift+R). no-cache still allows a cheap 304 when the
+        # file is unchanged — it only forces the browser to check first.
+        self.send_header("Cache-Control", "no-cache, must-revalidate")
+        super().end_headers()
+
     def _send_json(self, obj, code: int = 200, cors: bool = False):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
