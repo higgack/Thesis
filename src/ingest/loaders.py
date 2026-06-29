@@ -378,11 +378,11 @@ async def _load_via_jina(url: str,
     """
     api_url = f"https://r.jina.ai/{url}"
     headers = {"Accept": "text/plain"}
-    timeout = 60.0
+    timeout = 35.0
     if engine:
         headers["X-Engine"] = engine          # "browser" = real headless render
-        headers["X-Timeout"] = "30"
-        timeout = 90.0
+        headers["X-Timeout"] = "25"
+        timeout = 45.0
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True,
                                  headers=headers) as c:
         r = await c.get(api_url)
@@ -410,7 +410,7 @@ async def _fetch_html_impersonate(url: str, headers: dict) -> str:
             return ""
         try:
             r = _cffi.get(url, headers=headers, impersonate="chrome",
-                          timeout=30, allow_redirects=True)
+                          timeout=12, allow_redirects=True)
         except Exception:
             return ""
         if r.status_code >= 400:
