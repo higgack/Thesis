@@ -168,6 +168,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "src_url": (d.get("source") or "").strip(),
                     "ahhmm": al.get("hhmm", "") or "",
                     "adate": al.get("date", "") or "",
+                    "ts": e.get("ts") or "",  # 학습된 날짜(추출 시각)
                 })
             self._send_json({"edges": out, "count": len(out)})
         except Exception as e:

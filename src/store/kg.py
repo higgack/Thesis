@@ -179,8 +179,8 @@ def edges_for_entity(name: str, limit: int = 1200) -> list[dict]:
     try:
         with _conn() as c:
             rows = c.execute(
-                "SELECT id,src,rel,dst,confidence,doc_id FROM edges "
-                "WHERE src=? OR dst=? ORDER BY confidence DESC LIMIT ?",
+                "SELECT id,src,rel,dst,confidence,doc_id,ts FROM edges "
+                "WHERE src=? OR dst=? ORDER BY confidence DESC, ts DESC LIMIT ?",
                 (name, name, int(limit))).fetchall()
         return [dict(r) for r in rows]
     except Exception:
@@ -203,7 +203,7 @@ def edges_by_ids(ids) -> list[dict]:
         with _conn() as c:
             ph = ",".join("?" * len(iids))
             rows = c.execute(
-                f"SELECT id,src,rel,dst,confidence,doc_id FROM edges "
+                f"SELECT id,src,rel,dst,confidence,doc_id,ts FROM edges "
                 f"WHERE id IN ({ph})", iids).fetchall()
         return [dict(r) for r in rows]
     except Exception:
@@ -215,8 +215,8 @@ def all_edges(limit: int = 3000) -> list[dict]:
     init()
     with _conn() as c:
         rows = c.execute(
-            "SELECT id,src,rel,dst,confidence,doc_id FROM edges "
-            "ORDER BY confidence DESC LIMIT ?", (limit,)).fetchall()
+            "SELECT id,src,rel,dst,confidence,doc_id,ts FROM edges "
+            "ORDER BY confidence DESC, ts DESC LIMIT ?", (limit,)).fetchall()
     return [dict(r) for r in rows]
 
 
