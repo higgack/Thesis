@@ -83,6 +83,10 @@ font-size:15px;line-height:1;padding:0 2px;transition:.12s}
 font-size:14px;line-height:1;padding:0 2px;transition:.12s}
 .ememo:hover{opacity:1;transform:scale(1.15)}
 .ememo.on{opacity:1}
+.edel{cursor:pointer;background:transparent;border:0;opacity:.3;
+font-size:14px;line-height:1;padding:0 2px;transition:.12s}
+.edel:hover{opacity:1;color:var(--danger);transform:scale(1.15)}
+.edge.removing{opacity:0;transform:translateX(10px);transition:opacity .2s,transform .2s}
 .edge[data-important="1"]{border-color:rgba(245,158,11,.55);
 background:rgba(245,158,11,.07)}
 .edge-editor{margin:-2px 0 8px;padding:10px 12px;background:var(--panel);
@@ -261,6 +265,24 @@ _JS = r"""
     },true);
     if(ta)ta.focus();
   }
+  // 🗑 관계 삭제 (이벤트 위임에서 호출). 확인 후 서버 삭제 → 행 제거.
+  function deleteEdge(row){
+    var id=row.dataset.edgeid; if(!id)return;
+    if(!confirm('이 관계를 삭제할까요?\n\n'+(row.dataset.text||'')))return;
+    fetch('/'+token+'/kg/'+encodeURIComponent(id)+'/delete',{method:'POST'})
+      .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+      .then(function(){
+        var ed=row.nextSibling;
+        if(ed&&ed.classList&&ed.classList.contains('edge-editor'))ed.remove();
+        row.classList.add('removing');
+        setTimeout(function(){
+          row.remove();
+          var c=document.getElementById('cnt');
+          if(c){var n=parseInt(c.textContent,10); if(!isNaN(n)&&n>0)c.textContent=n-1;}
+        },200);
+      })
+      .catch(function(err){alert('삭제 실패: '+err.message);});
+  }
   // JSON 엣지 → 행 HTML (Python 렌더와 동일 구조; 동적 로드용).
   function renderEdge(e){
     var eid=esc(e.id), imp=e.important?1:0;
@@ -283,7 +305,8 @@ _JS = r"""
       +"<button type='button' class='ememo"+(hm?' on':'')+"' title='메모·알람'>📝</button>"
       +"<span class='s'>"+esc(e.src)+"</span><span class='arrow'>—</span>"
       +"<span class='r'>"+esc(e.rel)+"</span><span class='arrow'>→</span>"
-      +"<span class='o'>"+esc(e.dst)+"</span><span class='c'>"+c+"</span>"+date_html+src_html+"</div>";
+      +"<span class='o'>"+esc(e.dst)+"</span><span class='c'>"+c+"</span>"+date_html
+      +"<button type='button' class='edel' title='이 관계 삭제'>🗑</button>"+src_html+"</div>";
   }
   // 칩 클릭 = 그 개체의 전체 관계를 서버에서 받아와 표시(상위 3000 한계 우회).
   function loadEntity(name){
@@ -332,6 +355,9 @@ _JS = r"""
     var mbtn=t.closest('.ememo');
     if(mbtn&&listEl.contains(mbtn)){var r2=mbtn.closest('.edge'); if(r2){
       ev.preventDefault(); ev.stopPropagation(); openEditor(r2);} return;}
+    var dbtn=t.closest('.edel');
+    if(dbtn&&listEl.contains(dbtn)){var r3=dbtn.closest('.edge'); if(r3){
+      ev.preventDefault(); ev.stopPropagation(); deleteEdge(r3);} return;}
   });
 })();
 """
@@ -458,6 +484,7 @@ def render_kg(token: str) -> int:
             f"<span class='c'>{c:.2f}</span>"
             + (f"<span class='edate' title='학습된 날짜'>📅 {_esc(_ldate)}</span>"
                if _ldate else "")
+            + "<button type='button' class='edel' title='이 관계 삭제'>🗑</button>"
             + f"{src_html}</div>")
 
     # 메모·알람 편집은 각 관계 행의 📝 버튼으로 그 자리에서(인라인) 한다.
@@ -504,7 +531,7 @@ def render_kg(token: str) -> int:
         "title='정렬 기준 전환'>↕ 신뢰도순</button>"
         "<button id='reset' type='button' class='reset'>초기화</button></div>",
         f"<div class='sec'>관계 (<span id='cnt'>{len(edges)}</span>) — "
-        "☆ 중요 표시 · 📝 눌러 메모·알람 작성</div>",
+        "☆ 중요 표시 · 📝 메모·알람 · 🗑 삭제(잘못 추출된 관계)</div>",
         f"<div id='kg-list'>{chr(10).join(rows)}</div>",
         "<template id='eetpl'>"
         "<div class='ent-memo' data-id=\"__EID__\">"
