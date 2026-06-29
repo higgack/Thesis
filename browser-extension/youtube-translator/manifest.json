@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouTube 번역 & 스크립트 + 두뇌저장",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "유튜브 자막을 원하는 언어로 번역해 영상 위에 보여주고, 전체 스크립트를 타임스탬프와 함께 정리합니다. 한 번 클릭으로 RAG·학습노트에 저장합니다.",
   "permissions": ["storage"],
   "host_permissions": ["https://www.youtube.com/*", "http://*/*", "https://*/*"],

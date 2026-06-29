@@ -33,7 +33,7 @@ async function handleIngest(msg) {
   }
   let data = {};
   try { data = await resp.json(); } catch (e) {}
-  return { ok: true, id: data.id, target: data.target };
+  return { ok: true, id: data.id, target: data.target, duplicate: !!data.duplicate };
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

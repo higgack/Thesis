@@ -12951,6 +12951,12 @@ async def _run_dashboard_command(cmd: str, args: list[str],
     return {"kind": "command", "text": out or "(응답이 비어 있어요)"}
 
 
+# Cap one extension ingest so a slow caption-less video (full-audio
+# transcription) can't block the serial queue forever. Timed-out items
+# stay recoverable via the retry queue. Env-tunable.
+_EXT_INGEST_TIMEOUT_SEC = int(os.getenv("EXT_INGEST_TIMEOUT_SEC", "300"))
+
+
 async def _dash_ingest_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
     """Drain one browser-extension ingest request per tick. Routes by
     target: 'rag' → _ingest_one_url (same inflight/dedup/failed-log path
@@ -12967,6 +12973,7 @@ async def _dash_ingest_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
         rid = item["id"]
         url = (item.get("url") or "").strip()
         target = item.get("target") or "rag"
+        label = "📒 학습노트" if target == "note" else "🧠 RAG"
         if not url:
             dash_ingest.complete(rid, "error", error="빈 URL")
             continue
@@ -12977,38 +12984,56 @@ async def _dash_ingest_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
             continue
         owner = config.TELEGRAM_OWNER_ID
         try:
+            # Per-item timeout: a caption-less video transcribes its whole
+            # audio (slow), and the worker is serial (max_instances=1), so a
+            # single hung item would block every queued click. Cap it; a
+            # timed-out item is left recoverable by the retry queue.
             if target == "note":
                 from .notes import channel as _nc
-                nid = await _nc.ingest_url(url)
+                nid = await asyncio.wait_for(
+                    _nc.ingest_url(url), timeout=_EXT_INGEST_TIMEOUT_SEC)
                 if nid:
                     dash_ingest.complete(rid, "done", f"note:{nid}")
-                    await _notify_ext_ingest(ctx, owner, "📒 학습노트", url, True)
+                    await _notify_ext_ingest(ctx, owner, label, url[:60], True)
                 else:
                     dash_ingest.complete(rid, "empty", error="본문 추출 실패")
-                    await _notify_ext_ingest(ctx, owner, "📒 학습노트", url,
+                    await _notify_ext_ingest(ctx, owner, label, url[:60],
                                              False, "본문 추출 실패")
             else:
-                r = await _ingest_one_url(url, owner) or {}
+                r = await asyncio.wait_for(
+                    _ingest_one_url(url, owner),
+                    timeout=_EXT_INGEST_TIMEOUT_SEC) or {}
                 st = r.get("status")
                 title = (r.get("title") or url)[:80]
                 if st == "ok":
                     dash_ingest.complete(rid, "done", f"ok:{title}")
-                    await _notify_ext_ingest(ctx, owner, "🧠 RAG", title, True)
+                    await _notify_ext_ingest(ctx, owner, label, title, True)
                 elif st == "duplicate":
                     dash_ingest.complete(rid, "duplicate", f"dup:{title}")
-                    await _notify_ext_ingest(ctx, owner, "🧠 RAG", title, True,
+                    await _notify_ext_ingest(ctx, owner, label, title, True,
                                              "이미 학습됨 (중복)")
                 elif st == "queued":
                     dash_ingest.complete(rid, "queued", "재시도 큐 등록")
+                    await _notify_ext_ingest(ctx, owner, label, title, False,
+                                             "일시 실패 — 나중에 자동 재시도")
                 else:  # blocked / empty / skipped / error
                     detail = r.get("detail") or r.get("error") or st or "실패"
                     dash_ingest.complete(rid, st or "error", error=str(detail)[:200])
-                    await _notify_ext_ingest(ctx, owner, "🧠 RAG", title,
+                    await _notify_ext_ingest(ctx, owner, label, title,
                                              False, str(detail)[:80])
+        except asyncio.TimeoutError:
+            log.warning("ingest worker: timeout #%s (%s) %s",
+                        rid, target, url[:120])
+            dash_ingest.complete(rid, "timeout",
+                                 error=f"{_EXT_INGEST_TIMEOUT_SEC}s 초과")
+            await _notify_ext_ingest(ctx, owner, label, url[:60], False,
+                                     "시간 초과 — 나중에 자동 재시도")
         except Exception as e:
             log.exception("ingest worker: failed for #%s", rid)
             try:
                 dash_ingest.complete(rid, "error", error=f"{str(e)[:200]}")
+                await _notify_ext_ingest(ctx, owner, label, url[:60],
+                                         False, str(e)[:60])
             except Exception:
                 pass
 
@@ -13029,7 +13054,9 @@ async def _notify_ext_ingest(ctx: "ContextTypes.DEFAULT_TYPE", chat_id: int,
             text=f"{icon} 확장 학습 {kind}: {what}{tail}",
             disable_web_page_preview=True)
     except Exception:
-        log.debug("ext ingest notify failed", exc_info=True)
+        # Loud (was debug → invisible): if the owner DM ever fails we want
+        # it in the logs, not swallowed.
+        log.warning("ext ingest notify failed (chat=%s)", chat_id, exc_info=True)
 
 
 async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
@@ -13400,6 +13427,14 @@ def main():
         )
         # Browser-extension one-click ingests: drain every 3s (one per
         # tick → serial, memory-gated, can't stack pipeline runs).
+        # On startup, recover any 'running' rows orphaned by the restart
+        # (claimed before shutdown, never finished) → back to pending.
+        try:
+            _n_stale = dash_ingest.reset_stale_running()
+            if _n_stale:
+                log.info("dash_ingest: reset %d stale running → pending", _n_stale)
+        except Exception:
+            log.exception("dash_ingest reset_stale_running failed")
         app.job_queue.run_repeating(
             _dash_ingest_worker,
             interval=3,

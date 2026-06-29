@@ -236,6 +236,13 @@ class Handler(SimpleHTTPRequestHandler):
             target = "rag"
         try:
             from ..store import dash_ingest
+            # 같은 (URL,종류)가 이미 대기/처리 중이면 큐에 또 넣지 않음
+            # (실수로 여러 번 눌러 같은 영상이 쌓이는 것 방지).
+            if dash_ingest.has_active(url, target):
+                self._send_json(
+                    {"duplicate": True, "detail": "이미 학습 큐에 있어요"},
+                    cors=True)
+                return
             if dash_ingest.recent_count(_INGEST_FLOOD_WINDOW_SEC) >= _INGEST_FLOOD_MAX:
                 self._send_json(
                     {"error": "요청이 너무 많아요. 잠시 후 다시."}, 429, cors=True)
