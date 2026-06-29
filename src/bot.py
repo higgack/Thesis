@@ -106,10 +106,10 @@ _ACTIVE_AGENT_RUNS = 0
 _LAST_REPLY_AT: datetime | None = None
 _FAILED_MAX = 200
 # Max times an item can land in /failed before getting dropped entirely.
-# Each /failed_retry round trip counts as one cycle. Without this the
-# user-triggered retry loop could ping-pong an unfixable item forever
-# (paywall, removed URL, permanently 404'd). 3 = "tried hard enough".
-_FAILED_MAX_CYCLES = 3
+# Each /failed_retry round trip counts as one cycle. 1 = 재시도 사이클 한 번:
+# 최초 실패(큐에 cycle1) → /failed_retry 1회 실패 → 드롭(총 2회 시도).
+# (드롭 = 큐에서 제거이지 영구 무시 아님 — 영구 차단은 수동 [🚫]/[🗑].)
+_FAILED_MAX_CYCLES = 1
 
 # Per-ingest tracking — populated while a semaphore slot is actually
 # running work so /status can show filename + elapsed time. Earlier
