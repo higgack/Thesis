@@ -23,6 +23,7 @@ from . import config
 from .store import meta, vector, obsidian, cost, qna, wiki, pending as pending_store
 from .store import pending_url_decisions
 from .store import dash_queries
+from .store import dash_ingest
 from .ingest import pipeline
 from .agent import agent
 
@@ -12950,6 +12951,87 @@ async def _run_dashboard_command(cmd: str, args: list[str],
     return {"kind": "command", "text": out or "(응답이 비어 있어요)"}
 
 
+async def _dash_ingest_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    """Drain one browser-extension ingest request per tick. Routes by
+    target: 'rag' → _ingest_one_url (same inflight/dedup/failed-log path
+    as a Telegram URL), 'note' → notes.channel.ingest_url (체화 노트).
+    Serial + memory-gated like the dash query worker so extension clicks
+    can't stack pipeline runs and OOM the bot. Sends one concise Telegram
+    confirmation to the owner so a click made from the browser is visible."""
+    try:
+        pending = dash_ingest.claim_pending(limit=1)
+    except Exception:
+        log.exception("ingest worker: claim failed")
+        return
+    for item in pending:
+        rid = item["id"]
+        url = (item.get("url") or "").strip()
+        target = item.get("target") or "rag"
+        if not url:
+            dash_ingest.complete(rid, "error", error="빈 URL")
+            continue
+        # Defer (re-queue) under memory pressure rather than risk an OOM
+        # kill mid-ingest — the next tick retries once RSS drops.
+        if _mem_pressure() >= _MEM_REFUSE_THRESHOLD:
+            dash_ingest.release(rid)
+            continue
+        owner = config.TELEGRAM_OWNER_ID
+        try:
+            if target == "note":
+                from .notes import channel as _nc
+                nid = await _nc.ingest_url(url)
+                if nid:
+                    dash_ingest.complete(rid, "done", f"note:{nid}")
+                    await _notify_ext_ingest(ctx, owner, "📒 학습노트", url, True)
+                else:
+                    dash_ingest.complete(rid, "empty", error="본문 추출 실패")
+                    await _notify_ext_ingest(ctx, owner, "📒 학습노트", url,
+                                             False, "본문 추출 실패")
+            else:
+                r = await _ingest_one_url(url, owner) or {}
+                st = r.get("status")
+                title = (r.get("title") or url)[:80]
+                if st == "ok":
+                    dash_ingest.complete(rid, "done", f"ok:{title}")
+                    await _notify_ext_ingest(ctx, owner, "🧠 RAG", title, True)
+                elif st == "duplicate":
+                    dash_ingest.complete(rid, "duplicate", f"dup:{title}")
+                    await _notify_ext_ingest(ctx, owner, "🧠 RAG", title, True,
+                                             "이미 학습됨 (중복)")
+                elif st == "queued":
+                    dash_ingest.complete(rid, "queued", "재시도 큐 등록")
+                else:  # blocked / empty / skipped / error
+                    detail = r.get("detail") or r.get("error") or st or "실패"
+                    dash_ingest.complete(rid, st or "error", error=str(detail)[:200])
+                    await _notify_ext_ingest(ctx, owner, "🧠 RAG", title,
+                                             False, str(detail)[:80])
+        except Exception as e:
+            log.exception("ingest worker: failed for #%s", rid)
+            try:
+                dash_ingest.complete(rid, "error", error=f"{str(e)[:200]}")
+            except Exception:
+                pass
+
+
+async def _notify_ext_ingest(ctx: "ContextTypes.DEFAULT_TYPE", chat_id: int,
+                             kind: str, what: str, ok: bool,
+                             detail: str = "") -> None:
+    """One concise owner message for an extension-initiated ingest, so a
+    click made away from Telegram still surfaces. Not an actionable alert
+    (no follow-up needed) → plain send is fine; best-effort, never raises."""
+    if not chat_id:
+        return
+    icon = "✅" if ok else "⚠️"
+    tail = f" — {detail}" if detail else ""
+    try:
+        await ctx.bot.send_message(
+            chat_id=chat_id,
+            text=f"{icon} 확장 학습 {kind}: {what}{tail}",
+            disable_web_page_preview=True)
+    except Exception:
+        log.debug("ext ingest notify failed", exc_info=True)
+
+
 async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
     """Drain one parked dashboard query per tick: any /command or a
     natural-language agent.run(). Serial by design (one per tick) so
@@ -13033,6 +13115,12 @@ async def _dash_query_purge(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
             log.info("dash queries purged: %d", n)
     except Exception:
         log.exception("dash query purge failed")
+    try:
+        m = dash_ingest.purge_old(hours=12)
+        if m:
+            log.info("dash ingests purged: %d", m)
+    except Exception:
+        log.exception("dash ingest purge failed")
 
 
 def _build_dash_command_map() -> dict:
@@ -13309,6 +13397,14 @@ def main():
             interval=2,
             first=15,
             name="dash_query_worker",
+        )
+        # Browser-extension one-click ingests: drain every 3s (one per
+        # tick → serial, memory-gated, can't stack pipeline runs).
+        app.job_queue.run_repeating(
+            _dash_ingest_worker,
+            interval=3,
+            first=18,
+            name="dash_ingest_worker",
         )
         app.job_queue.run_repeating(
             _dash_query_purge,
