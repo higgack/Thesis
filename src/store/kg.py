@@ -210,6 +210,28 @@ def edges_by_ids(ids) -> list[dict]:
         return []
 
 
+def delete_edge(edge_id) -> bool:
+    """Delete one edge by id — powers the dashboard 🗑 (jal-mot 추출된 관계
+    제거). READ/WRITE but does NOT call init(): this runs in the dashboard
+    SERVER process and init()'s CREATE TABLE/INDEX would grab a write-lock
+    that contends with the bot writing kg.db during ingest → 'database is
+    locked'. The table already exists. Returns True if a row was removed.
+
+    Note: if the source document is later FULLY re-extracted (only happens
+    when a doc has zero remaining edges) the same triple could reappear;
+    deleting one edge from a multi-edge doc is permanent in practice."""
+    try:
+        eid = int(edge_id)
+    except (TypeError, ValueError):
+        return False
+    try:
+        with _conn() as c:
+            cur = c.execute("DELETE FROM edges WHERE id=?", (eid,))
+        return cur.rowcount > 0
+    except Exception:
+        return False
+
+
 def all_edges(limit: int = 3000) -> list[dict]:
     """Every edge (confidence-desc) for the dashboard KG view."""
     init()

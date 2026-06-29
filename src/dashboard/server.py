@@ -81,6 +81,8 @@ _ASK_GET_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/(\d+)/?$")
 # GET /<token>/kg/entity?e=<name> → all edges for an entity (full degree set,
 # not just the top-3000-by-confidence the static KG page loads).
 _KG_ENTITY_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/kg/entity/?$")
+# Delete one KG relation (dashboard 🗑): POST /<token>/kg/<edge_id>/delete
+_KG_DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/kg/(\d+)/delete/?$")
 # Browser-extension one-click ingest: POST /<token>/ingest {url,target}
 # (target = rag|note). Status poll: GET /<token>/ingest/<id>.
 _INGEST_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ingest/?$")
@@ -283,6 +285,30 @@ class Handler(SimpleHTTPRequestHandler):
             "result": row["result"], "error": row["error"],
         }, cors=True)
 
+    def _delete_kg_edge(self, token: str, edge_id: int):
+        """Delete one KG relation (dashboard 🗑) + clean up its ★/메모/알람
+        marks. Token-gated like the other write routes. sqlite-only, safe
+        in the 200MB dashboard container (no chroma)."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self.send_error(403, "forbidden")
+            return
+        try:
+            from ..store import kg, marks
+            ok = kg.delete_edge(edge_id)
+            if ok:
+                eid = str(edge_id)
+                try:
+                    marks.set_mark("kg_edge", eid, False)
+                    marks.set_memo("kg_edge", eid, "")
+                    marks.clear_alarm("kg_edge", eid)
+                except Exception:
+                    log.warning("kg edge mark cleanup failed: %s", eid,
+                                exc_info=True)
+            self._send_ok(1 if ok else 0)
+        except Exception as e:
+            log.exception("kg edge delete failed")
+            self.send_error(500, f"delete failed: {e}")
+
     def do_HEAD(self):
         if not self._check_basic_auth():
             return
@@ -308,6 +334,10 @@ class Handler(SimpleHTTPRequestHandler):
         mq = _QNA_IMPORTANT_RE.match(self.path)
         if mq:
             self._set_qna_important(mq.group(1), int(mq.group(2)))
+            return
+        mkd = _KG_DELETE_RE.match(self.path)
+        if mkd:
+            self._delete_kg_edge(mkd.group(1), int(mkd.group(2)))
             return
         mk = _MARK_RE.match(self.path)
         if mk:
