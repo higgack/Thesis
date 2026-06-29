@@ -576,6 +576,7 @@ def _render_index(token: str, notes: list[dict],
                   bodies: dict | None = None) -> str:
     cost = cost or {}
     bodies = bodies or {}
+    from . import widgets as _widgets
     try:
         from ..store import marks as _marks
         _nmemos = _marks.memos("note")
@@ -651,6 +652,7 @@ def _render_index(token: str, notes: list[dict],
         "\n".join(rows),
         "<div class='footer'>대시보드는 읽기 전용 · 🗑 = 노트 삭제</div>",
         f"<script>{_INDEX_JS}</script>",
+        _widgets.live_reload_js("notes"),
         "</div></body></html>",
     ])
 

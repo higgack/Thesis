@@ -1488,6 +1488,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
     parts.append(f"<script>{_INDEX_JS}</script>")
     parts.append(f"<script>{_LINKIFY_JS}</script>")
     parts.append(f"<script>{_widgets.ALARM_JS}</script>")
+    parts.append(_widgets.live_reload_js("qna"))
     parts.append("</div></body></html>")
     return "\n".join(parts)
 

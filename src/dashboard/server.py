@@ -83,6 +83,9 @@ _ASK_GET_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/(\d+)/?$")
 _KG_ENTITY_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/kg/entity/?$")
 # Delete one KG relation (dashboard 🗑): POST /<token>/kg/<edge_id>/delete
 _KG_DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/kg/(\d+)/delete/?$")
+# Live-update signal: GET /<token>/version → per-section content counts so
+# an open page auto-refreshes ONLY when something new actually arrived.
+_VERSION_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/version/?$")
 # Browser-extension one-click ingest: POST /<token>/ingest {url,target}
 # (target = rag|note). Status poll: GET /<token>/ingest/<id>.
 _INGEST_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ingest/?$")
@@ -172,6 +175,10 @@ class Handler(SimpleHTTPRequestHandler):
         m = _ASK_GET_RE.match(self.path)
         if m:
             self._handle_ask_get(m.group(1), int(m.group(2)))
+            return
+        mv = _VERSION_RE.match(parsed.path)
+        if mv:
+            self._handle_version(mv.group(1))
             return
         super().do_GET()
 
@@ -284,6 +291,35 @@ class Handler(SimpleHTTPRequestHandler):
             "status": row["status"], "target": row["target"],
             "result": row["result"], "error": row["error"],
         }, cors=True)
+
+    def _handle_version(self, token: str):
+        """Per-section content signature for the page's live-update poll.
+        Each value changes only when that section's content actually changes
+        (add/delete), so an open page reloads ONLY on real new content — not
+        on a blind timer. Cheap: COUNT(*) per table + wiki index mtime."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self.send_error(403, "forbidden")
+            return
+
+        def _count(db, table):
+            try:
+                with sqlite3.connect(str(db), timeout=5) as c:
+                    return int(c.execute(
+                        f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            except Exception:
+                return -1
+
+        out = {
+            "qna": _count(_QNA_DB, "qna"),
+            "notes": _count(_NOTES_DB, "notes"),
+            "kg": _count(_DATA_DIR / "kg.db", "edges"),
+        }
+        try:
+            wi = _DATA_DIR / "wiki_index.json"
+            out["wiki"] = int(wi.stat().st_mtime) if wi.exists() else 0
+        except Exception:
+            out["wiki"] = 0
+        self._send_json(out)
 
     def _delete_kg_edge(self, token: str, edge_id: int):
         """Delete one KG relation (dashboard 🗑) + clean up its ★/메모/알람

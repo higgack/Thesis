@@ -83,9 +83,9 @@ font-size:15px;line-height:1;padding:0 2px;transition:.12s}
 font-size:14px;line-height:1;padding:0 2px;transition:.12s}
 .ememo:hover{opacity:1;transform:scale(1.15)}
 .ememo.on{opacity:1}
-.edel{cursor:pointer;background:transparent;border:0;opacity:.3;
-font-size:14px;line-height:1;padding:0 2px;transition:.12s}
-.edel:hover{opacity:1;color:var(--danger);transform:scale(1.15)}
+.edel{cursor:pointer;background:transparent;border:0;opacity:.7;
+font-size:15px;line-height:1;padding:0 4px;transition:.12s;filter:grayscale(.2)}
+.edel:hover{opacity:1;color:var(--danger);transform:scale(1.2);filter:none}
 .edge.removing{opacity:0;transform:translateX(10px);transition:opacity .2s,transform .2s}
 .edge[data-important="1"]{border-color:rgba(245,158,11,.55);
 background:rgba(245,158,11,.07)}
@@ -545,6 +545,7 @@ def render_kg(token: str) -> int:
         "백그라운드 자동 축적</div>",
         f"<script>{_JS}</script>",
         f"<script>{_widgets.ALARM_JS}</script>",
+        _widgets.live_reload_js("kg"),
         "</div></body></html>",
     ])
 
