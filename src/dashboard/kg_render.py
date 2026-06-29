@@ -70,6 +70,7 @@ flex-wrap:wrap}
 .edge .s,.edge .o{font-weight:600}
 .edge .r{color:var(--muted);font-style:italic;font-size:13px}
 .edge .c{margin-left:auto;font-size:11px;color:var(--muted)}
+.edge .edate{font-size:11px;color:var(--muted);opacity:.85}
 .edge .esrc{flex-basis:100%;font-size:11.5px;color:var(--muted);
 text-decoration:none;margin-top:2px;display:block;overflow:hidden;
 text-overflow:ellipsis;white-space:nowrap}
@@ -119,6 +120,10 @@ color:var(--muted)}
 .controls .memofilter{background:var(--panel);border:1px solid var(--border);
 color:var(--muted)}
 .controls .memofilter.active{background:var(--memo);border-color:var(--memo);color:#fff}
+.controls .sortbtn{background:var(--panel);border:1px solid var(--border);
+color:var(--muted);white-space:nowrap}
+.controls .sortbtn:hover{border-color:var(--primary)}
+.controls .sortbtn.active{background:var(--primary);border-color:var(--primary);color:#fff}
 .arrow{color:var(--muted)}
 mark.kw{background:#fef08a;color:inherit;border-radius:2px;padding:0 1px}
 [data-theme=dark] mark.kw{background:#fbbf24;color:#0f172a}
@@ -136,11 +141,12 @@ _JS = r"""
   var q=document.getElementById('q'), reset=document.getElementById('reset');
   var impf=document.getElementById('impfilter');
   var memof=document.getElementById('memofilter');
+  var sortbtn=document.getElementById('sortbtn');
   var listEl=document.getElementById('kg-list');
   var origList=listEl?listEl.innerHTML:'';
   var tpl=document.getElementById('eetpl');
   var token=location.pathname.split('/').filter(Boolean)[0]||'';
-  var curImp=false, curMemo=false;
+  var curImp=false, curMemo=false, curSort='conf';
   function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function apply(){
@@ -157,6 +163,25 @@ _JS = r"""
       }
     });
     var c=document.getElementById('cnt'); if(c)c.textContent=shown;
+  }
+  // 정렬: 'conf'=신뢰도순(동점이면 최신순) / 'date'=최신순(동점이면 신뢰도순).
+  // 열려있는 인라인 편집기는 위치가 꼬이므로 정렬 전에 닫는다(미저장 입력 폐기).
+  function sortList(mode){
+    if(!listEl)return;
+    var eds=listEl.querySelectorAll('.edge-editor');
+    eds.forEach(function(x){x.remove();});
+    var rows=Array.prototype.slice.call(listEl.querySelectorAll('.edge'));
+    rows.sort(function(a,b){
+      var ca=parseFloat(a.dataset.conf)||0, cb=parseFloat(b.dataset.conf)||0;
+      var ta=a.dataset.ts||'', tb=b.dataset.ts||'';
+      if(mode==='date'){
+        if(ta!==tb)return ta<tb?1:-1;        // 최신 먼저
+        return cb-ca;
+      }
+      if(ca!==cb)return cb-ca;                // 신뢰도 높은 것 먼저
+      return ta<tb?1:(ta>tb?-1:0);           // 동점이면 최신 먼저
+    });
+    rows.forEach(function(r){listEl.appendChild(r);});
   }
   // 관계 메모 저장 (kg_edge) — 알람은 공용 ALARM_JS가 처리.
   function wireMemo(box){
@@ -248,14 +273,17 @@ _JS = r"""
       else src_html="<span class='esrc' title='출처 문서'>📰 "+esc(ttl)+"</span>";
     }
     var c=(typeof e.c==='number'?e.c:(parseFloat(e.c)||0)).toFixed(2);
+    var ld=(e.ts||'').slice(0,10);
+    var date_html=ld?"<span class='edate' title='학습된 날짜'>📅 "+esc(ld)+"</span>":'';
     return "<div class='edge' data-edgeid=\""+eid+"\" data-text=\""+esc(e.src+' '+e.rel+' '+e.dst)+"\""
-      +" data-important=\""+imp+"\" data-hasmemo=\""+hm+"\" data-memo=\""+esc(memo)+"\""
+      +" data-important=\""+imp+"\" data-conf=\""+c+"\" data-ts=\""+esc(e.ts||'')+"\""
+      +" data-hasmemo=\""+hm+"\" data-memo=\""+esc(memo)+"\""
       +" data-ahhmm=\""+esc(e.ahhmm||'')+"\" data-adate=\""+esc(e.adate||'')+"\">"
       +"<button type='button' class='estar"+(imp?' on':'')+"' title='중요 표시 토글'>"+(imp?'★':'☆')+"</button>"
       +"<button type='button' class='ememo"+(hm?' on':'')+"' title='메모·알람'>📝</button>"
       +"<span class='s'>"+esc(e.src)+"</span><span class='arrow'>—</span>"
       +"<span class='r'>"+esc(e.rel)+"</span><span class='arrow'>→</span>"
-      +"<span class='o'>"+esc(e.dst)+"</span><span class='c'>"+c+"</span>"+src_html+"</div>";
+      +"<span class='o'>"+esc(e.dst)+"</span><span class='c'>"+c+"</span>"+date_html+src_html+"</div>";
   }
   // 칩 클릭 = 그 개체의 전체 관계를 서버에서 받아와 표시(상위 3000 한계 우회).
   function loadEntity(name){
@@ -268,6 +296,7 @@ _JS = r"""
         listEl.innerHTML=edges.length?edges.map(renderEdge).join('')
           :"<div style='color:var(--muted);padding:14px'>관계 없음</div>";
         // 위임 리스너라 재-와이어링 불필요(listEl은 유지됨).
+        if(curSort!=='conf')sortList(curSort);
         if(q)q.value=name; apply();
         if(listEl.scrollIntoView)listEl.scrollIntoView({block:'start'});
       })
@@ -279,11 +308,18 @@ _JS = r"""
     curImp=!curImp; impf.classList.toggle('active',curImp); apply();});
   if(memof)memof.addEventListener('click',function(){
     curMemo=!curMemo; memof.classList.toggle('active',curMemo); apply();});
+  if(sortbtn)sortbtn.addEventListener('click',function(){
+    curSort=curSort==='conf'?'date':'conf';
+    sortbtn.textContent=curSort==='conf'?'↕ 신뢰도순':'↕ 최신순';
+    sortbtn.classList.toggle('active',curSort==='date');
+    sortList(curSort); apply();});
   if(reset)reset.addEventListener('click',function(){
     if(listEl){ listEl.innerHTML=origList; }   // 위임이라 재-와이어링 불필요
-    if(q)q.value=''; curImp=false; curMemo=false;
+    if(q)q.value=''; curImp=false; curMemo=false; curSort='conf';
     if(impf)impf.classList.remove('active');
-    if(memof)memof.classList.remove('active'); apply();});
+    if(memof)memof.classList.remove('active');
+    if(sortbtn){sortbtn.textContent='↕ 신뢰도순'; sortbtn.classList.remove('active');}
+    apply();});
   document.querySelectorAll('.chip').forEach(function(ch){
     ch.addEventListener('click',function(){ loadEntity(ch.dataset.name||''); });
   });
@@ -355,6 +391,15 @@ def render_kg(token: str) -> int:
     except Exception:
         pass
 
+    # 기본 정렬: 신뢰도 내림차순, 동점이면 최신순(ts 내림차순). reverse=True가
+    # 두 키 모두 내림차순으로 적용 → confidence desc, ts desc. (합집합으로
+    # 끼어든 ★/메모/알람 엣지까지 한 번에 올바른 순서로.)
+    try:
+        edges.sort(key=lambda e: (e.get("confidence") or 0, e.get("ts") or ""),
+                   reverse=True)
+    except Exception:
+        pass
+
     # 출처 문서: 각 트리플은 추출 원본 문서(doc_id)를 안다 → 근거 확인용으로
     # 관계 행에 "📄 제목"을 표시(URL이면 원문 링크). doc_id→문서 일괄 조회.
     try:
@@ -373,6 +418,7 @@ def render_kg(token: str) -> int:
     for e in edges:
         hay = f"{e['src']} {e['rel']} {e['dst']}"
         c = e.get("confidence") or 0
+        _ldate = (e.get("ts") or "")[:10]  # 학습된 날짜(추출 시각)
         eid = str(e.get("id") or "")
         imp = 1 if eid in _edge_imp else 0
         _memo_txt = (_edge_memos.get(eid) or "").strip()
@@ -396,6 +442,7 @@ def render_kg(token: str) -> int:
         rows.append(
             f"<div class='edge' data-edgeid=\"{_esc(eid)}\" "
             f"data-text=\"{_esc(hay)}\" data-important=\"{imp}\" "
+            f"data-conf=\"{c:.2f}\" data-ts=\"{_esc(e.get('ts') or '')}\" "
             f"data-hasmemo=\"{hasmemo}\" data-memo=\"{_esc(_memo_txt)}\" "
             f"data-ahhmm=\"{_esc(_al.get('hhmm','') or '')}\" "
             f"data-adate=\"{_esc(_al.get('date','') or '')}\">"
@@ -409,7 +456,9 @@ def render_kg(token: str) -> int:
             f"<span class='arrow'>→</span>"
             f"<span class='o'>{_esc(e['dst'])}</span>"
             f"<span class='c'>{c:.2f}</span>"
-            f"{src_html}</div>")
+            + (f"<span class='edate' title='학습된 날짜'>📅 {_esc(_ldate)}</span>"
+               if _ldate else "")
+            + f"{src_html}</div>")
 
     # 메모·알람 편집은 각 관계 행의 📝 버튼으로 그 자리에서(인라인) 한다.
     # 별도 그리드 섹션은 노트 화면처럼 '메모만' 필터 + 행 미리보기로 대체.
@@ -451,6 +500,8 @@ def render_kg(token: str) -> int:
         "★ 중요만</button>"
         "<button id='memofilter' type='button' class='reset memofilter'>"
         "📝 메모만</button>"
+        "<button id='sortbtn' type='button' class='reset sortbtn' "
+        "title='정렬 기준 전환'>↕ 신뢰도순</button>"
         "<button id='reset' type='button' class='reset'>초기화</button></div>",
         f"<div class='sec'>관계 (<span id='cnt'>{len(edges)}</span>) — "
         "☆ 중요 표시 · 📝 눌러 메모·알람 작성</div>",
