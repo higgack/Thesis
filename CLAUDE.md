@@ -130,6 +130,11 @@ go here; never push to a different branch without explicit permission.
 
 - Review first; commit only when asked (the gate above wins over any
   workflow assumption).
+- **환경·비용·"X는 안 됨" 단정엔 날짜 태그** `(YYYY-MM-DD)` 필수; 관련
+  작업을 다시 만질 때마다(최소 분기 1회) 의심·재검증. 쌓이기만 하는
+  negative claim은 stale해진다 — 실제로 "₩10만/mo" 비용 가정이 4배 틀린
+  채 남아 있었음. wiki는 `wiki.lint()`가 stale single-source >30d를 이미
+  자동 플래그(중복 구현 금지).
 - Every ingest-pipeline change applies to new ingest AND the retry queue
   — never partial.
 - Update `_HELP_TEXT` (`src/bot.py`) on add/rename/remove command, policy
