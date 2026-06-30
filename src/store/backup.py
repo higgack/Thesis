@@ -93,6 +93,7 @@ def _sqlite_snapshot(src_path, dst_path) -> bool:
     except Exception:
         return False
     try:
+        con.execute("PRAGMA busy_timeout=15000")  # fail-fast vs hang on a lock
         # VACUUM INTO's target is an expression literal (no bind param in
         # some sqlite builds); dst_path is a controlled temp path, escape
         # quotes for hygiene.
@@ -106,6 +107,49 @@ def _sqlite_snapshot(src_path, dst_path) -> bool:
         con.close()
 
 
+def _table_copy(src_path, dst_path, table: str) -> bool:
+    """Copy ONE table into a fresh small db via TWO independent connections
+    (NOT ATTACH — ATTACH on a same-process live WAL db can lock; two plain
+    connections + WAL readers don't, verified). Used for meta.db, which is
+    multi-GB (FTS5 index + rebuildable ocr/embed/summary caches) — we keep
+    only the irreplaceable `documents` metadata. RAM-frugal: streams rows."""
+    try:
+        if os.path.exists(dst_path):
+            os.unlink(dst_path)
+    except OSError:
+        pass
+    src = dst = None
+    try:
+        src = sqlite3.connect(str(src_path), timeout=30)
+        src.execute("PRAGMA busy_timeout=15000")
+        row = src.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+            (table,)).fetchone()
+        if not row or not row[0]:
+            return False
+        dst = sqlite3.connect(dst_path)
+        dst.execute(row[0])  # exact CREATE TABLE schema
+        sel = src.execute(f"SELECT * FROM {table}")
+        ins = "INSERT INTO %s VALUES(%s)" % (
+            table, ",".join("?" * len(sel.description)))
+        while True:
+            batch = sel.fetchmany(1000)
+            if not batch:
+                break
+            dst.executemany(ins, batch)
+        dst.commit()
+        return True
+    except Exception:
+        log.warning("table copy failed: %s.%s",
+                    getattr(src_path, "name", src_path), table, exc_info=True)
+        return False
+    finally:
+        if src is not None:
+            src.close()
+        if dst is not None:
+            dst.close()
+
+
 def _build_archive(out_path: str, workdir: str) -> int:
     """Write the tar.gz of small KB state to out_path. Returns its size.
     DB images go through a disk temp file first (RAM-flat)."""
@@ -116,7 +160,14 @@ def _build_archive(out_path: str, workdir: str) -> int:
             if not p.exists():
                 continue
             tmp_db = os.path.join(workdir, name)
-            if _sqlite_snapshot(p, tmp_db):
+            # meta.db is multi-GB (FTS5 + rebuildable caches) → keep only the
+            # irreplaceable `documents` metadata; everything else uses a full
+            # consistent snapshot.
+            if name == "meta.db":
+                ok = _table_copy(p, tmp_db, "documents")
+            else:
+                ok = _sqlite_snapshot(p, tmp_db)
+            if ok:
                 try:
                     tar.add(tmp_db, arcname=f"db/{name}")
                 finally:
