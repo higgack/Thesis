@@ -209,8 +209,14 @@ Account `01A847-50A403-149C08` ("결제계정-2"), $300 / 90 days. Projects
 
 ## VM right-sizing (2026-06-19)
 
+**리전 이동(2026-06-30): 서울 → us-central1.** 새 VM `telegram-bot-usc`,
+zone **`us-central1-b`** (a존 e2-standard-2 재고부족으로 b존), 새 고정 IP
+**`136.115.27.77`** (옛 서울 IP `34.50.23.221` 폐기 예정). Vertex와 같은
+리전이라 egress↓ + 컴퓨트 ~25%↓. 옛 서울 VM은 `telegram-bot`(asia-northeast3-a)
+로 며칠 정지 보관 후 삭제. gcloud 명령의 zone은 이제 `us-central1-b`.
+
 `telegram-bot` = **e2-standard-2** (2 vCPU / 8 GB; was n2-standard-2).
-Static IP `34.50.23.221` survives stop/start. bot `mem_limit: 5500m` +
+Static IP `136.115.27.77` (구 `34.50.23.221`) survives stop/start. bot `mem_limit: 5500m` +
 `INGEST_SEM_CAPACITY=4` (sized for the real 8 GB). Dashboard index rebuild
 = 15s. Host SHARED with `~/stock` + `~/stock-trade` (separate host-venv
 bots, also Vertex via `GOOGLE_GENAI_USE_VERTEXAI=true`) — don't eat all
