@@ -34,7 +34,7 @@
 - [전체 평가서 (RAG/KB/KG 7종)](tooling/rag-kb-tools-eval-2026-06.md)
 - 채택(opt-in): [Hyper-Extract](tooling/hyper-extract.md) (하이퍼그래프=CPC동시분류) · [kg-gen](tooling/kg-gen.md) · [OpenKB](tooling/openkb.md) · [rtk](tooling/rtk.md) · [notebooklm-mcp](tooling/notebooklm-mcp.md) · [ppt-master](tooling/ppt-master.md)
 - 조건부: [Unlimited-OCR](tooling/unlimited-ocr.md) (GPU+스캔) · [Kami](tooling/kami.md) (부차 산출물) · [im-not-ai](tooling/im-not-ai.md) (한글 문체, 윤리주의)
-- 후보/참고: [BuilderIO/skills](tooling/builderio-skills.md) · [기타(미채택)](tooling/_misc-reviewed.md) · [에이전트/인프라 6종](tooling/agent-infra-reviewed-2026-06.md)
+- 후보/참고: [BuilderIO/skills](tooling/builderio-skills.md) · [기타(미채택)](tooling/_misc-reviewed.md) · [에이전트/인프라 6종](tooling/agent-infra-reviewed-2026-06.md) · [과학·roboco 6종](tooling/scientific-roboco-reviewed-2026-06.md)
 - 세션관리 선별도입: [sovereign-skills](tooling/sovereign-skills.md) (session-start/checkpoint)
 - 미채택(검토기록): [lat.md](tooling/lat-md.md) · [awesome-design-md](tooling/awesome-design-md.md) (UI용, 부적용)
 
