@@ -1389,11 +1389,11 @@ async def _await_interactive_idle(
 
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
-<b>【1. 대시보드】</b> Basic Auth · 60s 갱신·다크 19~07
-📊 Q&amp;A http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html
-🕸 KG http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/kg/index.html
-📚 Wiki http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/index.html
-📒 학습 http://34.50.23.221:8082/1e68e9fae4e6fb1f8298bdee768eb73b/notes/index.html
+<b>【1. 대시보드】</b> BasicAuth·60s갱신·다크19~07
+📊 Q&amp;A http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html
+🕸 KG http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/kg/index.html
+📚 Wiki http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/index.html
+📒 학습 http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/notes/index.html
 
 <b>【2. 명령어】</b>
 
