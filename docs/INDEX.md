@@ -16,6 +16,7 @@
 
 - 파이프라인 산출물: [stage1 연구브리프](../manuscript/stage1_research_brief.md) · [outline](../manuscript/outline.md) · [stage2.5 무결성](../manuscript/stage2_5_integrity_report.md) · [stage3 리뷰](../manuscript/stage3_review.md) · [stage4 응답](../manuscript/stage4_response.md) · [stage3' 재검토](../manuscript/stage3prime_rereview.md) · [stage4.5 최종무결성](../manuscript/stage4_5_final_integrity.md) · [stage6 과정기록](../manuscript/stage6_process_record.md)
 - 마감 안내: [FINALIZE_NOTES.md](../manuscript/FINALIZE_NOTES.md)
+- §2 문헌 보강 후보: [lit_candidates.md](../manuscript/lit_candidates.md) (paper-lookup 실검색, 서지 확정 후 반영)
 - 그림: [기술 네트워크 설명](../manuscript/figures/tech_network.md) · 렌더 `tech_network_rich.png`(영문)/`tech_network_rich_ko.png`(한글)
 - 원자료: [manuscript/sources/](../manuscript/sources/) (① 영문 계량분석, ② 국문 특허분석 PDF+txt)
 
@@ -23,6 +24,7 @@
 - [rag/README.md](../rag/README.md) — 설치(경량/GPU)·사용
 - [triage.py](../rag/triage.py) — PDF 페이지 분류(SKIP/TEXT_ONLY/OCR_NEEDED/LLM_NEEDED), 비용 선별
 - [ingest.py](../rag/ingest.py) (`--triage`) · [query.py](../rag/query.py) · [_common.py](../rag/_common.py)
+- [paper_lookup.py](../rag/paper_lookup.py) — arXiv·Semantic Scholar 실재 문헌 검색(무키, paper-lookup 경량판)
 
 ## 🧩 스킬 suite (academic-research-skills, vendored)
 - 스킬: `.claude/skills/` → deep-research · academic-paper · academic-paper-reviewer · academic-pipeline
