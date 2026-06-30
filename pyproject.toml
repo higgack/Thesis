@@ -46,10 +46,6 @@ dependencies = [
     # pycryptodome is pure-Python compatible and the same library
     # the upstream kisti-mcp package uses.
     "pycryptodome>=3.19.0",
-    # Daily off-disk backup of small KB state to a GCS bucket (src/store/
-    # backup.py). Auths via the same ADC as Vertex (no key file). Only
-    # imported when BACKUP_BUCKET is set, so it's inert until configured.
-    "google-cloud-storage>=2.18.0",
 ]
 
 [build-system]
