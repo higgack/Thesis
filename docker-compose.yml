@@ -12,6 +12,12 @@ services:
   bot:
     build: .
     env_file: .env
+    # tini as PID 1 (reaps zombies). `python -m src.bot` would otherwise
+    # be PID 1, and yt-dlp's transient children (Deno/yt-dlp-ejs runtime,
+    # ffmpeg) get orphaned and reparented to PID 1; a plain Python process
+    # never wait()s on reparented orphans, so they pile up as <defunct>
+    # (observed 143 zombies on the us-central1 VM). tini reaps them.
+    init: true
     # HF_HOME inside /app/data so the BGE-reranker download (~380MB)
     # persists across container rebuilds via the bind mount.
     environment:
