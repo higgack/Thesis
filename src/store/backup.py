@@ -74,26 +74,36 @@ def _access_token() -> str | None:
         return None
 
 
-def _sqlite_backup_to(src_path, dst_path) -> bool:
-    """Online .backup into a temp db FILE (page-by-page → RAM-flat). Safe
-    during WAL writes. True on success."""
+def _sqlite_snapshot(src_path, dst_path) -> bool:
+    """Consistent snapshot via 'VACUUM INTO' — RAM-flat AND starvation-free.
+
+    The online .backup() API RESTARTS from scratch whenever a writer touches
+    the source mid-copy. On a hot db the bot writes constantly (cost.db every
+    LLM call, kg.db each ingest) it therefore restarts forever and HANGS.
+    VACUUM INTO instead reads ONE consistent WAL snapshot into a new file —
+    no restart, no hang — and writes straight to disk (RAM-flat). Verified to
+    work on a read-only connection while a writer is open."""
     try:
-        src = sqlite3.connect(f"file:{src_path}?mode=ro", uri=True, timeout=30)
+        if os.path.exists(dst_path):
+            os.unlink(dst_path)
+    except OSError:
+        pass
+    try:
+        con = sqlite3.connect(f"file:{src_path}?mode=ro", uri=True, timeout=30)
     except Exception:
         return False
     try:
-        dst = sqlite3.connect(dst_path)
-        try:
-            src.backup(dst)
-            return True
-        finally:
-            dst.close()
+        # VACUUM INTO's target is an expression literal (no bind param in
+        # some sqlite builds); dst_path is a controlled temp path, escape
+        # quotes for hygiene.
+        con.execute("VACUUM INTO '%s'" % str(dst_path).replace("'", "''"))
+        return True
     except Exception:
-        log.warning("sqlite backup failed: %s",
+        log.warning("sqlite snapshot failed: %s",
                     getattr(src_path, "name", src_path), exc_info=True)
         return False
     finally:
-        src.close()
+        con.close()
 
 
 def _build_archive(out_path: str, workdir: str) -> int:
@@ -106,7 +116,7 @@ def _build_archive(out_path: str, workdir: str) -> int:
             if not p.exists():
                 continue
             tmp_db = os.path.join(workdir, name)
-            if _sqlite_backup_to(p, tmp_db):
+            if _sqlite_snapshot(p, tmp_db):
                 try:
                     tar.add(tmp_db, arcname=f"db/{name}")
                 finally:
