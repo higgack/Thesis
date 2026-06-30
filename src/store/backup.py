@@ -6,35 +6,44 @@ history — lives ONLY on that disk and is KB~MB-scale, so it's backed up
 DAILY off-disk (to a GCS bucket) at near-zero cost. That closes the 7-day
 snapshot loss window for the data that actually matters.
 
-NOT included: data/chroma (vector embeddings — large, and rebuildable by
-re-embedding) and data/files (re-fetchable). Those rely on the weekly
-snapshot.
+NOT included: data/chroma (vectors — large, rebuildable by re-embedding)
+and data/files (re-fetchable). Those rely on the weekly snapshot.
 
-Consistency: sqlite DBs are copied via the online backup API + serialize()
-(NOT raw cp — a raw copy mid-WAL-write can be corrupt). JSON/wiki files are
-written atomically elsewhere (CLAUDE.md invariant), so a plain read is safe.
+MEMORY-CRITICAL: this runs inside the bot's cgroup (mem_limit 5500m) on
+top of the bot's ~4.6G baseline — only ~0.9G headroom. So it must stay
+RAM-frugal or it OOM-kills the bot:
+  • sqlite → online .backup to a temp FILE on disk (page-by-page, RAM-flat)
+    — NOT serialize()/raw-cp (serialize holds the whole db in RAM; raw cp
+    mid-WAL-write can corrupt).
+  • upload via httpx (already loaded) + the metadata-server ADC token —
+    NOT google-cloud-storage (its grpc/protobuf import alone is ~150MB+).
+JSON/wiki files are atomically written elsewhere, so a plain copy is safe.
 
-RAM-friendly: the tar.gz is streamed to a temp FILE (not held in memory —
-the VM is memory-tight), and each sqlite db is serialized one at a time.
-
-Inert until BACKUP_BUCKET is set (see docs/backup.md), so shipping is safe.
-Auths via the same ADC already used for Vertex (no key file).
+Inert until BACKUP_BUCKET is set (see docs/backup.md). Auths via the same
+compute-SA ADC as Vertex (metadata server), no key file.
 """
 from __future__ import annotations
 
-import io
 import logging
 import os
+import shutil
 import sqlite3
 import tarfile
 import tempfile
-import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
+
+import httpx
 
 from .. import config
 
 log = logging.getLogger(__name__)
 _KST = timezone(timedelta(hours=9))
+
+_META_TOKEN_URL = (
+    "http://metadata.google.internal/computeMetadata/v1/instance/"
+    "service-accounts/default/token"
+)
 
 # Small, unique, irreplaceable. Resolved against DATA_DIR.
 _DB_FILES = [
@@ -47,59 +56,70 @@ _DB_FILES = [
     "meta.db",         # 문서 메타
     "pending.db",      # 보류 결정
 ]
-# Every state/curation JSON (wiki_*, ignored_*, notify_acks, dart_cap, …)
-# and the wiki markdown pages tree.
-_JSON_GLOB = "*.json"
-_DIR_TREES = ["wiki"]
+_JSON_GLOB = "*.json"   # wiki_*, ignored_*, notify_acks, dart_cap, …
+_DIR_TREES = ["wiki"]   # data/wiki/*.md
 
 
-def _sqlite_image(path) -> bytes | None:
-    """A consistent .db image via the online backup API → serialize()
-    (py3.11+). Safe during WAL writes. None if not a usable sqlite db."""
+def _access_token() -> str | None:
+    """Short-lived OAuth token for the VM's compute SA (cloud-platform
+    scope → GCS write). Same ADC path Vertex uses; needs the container's
+    metadata.google.internal extra_host."""
     try:
-        src = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
+        r = httpx.get(_META_TOKEN_URL,
+                      headers={"Metadata-Flavor": "Google"}, timeout=10)
+        r.raise_for_status()
+        return r.json().get("access_token")
     except Exception:
+        log.warning("metadata token fetch failed", exc_info=True)
         return None
+
+
+def _sqlite_backup_to(src_path, dst_path) -> bool:
+    """Online .backup into a temp db FILE (page-by-page → RAM-flat). Safe
+    during WAL writes. True on success."""
     try:
-        mem = sqlite3.connect(":memory:")
+        src = sqlite3.connect(f"file:{src_path}?mode=ro", uri=True, timeout=30)
+    except Exception:
+        return False
+    try:
+        dst = sqlite3.connect(dst_path)
         try:
-            src.backup(mem)
-            return mem.serialize()
+            src.backup(dst)
+            return True
         finally:
-            mem.close()
+            dst.close()
     except Exception:
-        log.warning("sqlite image failed: %s", getattr(path, "name", path),
-                    exc_info=True)
-        return None
+        log.warning("sqlite backup failed: %s",
+                    getattr(src_path, "name", src_path), exc_info=True)
+        return False
     finally:
         src.close()
 
 
-def _build_archive(out_path: str) -> int:
-    """Write the tar.gz of small KB state to out_path. Returns file size."""
+def _build_archive(out_path: str, workdir: str) -> int:
+    """Write the tar.gz of small KB state to out_path. Returns its size.
+    DB images go through a disk temp file first (RAM-flat)."""
     d = config.DATA_DIR
-    now = int(time.time())
     with tarfile.open(out_path, mode="w:gz") as tar:
-        # sqlite DBs → consistent image (one at a time, low RAM)
         for name in _DB_FILES:
             p = d / name
             if not p.exists():
                 continue
-            img = _sqlite_image(p)
-            if img is None:
-                continue
-            info = tarfile.TarInfo(name=f"db/{name}")
-            info.size = len(img)
-            info.mtime = now
-            tar.addfile(info, io.BytesIO(img))
-        # state/curation JSON (atomic-written → plain copy is consistent)
+            tmp_db = os.path.join(workdir, name)
+            if _sqlite_backup_to(p, tmp_db):
+                try:
+                    tar.add(tmp_db, arcname=f"db/{name}")
+                finally:
+                    try:
+                        os.unlink(tmp_db)
+                    except OSError:
+                        pass
         for p in sorted(d.glob(_JSON_GLOB)):
             if p.is_file():
                 try:
                     tar.add(p, arcname=f"json/{p.name}")
                 except OSError:
                     log.warning("backup add json failed: %s", p.name)
-        # wiki markdown pages
         for tree in _DIR_TREES:
             t = d / tree
             if t.is_dir():
@@ -110,33 +130,49 @@ def _build_archive(out_path: str) -> int:
     return os.path.getsize(out_path)
 
 
+def _upload(path: str, bucket: str, object_name: str, token: str) -> tuple[bool, str]:
+    """Simple media upload to GCS via the JSON API + bearer token. Reads
+    the (tens-of-MB) gzip into memory once for the POST — fine vs the
+    ~150MB google-cloud-storage import it replaces."""
+    url = (f"https://storage.googleapis.com/upload/storage/v1/b/{bucket}/o"
+           f"?uploadType=media&name={quote(object_name, safe='')}")
+    try:
+        with open(path, "rb") as f:
+            body = f.read()
+        r = httpx.post(url, content=body, timeout=180, headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/gzip",
+        })
+        if r.status_code in (200, 201):
+            return True, ""
+        return False, f"HTTP {r.status_code}: {r.text[:160]}"
+    except Exception as e:
+        return False, str(e)[:160]
+
+
 def run_backup() -> dict:
     """Build + upload today's backup. Returns {status, detail}.
     status ∈ {ok, skip, error}. Never raises."""
     bucket = (config.BACKUP_BUCKET or "").strip()
     if not bucket:
         return {"status": "skip", "detail": "BACKUP_BUCKET 미설정"}
-    fd, tmp = tempfile.mkstemp(suffix=".tar.gz")
-    os.close(fd)
+    token = _access_token()
+    if not token:
+        return {"status": "error", "detail": "ADC 토큰 획득 실패(metadata)"}
+    workdir = tempfile.mkdtemp(prefix="bk_")
+    tar_path = os.path.join(workdir, "backup.tar.gz")
     try:
         try:
-            size = _build_archive(tmp)
+            size = _build_archive(tar_path, workdir)
         except Exception as e:
             log.exception("backup build failed")
             return {"status": "error", "detail": f"빌드 실패: {str(e)[:160]}"}
         name = "thesis/" + datetime.now(_KST).strftime("%Y-%m-%d") + ".tar.gz"
-        try:
-            from google.cloud import storage
-            client = storage.Client(project=config.VERTEX_PROJECT or None)
-            blob = client.bucket(bucket).blob(name)
-            blob.upload_from_filename(tmp, content_type="application/gzip")
-        except Exception as e:
-            log.exception("backup upload failed")
-            return {"status": "error", "detail": f"업로드 실패: {str(e)[:160]}"}
+        ok, err = _upload(tar_path, bucket, name, token)
+        if not ok:
+            log.warning("backup upload failed: %s", err)
+            return {"status": "error", "detail": f"업로드 실패: {err}"}
         return {"status": "ok",
                 "detail": f"gs://{bucket}/{name} ({size // 1024}KB)"}
     finally:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        shutil.rmtree(workdir, ignore_errors=True)
