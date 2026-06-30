@@ -1,6 +1,10 @@
 # Lessons (교정 규칙)
 
 > session-checkpoint가 갱신, session-start가 리뷰. 메타: `conf`(신뢰도) · `seen`(최근) · `obs`(관측수).
+>
+> **env-TTL 규약 (hermes-agent #7816 차용):** "도구/접근이 안 된다"는 **환경 의존 부정주장**은 영구 진리가 아니다.
+> 환경(VM·프록시·권한)이 바뀌면 **재검증** 대상이다. `env-TTL: 재검증요` 표시가 붙은 레슨은 다음 세션에서
+> 맹신하지 말고 1회 확인 후 갱신한다. (망각 대신 재확인 — 스킬 stale 관리)
 
 ## 졸업 게이트 (Graduated Gates)
 
@@ -22,12 +26,12 @@
 DejaVu엔 한글 글리프 없음 → `pip install koreanize-matplotlib` 후 `import koreanize_matplotlib`. 영문 라벨이면 불필요.
 
 ### 외부 GitHub 접근은 curl raw로 우회
-> conf 0.75 · obs 2
-이 환경 git 프록시는 **higgack/Thesis만** 허용(타 repo clone 403). 외부 repo 파일은 `curl https://raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>`로 받는다. wikidocs 등 일부 호스트는 HTTPS 프록시 자체가 차단(403).
+> conf 0.75 · obs 2 · **env-TTL: 재검증요 (VM 서울→us-central1 이전 2026-06, 프록시 정책 변동 가능)**
+이 환경 git 프록시는 **higgack/Thesis만** 허용(타 repo clone 403). 외부 repo 파일은 `curl https://raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>`로 받는다. wikidocs 등 일부 호스트는 HTTPS 프록시 자체가 차단(403). *(환경 의존 — 새 IP/프록시에서 clone 재시도해 보고 갱신.)*
 
 ### 새 repo 생성/푸시 불가
-> conf 0.9 · obs 1
-환경 권한상 새 GitHub repo 생성(403)·타 repo 푸시 불가. 산출물은 PR(#8)·tarball·SendUserFile로 전달.
+> conf 0.9 · obs 1 · **env-TTL: 재검증요 (VM 이전·권한 정책 변동 가능)**
+환경 권한상 새 GitHub repo 생성(403)·타 repo 푸시 불가. 산출물은 PR(#8)·tarball·SendUserFile로 전달. *(환경 의존 — 권한 바뀌면 재확인.)*
 
 ### 논문 수치는 '인용'이지 '재계산' 아님
 > conf 0.9 · obs 1
