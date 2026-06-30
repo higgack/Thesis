@@ -57,6 +57,13 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "files").mkdir(exist_ok=True)
 (DATA_DIR / "chroma").mkdir(exist_ok=True)
 
+# Off-disk daily backup target (GCS bucket name, no gs:// prefix). The full
+# VM disk is snapshotted weekly to save cost; this backs up the small,
+# irreplaceable KB state (★/메모/알람 marks, Q&A·notes·KG·wiki·cost) DAILY
+# off-disk at near-zero cost so the 7-day snapshot window can't lose it.
+# Unset → backup job no-ops (see docs/backup.md for one-time bucket setup).
+BACKUP_BUCKET = os.getenv("BACKUP_BUCKET", "").strip()
+
 # YouTube cookies (burner account) to dodge the GCP-IP "not a bot" wall.
 # Drop a Netscape-format cookies.txt at data/yt_cookies.txt (or point
 # YT_COOKIES_FILE elsewhere); yt-dlp uses it when present. Absent → normal

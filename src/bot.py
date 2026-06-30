@@ -13059,6 +13059,36 @@ async def _notify_ext_ingest(ctx: "ContextTypes.DEFAULT_TYPE", chat_id: int,
         log.warning("ext ingest notify failed (chat=%s)", chat_id, exc_info=True)
 
 
+async def _daily_backup_job(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    """Daily off-disk backup of the small irreplaceable KB state → GCS
+    (src/store/backup.py). No-op until BACKUP_BUCKET is set. Runs the
+    blocking build+upload off the event loop. Telegram-pings the owner
+    ONLY on failure (silence = success), since a failing backup is the
+    one thing you'd want to know once snapshots are weekly."""
+    try:
+        from .store import backup as _backup
+        res = await asyncio.to_thread(_backup.run_backup)
+    except Exception as e:
+        log.exception("daily backup job crashed")
+        res = {"status": "error", "detail": str(e)[:160]}
+    st = res.get("status")
+    if st == "ok":
+        log.info("daily backup ok: %s", res.get("detail"))
+    elif st == "skip":
+        log.debug("daily backup skipped: %s", res.get("detail"))
+    else:
+        log.warning("daily backup FAILED: %s", res.get("detail"))
+        try:
+            await ctx.bot.send_message(
+                config.TELEGRAM_OWNER_ID,
+                f"⚠️ 일일 오프디스크 백업 실패: {res.get('detail')}\n"
+                f"스냅샷이 주1회라면 이 백업이 유니크 데이터(★/메모/노트/KG/위키) "
+                f"방어선이야 — 확인 필요.",
+                disable_web_page_preview=True)
+        except Exception:
+            log.debug("backup fail notify failed", exc_info=True)
+
+
 async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
     """Drain one parked dashboard query per tick: any /command or a
     natural-language agent.run(). Serial by design (one per tick) so
@@ -13446,6 +13476,21 @@ def main():
             interval=3600,
             first=1800,
             name="dash_query_purge",
+        )
+        # Daily off-disk backup of small KB state → GCS, aligned to ~04:00
+        # KST (low-activity). No-op until BACKUP_BUCKET is set. Existing
+        # crons aren't touched (automation-first via APScheduler, per
+        # CLAUDE.md "never add a recurring cron entry").
+        _bkst = timezone(timedelta(hours=9))
+        _bnow = datetime.now(_bkst)
+        _btgt = _bnow.replace(hour=4, minute=0, second=0, microsecond=0)
+        if _btgt <= _bnow:
+            _btgt += timedelta(days=1)
+        app.job_queue.run_repeating(
+            _daily_backup_job,
+            interval=86400,
+            first=max(60.0, (_btgt - _bnow).total_seconds()),
+            name="daily_backup",
         )
         app.job_queue.run_repeating(
             _promote_expired_pending,
