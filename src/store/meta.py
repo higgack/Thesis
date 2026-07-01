@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import random
 import re
 import sqlite3
 from contextlib import contextmanager
@@ -113,6 +114,10 @@ def init():
             " metadata_json TEXT NOT NULL,"
             " ts TEXT NOT NULL)"
         )
+        # Index the TTL column so the periodic prune below is an index range
+        # scan, not a full-table scan holding the write lock.
+        c.execute("CREATE INDEX IF NOT EXISTS idx_summary_cache_ts "
+                  "ON summary_cache(ts)")
         # Chunk keyword index (FTS5) — keyword retrieval that scales past
         # BM25_MAX_CHUNKS. The in-memory rank_bm25 disables itself above
         # 50k chunks (→ dense-only) and pegs RAM/CPU rebuilding the whole
@@ -139,6 +144,16 @@ def init():
 def _conn():
     conn = sqlite3.connect(_DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    # meta.db is the hottest + largest store (3+ GB: documents + FTS5). Under
+    # bulk ingest, FTS5 segment merges hold the write lock, and with the
+    # default synchronous=FULL every COMMIT fsyncs — on the GCP persistent
+    # disk that fsync latency stacks up, stretching lock-hold past the 30 s
+    # busy_timeout and starving small writers (summary_cache_remember was
+    # failing ~9×/hr with "database is locked"). NORMAL is WAL-safe (fsync
+    # only at checkpoint, not per commit) — a power loss can drop the last
+    # few committed txns but never corrupts, which is fine for a cache/meta
+    # store that's also backed up daily. Cuts commit latency → shorter locks.
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -385,8 +400,15 @@ def summary_cache_remember(cache_key: str, summary: str,
                  json.dumps(metadata or {}, ensure_ascii=False),
                  ts.isoformat()),
             )
-            cutoff = (ts - timedelta(days=_SUMMARY_CACHE_TTL_DAYS)).isoformat()
-            c.execute("DELETE FROM summary_cache WHERE ts < ?", (cutoff,))
+            # Prune only occasionally (~5% of writes), not on every write:
+            # a TTL DELETE on each remember adds write work to the exact
+            # table under contention during bulk ingest, lengthening the
+            # lock hold. Probabilistic pruning keeps the table bounded at a
+            # fraction of the cost. (random is fine here — bot runtime, not
+            # a resume-safe workflow script.)
+            if random.random() < 0.05:
+                cutoff = (ts - timedelta(days=_SUMMARY_CACHE_TTL_DAYS)).isoformat()
+                c.execute("DELETE FROM summary_cache WHERE ts < ?", (cutoff,))
     except Exception:
         log.exception("summary_cache_remember failed")
 
