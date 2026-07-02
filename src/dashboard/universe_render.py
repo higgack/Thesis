@@ -332,6 +332,7 @@ svg#svg{width:100%%;height:100%%;display:block;cursor:grab;touch-action:none}
   <a class="nav" href="/%(tok)s/wiki/">📚 Wiki</a>
   <a class="nav" href="/%(tok)s/kg/">🕸 KG</a>
   <a class="nav" href="/%(tok)s/notes/">📒 노트</a>
+  <a class="nav" href="/%(tok)s/commands/">📋 Commands</a>
 </header>
 <div id="stage">
   <svg id="svg"></svg>
