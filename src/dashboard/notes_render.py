@@ -126,7 +126,9 @@ border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
 .controls .reset:hover{opacity:.9}
 .note-row{background:var(--panel);border:1px solid var(--border);
 border-radius:10px;padding:13px 16px;margin-bottom:8px;box-shadow:var(--shadow);
-display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+/* skip offscreen layout/paint on long note lists (weak-PC fix) */
+content-visibility:auto;contain-intrinsic-size:auto 56px}
 .note-row .t{font-weight:600;flex:1;word-break:break-word}
 .note-row .meta{font-size:11px;color:var(--muted);white-space:nowrap}
 .note-row .snippet{flex-basis:100%;font-size:12.5px;line-height:1.55;
@@ -400,6 +402,9 @@ _NOTE_JS = r"""
 """
 
 _CDN = (
+    # preconnect: pay the jsdelivr DNS+TLS handshake once, up front, in
+    # parallel with page parse — noticeable on slow client machines.
+    "<link rel='preconnect' href='https://cdn.jsdelivr.net'>"
     "<link rel='stylesheet' "
     "href='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css'>"
     "<script src='https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js'></script>"

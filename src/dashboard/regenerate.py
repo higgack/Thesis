@@ -286,6 +286,12 @@ header .sub { color: var(--muted); font-size: 13px; }
   background: var(--panel-alt); border: 1px solid var(--border-soft);
   border-radius: 10px; padding: 14px 16px; margin-bottom: 8px;
   transition: 0.1s;
+  /* The index renders up to 2000 cards; without this the browser lays out
+     and paints ALL of them on load (seconds on a weak machine). c-v:auto
+     skips rendering work for offscreen cards — DOM search/filter/find-in-
+     page still see them. intrinsic-size 'auto 140px' reserves an estimate
+     then remembers the real height, so the scrollbar doesn't jump. */
+  content-visibility: auto; contain-intrinsic-size: auto 140px;
 }
 .qna-card:hover { border-color: var(--border); }
 /* Card-level accent: extend the per-chip tool colours to the whole card's

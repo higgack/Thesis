@@ -240,6 +240,7 @@ def _render_html(payload: dict, token: str) -> str:
 <html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🌌 두뇌 UNIVERSE</title>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com">
 <script>%(theme_js)s</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <style>

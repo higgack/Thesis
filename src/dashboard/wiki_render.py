@@ -616,6 +616,8 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
   border-radius: 6px; padding: 20px 24px;
   box-shadow: var(--shadow);
   transition: box-shadow 0.15s, border-color 0.15s;
+  /* skip offscreen layout/paint as the topic list grows (weak-PC fix) */
+  content-visibility: auto; contain-intrinsic-size: auto 150px;
 }
 .wiki-card:hover {
   border-color: var(--accent);
