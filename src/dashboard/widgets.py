@@ -24,24 +24,26 @@ def live_reload_js(page_key: str) -> str:
     WITHOUT a manual refresh and WITHOUT disrupting active work.
 
     It polls /<token>/version (a cheap per-section count) and reacts ONLY
-    when this page's section count actually changed. To avoid yanking the
-    page on high-churn sections (KG grows constantly from background
-    extraction), the reload is IDLE-GATED:
-      • auto-reload only when the user is idle (no scroll/key/click for
-        ~15s), no inline editor is open, and the tab is visible → so
-        stepping away still shows the latest with zero clicks;
-      • otherwise show a small "🔄 새 내용 — 보기" pill that reloads on
-        click, and auto-reload later once the user goes idle.
+    when this page's section count actually changed. Two-speed response
+    (user request, 2026-07-02):
+      • the "🔄 새 내용 — 보기" pill appears PROMPTLY on any change —
+        click = instant manual refresh, never throttled;
+      • the AUTOMATIC reload fires at most once per 30 minutes per page
+        (sessionStorage stamp survives the reload), and still only when
+        idle (no scroll/key/click ~15s, no editor open, tab visible) —
+        so an open page refreshes itself on a calm cadence instead of
+        yanking on every KG tick.
     Scroll position is preserved across the reload.
 
-    page_key ∈ {"qna","notes","kg","wiki"} — matches the /version JSON keys.
+    page_key ∈ {"qna","notes","kg","wiki","universe"} — /version JSON keys.
     """
     k = repr(str(page_key))
     return (
         "<script>(function(){"
         "var token=location.pathname.split('/').filter(Boolean)[0]||'';"
-        "var KEY=" + k + ",cur=null,SK='dash_scroll_'+KEY,pending=false,"
-        "last=Date.now(),IDLE=15000;"
+        "var KEY=" + k + ",cur=null,SK='dash_scroll_'+KEY,"
+        "AK='dash_auto_'+KEY,pending=false,"
+        "last=Date.now(),IDLE=15000,AUTO=1800000;"
         # restore scroll if THIS script triggered the last reload
         "try{var s=sessionStorage.getItem(SK);"
         "if(s!==null){window.scrollTo(0,parseInt(s,10)||0);"
@@ -57,7 +59,14 @@ def live_reload_js(page_key: str) -> str:
         "if(a&&(a.tagName==='TEXTAREA'||a.tagName==='INPUT'))return true;"
         "return false;}"
         "function go(){try{sessionStorage.setItem(SK,String("
-        "window.scrollY||window.pageYOffset||0));}catch(e){}location.reload();}"
+        "window.scrollY||window.pageYOffset||0));"
+        "sessionStorage.setItem(AK,String(Date.now()));}catch(e){}"
+        "location.reload();}"
+        # auto-reload throttle: at most once / 30min per page (manual pill
+        # clicks also stamp — the content is fresh either way)
+        "function canAuto(){try{var t=parseInt("
+        "sessionStorage.getItem(AK)||'0',10);"
+        "return (Date.now()-t)>=AUTO;}catch(e){return true;}}"
         "function pill(){if(document.getElementById('dash-newpill'))return;"
         "var b=document.createElement('div');b.id='dash-newpill';"
         "b.textContent='\\uD83D\\uDD04 \\uC0C8 \\uB0B4\\uC6A9 \\u2014 \\uBCF4\\uAE30';"
@@ -67,7 +76,7 @@ def live_reload_js(page_key: str) -> str:
         "font:600 13px/1.2 -apple-system,BlinkMacSystemFont,sans-serif;"
         "box-shadow:0 6px 20px rgba(0,0,0,.4)';"
         "b.addEventListener('click',go);document.body.appendChild(b);}"
-        "function tick(){if(pending){if(!busy())go();else pill();}}"
+        "function tick(){if(pending){if(!busy()&&canAuto())go();else pill();}}"
         "function chk(){fetch('/'+token+'/version',{cache:'no-store'})"
         ".then(function(r){return r.ok?r.json():null;})"
         ".then(function(d){if(!d||!(KEY in d))return;var v=d[KEY];"

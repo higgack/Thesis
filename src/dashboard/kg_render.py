@@ -66,7 +66,10 @@ color:var(--text);padding:10px 14px;border-radius:8px;font-size:14px;outline:non
 border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
 .edge{background:var(--panel);border:1px solid var(--border);border-radius:9px;
 padding:9px 14px;margin-bottom:6px;display:flex;align-items:center;gap:8px;
-flex-wrap:wrap}
+flex-wrap:wrap;
+/* 1200 edge cards render at once — skip offscreen layout/paint (weak-PC
+   fix); search/filter JS is unaffected. */
+content-visibility:auto;contain-intrinsic-size:auto 48px}
 .edge .s,.edge .o{font-weight:600}
 .edge .r{color:var(--muted);font-style:italic;font-size:13px}
 .edge .c{margin-left:auto;font-size:11px;color:var(--muted)}
