@@ -2846,7 +2846,7 @@ async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # mid-delete, leaving meta/vector diverged).
         ids = [r["id"] for r in noisy]
         n_chunks = await asyncio.to_thread(vector.delete_docs, ids)
-        await asyncio.to_thread(lambda: [meta.delete(i) for i in ids])
+        await asyncio.to_thread(meta.delete_many, ids)
         for r in noisy:
             # Record filename so orphan scan doesn't re-queue this
             # file from disk (cleanup is normally text-only docs, but
@@ -2885,7 +2885,7 @@ async def cmd_forget_forwards(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if "confirm" in args:
         ids = [d["id"] for d in candidates]
         n_chunks = await asyncio.to_thread(vector.delete_docs, ids)
-        await asyncio.to_thread(lambda: [meta.delete(i) for i in ids])
+        await asyncio.to_thread(meta.delete_many, ids)
         await update.message.reply_text(
             f"✅ 자동 포워딩 자료 {len(candidates)}건 제거 "
             f"(청크 {n_chunks}개)"
@@ -2917,7 +2917,7 @@ async def cmd_dedupe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             doomed.extend(d for d in g if d["id"] != keeper["id"])
         ids = [d["id"] for d in doomed]
         chunks_removed = await asyncio.to_thread(vector.delete_docs, ids)
-        await asyncio.to_thread(lambda: [meta.delete(i) for i in ids])
+        await asyncio.to_thread(meta.delete_many, ids)
         for d in doomed:
             # Stop the orphan-scan loop: file is still on disk
             # after meta delete; without this, _scan_orphan_files
@@ -5414,7 +5414,7 @@ async def cmd_forget_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     ids = [m["id"] for m in matches]
     n_chunks = await asyncio.to_thread(vector.delete_docs, ids)
-    await asyncio.to_thread(lambda: [meta.delete(i) for i in ids])
+    await asyncio.to_thread(meta.delete_many, ids)
     forgotten = []
     for m in matches:
         fname = _filename_from_source(m.get("source") or "")
@@ -5495,7 +5495,7 @@ async def cmd_forget_search_all(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # → watchdog restart mid-delete (meta/vector divergence).
     ids = [m["id"] for m in matches]
     chunks_total = await asyncio.to_thread(vector.delete_docs, ids)
-    await asyncio.to_thread(lambda: [meta.delete(i) for i in ids])
+    await asyncio.to_thread(meta.delete_many, ids)
     for m in matches:
         fname = _filename_from_source(m.get("source") or "")
         if fname:

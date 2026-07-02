@@ -4,6 +4,7 @@ import logging
 import random
 import re
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from .. import config
@@ -162,6 +163,24 @@ def _conn():
         conn.close()
 
 
+# All meta.db WRITERS live in the bot process (the dashboard only reads),
+# so serialising them through one in-process lock removes writer-vs-writer
+# starvation entirely: instead of N threads (4-wide link ingest fanning out
+# fts_upsert while /dedupe deletes docs) racing sqlite's 30s busy timeout —
+# where whoever loses the race FAILS with "database is locked" — they queue.
+# A wait replaces an error. Callers already run in asyncio.to_thread
+# workers, so blocking here never touches the event loop. Readers stay
+# lock-free (WAL readers don't block and aren't blocked).
+_W_LOCK = threading.Lock()
+
+
+@contextmanager
+def _wconn():
+    with _W_LOCK:
+        with _conn() as conn:
+            yield conn
+
+
 # ----------------------------------------------------------- FTS5 ------
 # Keyword half of hybrid retrieval. Every function swallows
 # sqlite3.OperationalError so a SQLite build without FTS5 (or a tokenizer
@@ -185,7 +204,7 @@ def fts_upsert(rows: list[tuple[str, str | None, str]]) -> None:
     """Incremental upsert on ingest. rows = [(cid, doc_id, text)]."""
     if not rows:
         return
-    with _conn() as c:
+    with _wconn() as c:
         try:
             c.executemany("DELETE FROM chunk_fts WHERE cid=?",
                           [(r[0],) for r in rows])
@@ -200,7 +219,7 @@ def fts_insert(rows: list[tuple[str, str | None, str]]) -> None:
     already cleared the table."""
     if not rows:
         return
-    with _conn() as c:
+    with _wconn() as c:
         try:
             c.executemany(
                 "INSERT INTO chunk_fts(cid, doc_id, text) VALUES(?,?,?)", rows)
@@ -209,7 +228,7 @@ def fts_insert(rows: list[tuple[str, str | None, str]]) -> None:
 
 
 def fts_clear() -> None:
-    with _conn() as c:
+    with _wconn() as c:
         try:
             c.execute("DELETE FROM chunk_fts")
         except sqlite3.OperationalError:
@@ -217,7 +236,7 @@ def fts_clear() -> None:
 
 
 def fts_delete_doc(doc_id: str) -> None:
-    with _conn() as c:
+    with _wconn() as c:
         try:
             c.execute("DELETE FROM chunk_fts WHERE doc_id=?", (doc_id,))
         except sqlite3.OperationalError:
@@ -277,7 +296,7 @@ def upsert_doc(doc_id: str, source: str, doc_type: str, title: str,
                body_signature: str | None = None) -> None:
     import json as _json
     metadata_json = _json.dumps(metadata, ensure_ascii=False) if metadata else None
-    with _conn() as c:
+    with _wconn() as c:
         c.execute(
             """INSERT INTO documents(id, source, type, title, summary,
                                      obsidian_path, ingested_at, metadata,
@@ -315,7 +334,7 @@ def ocr_cache_put(img_hash: str, text: str) -> None:
     via INSERT OR REPLACE so repeat ingests don't duplicate rows."""
     if not img_hash or not text:
         return
-    with _conn() as c:
+    with _wconn() as c:
         c.execute(
             "INSERT OR REPLACE INTO ocr_cache(img_hash, text, ts) "
             "VALUES(?, ?, ?)",
@@ -346,7 +365,7 @@ def chunk_embed_remember(mapping: list[tuple[str, str]]) -> None:
     if not mapping:
         return
     ts = datetime.utcnow().isoformat()
-    with _conn() as c:
+    with _wconn() as c:
         c.executemany(
             "INSERT OR IGNORE INTO chunk_embed_cache(chunk_hash, chroma_id, ts) "
             "VALUES(?, ?, ?)",
@@ -392,7 +411,7 @@ def summary_cache_remember(cache_key: str, summary: str,
         return
     try:
         ts = datetime.utcnow()
-        with _conn() as c:
+        with _wconn() as c:
             c.execute(
                 "INSERT OR REPLACE INTO summary_cache"
                 "(cache_key, summary, metadata_json, ts) VALUES(?, ?, ?, ?)",
@@ -947,9 +966,22 @@ def usage_stats() -> dict:
 
 
 def delete(doc_id: str) -> bool:
-    with _conn() as c:
+    with _wconn() as c:
         cur = c.execute("DELETE FROM documents WHERE id=?", (doc_id,))
         return cur.rowcount > 0
+
+
+def delete_many(doc_ids: list[str]) -> int:
+    """Bulk delete in ONE transaction/lock hold. /dedupe·/cleanup used to
+    call delete() per doc — N lock acquisitions + N commits racing the
+    ingest writers N times. One executemany is faster and can't be starved
+    mid-batch. Returns rows deleted."""
+    if not doc_ids:
+        return 0
+    with _wconn() as c:
+        cur = c.executemany("DELETE FROM documents WHERE id=?",
+                            [(i,) for i in doc_ids])
+        return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
 
 def update_title(doc_id: str, new_title: str) -> bool:
@@ -959,7 +991,7 @@ def update_title(doc_id: str, new_title: str) -> bool:
     프레젠테이션') for the source filename without re-ingesting."""
     if not doc_id or not new_title:
         return False
-    with _conn() as c:
+    with _wconn() as c:
         cur = c.execute("UPDATE documents SET title=? WHERE id=?",
                         (new_title, doc_id))
         return cur.rowcount > 0
