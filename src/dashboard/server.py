@@ -319,6 +319,10 @@ class Handler(SimpleHTTPRequestHandler):
             out["wiki"] = int(wi.stat().st_mtime) if wi.exists() else 0
         except Exception:
             out["wiki"] = 0
+        # Universe view = wiki topics + KG links + notes panels → composite
+        # signature (client compares with !==, so a string works like a
+        # count: any component change flips it).
+        out["universe"] = f"{out['wiki']}-{out['kg']}-{out['notes']}"
         self._send_json(out)
 
     def _delete_kg_edge(self, token: str, edge_id: int):
