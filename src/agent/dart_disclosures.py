@@ -87,16 +87,43 @@ async def _load_corps() -> list[dict]:
     return corps
 
 
+import re as _re
+
+# 법인 접미는 통째로 먼저 제거 — '(주)'를 괄호만 벗기면 '주'가 남아
+# '삼성전자주' != '삼성전자'가 되므로 순서가 중요하다.
+_CORP_SUFFIX_RE = _re.compile(r"\(주\)|㈜|주식회사")
+_NAME_NOISE_RE = _re.compile(r"[\s\.\(\)'\"·-]+")
+
+
+def _norm_name(s: str) -> str:
+    """회사명 비교용 정규화 — 법인 접미((주)/㈜/주식회사)·공백·점·괄호
+    제거 + 소문자. 'SK 하이닉스' == 'sk하이닉스', '삼성전자(주)' ==
+    '삼성전자'."""
+    s = _CORP_SUFFIX_RE.sub("", (s or "").lower())
+    return _NAME_NOISE_RE.sub("", s)
+
+
 async def find_corp(name: str) -> list[dict]:
-    """이름 → 상장사 후보. 정확 일치 우선, 없으면 부분 일치 상위 8."""
+    """이름 → 상장사 후보 (퍼지). '하이닉스' → SK하이닉스처럼 부분 명칭도
+    받는다. 랭킹: 정확 일치 > 접두 일치 > 부분 일치, 각 그룹 안에서는
+    이름이 짧은 쪽(대표 법인일 확률↑) 우선. 상위 8."""
     corps = await _load_corps()
-    nl = (name or "").strip().lower()
+    nl = _norm_name(name)
     if not nl:
         return []
-    exact = [x for x in corps if x["n"].lower() == nl]
-    if exact:
-        return exact
-    return [x for x in corps if nl in x["n"].lower()][:8]
+    exact, starts, contains = [], [], []
+    for x in corps:
+        xn = _norm_name(x["n"])
+        if xn == nl:
+            exact.append(x)
+        elif xn.startswith(nl):
+            starts.append(x)
+        elif nl in xn:
+            contains.append(x)
+    key = lambda x: (len(x["n"]), x["n"])  # noqa: E731
+    starts.sort(key=key)
+    contains.sort(key=key)
+    return (exact + starts + contains)[:8]
 
 
 async def list_filings(corp_code: str, days: int = 90,
