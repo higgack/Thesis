@@ -18,6 +18,7 @@ token-path stage.
 from __future__ import annotations
 
 import base64
+import gzip
 import hmac
 import json
 import logging
@@ -180,7 +181,45 @@ class Handler(SimpleHTTPRequestHandler):
         if mv:
             self._handle_version(mv.group(1))
             return
+        if self._try_gzip_html(parsed.path):
+            return
         super().do_GET()
+
+    def _try_gzip_html(self, url_path: str) -> bool:
+        """Serve .html gzipped when the client accepts it. The pages are
+        text-heavy (the universe view embeds a few-hundred-KB JSON payload)
+        and plain SimpleHTTPRequestHandler sends them uncompressed — over
+        the Korea↔us-central1 RTT that raw transfer IS the perceived page
+        slowness. gzip cuts them 5-10×. Only exact .html files or
+        directories WITH the trailing slash (index.html) are handled;
+        everything else — including the slashless-dir 301 redirect —
+        falls back to the stock handler. Any error → False (stock path)."""
+        try:
+            if "gzip" not in (self.headers.get("Accept-Encoding") or ""):
+                return False
+            if url_path.endswith("/"):
+                fs_path = os.path.join(self.translate_path(url_path),
+                                       "index.html")
+            elif url_path.endswith(".html"):
+                fs_path = self.translate_path(url_path)
+            else:
+                return False
+            if not os.path.isfile(fs_path):
+                return False
+            with open(fs_path, "rb") as f:
+                raw = f.read()
+            body = gzip.compress(raw, 6)
+            self.send_response(200)
+            self.send_header("content-type", "text/html; charset=utf-8")
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+        except Exception:
+            log.exception("gzip html serve failed; falling back")
+            return False
 
     def _handle_kg_entity(self, token: str, ename: str):
         """Return every edge touching `ename` (full graph), enriched with
