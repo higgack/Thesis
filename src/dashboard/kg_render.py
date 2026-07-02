@@ -500,6 +500,7 @@ def render_kg(token: str) -> int:
         f"<div class='sub'><a class='nav' href='/{_esc(token)}/'>🧠 Archive</a> "
         f"<a class='nav' href='/{_esc(token)}/wiki/'>📚 Wiki</a> "
         f"<a class='nav' href='/{_esc(token)}/notes/'>학습 노트</a> "
+        f"<a class='nav' href='/{_esc(token)}/universe/'>🌌 Universe</a> "
         f"<a class='nav' href='/{_esc(token)}/commands/'>📋 Commands</a></div>"
         "</header>",
         "<div class='stats'>",
