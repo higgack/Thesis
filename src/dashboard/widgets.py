@@ -23,17 +23,19 @@ def live_reload_js(page_key: str) -> str:
     """A tiny <script> that makes an open dashboard page surface new content
     WITHOUT a manual refresh and WITHOUT disrupting active work.
 
-    It polls /<token>/version (a cheap per-section count) and reacts ONLY
-    when this page's section count actually changed. Two-speed response
-    (user request, 2026-07-02):
-      • the "🔄 새 내용 — 보기" pill appears PROMPTLY on any change —
-        click = instant manual refresh, never throttled;
-      • the AUTOMATIC reload fires at most once per 30 minutes per page
-        (sessionStorage stamp survives the reload), and still only when
-        idle (no scroll/key/click ~15s, no editor open, tab visible) —
-        so an open page refreshes itself on a calm cadence instead of
-        yanking on every KG tick.
-    Scroll position is preserved across the reload.
+    Checks /<token>/version quietly every 1min and reacts ONLY when this
+    page's section signature actually changed (user-specified behaviour,
+    2026-07-02):
+      • BASELINE — the automatic refresh fires at most once per 30min
+        per page, and only when idle (no scroll/key/click ~15s, nothing
+        being typed, no editor open, tab visible). View state survives:
+        scroll position AND filter state (search text, active toggle
+        buttons, active data-tool chips) are saved → restored.
+      • IN BETWEEN — a change shows the two-button prompt
+        '🆕 새 내용 도착  [바로 반영] [그대로 보기]'. 바로 반영 =
+        instant refresh (state preserved). 그대로 보기 = dismiss THIS
+        version only — no re-prompt until a newer update arrives, but
+        the 30min baseline still auto-applies it.
 
     page_key ∈ {"qna","notes","kg","wiki","universe"} — /version JSON keys.
     """
@@ -41,48 +43,90 @@ def live_reload_js(page_key: str) -> str:
     return (
         "<script>(function(){"
         "var token=location.pathname.split('/').filter(Boolean)[0]||'';"
-        "var KEY=" + k + ",cur=null,SK='dash_scroll_'+KEY,"
-        "AK='dash_auto_'+KEY,pending=false,"
+        "var KEY=" + k + ",cur=null,dismissed=null,SK='dash_scroll_'+KEY,"
+        "AK='dash_auto_'+KEY,FK='dash_filters_'+KEY,pending=false,"
         "last=Date.now(),IDLE=15000,AUTO=1800000;"
-        # restore scroll if THIS script triggered the last reload
+        # ── restore after OUR reload: filters FIRST (they hide/show items
+        #    and change page height), then scroll to the saved spot.
+        "try{var f=sessionStorage.getItem(FK);if(f){f=JSON.parse(f);"
+        "sessionStorage.removeItem(FK);"
+        "Object.keys(f.v||{}).forEach(function(id){"
+        "var el=document.getElementById(id);if(el){el.value=f.v[id];"
+        "el.dispatchEvent(new Event('input',{bubbles:true}));}});"
+        "(f.on||[]).forEach(function(id){var el=document.getElementById(id);"
+        "if(el&&!el.classList.contains('active')"
+        "&&!el.classList.contains('on'))el.click();});"
+        "(f.chips||[]).forEach(function(t){var el=document.querySelector("
+        "'.chip[data-tool=\"'+t+'\"]');"
+        "if(el&&!el.classList.contains('active'))el.click();});}}catch(e){}"
         "try{var s=sessionStorage.getItem(SK);"
         "if(s!==null){window.scrollTo(0,parseInt(s,10)||0);"
         "sessionStorage.removeItem(SK);}}catch(e){}"
         "['scroll','keydown','mousedown','touchstart','wheel'].forEach("
         "function(ev){window.addEventListener(ev,function(){last=Date.now();},"
         "{passive:true});});"
-        # busy = actively reading/editing → don't yank the page
+        # busy = actively reading/editing (incl. memo/alarm typing) → skip
         "function busy(){if(document.hidden)return true;"
         "if(Date.now()-last<IDLE)return true;"
         "if(document.querySelector('.edge-editor'))return true;"
         "var a=document.activeElement;"
         "if(a&&(a.tagName==='TEXTAREA'||a.tagName==='INPUT'))return true;"
         "return false;}"
-        "function go(){try{sessionStorage.setItem(SK,String("
+        # save search text (#q/#search/#wiki-search), active toggle buttons
+        # (by id, class active/on) and active category chips (data-tool) —
+        # restored above after the reload, so the view comes back as-was.
+        "function saveState(){try{var st={v:{},on:[],chips:[]};"
+        "['q','search','wiki-search'].forEach(function(id){"
+        "var el=document.getElementById(id);if(el&&el.value)st.v[id]=el.value;});"
+        "document.querySelectorAll('.active[id],.on[id]').forEach("
+        "function(el){if(el.tagName==='BUTTON')st.on.push(el.id);});"
+        "document.querySelectorAll('.chip.active').forEach(function(el){"
+        "if(el.dataset.tool)st.chips.push(el.dataset.tool);});"
+        "sessionStorage.setItem(FK,JSON.stringify(st));}catch(e){}}"
+        "function go(){try{saveState();sessionStorage.setItem(SK,String("
         "window.scrollY||window.pageYOffset||0));"
         "sessionStorage.setItem(AK,String(Date.now()));}catch(e){}"
         "location.reload();}"
-        # auto-reload throttle: at most once / 30min per page (manual pill
-        # clicks also stamp — the content is fresh either way)
+        # baseline: the AUTOMATIC refresh fires at most once / 30min
         "function canAuto(){try{var t=parseInt("
         "sessionStorage.getItem(AK)||'0',10);"
         "return (Date.now()-t)>=AUTO;}catch(e){return true;}}"
+        # two-button prompt; '그대로 보기' mutes THIS version only (a newer
+        # update pops again; the 30min baseline still auto-applies)
+        "function rmpill(){var p=document.getElementById('dash-newpill');"
+        "if(p)p.remove();}"
         "function pill(){if(document.getElementById('dash-newpill'))return;"
         "var b=document.createElement('div');b.id='dash-newpill';"
-        "b.textContent='\\uD83D\\uDD04 \\uC0C8 \\uB0B4\\uC6A9 \\u2014 \\uBCF4\\uAE30';"
         "b.style.cssText='position:fixed;left:50%;bottom:24px;"
         "transform:translateX(-50%);z-index:100000;background:#5e6ad2;"
-        "color:#fff;padding:9px 16px;border-radius:20px;cursor:pointer;"
+        "color:#fff;padding:9px 14px;border-radius:20px;"
         "font:600 13px/1.2 -apple-system,BlinkMacSystemFont,sans-serif;"
-        "box-shadow:0 6px 20px rgba(0,0,0,.4)';"
-        "b.addEventListener('click',go);document.body.appendChild(b);}"
-        "function tick(){if(pending){if(!busy()&&canAuto())go();else pill();}}"
+        "box-shadow:0 6px 20px rgba(0,0,0,.4);display:flex;gap:8px;"
+        "align-items:center';"
+        "var t=document.createElement('span');"
+        "t.textContent='\\uD83C\\uDD95 \\uC0C8 \\uB0B4\\uC6A9 \\uB3C4\\uCC29';"
+        "var y=document.createElement('button');"
+        "y.textContent='\\uBC14\\uB85C \\uBC18\\uC601';"
+        "y.style.cssText='background:#fff;color:#5e6ad2;border:none;"
+        "border-radius:12px;padding:5px 10px;font:700 12px/1 inherit;"
+        "cursor:pointer';y.addEventListener('click',go);"
+        "var n=document.createElement('button');"
+        "n.textContent='\\uADF8\\uB300\\uB85C \\uBCF4\\uAE30';"
+        "n.style.cssText='background:transparent;color:#dfe3ff;"
+        "border:1px solid rgba(255,255,255,.5);border-radius:12px;"
+        "padding:5px 10px;font:600 12px/1 inherit;cursor:pointer';"
+        "n.addEventListener('click',function(){dismissed=cur;rmpill();});"
+        "b.appendChild(t);b.appendChild(y);b.appendChild(n);"
+        "document.body.appendChild(b);}"
+        "function tick(){if(!pending)return;"
+        "if(!busy()&&canAuto()){go();return;}"
+        "if(dismissed!==cur)pill();}"
         "function chk(){fetch('/'+token+'/version',{cache:'no-store'})"
         ".then(function(r){return r.ok?r.json():null;})"
         ".then(function(d){if(!d||!(KEY in d))return;var v=d[KEY];"
         "if(cur===null){cur=v;return;}"
         "if(v!==cur){cur=v;pending=true;tick();}}).catch(function(){});}"
-        "setInterval(chk,12000);setInterval(tick,3000);chk();"
+        "setInterval(chk,60000);setInterval(tick,3000);chk();"
         "})();</script>"
     )
 
