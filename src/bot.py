@@ -1389,11 +1389,12 @@ async def _await_interactive_idle(
 
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
-<b>【1. 대시보드】</b> BasicAuth·60s갱신·다크19~07
-📊 Q&amp;A http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/index.html
-🕸 KG http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/kg/index.html
-📚 Wiki http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/index.html
-📒 학습 http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/notes/index.html
+<b>【1. 대시보드】</b> Auth·다크19~07
+📊 Q&amp;A http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/
+🕸 KG http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/kg/
+📚 Wiki http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/
+📒 학습 http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/notes/
+🌌 유니버스 http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/universe/
 
 <b>【2. 명령어】</b>
 
@@ -1441,41 +1442,29 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup
 
-<b>【3. 핵심】</b> 채널/DM 자료→자동 수집·요약·임베딩·Obsidian / 자연어→에이전트 도구 자동 / 메모리 7턴(/reset) / 비용·Q&amp;A SQLite+대시보드 / 답변 끝 (자료 시점: YYYY.MM)
+<b>【3. 핵심】</b> 자료→자동 수집·요약·임베딩·Obsidian · 자연어→에이전트 도구 자동 · 메모리 7턴(/reset) · 답변 끝 (자료 시점: YYYY.MM)
 
-<b>【4. 도구】</b> 🧠 brain·compare · 📄 papers 6소스 · 🇰🇷 KIPRIS·ScienceON·NTIS · ⚖️ patents EPO · 🌐 web · 📥 ingest · 한국어번역
+<b>【4. 자연어 트리거】</b>
+🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL" · 회사+실적 질문→📌 실적 표(YoY·QoQ)+가이던스
 
-<b>【4-1. 회사 분석】</b> "회사명+실적/매출" → 본문 + 신사업 + 📌 실적 표(A./F.·YoY·QoQ) + 가이던스 + brain/web 분리.
-
-<b>【5. 자연어 트리거】</b>
-🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL"
-
-<b>【6. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 전송
+<b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 전송
 • PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · [OCR] 강제 · 음성=Gemini STT · YouTube=자막→Jina · <b>.txt/.md/.csv 학습 제외</b>
 차단: LinkedIn/FB/IG · Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
-<b>【7. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
+<b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
 [Noah 디지스트] 📋 TG 원문 fetch / 📰 Substack URL relay / 그 외 drop
 [PLAIN] 텍스트만: Fundeasyearnings / 전체: aicorporateanalysisdeepdive
 [URL전용] benineb9·getfeed: naver/youtube/t.me 자동, 그외=알림
-[제목필터] insidertracking: "미국 레딧 게시물 분석"만 forward
-백필: tmux + python -m src.scripts.import_channel &lt;ch&gt; --resume
+[제목필터] insidertracking: 미국 레딧 분석만
+백필: python -m src.scripts.import_channel &lt;ch&gt; --resume
 
-<b>【8. 메타데이터】</b> Flash-Lite 요약+메타 1콜 · 🏢회사 🏷태그 📅YYYY.MM · 📊브로커리지·애널리스트(자동 추출)
+<b>【7. 모델】</b> Embed gemini-embedding-001 · Lite flash-lite · 답변 flash · /deep pro · 캐시 1h
 
-<b>【9. 답변 품질】</b> 시점 필수 · brain 재검색 · 인용 [N] · 숫자 audit
+<b>【8. Retry】</b> 자동1회→/failed(🔁3회후폐기) · in_flight→자동재개
 
-<b>【10. 운영】</b> 영속(atomic+.bak) · 메모리 5분 · 질문＞학습
+<b>【9. 문제해결】</b> 본문비어→차단 · 막힘→/queue_panic · /reset
 
-<b>【10-1. 모델】</b> Embed gemini-embedding-001 · Lite flash-lite · 답변 flash · /deep pro · 캐시 1h
-
-<b>【10-2. 비용】</b> 6단 dedup · 청크 1000 · DPI 100 · OCR 0p · 메타 gating
-
-<b>【10-3. Retry】</b> 자동1회→/failed(🔁3회후폐기) · in_flight→자동재개
-
-<b>【11.】</b> 본문비어→차단 · 막힘→/queue_panic · /reset
-
-<b>【12. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS 14건+NTIS 5건 승인대기"""
+<b>【10. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS·NTIS 승인대기"""
 
 
 # Detailed multi-section guide for the patent suite. Kept separate
@@ -1868,6 +1857,13 @@ NTIS 이슈로보는R&amp;D — 정부R&amp;D 한정 트렌드. ⏳ 승인 대�
 ═══════════════════════════════════════
 <b>📊 10. 대시보드 기록 정책</b>
 ═══════════════════════════════════════
+
+뷰: 📊 Q&amp;A 아카이브 · 🕸 KG · 📚 위키 · 📒 학습노트 · <b>🌌 유니버스</b>
+— 유니버스 = 두뇌 전체 지도. 위키 토픽이 별(크기=문서 수), 연결선은
+KG 관계(실선)·공유 문서(점선). 별 클릭→위키·KG관계·학습노트·소스문서
+패널, 더블클릭→위키 페이지. 검색(별칭 포함)·상위 토픽 칩·🎲 랜덤·
+줌/맞춤. 내용 바뀌면 자동 갱신, 19~07 KST 다크 테마. 상단 nav 로 모든
+대시보드에서 이동 가능.
 
 자동 기록 (⚖️/📄/💾 칩으로 필터):
 ✅ 자연어 질문 (agent 경로)

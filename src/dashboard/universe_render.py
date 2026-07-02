@@ -222,6 +222,7 @@ def _build_payload() -> dict | None:
 
 def _render_html(payload: dict, token: str) -> str:
     from . import widgets as _widgets
+    from .kg_render import _THEME_JS  # same 19~07 KST dark switch as every page
     tok = _esc(token)
     # "</" would terminate the <script> block mid-JSON.
     data = json.dumps(payload, ensure_ascii=False,
@@ -233,27 +234,39 @@ def _render_html(payload: dict, token: str) -> str:
 <html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🌌 두뇌 UNIVERSE</title>
+<script>%(theme_js)s</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
 <style>
 *{box-sizing:border-box}
-:root{--bg:#0d1117;--panel:#161b27;--ink:#e6e9f2;--sub:#8b93a8;--line:#262c3d;
+/* Light by default; [data-theme=dark] flips 19~07 KST like every other
+   dashboard page (same _THEME_JS). Palette passes the dataviz checks on
+   BOTH surfaces. --lk/--lkdoc/--nodeline drive link + node-outline colors
+   so the graph re-skins with the theme. */
+:root{--bg:#f2f3f8;--panel:#ffffff;--ink:#23262f;--sub:#697086;--line:#d9dde9;
+  --chrome:rgba(242,243,248,.94);--field:#ffffff;--chip:#ffffff;--hov:#eceef7;
+  --lk:#7a84cf;--lkdoc:#a9b0cc;--nodeline:#4d59c4;
   --node:%(C_NODE)s;--accent:%(C_ACCENT)s}
+[data-theme=dark]{--bg:#0d1117;--panel:#161b27;--ink:#e6e9f2;--sub:#8b93a8;
+  --line:#262c3d;--chrome:rgba(13,17,23,.94);--field:#0f141f;--chip:#121826;
+  --hov:#1b2233;--lk:#7c88cf;--lkdoc:#586285;--nodeline:#9aa4ee}
 html,body{margin:0;height:100%%;background:var(--bg);color:var(--ink);
-  font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;overflow:hidden}
+  font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;overflow:hidden;
+  transition:background-color .3s,color .3s}
 #app{position:fixed;inset:0;display:flex;flex-direction:column}
 header{display:flex;align-items:center;gap:10px;padding:10px 16px;
-  background:rgba(13,17,23,.94);border-bottom:1px solid var(--line);z-index:20}
+  background:var(--chrome);border-bottom:1px solid var(--line);z-index:20}
 header h1{font-size:15px;margin:0;font-weight:800;white-space:nowrap}
-#search{flex:1;max-width:340px;background:#0f141f;border:1px solid var(--line);
+#search{flex:1;max-width:340px;background:var(--field);border:1px solid var(--line);
   color:var(--ink);border-radius:999px;padding:8px 15px;font-size:13px;outline:none}
 #search:focus{border-color:var(--node)}
 .nav{white-space:nowrap;text-decoration:none;font-size:12.5px;font-weight:600;
   padding:7px 12px;border-radius:999px;border:1px solid var(--line);
-  background:#121826;color:var(--sub)}
+  background:var(--chip);color:var(--sub)}
 .nav:hover{border-color:var(--node);color:var(--ink)}
 #stage{flex:1;position:relative;overflow:hidden}
 svg#svg{width:100%%;height:100%%;display:block;cursor:grab;touch-action:none}
-.lk{stroke:#4a5578;fill:none}.lk.doc{stroke:#333c58;stroke-dasharray:4 4}
+.lk{stroke:var(--lk);fill:none}.lk.doc{stroke:var(--lkdoc);stroke-dasharray:4 4}
+.lk.hot{stroke:var(--accent)}
 .node-c{cursor:pointer}
 .lbl{paint-order:stroke;stroke:var(--bg);stroke-width:3px;fill:var(--ink);
   font-weight:600;pointer-events:none;user-select:none}
@@ -261,7 +274,7 @@ svg#svg{width:100%%;height:100%%;display:block;cursor:grab;touch-action:none}
   display:flex;gap:6px;max-width:92%%;overflow-x:auto;padding:4px;scrollbar-width:none}
 #kwbar::-webkit-scrollbar{display:none}
 .kw{white-space:nowrap;cursor:pointer;font-size:12px;font-weight:600;padding:6px 12px;
-  border-radius:999px;background:rgba(18,24,38,.9);border:1px solid var(--line);color:var(--sub)}
+  border-radius:999px;background:var(--chrome);border:1px solid var(--line);color:var(--sub)}
 .kw:hover{border-color:var(--node);color:var(--ink)}
 #panel{position:absolute;top:0;right:0;height:100%%;width:380px;max-width:88vw;
   background:var(--panel);border-left:1px solid var(--line);transform:translateX(100%%);
@@ -270,7 +283,7 @@ svg#svg{width:100%%;height:100%%;display:block;cursor:grab;touch-action:none}
 #panel .ph{padding:14px 16px 11px;border-bottom:1px solid var(--line)}
 #panel .ptitle{font-size:17px;font-weight:800;margin:0 40px 4px 0;color:var(--ink)}
 #panel .pmeta{font-size:11.5px;color:var(--sub)}
-#pclose{position:absolute;top:12px;right:12px;background:#121826;
+#pclose{position:absolute;top:12px;right:12px;background:var(--chip);
   border:1px solid var(--line);color:var(--sub);border-radius:8px;width:28px;height:28px;
   font-size:14px;cursor:pointer}
 #panel .plist{flex:1;overflow-y:auto;padding:10px 12px 30px}
@@ -278,7 +291,7 @@ svg#svg{width:100%%;height:100%%;display:block;cursor:grab;touch-action:none}
   margin:14px 4px 6px;text-transform:uppercase}
 .pitem{display:block;text-decoration:none;color:var(--ink);padding:7px 9px;
   border-radius:9px;border-left:2px solid transparent;font-size:13px;line-height:1.45}
-.pitem:hover{background:#1b2233;border-left-color:var(--node)}
+.pitem:hover{background:var(--hov);border-left-color:var(--node)}
 .pitem .pd{font-size:10.5px;color:var(--sub);margin-top:2px}
 .rel{font-size:12px;color:var(--sub);padding:5px 9px;line-height:1.5}
 .rel b{color:var(--ink);font-weight:600}
@@ -287,16 +300,16 @@ svg#svg{width:100%%;height:100%%;display:block;cursor:grab;touch-action:none}
   border-radius:9px;background:var(--node);color:#0d1117;font-weight:800;
   font-size:13.5px;text-decoration:none}
 #foot{position:absolute;left:14px;bottom:12px;font-size:11px;color:var(--sub);
-  z-index:10;background:rgba(13,17,23,.75);padding:6px 10px;border-radius:8px;
+  z-index:10;background:var(--chrome);padding:6px 10px;border-radius:8px;
   border:1px solid var(--line);line-height:1.6}
-#foot .sw{display:inline-block;width:14px;height:0;border-top:2px solid #4a5578;
+#foot .sw{display:inline-block;width:14px;height:0;border-top:2px solid var(--lk);
   vertical-align:middle;margin:0 3px}
-#foot .sw.dash{border-top-style:dashed;border-top-color:#333c58}
+#foot .sw.dash{border-top-style:dashed;border-top-color:var(--lkdoc)}
 #ctrls{position:absolute;right:14px;bottom:12px;z-index:10;display:flex;gap:6px}
-#ctrls button{background:rgba(18,24,38,.9);border:1px solid var(--line);
+#ctrls button{background:var(--chrome);border:1px solid var(--line);
   color:var(--ink);width:34px;height:34px;border-radius:8px;font-size:15px;cursor:pointer}
 #ctrls button:hover{border-color:var(--node)}
-#tip{position:absolute;pointer-events:none;z-index:40;background:#1b2233;
+#tip{position:absolute;pointer-events:none;z-index:40;background:var(--panel);
   border:1px solid var(--line);color:var(--ink);font-size:12px;padding:6px 10px;
   border-radius:8px;opacity:0;transition:opacity .12s;max-width:260px}
 @media(max-width:760px){#panel{width:100%%;max-width:100%%;height:66%%;top:auto;bottom:0;
@@ -343,10 +356,10 @@ const zoom=d3.zoom().scaleExtent([.15,4])
 svg.call(zoom);
 const lk=g.selectAll('line').data(LINKS).join('line')
   .attr('class',l=>'lk'+(l.k==='doc'?' doc':''))
-  .attr('stroke-width',l=>Math.min(4,.7+l.w*.5)).attr('opacity',.55);
+  .attr('stroke-width',l=>Math.min(4.5,1.3+l.w*.55)).attr('opacity',.8);
 const nd=g.selectAll('g.node-c').data(NODES).join('g').attr('class','node-c');
 nd.append('circle').attr('r',R).attr('fill','var(--node)')
-  .attr('fill-opacity',.85).attr('stroke','#9aa4ee').attr('stroke-width',1);
+  .attr('fill-opacity',.85).style('stroke','var(--nodeline)').attr('stroke-width',1);
 nd.append('text').attr('class','lbl').attr('text-anchor','middle')
   .attr('dy',d=>R(d)+13).style('font-size',d=>FS(d)+'px')
   .text(d=>d.label.length>16?d.label.slice(0,15)+'…':d.label);
@@ -357,11 +370,18 @@ const sim=d3.forceSimulation(NODES)
   .force('collide',d3.forceCollide().radius(d=>R(d)+16))
   .force('x',d3.forceX(W/2).strength(.04))
   .force('y',d3.forceY(H/2).strength(.04));
-sim.on('tick',()=>{
+function ticked(){
   lk.attr('x1',l=>l.source.x).attr('y1',l=>l.source.y)
     .attr('x2',l=>l.target.x).attr('y2',l=>l.target.y);
   nd.attr('transform',d=>`translate(${d.x},${d.y})`);
-});
+}
+sim.on('tick',ticked);
+// Settle the layout BEFORE first paint: the multi-second "stars floating
+// into place" intro read as page slowness. ~200 synchronous ticks of a
+// few-hundred-node graph is <150ms, then the map appears fully formed.
+sim.stop();
+for(let i=0;i<200;i++)sim.tick();
+ticked();
 nd.call(d3.drag()
   .on('start',(ev,d)=>{if(!ev.active)sim.alphaTarget(.25).restart();d.fx=d.x;d.fy=d.y;})
   .on('drag',(ev,d)=>{d.fx=ev.x;d.fy=ev.y;})
@@ -372,8 +392,13 @@ let selected=null;
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
 function openPanel(d){
   selected=d.id;
-  nd.select('circle').attr('stroke',n=>n.id===d.id?'var(--accent)':'#9aa4ee')
+  nd.select('circle').style('stroke',n=>n.id===d.id?'var(--accent)':'var(--nodeline)')
     .attr('stroke-width',n=>n.id===d.id?3:1);
+  // spotlight the selected star's links; push the rest back
+  lk.classed('hot',l=>l.source.id===d.id||l.target.id===d.id)
+    .attr('opacity',l=>(l.source.id===d.id||l.target.id===d.id)?.95:.15)
+    .attr('stroke-width',l=>(l.source.id===d.id||l.target.id===d.id)
+      ?Math.min(5,1.8+l.w*.55):Math.min(4.5,1.3+l.w*.55));
   document.getElementById('ptitle').textContent=d.label;
   document.getElementById('pmeta').textContent=
     `문서 ${d.docs}편`+(d.up?` · 갱신 ${d.up}`:'');
@@ -390,8 +415,12 @@ function openPanel(d){
   document.getElementById('plist').scrollTop=0;
   panel.classList.add('open');
 }
-document.getElementById('pclose').onclick=()=>{panel.classList.remove('open');
-  selected=null;nd.select('circle').attr('stroke','#9aa4ee').attr('stroke-width',1);};
+function clearSel(){panel.classList.remove('open');selected=null;
+  nd.select('circle').style('stroke','var(--nodeline)').attr('stroke-width',1);
+  lk.classed('hot',false)
+    .attr('stroke-width',l=>Math.min(4.5,1.3+l.w*.55));
+  applyFilter();}
+document.getElementById('pclose').onclick=clearSel;
 nd.on('click',(ev,d)=>{ev.stopPropagation();openPanel(d);});
 nd.on('dblclick',(ev,d)=>{location.href=d.url;});
 // ---- tooltip
@@ -407,9 +436,9 @@ function applyFilter(){
   const v=(q.value||'').trim().toLowerCase();
   nd.attr('opacity',d=>!v||(d.label+' '+d.id+' '+(d.al||'')).toLowerCase()
     .includes(v)?1:.12);
-  lk.attr('opacity',l=>{if(!v)return .55;
+  lk.attr('opacity',l=>{if(!v)return .8;
     const m=d=>(d.label+' '+d.id+' '+(d.al||'')).toLowerCase().includes(v);
-    return m(l.source)&&m(l.target)?.55:.05;});
+    return m(l.source)&&m(l.target)?.8:.05;});
 }
 q.addEventListener('input',applyFilter);
 q.addEventListener('keydown',ev=>{if(ev.key!=='Enter')return;
@@ -438,9 +467,8 @@ document.getElementById('zout').onclick=()=>svg.transition().call(zoom.scaleBy,1
 document.getElementById('zfit').onclick=fit;
 document.getElementById('dice').onclick=()=>{
   const d=NODES[Math.floor(Math.random()*NODES.length)];focusNode(d);openPanel(d);};
-svg.on('click',()=>{panel.classList.remove('open');selected=null;
-  nd.select('circle').attr('stroke','#9aa4ee').attr('stroke-width',1);});
-setTimeout(fit,900);
+svg.on('click',clearSel);
+fit();  // positions are pre-settled — frame the whole map immediately
 addEventListener('resize',()=>{W=stage.clientWidth;H=stage.clientHeight;
   sim.force('x',d3.forceX(W/2).strength(.04))
      .force('y',d3.forceY(H/2).strength(.04));sim.alpha(.2).restart();});
@@ -450,6 +478,7 @@ addEventListener('resize',()=>{W=stage.clientWidth;H=stage.clientHeight;
         "C_NODE": _C_NODE, "C_ACCENT": _C_ACCENT, "tok": tok,
         "n_topics": n_topics, "n_links": n_links, "n_docs": n_docs,
         "data": data, "reload_js": _widgets.live_reload_js("universe"),
+        "theme_js": _THEME_JS,
     }
 
 

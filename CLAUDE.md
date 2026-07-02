@@ -140,8 +140,10 @@ go here; never push to a different branch without explicit permission.
 - Update `_HELP_TEXT` (`src/bot.py`) on add/rename/remove command, policy
   change, or model-id change. Keep ≤4000 chars (single Telegram message).
 - **Never drop a command from the `_HELP_TEXT` listing.** Tight on space →
-  condense sections 9, 10-1, 10-2, 10-3, 11 first (prose); touch command
-  listings only as a last resort + with explicit approval.
+  condense the prose sections first (핵심·트리거·모델·Retry·문제해결·백엔드;
+  info-only prose was already purged 2026-07-02 — help is commands+URLs+운영
+  info now); touch command listings only as a last resort + with explicit
+  approval.
 - `_HELP_TEXT` model ids must match `src/config.py`/`.env`; update them in
   the same commit as any model upgrade.
 - **Help + ALL guide constants move together** on any command/feature/
