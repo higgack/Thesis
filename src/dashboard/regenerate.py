@@ -459,6 +459,34 @@ header .sub { color: var(--muted); font-size: 13px; }
 }
 """
 
+_SRC_INGEST_JS = r"""
+(function(){
+  // [📥 학습] on raw-URL sources → extension /ingest endpoint (dedup +
+  // flood-cap live server-side; we just report what it said).
+  var token = location.pathname.split('/').filter(Boolean)[0] || '';
+  document.querySelectorAll('.src-ingest').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var url = btn.dataset.url || '';
+      if (!url || btn.disabled) return;
+      btn.disabled = true; btn.textContent = '⏳ 등록 중…';
+      fetch('/' + token + '/ingest', {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({url: url, target: 'rag'})
+      }).then(function(r){ return r.json().catch(function(){return {};}); })
+        .then(function(d){
+          if (d && d.duplicate){ btn.textContent = '♻️ 이미 큐에 있음'; }
+          else if (d && d.id != null){ btn.textContent = '✅ 학습 큐 등록'; }
+          else { btn.textContent = '⚠️ ' + ((d && d.error) || '실패');
+                 btn.disabled = false; }
+        })
+        .catch(function(){ btn.textContent = '⚠️ 네트워크 실패';
+                           btn.disabled = false; });
+    });
+  });
+})();
+"""
+
 _DETAIL_JS = r"""
 (function(){
   // Pull ?kw= off the URL; if present, highlight all matches in the
@@ -544,6 +572,13 @@ h1 {
 .sources h3 { margin: 0 0 10px 0; font-size: 13px; color: var(--muted); }
 .sources ul { margin: 0; padding-left: 18px; color: var(--text); }
 .sources li { padding: 3px 0; }
+.src-ingest {
+  margin-left: 6px; padding: 2px 9px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--panel-alt);
+  color: var(--text); font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.src-ingest:hover { border-color: var(--accent); }
+.src-ingest:disabled { cursor: default; opacity: .8; }
 .tool {
   display: inline-block; padding: 3px 10px; border-radius: 12px;
   font-size: 11px; font-weight: 600; background: rgba(107,114,128,0.10);
@@ -579,7 +614,24 @@ def _source_li(title: str) -> str:
     meta.title_url_map) — when the source is an http(s) URL the title
     becomes a clickable link, otherwise plain text. Resolving at render
     time lets historical Q&As pick up newly-known URLs without a
-    migration, but the lookup is now O(1) dict access, not a SQL scan."""
+    migration, but the lookup is now O(1) dict access, not a SQL scan.
+
+    RAW-URL sources (the string itself is a URL — e.g. /kr_disclosures
+    stores DART viewer URLs, i.e. things LISTED but not necessarily
+    learned yet) additionally get a [📥 학습] button that enqueues the
+    URL through the extension's /ingest endpoint (dedup + flood-cap +
+    Telegram notify all reused). Title-resolved sources don't get the
+    button — those are docs already in the brain."""
+    t = (title or "").strip()
+    if t.startswith(("http://", "https://")):
+        safe_url = _esc(t)
+        label = _esc(t if len(t) <= 80 else t[:77] + "…")
+        return (
+            f"<li><a href='{safe_url}' target='_blank' rel='noopener'>"
+            f"{label}</a> "
+            f"<button class='src-ingest' data-url=\"{safe_url}\">"
+            f"📥 학습</button></li>"
+        )
     safe_title = _esc(title)
     url = _SOURCE_URL_CACHE.get((title or "").strip(), "")
     if not url:
@@ -1596,6 +1648,7 @@ def _render_detail(item: dict, token_dir: str) -> str:
         sources_html,
         memo_box,
         "</main>",
+        f"<script>{_SRC_INGEST_JS}</script>",
         f"<script>{_DETAIL_JS}</script>",
         f"<script>{_LINKIFY_JS}</script>",
         f"<script>{_memo_js}</script>",

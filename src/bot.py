@@ -1446,7 +1446,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 <b>【3. 핵심】</b> 자료→자동 수집·요약·임베딩·Obsidian · 자연어→에이전트 도구 자동 · 메모리 7턴(/reset) · 답변 끝 (자료 시점: YYYY.MM)
 
 <b>【4. 자연어 트리거】</b>
-🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL" · 회사+실적 질문→📌 실적 표(YoY·QoQ)+가이던스
+🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 📑 disclosures "[회사] 공시" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL" · 회사+실적 질문→📌 실적 표(YoY·QoQ)+가이던스
 
 <b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 전송
 • PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · [OCR] 강제 · 음성=Gemini STT · YouTube=자막→Jina · <b>.txt/.md/.csv 학습 제외</b>
@@ -1838,7 +1838,13 @@ NTIS 이슈로보는R&amp;D — 정부R&amp;D 한정 트렌드. ⏳ 승인 대�
 OpenDART 최근 공시 목록 (90일, 기본 10건, 상장사만). 각 건에
 [📥 N] 버튼 — 누르면 그 공시 원문을 학습 (기존 DART 인입 경로 재사용,
 DART_DAILY_MAX 일일 캡 공유). 결과는 대시보드에도 기록.
-회사명이 여러 상장사에 걸리면 첫 후보 사용 + 다른 후보 표기.
+• <b>회사명 퍼지 매칭</b>: "하이닉스"→SK하이닉스, 공백/㈜ 무시.
+  여러 상장사에 걸리면 첫 후보 사용 + 다른 후보 표기.
+• <b>자연어</b>: "삼성전자 최근 공시 뭐 나왔어" 같은 질문도 같은 조회
+  (에이전트 도구 search_kr_disclosures — 답변에 뷰어 링크 인용).
+• <b>대시보드</b>: 검색창에 /kr_disclosures 실행 가능. 결과 카드 상세의
+  출처 URL 옆 <b>[📥 학습]</b> 버튼 = 그 공시를 학습 큐에 등록
+  (확장프로그램 인입 경로 재사용 — 중복 방지·텔레그램 알림 포함).
 DART_API_KEY(.env) 필요 — 링크 인입(load_dart)과 같은 키.
 
 승인 상태 (2026-05 기준):

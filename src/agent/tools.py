@@ -13,7 +13,8 @@ from .. import config
 from ..store import meta, vector, cost
 from ..ingest import pipeline
 from . import (retrieve, papersearch, patentsearch,
-               kisti_scienceon, kisti_ntis, translate)
+               kisti_scienceon, kisti_ntis, translate,
+               dart_disclosures)
 
 log = logging.getLogger(__name__)
 
@@ -415,6 +416,30 @@ async def search_kr_rnd_issues(query: str, limit: int = 10) -> dict:
     return {"results": rows, "count": len(rows)}
 
 
+async def search_kr_disclosures(company: str, count: int = 10) -> dict:
+    """OpenDART 최근 공시 목록 — /kr_disclosures 와 같은 데이터 계층.
+    회사명은 퍼지 매칭('하이닉스'→SK하이닉스). 각 건에 DART 뷰어 url 을
+    포함하므로 에이전트 답변이 원문 링크를 그대로 인용할 수 있다."""
+    if not dart_disclosures.api_key():
+        return {"error": "DART_API_KEY 미설정 (.env)", "results": [],
+                "count": 0}
+    matches = await dart_disclosures.find_corp(company)
+    if not matches:
+        return {"error": f"'{company}' 상장사를 찾지 못함 (비상장 미지원)",
+                "results": [], "count": 0}
+    corp = matches[0]
+    rows = await dart_disclosures.list_filings(
+        corp["c"], count=max(1, min(int(count), 20)))
+    for r in rows:
+        r["url"] = dart_disclosures.VIEWER_URL.format(
+            rcept_no=r["rcept_no"])
+    return {"corp": corp["n"], "stock_code": corp["s"],
+            "other_candidates": [m["n"] for m in matches[1:4]],
+            "results": rows, "count": len(rows),
+            "note": ("원문 학습은 /kr_disclosures 명령의 [📥] 버튼 또는 "
+                     "url 을 그대로 봇에 보내면 됨")}
+
+
 async def ingest_url(url: str) -> dict:
     r = await pipeline.ingest_url(url)
     return {
@@ -618,6 +643,7 @@ TOOL_DISPATCH = {
     "search_kr_govt_reports": search_kr_govt_reports,
     "search_kr_agency_rnd": search_kr_agency_rnd,
     "search_kr_rnd_issues": search_kr_rnd_issues,
+    "search_kr_disclosures": search_kr_disclosures,
     "ingest_url": ingest_url,
     "recent_docs": recent_docs,
     "compare_papers": compare_papers,
@@ -1170,6 +1196,33 @@ TOOL_DECLARATIONS = types.Tool(function_declarations=[
                 ),
             },
             required=["query"],
+        ),
+    ),
+    types.FunctionDeclaration(
+        name="search_kr_disclosures",
+        description=(
+            "한국 상장사의 최근 공시 목록 (DART 전자공시, 최근 90일 "
+            "최신순). Use when the user asks about a Korean company's "
+            "공시 / 전자공시 / 사업보고서 / 분기보고서 / 주요사항보고 / "
+            "지분 변동 / 주주총회 filings — e.g. '삼성전자 최근 공시', "
+            "'하이닉스 공시 뭐 나왔어'. Company name is fuzzy-matched "
+            "('하이닉스' → SK하이닉스). Each result carries the DART "
+            "viewer url — cite it so the user can open/learn the "
+            "original filing."
+        ),
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "company": types.Schema(
+                    type=types.Type.STRING,
+                    description="회사명 (부분 명칭 허용, 상장사만)",
+                ),
+                "count": types.Schema(
+                    type=types.Type.INTEGER,
+                    description="Max filings (1-20). Default 10.",
+                ),
+            },
+            required=["company"],
         ),
     ),
 ])
