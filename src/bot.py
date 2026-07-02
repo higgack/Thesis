@@ -1439,6 +1439,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   ScienceON: /kr_papers · /kr_patents · /kr_reports · /kr_trends · /kr_researcher · /kr_organ · /kr_science_trend
   NTIS: /kr_rnd_projects · /kr_related
         /kr_outcomes · /kr_govt_reports · /kr_agency_rnd · /kr_rnd_issues
+  DART: /kr_disclosures &lt;회사&gt; (최근 공시→📥 학습)
 
 ℹ️ <b>기타</b>: /start · /help · 상세: /guide_lookup
 
@@ -1831,6 +1832,15 @@ NTIS 수행기관 R&amp;D현황 — 기관별 과제·예산·논문 통계. ⏳
 <b>/kr_rnd_issues &lt;토픽&gt;</b>
 NTIS 이슈로보는R&amp;D — 정부R&amp;D 한정 트렌드. ⏳ 승인 대기.
 
+<b>📑 DART (전자공시)</b>
+
+<b>/kr_disclosures &lt;회사명&gt; [건수≤20]</b>
+OpenDART 최근 공시 목록 (90일, 기본 10건, 상장사만). 각 건에
+[📥 N] 버튼 — 누르면 그 공시 원문을 학습 (기존 DART 인입 경로 재사용,
+DART_DAILY_MAX 일일 캡 공유). 결과는 대시보드에도 기록.
+회사명이 여러 상장사에 걸리면 첫 후보 사용 + 다른 후보 표기.
+DART_API_KEY(.env) 필요 — 링크 인입(load_dart)과 같은 키.
+
 승인 상태 (2026-05 기준):
 ✅ EPO OPS — 활성 (글로벌 특허)
 ⏳ KIPRIS Plus — 14건 활용신청 승인 대기 (영업일 1-3일)
@@ -1872,6 +1882,7 @@ KG 관계(실선)·공유 문서(점선). 별 클릭→위키·KG관계·학습�
 ✅ /company_patents · /patent_detail · /citing_patents
 ✅ /kr_papers · /kr_patents · /kr_reports
 ✅ /kr_rnd_projects · /kr_outcomes · /kr_govt_reports · /kr_agency_rnd · /kr_rnd_issues
+✅ /kr_disclosures (DART 공시 목록)
 
 기록 안 함 (운영/조회 명령어):
 ❌ /find · /show · /recent · /stats · /status · /usage · /cost
@@ -8051,6 +8062,128 @@ async def cmd_kr_science_trend(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_kr_disclosures(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/kr_disclosures <회사명> [N] — OpenDART 최근 공시 목록(90일, 기본
+    10건) + 건별 [📥 학습] 버튼. 능동 조회 → 기존 DART 인입 경로
+    (load_dart + dart_cap 일일 캡) 재사용이라 LLM 추가비용 0."""
+    if not _is_owner(update):
+        return
+    from .agent import dart_disclosures as _dd
+    if not _dd.api_key():
+        await update.message.reply_text(
+            "DART_API_KEY 미설정 — .env에 추가 필요 "
+            "(opendart.fss.or.kr 무료 발급)")
+        return
+    args = list(ctx.args or [])
+    n = 10
+    if len(args) >= 2 and args[-1].isdigit():
+        n = max(1, min(int(args.pop()), 20))
+    name = " ".join(args).strip()
+    if not name:
+        await update.message.reply_text(
+            "사용법: /kr_disclosures <회사명> [건수≤20]")
+        return
+    status = await update.message.reply_text(
+        f"🔍 '{name}' DART 공시 조회 중...")
+
+    async def _edit(text, **kw):
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=status.chat.id, message_id=status.message_id,
+                text=text, **kw)
+        except Exception:
+            try:
+                await update.message.reply_text(text, **kw)
+            except Exception:
+                log.exception("kr_disclosures send failed")
+
+    try:
+        matches = await _dd.find_corp(name)
+    except Exception as e:
+        log.exception("dart corp lookup failed for %r", name)
+        await _edit(f"⚠️ DART 회사 조회 실패: {_explain_error(e)}")
+        return
+    if not matches:
+        await _edit(f"'{name}' 상장사를 못 찾았어 (비상장사는 미지원). "
+                    "정확한 회사명으로 다시 시도해줘.")
+        return
+    corp = matches[0]
+    try:
+        rows = await _dd.list_filings(corp["c"], count=n)
+    except Exception as e:
+        log.exception("dart list failed for %s", corp["c"])
+        await _edit(f"⚠️ DART 공시 목록 실패: {_explain_error(e)}")
+        return
+    if not rows:
+        await _edit(f"📑 {corp['n']}: 최근 90일 공시 없음.")
+        return
+
+    lines = [f"📑 <b>{html.escape(corp['n'])}</b> ({corp['s']}) "
+             f"최근 공시 {len(rows)}건 (90일)"]
+    if len(matches) > 1:
+        others = " · ".join(html.escape(m["n"]) for m in matches[1:4])
+        lines.append(f"<i>다른 후보: {others}</i>")
+    lines.append("")
+    urls = []
+    for i, r in enumerate(rows, 1):
+        d = r["rcept_dt"]
+        d = f"{d[:4]}.{d[4:6]}.{d[6:]}" if len(d) == 8 else d
+        url = _dd.VIEWER_URL.format(rcept_no=r["rcept_no"])
+        urls.append(url)
+        lines.append(
+            f"{i}. [{d}] <a href=\"{url}\">"
+            f"{html.escape(r['report_nm'])}</a>"
+            + (f" — {html.escape(r['flr_nm'])}" if r["flr_nm"] else ""))
+    lines.append("")
+    lines.append("아래 [📥 N] 버튼 = 해당 공시 원문 학습 "
+                 f"(일일 캡 공유, DART_DAILY_MAX)")
+    body = "\n".join(lines)
+
+    _record_command_qna(
+        update,
+        question=(update.message.text or f"/kr_disclosures {name}").strip(),
+        body=body, tools=["search_kr_disclosures"], sources=urls,
+    )
+    kb_row, kb = [], []
+    for i, r in enumerate(rows, 1):
+        kb_row.append(InlineKeyboardButton(
+            f"📥 {i}", callback_data=f"dartin:{r['rcept_no']}"))
+        if len(kb_row) == 5:
+            kb.append(kb_row)
+            kb_row = []
+    if kb_row:
+        kb.append(kb_row)
+    await _edit(body[:4000], parse_mode="HTML",
+                disable_web_page_preview=True,
+                reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def on_dart_ingest_callback(update: Update,
+                                  ctx: ContextTypes.DEFAULT_TYPE):
+    """[📥 N] on a /kr_disclosures list — ingest that filing through the
+    normal DART path (dart_cap still applies; over-cap reads as 학습 안
+    함, same as an auto-channel DART link)."""
+    q = update.callback_query
+    if not _is_owner(update):
+        await q.answer()
+        return
+    rcept_no = (q.data or "").split(":", 1)[-1]
+    if not rcept_no.isdigit():
+        await q.answer("잘못된 요청")
+        return
+    await q.answer("📥 학습 시작")
+    from .agent import dart_disclosures as _dd
+    url = _dd.VIEWER_URL.format(rcept_no=rcept_no)
+    res = await _ingest_one_url(url, q.message.chat_id, scan_links=False)
+    line = _format_results([res]).strip() or f"🚫 학습 안 함: {url}"
+    try:
+        await ctx.bot.send_message(
+            q.message.chat_id, ("📑 DART 학습 결과:\n" + line)[:4000],
+            disable_web_page_preview=True)
+    except Exception:
+        log.exception("dart ingest result send failed")
+
+
 def _dedup_ntis_projects(rows: list[dict]) -> list[dict]:
     """Group multi-year NTIS project rows by (ProjectTitle,
     ResearchLeader, ResearchAgency) and collapse to the latest year.
@@ -13304,6 +13437,9 @@ def main():
         on_link_callback, pattern=r"^lnk:"
     ))
     app.add_handler(CallbackQueryHandler(
+        on_dart_ingest_callback, pattern=r"^dartin:"
+    ))
+    app.add_handler(CallbackQueryHandler(
         on_ack_callback, pattern=r"^ack:"
     ))
     app.add_handler(CallbackQueryHandler(
@@ -13375,6 +13511,7 @@ def main():
     app.add_handler(CommandHandler("kr_trends", cmd_kr_trends))
     app.add_handler(CommandHandler("kr_researcher", cmd_kr_researcher))
     app.add_handler(CommandHandler("kr_organ", cmd_kr_organ))
+    app.add_handler(CommandHandler("kr_disclosures", cmd_kr_disclosures))
     app.add_handler(CommandHandler("kr_science_trend",
                                     cmd_kr_science_trend))
     app.add_handler(CommandHandler("kr_rnd_projects", cmd_kr_rnd_projects))

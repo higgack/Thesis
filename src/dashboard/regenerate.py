@@ -611,10 +611,12 @@ def _tool_bucket(name: str) -> str:
     if ("report" in n or "rnd_projects" in n
             or "related_content" in n or "classification" in n
             or "govt_reports" in n or "agency_rnd" in n
-            or "rnd_outcomes" in n or "rnd_issues" in n):
+            or "rnd_outcomes" in n or "rnd_issues" in n
+            or "disclosure" in n):
         # KR R&D bucket: ScienceON reports + NTIS projects /
         # classification recommend / related content / outcomes /
-        # govt reports / agency stats / issues.
+        # govt reports / agency stats / issues + DART 공시 목록
+        # (search_kr_disclosures).
         return "report"
     if "paper" in n:
         return "paper"
