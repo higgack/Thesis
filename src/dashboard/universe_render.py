@@ -36,6 +36,12 @@ from .. import config
 log = logging.getLogger(__name__)
 
 _LAST_SIG: str | None = None
+# Cheap pre-gate signature (wiki index mtime + kg/notes row counts). The
+# full payload build reads thousands of meta.db/kg.db/notes.db rows; doing
+# that every 15s regenerate tick — from the bot AND the dashboard process —
+# adds constant read pressure to the hottest DBs for a page whose content
+# rarely changed. Skip the heavy reads entirely unless an input moved.
+_LAST_PRE: str | None = None
 
 # Validated dark-mode palette (see module docstring).
 _C_NODE = "#6b78e3"
@@ -434,11 +440,16 @@ nd.on('mousemove',(ev,d)=>{tip.style.opacity=1;
 const q=document.getElementById('search');
 function applyFilter(){
   const v=(q.value||'').trim().toLowerCase();
-  nd.attr('opacity',d=>!v||(d.label+' '+d.id+' '+(d.al||'')).toLowerCase()
-    .includes(v)?1:.12);
-  lk.attr('opacity',l=>{if(!v)return .8;
-    const m=d=>(d.label+' '+d.id+' '+(d.al||'')).toLowerCase().includes(v);
-    return m(l.source)&&m(l.target)?.8:.05;});
+  if(!v){nd.attr('opacity',1);lk.attr('opacity',.8);return;}
+  const m=d=>(d.label+' '+d.id+' '+(d.al||'')).toLowerCase().includes(v);
+  // 매치만 밝히면 연결선이 어두운 별로 사라져 "뭐랑 연결됐는지"가 안 보인다.
+  // 매치 + 1-hop 이웃까지 함께 밝히고, 매치에 닿는 링크는 살린다.
+  const hit=new Set();NODES.forEach(d=>{if(m(d))hit.add(d.id);});
+  const nbr=new Set();
+  LINKS.forEach(l=>{const s=hit.has(l.source.id),t=hit.has(l.target.id);
+    if(s&&!t)nbr.add(l.target.id);if(t&&!s)nbr.add(l.source.id);});
+  nd.attr('opacity',d=>hit.has(d.id)?1:nbr.has(d.id)?.8:.12);
+  lk.attr('opacity',l=>(hit.has(l.source.id)||hit.has(l.target.id))?.85:.05);
 }
 q.addEventListener('input',applyFilter);
 q.addEventListener('keydown',ev=>{if(ev.key!=='Enter')return;
@@ -482,13 +493,44 @@ addEventListener('resize',()=>{W=stage.clientWidth;H=stage.clientHeight;
     }
 
 
+def _pre_signature() -> str | None:
+    """File-stat + row-count fingerprint of the universe's inputs — no
+    heavy reads. None → couldn't compute (fail open, do the full build)."""
+    import sqlite3
+    try:
+        idx_path = config.DATA_DIR / "wiki_index.json"
+        parts = [str(int(idx_path.stat().st_mtime)) if idx_path.exists()
+                 else "0"]
+        for db, table in (("kg.db", "edges"), ("notes.db", "notes"),
+                          ("meta.db", "documents")):
+            p = config.DATA_DIR / db
+            if not p.exists():
+                parts.append("0")
+                continue
+            c = sqlite3.connect(f"file:{p}?mode=ro", uri=True, timeout=5)
+            try:
+                parts.append(str(c.execute(
+                    f"SELECT COUNT(*) FROM {table}").fetchone()[0]))
+            finally:
+                c.close()
+        return "-".join(parts)
+    except Exception:
+        return None
+
+
 def render_universe(token: str) -> int:
     """Write data/dashboard/<token>/universe/index.html. Returns 1 if
-    (re)written, 0 when skipped (no data / payload unchanged)."""
-    global _LAST_SIG
+    (re)written, 0 when skipped (no data / inputs unchanged)."""
+    global _LAST_SIG, _LAST_PRE
+    out_file = (Path(config.DATA_DIR) / "dashboard" / token
+                / "universe" / "index.html")
+    pre = _pre_signature()
+    if pre is not None and pre == _LAST_PRE and out_file.exists():
+        return 0
     payload = _build_payload()
     if payload is None:
         return 0
+    _LAST_PRE = pre
     sig = hashlib.sha1(json.dumps(
         payload, ensure_ascii=False, sort_keys=True,
         separators=(",", ":")).encode("utf-8")).hexdigest()
