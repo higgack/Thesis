@@ -29,14 +29,21 @@ log = logging.getLogger(__name__)
 
 _URL_RE = re.compile(r"https?://[^\s<>\")]+")
 _DOC_EXTS = ("pdf", "pptx", "docx", "xlsx", "xls")
+# 파일 첨부로 온 오디오(msg.document)도 음성 경로로 재라우팅하기 위한 확장자.
+_AUDIO_EXTS = ("mp3", "m4a", "wav", "ogg", "oga", "flac", "aac", "opus",
+               "wma")
 
 _NOTES_GUIDE_TEXT = """📒 <b>학습 노트 사용법</b>
 
 내가 공부한 자료를 다시 읽고 되새김질하는 개인 노트 시스템.
 
 <b>1. 자료 넣기</b>
-전용 학습 채널에 그냥 올리면 자동 노트화:
+전용 학습 채널에 그냥 올리면 자동 노트화 (두뇌 학습과 동일 타입):
 • URL · 유튜브 · PDF · PPTX · DOCX · XLSX · 텍스트
+• 🎙 <b>음성/오디오</b> (mp3·m4a·wav 등, 파일 첨부도 OK) — Gemini STT
+  전사 → 노트. 캡션을 달면 전사문 앞에 붙음.
+• 🖼 <b>사진</b> — 캡션 ≥80자면 캡션으로(무료), 짧으면 Vision OCR.
+  캡션에 [OCR] 넣으면 강제 OCR.
 • 올리면 DM으로 <i>📒 노트 만드는 중…</i> → 완료/실패 알림
 • 텍스트 살아있는 자료가 최적 (스캔 PDF는 OCR, 최대 7p)
 
@@ -108,9 +115,21 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     doc = getattr(msg, "document", None)
+    voice = getattr(msg, "voice", None)
+    audio = getattr(msg, "audio", None)
+    photo = getattr(msg, "photo", None)
+    # 오디오가 일반 파일 첨부(document)로 오면 음성 경로로 재라우팅 —
+    # 두뇌(RAG) 학습과 동일하게 모든 인입 타입을 지원한다 (2026-07 요청).
+    if doc and not audio and \
+            (doc.file_name or "").lower().rsplit(".", 1)[-1] in _AUDIO_EXTS:
+        audio, doc = doc, None
     url_m = _URL_RE.search(text)
-    src_label = (doc.file_name if doc else None) or (
-        url_m.group(0) if url_m else "텍스트")
+    src_label = (doc.file_name if doc else None) or \
+        ("음성 메모" if voice else None) or \
+        ((getattr(audio, "file_name", None) or getattr(audio, "title", None)
+          or "오디오") if audio else None) or \
+        ("사진" if photo else None) or \
+        (url_m.group(0) if url_m else "텍스트")
     log.info("study post received: %s", src_label)
 
     progress = None
@@ -124,6 +143,57 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     note_ids: list[str] = []
     err: str | None = None
     try:
+        # 0) 음성/오디오 → 두뇌 경로와 같은 Gemini STT → 전사문으로 노트.
+        #    임시 파일로 받고 전사 후 즉시 삭제 (노트는 텍스트만 보존;
+        #    1.5h 강의 mp3를 data/files에 쌓아둘 이유가 없다).
+        if voice or audio:
+            import asyncio as _aio
+            import tempfile
+            from pathlib import Path as _P
+            from ..ingest.loaders import transcribe_audio_async
+            media = voice or audio
+            mime = getattr(media, "mime_type", None) or (
+                "audio/ogg" if voice else "audio/mpeg")
+            with tempfile.TemporaryDirectory(prefix="note_audio_") as td:
+                tmp = _P(td) / "audio.bin"
+                tf = await ctx.bot.get_file(media.file_id)
+                await tf.download_to_drive(str(tmp))
+                data = await _aio.to_thread(tmp.read_bytes)
+            transcript = await transcribe_audio_async(
+                data, mime_type=mime, purpose="notes")
+            if transcript:
+                cap = (msg.caption or "").strip()
+                body = (cap + "\n\n" + transcript).strip() if cap \
+                    else transcript
+                ref = f"tg-audio:{media.file_unique_id}"
+                nid = await channel.ingest_text(
+                    "audio", ref, body,
+                    title=None if src_label in ("음성 메모", "오디오")
+                    else src_label)
+                if nid:
+                    note_ids.append(nid)
+        # 0-b) 사진 → 캡션 우선, 부족하면 Vision OCR (두뇌 경로와 동일
+        #      정책: 캡션 ≥80자는 무료 경로, "[OCR]" 태그로 강제 OCR).
+        elif photo:
+            from ..ingest.loaders import ocr_image_async
+            p = photo[-1]  # 최대 해상도
+            tf = await ctx.bot.get_file(p.file_id)
+            data = bytes(await tf.download_as_bytearray())
+            cap = (msg.caption or "").strip()
+            force_ocr = "[OCR]" in cap.upper()
+            cap_clean = cap.replace("[OCR]", "").replace("[ocr]", "").strip()
+            if len(cap_clean) >= 80 and not force_ocr:
+                body = cap_clean
+            else:
+                ocr_text = await ocr_image_async(
+                    data, mime_type="image/jpeg") or ""
+                body = (cap_clean + "\n\n" + ocr_text).strip() \
+                    if cap_clean else ocr_text
+            if body.strip():
+                nid = await channel.ingest_text(
+                    "image", f"tg-photo:{p.file_unique_id}", body)
+                if nid:
+                    note_ids.append(nid)
         # 1) Attached document (pdf/office) → download + ingest.
         if doc and (doc.file_name or "").lower().rsplit(".", 1)[-1] in _DOC_EXTS:
             dest = config.DATA_DIR / "files" / (doc.file_name or f"{doc.file_id}.bin")
@@ -168,6 +238,10 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                "JS 렌더링/로그인 전용/차단 페이지일 수 있어. 잠시 후 다시 "
                "시도하거나, 원문 본문을 복사해서 텍스트로 붙여넣어줘. "
                "(미리보기 요약으로 가짜 노트를 만들지 않으려고 일부러 중단함)")
+    elif voice or audio:
+        out = (f"⚠️ 노트를 못 만들었어 ({src_label})\n"
+               "음성 전사(STT)가 비었어 — 무음/음악 위주 파일이거나 "
+               "전사 실패일 수 있어. 다시 보내보거나 짧게 잘라서 시도해봐.")
     else:
         out = (f"⚠️ 노트를 못 만들었어 ({src_label})\n"
                "본문이 너무 짧거나 추출 실패 — 스캔 PDF/이미지거나 차단 호스트일 수 "
