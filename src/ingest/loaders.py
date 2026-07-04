@@ -1448,6 +1448,14 @@ def _transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg",
     model/max_tokens/purpose let callers override the default (e.g. the
     YouTube fallback transcribes on ANSWER_MODEL/flash for note-grade
     quality with a higher output cap)."""
+    # Enforce the inline limit HERE too (belt + suspenders with
+    # pipeline.ingest_audio): base64-building a >20MB request inflates
+    # RAM +50% and then fails anyway — on the memory-tight bot that
+    # spike stalled the event loop (2026-07-04).
+    if len(audio_bytes) > 20 * 1024 * 1024:
+        log.warning("STT refused: %dMB > 20MB inline limit",
+                    len(audio_bytes) // (1024 * 1024))
+        return ""
     try:
         from google.genai import types
         from .. import config
