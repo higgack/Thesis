@@ -10379,6 +10379,9 @@ async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE,
     if suffix == ".xlsx":
         return await pipeline.ingest_xlsx(dest, label, on_stage=on_stage)
     if suffix in _AUDIO_SUFFIX_MIME:
+        # already on disk — gate by stat before pulling it into RAM
+        if blocked := _audio_too_big(dest.stat().st_size):
+            return blocked
         return await pipeline.ingest_audio(
             await asyncio.to_thread(dest.read_bytes), label,
             caption=msg.caption or "",
@@ -10442,10 +10445,25 @@ _SUPPORTED_INGEST_SUFFIXES: frozenset[str] = frozenset({
 })
 
 
+def _audio_too_big(size: int | None) -> dict | None:
+    """Pre-download STT size gate. Telegram tells us file_size up front —
+    a >20MB audio can never transcribe (Gemini inline cap), so don't pull
+    128MB into RAM (BytesIO) just to fail: that spike stalled the bot at
+    94.7% of its cgroup (2026-07-04)."""
+    from .ingest.pipeline import STT_MAX_BYTES
+    if size and size > STT_MAX_BYTES:
+        mb = size // (1024 * 1024)
+        return {"status": "empty",
+                "title": f"오디오 {mb}MB — STT 한도 20MB 초과 (분할해서 다시)"}
+    return None
+
+
 async def _ingest_voice_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
     """Telegram voice note (msg.voice) — OGG/Opus."""
     import io
     voice = msg.voice
+    if blocked := _audio_too_big(getattr(voice, "file_size", 0)):
+        return blocked
     file = await ctx.bot.get_file(voice.file_id)
     bio = io.BytesIO()
     await file.download_to_memory(out=bio)
@@ -10460,6 +10478,8 @@ async def _ingest_audio_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
     """Telegram audio (msg.audio) — uploaded music/audio file."""
     import io
     audio = msg.audio
+    if blocked := _audio_too_big(getattr(audio, "file_size", 0)):
+        return blocked
     file = await ctx.bot.get_file(audio.file_id)
     bio = io.BytesIO()
     await file.download_to_memory(out=bio)

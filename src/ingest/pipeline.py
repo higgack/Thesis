@@ -374,10 +374,24 @@ async def ingest_xlsx(path: Path, source_label: str,
                          file_hash=file_hash, on_stage=on_stage)
 
 
+STT_MAX_BYTES = 20 * 1024 * 1024
+
+
 async def ingest_audio(audio_bytes: bytes, source_label: str, caption: str = "",
                        mime_type: str = "audio/ogg") -> dict:
     """Voice note / audio file → Gemini STT → text ingest. Caption is
-    prepended to the transcript so any user-provided context survives."""
+    prepended to the transcript so any user-provided context survives.
+
+    HARD size cap (STT_MAX_BYTES=20MB): Gemini's inline-bytes limit is
+    ~20MB, so a bigger file can never transcribe — but building the
+    request base64-inflates it +50% in RAM first. A forwarded 128MB
+    lecture mp3 spiked the bot to 94.7% of its 5.5GB cgroup and stalled
+    the event loop (2026-07-04 incident). Refuse early with a clear
+    message instead."""
+    if len(audio_bytes) > STT_MAX_BYTES:
+        mb = len(audio_bytes) // (1024 * 1024)
+        return {"status": "empty",
+                "title": f"오디오 {mb}MB — STT 한도 20MB 초과 (20분 안팎으로 분할해서 다시)"}
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     transcript = await transcribe_audio_async(audio_bytes, mime_type=mime_type)

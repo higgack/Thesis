@@ -151,7 +151,15 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             import tempfile
             from pathlib import Path as _P
             from ..ingest.loaders import transcribe_audio_async
+            from ..ingest.pipeline import STT_MAX_BYTES
             media = voice or audio
+            size = int(getattr(media, "file_size", 0) or 0)
+            if size > STT_MAX_BYTES:
+                # 다운로드조차 하지 않는다 — 128MB를 RAM에 올렸다 실패하는
+                # 경로가 봇을 메모리 한계로 몰았음 (2026-07-04).
+                raise ValueError(
+                    f"오디오 {size // (1024 * 1024)}MB — STT 한도 20MB 초과. "
+                    "20분 안팎(≈15-20MB)으로 분할해서 올려줘.")
             mime = getattr(media, "mime_type", None) or (
                 "audio/ogg" if voice else "audio/mpeg")
             with tempfile.TemporaryDirectory(prefix="note_audio_") as td:

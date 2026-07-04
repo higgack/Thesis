@@ -32,6 +32,10 @@ from .. import config
 
 log = logging.getLogger(__name__)
 
+# note_id → last-rendered `updated` stamp (per process). Lets render_notes
+# skip rewriting unchanged note pages every 15s tick.
+_PAGE_STAMPS: dict[str, str] = {}
+
 
 def _esc(s) -> str:
     return html.escape(str(s) if s is not None else "")
@@ -770,7 +774,18 @@ def render_notes(token: str) -> int:
             full = full_map.get(n["id"])
             if not full:
                 continue
-            _atomic(base / f"note-{n['id']}.html", _render_note(token, full))
+            # Incremental: a note page only changes when the note row's
+            # `updated` stamp moves (memo edit, resync). Rewriting ALL
+            # pages every 15s tick ("wrote 229 note page(s)" each tick)
+            # burned constant CPU+IO for identical bytes. First tick per
+            # process still writes everything (cache empty) so template
+            # changes roll out on deploy.
+            stamp = str(n.get("updated") or "")
+            fname = base / f"note-{n['id']}.html"
+            if _PAGE_STAMPS.get(n["id"]) == stamp and fname.exists():
+                continue
+            _atomic(fname, _render_note(token, full))
+            _PAGE_STAMPS[n["id"]] = stamp
             written += 1
     except Exception:
         log.exception("notes_render: write failed")
