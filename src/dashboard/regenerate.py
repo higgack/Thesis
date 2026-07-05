@@ -1411,7 +1411,12 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "<div class='stat-card'>",
         f"<div class='label'>📅 이번 달 ({stats['mtd_year']}년 {stats['mtd_month']}월)</div>",
         f"<div class='value'>₩{stats['mtd_krw']:,.0f}</div>",
-        f"<div class='sub'>{mtd_day}일차 · 일평균 ₩{avg_daily:,.0f}</div>",
+        f"<div class='sub'>{mtd_day}일차 · 일평균 ₩{avg_daily:,.0f}"
+        + (f" · 누적 ₩{stats['total_cost_krw']:,.0f}"
+           + (f" ({stats['total_first_day']}~)"
+              if stats.get("total_first_day") else "")
+           if stats.get("total_cost_krw") else "")
+        + "</div>",
         "</div>",
         "</div>",
 
@@ -2060,6 +2065,10 @@ def regenerate() -> None:
         rows = qna.recent(limit=2000)
         today = cost.today_krw()
         mtd = cost.month_to_date_krw()
+        try:
+            alltime = cost.total_krw()
+        except Exception:
+            alltime = {"total_krw": 0.0, "first_day": ""}
         from datetime import datetime as _dt, timezone as _tz, timedelta as _td
         generated_at = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d %H:%M")
         stats = {
@@ -2072,6 +2081,8 @@ def regenerate() -> None:
             "mtd_year": mtd["year"],
             "mtd_month": mtd["month"],
             "mtd_day": mtd["day"],
+            "total_cost_krw": alltime["total_krw"],
+            "total_first_day": alltime["first_day"],
             "generated_at": generated_at,
         }
         # Atomic index write so the http.server never serves a
