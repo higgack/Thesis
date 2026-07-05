@@ -224,6 +224,26 @@ def period_krw(days: int) -> dict:
     return _since(start.isoformat(timespec="seconds"))
 
 
+def total_krw() -> dict:
+    """All-time spend across the whole calls table (누적). Also returns
+    the first-call date (KST) so the dashboard can show the span."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT COALESCE(SUM(cost_krw),0), COUNT(*), MIN(ts) "
+            "FROM calls").fetchone()
+    first_day = ""
+    if row[2]:
+        try:
+            dt = datetime.fromisoformat(str(row[2]).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            first_day = dt.astimezone(KST).strftime("%Y.%m.%d")
+        except Exception:
+            first_day = str(row[2])[:10]
+    return {"total_krw": float(row[0] or 0.0), "calls": int(row[1] or 0),
+            "first_day": first_day}
+
+
 def month_to_date_krw() -> dict:
     """Current calendar month in KST: 1st 00:00 KST → now."""
     today = datetime.now(KST).date()
