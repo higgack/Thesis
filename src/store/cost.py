@@ -275,9 +275,13 @@ def purpose_today_month(purpose: str) -> dict:
     m = _since_purpose(
         _kst_day_start_utc(today.replace(day=1)).isoformat(timespec="seconds"),
         purpose)
+    # 누적(all-time) too — every per-feature cost card shows 오늘/이번달/
+    # 누적 (dashboard-wide convention, 2026-07-05).
+    a = _since_purpose("2000-01-01T00:00:00", purpose)
     return {
         "today_krw": t["krw"], "today_calls": t["calls"],
         "month_krw": m["krw"], "month_calls": m["calls"],
+        "total_krw": a["krw"], "total_calls": a["calls"],
         "year": today.year, "month": today.month, "day": today.day,
     }
 
