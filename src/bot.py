@@ -33,13 +33,14 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
-# Ingest concurrency cap. Sized for the live VM = e2-standard-2 (2 vCPU,
-# 8 GB) + 5500m bot mem_limit. 4 parallel ingests keep the chunk +
-# reranker working set under the cap, so a multi-file burst refuses
-# gracefully (retry queue) instead of OOM-killing the co-tenant `stock`
-# project that shares this host. Was 8 — tuned for a 16 GB VM that never
-# ran in production. Override via env if the VM is later upsized.
-_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "4"))
+# Ingest concurrency cap. Sized for the live VM = e2-highmem-2 (2 vCPU,
+# 16 GB, upgraded 2026-07-05) + 11g bot mem_limit. 6 parallel ingests fit
+# the ~6 GB headroom above the chroma HNSW baseline (embeddings live in
+# RAM and grow with the corpus — ~4.4 GB at 354k chunks). On the old
+# 8 GB box this was 4 and even that thrashed once the corpus filled the
+# cap. Override via env; if .env still pins INGEST_SEM_CAPACITY=4 the
+# env wins — remove it there to get this default.
+_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "6"))
 _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # Interactive-priority gate. A user's command (_SustainedTyping bumps
 # _INTERACTIVE_INFLIGHT) or Q&A (_run_agent bumps _ACTIVE_AGENT_RUNS)
