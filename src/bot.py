@@ -34,13 +34,14 @@ logging.basicConfig(
 log = logging.getLogger("bot")
 
 # Ingest concurrency cap. Sized for the live VM = e2-highmem-2 (2 vCPU,
-# 16 GB, upgraded 2026-07-05) + 11g bot mem_limit. 6 parallel ingests fit
-# the ~6 GB headroom above the chroma HNSW baseline (embeddings live in
-# RAM and grow with the corpus — ~4.4 GB at 354k chunks). On the old
-# 8 GB box this was 4 and even that thrashed once the corpus filled the
-# cap. Override via env; if .env still pins INGEST_SEM_CAPACITY=4 the
-# env wins — remove it there to get this default.
-_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "6"))
+# 16 GB, upgraded 2026-07-05) + 11g bot mem_limit. RAM now allows more,
+# but 2 vCPUs DON'T: raising this to 6 during the post-deploy backlog
+# drain starved the event loop outright (2026-07-05 — CPU-heavy worker
+# threads held the GIL, zero log/heartbeat/command output for 10+ min
+# while memory sat at 52%). 4 is the ceiling until the box has more
+# cores; the real speed win of the resize was eliminating memory-thrash,
+# not parallelism. Override via env (VM .env pins 4 too).
+_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "4"))
 _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # Interactive-priority gate. A user's command (_SustainedTyping bumps
 # _INTERACTIVE_INFLIGHT) or Q&A (_run_agent bumps _ACTIVE_AGENT_RUNS)
