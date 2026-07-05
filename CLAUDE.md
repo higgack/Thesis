@@ -230,8 +230,9 @@ gcloud 명령의 zone은 이제 `us-central1-b`.
 e2-standard-2/8GB에서 승급 — chroma HNSW가 임베딩을 전부 RAM에 들고
 있어(354k청크≈4.4GB, 학습마다 증가) 8GB 박스가 93~95%에서 20~40분씩
 스톨). Static IP `136.115.27.77` (구 `34.50.23.221`) survives stop/start.
-bot `mem_limit: 11g` + `INGEST_SEM_CAPACITY=6` (.env에 4로 박혀 있으면
-env가 이김 — 제거해야 새 기본값). Dashboard index rebuild = 15s. Host
+bot `mem_limit: 11g` + `INGEST_SEM_CAPACITY=4` — **RAM은 늘었어도 2 vCPU
+가 병렬 상한: 6으로 올렸다가 백로그 드레인 때 GIL 기아로 루프가 10분+
+무음(2026-07-05). 코어 추가 전엔 4 고정** (.env도 4로 핀). Dashboard index rebuild = 15s. Host
 SHARED with `~/stock` + `~/stock-trade` (separate host-venv bots, also
 Vertex via `GOOGLE_GENAI_USE_VERTEXAI=true`) — don't eat all RAM. Those
 aren't `higgack/thesis` (their `gemini_cache_manager.py:137` still passes
