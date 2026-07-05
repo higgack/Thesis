@@ -521,7 +521,8 @@ def render_kg(token: str) -> int:
         f"{f' ({mtd_y}년 {mtd_m}월)' if mtd_y else ''}</div>"
         f"<div class='value'>₩{mtd_krw:,.1f}</div>"
         f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
-        f"{mtd_calls}콜 추출</div></div>",
+        f"{mtd_calls}콜 추출 · 누적 ₩{nc.get('total_krw', 0):,.0f} "
+        f"({nc.get('total_calls', 0):,}콜)</div></div>",
         "</div>",
         "<div class='sec'>주요 개체 (연결수) — 클릭하면 그 개체의 전체 관계</div>",
         f"<div class='chips'>{chips}</div>",

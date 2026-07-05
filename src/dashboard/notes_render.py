@@ -638,7 +638,8 @@ def _render_index(token: str, notes: list[dict],
         f"({cost.get('mtd_year','')}년 {cost.get('mtd_month','')}월)</div>"
         f"<div class='value'>₩{cost.get('mtd_krw',0):,.1f}</div>"
         f"<div style='font-size:11px;color:var(--muted);margin-top:4px'>"
-        f"{cost.get('mtd_count',0)}회 합성</div></div>",
+        f"{cost.get('mtd_count',0)}회 합성 · 누적 ₩{cost.get('total_krw',0):,.0f} "
+        f"({cost.get('total_count',0):,}회)</div></div>",
         "</div>",
         "<div class='fbar'><span class='flabel'>유형별</span>"
         "<button class='fbtn ftype active' data-type='all'>전체</button>"
@@ -738,6 +739,8 @@ def render_notes(token: str) -> int:
             "today_count": nc["today_calls"],
             "mtd_krw": nc["month_krw"],
             "mtd_count": nc["month_calls"],
+            "total_krw": nc.get("total_krw", 0),
+            "total_count": nc.get("total_calls", 0),
             "mtd_year": nc["year"],
             "mtd_month": nc["month"],
         }
