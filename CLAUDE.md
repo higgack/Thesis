@@ -226,13 +226,16 @@ gcloud 명령의 zone은 이제 `us-central1-b`.
 + 수동 베이스라인 `telegram-bot-usc-manual-20260704` (weekly-usc 첫
 회차 확인 후 삭제 가능) + 매일 GCS 백업(backup.py).
 
-`telegram-bot` = **e2-standard-2** (2 vCPU / 8 GB; was n2-standard-2).
-Static IP `136.115.27.77` (구 `34.50.23.221`) survives stop/start. bot `mem_limit: 5500m` +
-`INGEST_SEM_CAPACITY=4` (sized for the real 8 GB). Dashboard index rebuild
-= 15s. Host SHARED with `~/stock` + `~/stock-trade` (separate host-venv
-bots, also Vertex via `GOOGLE_GENAI_USE_VERTEXAI=true`) — don't eat all
-RAM. Those aren't `higgack/thesis` (their `gemini_cache_manager.py:137`
-still passes `api_key=` → 401, their own problem).
+`telegram-bot-usc` = **e2-highmem-2** (2 vCPU / 16 GB; 2026-07-05에
+e2-standard-2/8GB에서 승급 — chroma HNSW가 임베딩을 전부 RAM에 들고
+있어(354k청크≈4.4GB, 학습마다 증가) 8GB 박스가 93~95%에서 20~40분씩
+스톨). Static IP `136.115.27.77` (구 `34.50.23.221`) survives stop/start.
+bot `mem_limit: 11g` + `INGEST_SEM_CAPACITY=6` (.env에 4로 박혀 있으면
+env가 이김 — 제거해야 새 기본값). Dashboard index rebuild = 15s. Host
+SHARED with `~/stock` + `~/stock-trade` (separate host-venv bots, also
+Vertex via `GOOGLE_GENAI_USE_VERTEXAI=true`) — don't eat all RAM. Those
+aren't `higgack/thesis` (their `gemini_cache_manager.py:137` still passes
+`api_key=` → 401, their own problem).
 
 ## Wiki system (don't regress)
 

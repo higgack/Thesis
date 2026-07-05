@@ -26,16 +26,19 @@ services:
       - ./data:/app/data
       - tg-bot-api-data:/var/lib/telegram-bot-api
     restart: unless-stopped
-    # Sized for the LIVE VM = n2-standard-2 (2 vCPU, 7.8 GB RAM), NOT
-    # the 16 GB machine the old comment assumed. Bot idles ~4 GB; a
-    # 5500m cap leaves ~2.3 GB for the OS, telegram-bot-api, listener,
-    # dashboard AND the co-tenant `stock` project that shares this host.
-    # The previous 12000m exceeded physical RAM, so _MEM_REFUSE_THRESHOLD
-    # computed against ~7.8 GB and let RSS climb until the kernel
-    # OOM-killer fired on a random process (incl. stock). 5500m makes the
-    # bot refuse new agent/ingest runs (retry queue intact) well before
-    # the box is exhausted. Paired with INGEST_SEM_CAPACITY=4 (bot.py).
-    mem_limit: 5500m
+    # Sized for the LIVE VM = e2-highmem-2 (2 vCPU, 16 GB RAM — upgraded
+    # 2026-07-05 from e2-standard-2/8GB). The corpus outgrew the old box:
+    # chroma's HNSW keeps every embedding in RAM (3072-dim × 354k chunks
+    # ≈ 4.4 GB and growing with each ingest), so the bot sat at ~93-95%
+    # of the old 5500m cap and the kernel's reclaim thrash stalled the
+    # event loop for 20-40 min at a time (heartbeat alerts, frozen
+    # ingest). 11g leaves the OS + telegram-bot-api + listener +
+    # dashboard + the co-tenant `stock`/`stock-trade` host bots ~5 GB.
+    # NEVER set this above physical RAM (the old 12000m mistake let the
+    # kernel OOM-killer fire on random processes). Paired with
+    # INGEST_SEM_CAPACITY (bot.py, default 6 since the RAM headroom
+    # allows real parallel ingest again).
+    mem_limit: 11g
     # Default 10s SIGTERM→SIGKILL is too short for any non-trivial
     # ingest. 120s lets short jobs (URLs, text, photos, small PDFs)
     # finish cleanly during deploys; longer jobs are still safe
