@@ -35,6 +35,17 @@ HEARTBEAT_FILE="data/bot_heartbeat"
 HEARTBEAT_STALE_SEC=600        # 10 min with no stamp = hung loop
 WATCHDOG_COOLDOWN_FILE="/tmp/thesis_watchdog_cooldown"
 WATCHDOG_COOLDOWN_SEC=1800     # alert at most once / 30 min (≤2/h)
+# Deploy-window mute (2026-07-05). Every deploy produced a FALSE hang
+# alert: the image build pegs both vCPUs (the old container starves and
+# its heartbeat stalls), then the fresh container drains the ingest
+# backlog for several more minutes. Those alerts trained the user to
+# ignore the watchdog — the opposite of its job. The deploy path stamps
+# this file before the build and again after success; check_heartbeat
+# stays silent for DEPLOY_MUTE_SEC after the last stamp. An alert
+# OUTSIDE a deploy window is therefore always real. Missing file →
+# normal alerting (fresh VM safe).
+DEPLOY_STAMP_FILE="/tmp/thesis_last_deploy_ts"
+DEPLOY_MUTE_SEC=900            # 15 min after (re)stamp
 
 notify() {
     [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_OWNER_ID:-}" ] || return 0
@@ -59,6 +70,16 @@ check_heartbeat() {
     local status
     status=$(docker inspect -f '{{.State.Status}}' thesis-bot-1 2>/dev/null || echo missing)
     [ "$status" = "running" ] || return 0
+
+    # Deploy-window mute: a recent deploy (build CPU starvation + post-boot
+    # backlog drain) makes a stale heartbeat EXPECTED, not a hang.
+    if [ -f "$DEPLOY_STAMP_FILE" ]; then
+        local dts
+        dts=$(tr -dc '0-9' < "$DEPLOY_STAMP_FILE" 2>/dev/null)
+        if [ -n "$dts" ] && [ "$(( $(date +%s) - dts ))" -lt "$DEPLOY_MUTE_SEC" ]; then
+            return 0
+        fi
+    fi
 
     # Container-uptime guard. A freshly (re)started/deployed container
     # inherits the PREVIOUS run's heartbeat file (bind mount) and may not
@@ -146,6 +167,10 @@ fi
     [ -n "$TITLE" ] && echo "title: $TITLE"
 } >>"$LOG"
 
+# Mute the hang watchdog for the whole build + warm-up window (quiet
+# retries rebuild too, so stamp regardless of QUIET).
+date +%s > "$DEPLOY_STAMP_FILE"
+
 [ "$QUIET" -eq 1 ] || notify "🚀 배포 시작: ${SUBJECT}"
 
 # Disk guard. The torch layer (line 30 of Dockerfile) cache-busts on every
@@ -195,6 +220,9 @@ if git pull --ff-only origin "$BRANCH" >>"$LOG" 2>&1; then
     # and refill the disk over successive deploys. Dangling-only (-f, no -a)
     # → never removes an image a running container still references.
     docker image prune -f >>"$LOG" 2>&1 || true
+    # Re-stamp AFTER the build finished so the mute covers build time +
+    # a full DEPLOY_MUTE_SEC of post-boot backlog drain.
+    date +%s > "$DEPLOY_STAMP_FILE"
     sleep 5
     STATUS=$(docker inspect -f '{{.State.Status}}' thesis-bot-1 2>/dev/null || echo missing)
     if [ "$STATUS" = "running" ]; then
