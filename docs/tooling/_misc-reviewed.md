@@ -9,3 +9,10 @@
 [리포](https://github.com/agentic-in/elephant-agent) — "퍼스널 모델 우선"의 **개인 라이프 코치 에이전트**
 (Identity/World/Pulse/Journey, 일/건강/학습/관계 경로 설계). macOS 앱 + CLI. → 우리는 **논문/RAG 워크스페이스**라
 용도 무관. **부적용.**
+
+## marketingskills (coreyhaines31) — 부적용
+[리포](https://github.com/coreyhaines31/marketingskills) (MIT) — 마케터/창업자용 **마케팅 스킬 50+**
+(CRO·카피라이팅·콜드메일·SEO·광고·A/B·리텐션·그로스). Claude Code 호환 마크다운 스킬, npx 설치.
+→ 우리는 학위논문+특허분석 워크스페이스라 **도메인 완전 불일치**(제품/웹·광고·SEO 활동 없음; 학술 산문은
+academic-paper 담당, 마케팅 카피 톤은 논문에 부적합). analytics도 웹 분석이지 특허 계량 아님. **부적용.**
+(향후 연구 홍보 콘텐츠가 필요하면 그때 copywriting/social만 설치 고려.)
