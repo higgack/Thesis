@@ -36,6 +36,28 @@ def _build_norm_idx(m: dict) -> dict[str, str]:
 # Lightweight markdown → HTML (handles what wiki merge pages actually use)
 # ---------------------------------------------------------------------------
 
+# Compiled topic-autolink regex, cached across _inline calls (one build
+# per topic-set change, not one scan per topic per line — see the
+# incident note inside _inline). Longest-first alternation = longest
+# topic wins at the same position, matching the old loop's priority.
+_AUTOLINK_CACHE: dict = {"key": None, "rx": None}
+
+
+def _topic_autolink_re(topics: set[str]):
+    if not topics:
+        return None
+    key = (len(topics), hash(frozenset(topics)))
+    if _AUTOLINK_CACHE["key"] == key:
+        return _AUTOLINK_CACHE["rx"]
+    alts = [re.escape(html.escape(t))
+            for t in sorted(topics, key=len, reverse=True) if len(t) >= 2]
+    rx = (re.compile(r"(?<![가-힣A-Za-z0-9])(?:" + "|".join(alts)
+                     + r")(?![A-Za-z0-9])") if alts else None)
+    _AUTOLINK_CACHE["key"] = key
+    _AUTOLINK_CACHE["rx"] = rx
+    return rx
+
+
 def _md_to_html(md: str, topic_set: set[str] | None = None,
                 source_url_map: dict[str, str] | None = None,
                 source_date_map: dict[str, dict] | None = None,
@@ -198,44 +220,44 @@ def _md_to_html(md: str, topic_set: set[str] | None = None,
                 return _make_footnote(clean)
             return _topic_link(clean)
         t = re.sub(r"\[\[(.+?)\]\]", _link_or_fn, t)
-        _KO = re.compile(r"[가-힣]")
-        _ALNUM = re.compile(r"[a-zA-Z0-9]")
-        for topic in sorted(_topics, key=len, reverse=True):
-            if len(topic) < 2:
-                continue
-            escaped = html.escape(topic)
-            if escaped not in t:
-                continue
+        # Topic auto-linking — SINGLE combined-regex scan. 2026-07-08:
+        # the old per-topic loop (sort + substring scan + re.split for
+        # EVERY topic, on EVERY line) went quadratic as the wiki grew —
+        # hundreds of topics × 30K-char pages × every stale page after
+        # each hourly batch pegged a GIL-holding worker thread for
+        # minutes at a time, starving the event loop bot-wide (frozen
+        # ingest, stalled heartbeats, the 15-min ingest wait_for firing
+        # hours late). Caught red-handed by py-spy: _inline() active+gil.
+        # Same output semantics: longest topic wins at a position
+        # (alternation order), each topic linked at most once per call,
+        # boundary rules preserved (no 한글/alnum before, no alnum
+        # after), text inside tags/anchors untouched.
+        rx = _topic_autolink_re(_topics)
+        if rx is not None and rx.search(t):
             parts = re.split(r"(<[^>]+>)", t)
             in_anchor = False
-            replaced = False
+            linked: set[str] = set()
+
+            def _link_topic(m):
+                name = m.group(0)
+                topic = html.unescape(name)
+                if topic in linked:
+                    return name
+                linked.add(topic)
+                return (f'<a href="{_topic_filename(topic)}" '
+                        f'class="wiki-internal">{name}</a>')
+
             for i, part in enumerate(parts):
-                if replaced:
-                    break
                 if part.startswith("<"):
                     if part.startswith("<a ") or part == "<a>":
                         in_anchor = True
                     elif part == "</a>":
                         in_anchor = False
                     continue
-                if in_anchor:
+                if in_anchor or not part:
                     continue
-                idx = part.find(escaped)
-                if idx < 0:
-                    continue
-                before = part[idx - 1] if idx > 0 else ""
-                after_idx = idx + len(escaped)
-                after = part[after_idx] if after_idx < len(part) else ""
-                if _KO.match(before):
-                    continue
-                if _ALNUM.match(before) or _ALNUM.match(after):
-                    continue
-                link = (f'<a href="{_topic_filename(topic)}" '
-                        f'class="wiki-internal">{escaped}</a>')
-                parts[i] = part[:idx] + link + part[after_idx:]
-                replaced = True
-            if replaced:
-                t = "".join(parts)
+                parts[i] = rx.sub(_link_topic, part)
+            t = "".join(parts)
         return t
 
     in_table = False
