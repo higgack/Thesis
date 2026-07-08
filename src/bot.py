@@ -386,6 +386,38 @@ def _unregister_ingest(job_id: str) -> None:
     _ACTIVE_INGESTS.pop(job_id, None)
 
 
+# Stuck-slot tripwire threshold. The per-message wait_for is 15 min
+# (_INGEST_TIMEOUT_SEC); a slot older than DOUBLE that means the guard
+# didn't fire — exactly the 2026-07-08 silent-stall signature.
+_STUCK_INGEST_ALERT_SEC = 1800
+
+
+async def _check_stuck_ingests(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
+    """10-min tick: any ingest holding a slot >30 min → one-shot Telegram
+    alert carrying label + pipeline stage + age, so a silent ingest stall
+    self-diagnoses instead of needing hours of log archaeology. Alert-only
+    (no auto-cancel): if the 15-min wait_for failed to fire, cancellation
+    is suspect too — first occurrence should be diagnosed, not masked."""
+    now = time.time()
+    for job_id, slot in list(_ACTIVE_INGESTS.items()):
+        age = now - (slot.get("started_at") or now)
+        if age < _STUCK_INGEST_ALERT_SEC or slot.get("stuck_alerted"):
+            continue
+        slot["stuck_alerted"] = True
+        try:
+            await ctx.bot.send_message(
+                config.TELEGRAM_OWNER_ID,
+                "⚠️ 인입 슬롯 정체 감지 (15분 타임아웃 미발동 = 버그 단서)\n"
+                f"자료: {str(slot.get('label') or '?')[:120]}\n"
+                f"단계: {slot.get('stage') or '(미기록)'} · "
+                f"{_fmt_elapsed(age)} 경과\n"
+                f"슬롯 {len(_ACTIVE_INGESTS)}/{_INGEST_SEM_CAPACITY} 점유 중 — "
+                "이 메시지를 Claude에게 그대로 전달해줘.\n"
+                "응급 복구: docker restart thesis-bot-1")
+        except Exception:
+            log.exception("stuck ingest alert failed")
+
+
 def _fmt_elapsed(seconds: float) -> str:
     s = int(seconds)
     if s < 60:
@@ -13760,6 +13792,18 @@ def main():
             interval=60,
             first=15,
             name="heartbeat",
+        )
+        # Every 10 min: stuck-ingest tripwire. 2026-07-08: brain ingest
+        # went silent for 9h — slots held by ingests whose ⏳ bubbles
+        # kept being edited, while polling/scheduler/heartbeat all looked
+        # healthy, so nothing alerted and diagnosis took hours of log
+        # archaeology. This turns any recurrence into a self-describing
+        # Telegram alert (label + pipeline stage + age) within ~30 min.
+        app.job_queue.run_repeating(
+            _check_stuck_ingests,
+            interval=600,
+            first=600,
+            name="check_stuck_ingests",
         )
         # Post-deploy smoke test: ~3 min after boot (BM25 cache + reranker
         # warmed), run the real read-only hot path (retrieval + embed)
