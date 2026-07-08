@@ -21,17 +21,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
-# Install torch CPU-only first so sentence-transformers' transitive
-# dependency doesn't drag in 1-2GB of nvidia-cuda-* wheels we can't
-# use on this CPU-only VM. The CPU index has the same torch API.
-# Generous --retries/--timeout: this layer cache-busts on every code push
-# (COPY src below), so the torch download re-runs each deploy and a single
-# transient pytorch.org hiccup must not fail the whole build.
+# Install torch CPU-only FIRST — and BEFORE any COPY — so this multi-GB
+# layer's cache survives both code pushes and pyproject dependency bumps
+# (it depends on nothing but this RUN line). CPU index avoids the 1-2GB
+# nvidia-cuda-* wheels sentence-transformers would otherwise drag in.
+# Generous --retries/--timeout so a cold build (e.g. right after the
+# disk-guard cache prune) doesn't die on a pytorch.org hiccup.
 RUN pip install --upgrade pip && \
     pip install --retries 10 --timeout 180 \
-        --index-url https://download.pytorch.org/whl/cpu torch && \
-    pip install .
+        --index-url https://download.pytorch.org/whl/cpu torch
+
+COPY pyproject.toml ./
+# Project deps in their own layer: re-runs when pyproject.toml changes,
+# but never re-downloads torch above.
+RUN pip install .
 
 COPY src ./src
 

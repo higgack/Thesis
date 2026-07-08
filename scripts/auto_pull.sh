@@ -188,7 +188,13 @@ free_disk_if_needed() {
     [ -n "$use" ] || return 0
     if [ "$use" -ge 85 ]; then
         echo "disk ${use}% ≥85% — pruning build cache + dangling images" >>"$LOG"
-        docker builder prune -af >>"$LOG" 2>&1 || true
+        # NOT -af: a full prune deletes the multi-GB torch/deps layers, so
+        # the very next deploy is a 10-20 min cold build (2026-07-08 — a
+        # burst of deploys crossed 85%, -af fired, the following build
+        # re-downloaded torch from scratch). --keep-storage retains the
+        # most-recently-used ~6GB — the hot torch + deps layers are used
+        # by every build, so they survive; stale cache still gets freed.
+        docker builder prune -f --keep-storage 6g >>"$LOG" 2>&1 || true
         docker image prune -f >>"$LOG" 2>&1 || true
         local after
         after=$(df --output=pcent / 2>/dev/null | tail -1 | tr -dc '0-9')
