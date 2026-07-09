@@ -41,13 +41,28 @@ def make_genai_client():
     """The single google-genai client factory every module uses instead
     of genai.Client(...). Centralised so the AI Studio → Vertex switch is
     one env var, not seven edits. Lazy import keeps google-genai off the
-    import path for callers that only need config constants."""
+    import path for callers that only need config constants.
+
+    http_options.timeout (MILLISECONDS — the SDK divides by 1000 into
+    httpx seconds): a HARD network timeout on every Gemini request.
+    2026-07-09: a network-stalled generate_content inside
+    asyncio.to_thread pinned an ingest slot for 45+ min — a RUNNING
+    thread cannot be cancelled, so even the 15-min ingest wait_for
+    couldn't free the slot (stuck-ingest tripwire alerts '생각들…',
+    'SK하이닉스 ADR…'). 300s covers the slowest legitimate calls (20MB
+    STT, /deep Pro answers, 12K-token wiki merges) with headroom; a
+    stalled socket now raises instead of hanging forever. Override via
+    GENAI_TIMEOUT_MS if a future call class needs longer."""
     from google import genai
+    from google.genai import types as _gtypes
+    http_options = _gtypes.HttpOptions(
+        timeout=int(os.getenv("GENAI_TIMEOUT_MS", "300000")))
     if GEMINI_BACKEND == "vertex":
         return genai.Client(
-            vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION
+            vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION,
+            http_options=http_options,
         )
-    return genai.Client(api_key=GOOGLE_API_KEY)
+    return genai.Client(api_key=GOOGLE_API_KEY, http_options=http_options)
 
 OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH", "").strip() or None
 OBSIDIAN_GIT_REMOTE = os.getenv("OBSIDIAN_GIT_REMOTE", "").strip() or None

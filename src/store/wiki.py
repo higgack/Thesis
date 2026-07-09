@@ -1253,6 +1253,71 @@ def delete_topic(topic: str) -> dict:
             "removed_queue": removed_queue, "had_index": rec is not None}
 
 
+async def classify_stale_singletons(stale_days: int = 30) -> dict:
+    """/wiki_prune 데이터 계층: lint의 정체 단일소스(1소스·30일+ 미갱신)
+    토픽 이름을 flash-lite로 분류한다 —
+      • delete 후보: 일반 개념/추상어/너무 광범위 (철학·리더십·차트·웹3…)
+        → 위키 토픽으로 유지할 가치가 없는 노이즈
+      • keep: 기업/제품/인물/기관/기술 고유명사 (소스가 더 붙으면 자랄
+        수 있는 실체) — 절대 안 건드림
+    이름만 보내므로 550개 기준 ~₩10-20. 분류 응답 파싱 실패 시 그 배치는
+    전부 keep (fail-safe: 불확실하면 안 지운다)."""
+    import asyncio as _aio
+    res = await _aio.to_thread(lint, stale_days, False)
+    stale = res.get("stale_singletons") or []
+    names = [s["topic"] for s in stale if s.get("topic")]
+    if not names:
+        return {"delete": [], "keep": [], "total": 0}
+    from ..llm.gemini import complete
+    system = (
+        "당신은 개인 투자 리서치 위키의 사서입니다. 아래 위키 토픽 이름"
+        " 목록을 두 그룹으로 분류하세요.\n"
+        "DELETE = 일반 개념/추상어/형용사적 주제/너무 광범위해서 개별"
+        " 위키 페이지로 유지할 가치가 없는 것 (예: 철학, 리더십, 차트,"
+        " 웹3, 감원, 정치성향, K-뷰티, RTO)\n"
+        "KEEP = 기업·제품·인물·기관·특정 기술의 고유명사 (예: 삼성전자,"
+        " DraftKings, Nemotron, 태평염전) — 투자 리서치 대상이 될 수"
+        " 있는 실체\n"
+        "애매하면 KEEP. 반드시 JSON 하나만 출력:"
+        ' {"delete": ["..."], "keep": ["..."]}'
+    )
+    delete: list[str] = []
+    keep: list[str] = []
+    for i in range(0, len(names), 100):
+        batch = names[i:i + 100]
+        try:
+            out = await complete(
+                config.SUMMARY_MODEL, system, "\n".join(batch),
+                max_tokens=8192, temperature=0.0, purpose="wiki",
+                timeout=120)
+            m = re.search(r"\{.*\}", out or "", re.S)
+            j = json.loads(m.group(0)) if m else {}
+            dset = {str(x).strip() for x in (j.get("delete") or [])}
+        except Exception:
+            log.exception("wiki prune classify batch failed — keeping all")
+            dset = set()
+        for n in batch:
+            (delete if n in dset else keep).append(n)
+    return {"delete": delete, "keep": keep, "total": len(names)}
+
+
+def bulk_delete_topics(topics: list[str]) -> dict:
+    """Delete many topics (each via delete_topic → 영구 삭제 + 재생성
+    차단). Returns {deleted, errors:[...]}."""
+    deleted = 0
+    errors: list[str] = []
+    for t in topics:
+        try:
+            r = delete_topic(t)
+            if r.get("error"):
+                errors.append(f"{t}: {r['error']}")
+            else:
+                deleted += 1
+        except Exception as e:  # 한 건 실패가 전체를 멈추지 않게
+            errors.append(f"{t}: {str(e)[:80]}")
+    return {"deleted": deleted, "errors": errors}
+
+
 def backfill(docs: list[dict]) -> dict:
     """Enqueue EXISTING corpus docs (from meta.docs_since) into the wiki
     queue so the nightly batch will synthesize them too — not just new
