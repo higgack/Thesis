@@ -1342,8 +1342,11 @@ def _render_lint_panel(token: str) -> str:
             f'{items}{more}</div>')
 
     open_attr = " open" if (contra or missing) else ""
+    acked = int(data.get("acked_singletons") or 0)
     summary = (f"🩺 위키 점검 — ⚠️ 모순 {len(contra)} · "
-               f"🧹 정체 {len(stale)} · 🗂 누락 {len(missing)}")
+               f"🧹 정체 {len(stale)}"
+               + (f" (📌 보존확정 {acked} 제외)" if acked else "")
+               + f" · 🗂 누락 {len(missing)}")
     return (
         f'<details{open_attr} style="margin:0 0 18px;padding:10px 14px;'
         'border:1px solid var(--border-light);border-radius:10px;'

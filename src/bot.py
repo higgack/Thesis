@@ -1463,7 +1463,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
   🕸 KG(시범): /kg_extract · /kg
 
-📚 <b>위키</b>(매시 정시·요약 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_prune(+_confirm) · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
+📚 <b>위키</b>(매시 정시·요약 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_prune(+_confirm) · /wiki_fix(+_confirm) · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
 📒 <b>학습 노트</b>: /notes · 상세: /notes_guide
 
@@ -1981,6 +1981,8 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
 • <b>/wiki_dedup [merge A :: B | merge_all]</b> 유사 중복 토픽 감지(접미사 정규화·부분문자열) — 목록 확인 후 개별/전체 병합
 • <b>/wiki_prune → /wiki_prune_confirm</b> 정체 단일소스(1소스·30일+) 대량 정리 — 이름만 LLM 분류(~₩20)해 일반개념·노이즈(철학/차트/웹3류)만 삭제 후보로 제시, 기업·고유명사는 보존. 목록 확인 후 confirm으로 일괄 영구 삭제(재생성 차단, 10분 유효)
+• <b>/wiki_prune keep_all</b> 삭제 없이 현재 정체 전부 '보존 확정'(₩0) — lint 정체 목록에서 영구 제외, 새로 정체되는 토픽만 계속 표시. 해제는 data/wiki_lint_ack.json 수동 편집
+• <b>/wiki_fix → /wiki_fix_confirm</b> 모순(⚠️ 검토 필요) 페이지 일괄 재통합 — LLM이 페이지를 다시 써서 시점 차이는 시간순으로 본문 흡수, 진짜 모순만 잔존. 페이지당 ~₩55 (자동 배치 예산과 별도, purpose=wiki_fix). 원본 절반 이하 출력은 손실 가드로 스킵
 • <b>/wiki_rename &lt;옛이름&gt; :: &lt;새이름&gt;</b> 토픽명 변경(인덱스+파일+큐+alias 일괄)
 • <b>/wiki_delete &lt;토픽&gt;</b> 토픽 완전 삭제(인덱스+페이지+큐). 삭제 후 backfill·재인제스트로 안 돌아옴(영구)
 • <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 매시 배치·일일 예산 캡 내 분산)
@@ -2482,7 +2484,8 @@ DB 엔진(LSM Tree), 이벤트 소싱, 위키피디아 편집 모델 등에서 �
 • 배치 주기: <b>매시 정시</b> (KST) — 큐 자동 머지, 일일 예산 캡 내
 • 알림: 학습 요약 <b>1일 1회</b>(그날 첫 갱신된 정시 직후, 시각 유동) · 예산/모순 알람은 별도 즉시
 • 점검: <b>/wiki_lint</b>(₩0, LLM 없음) — 정체 단일소스·미해결 모순·누락 페이지. 매시 배치가 자동 갱신해 대시보드 위키 상단 점검 패널에 표시(온디맨드 실행도 가능)
-• 정리: <b>/wiki_prune</b>(→ _confirm) — 정체 단일소스를 LLM 분류(~₩20)로 노이즈만 골라 일괄 영구 삭제. 기업·고유명사는 자동 보존
+• 정리: <b>/wiki_prune</b>(→ _confirm) — 정체 단일소스를 LLM 분류(~₩20)로 노이즈만 골라 일괄 영구 삭제. 기업·고유명사는 자동 보존. <b>keep_all</b>이면 삭제 없이 전부 보존 확정(정체 목록에서 제외, ₩0)
+• 모순 해소: <b>/wiki_fix</b>(→ _confirm) — ⚠️ 검토 필요 페이지를 LLM 재작성으로 일괄 해소(페이지당 ~₩55, 일일 예산과 별도). 시점 차이는 본문에 시간순 흡수, 판단 불가만 잔존
 • <code>WIKI_MIN_SUMMARY_CHARS=600</code> — 이하 요약은 위키 제외
 
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -12431,7 +12434,9 @@ async def cmd_wiki_lint(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     missing = res.get("missing_pages") or []
     lines = [
         "🩺 <b>위키 점검</b> (₩0, LLM 없음)",
-        f"📊 토픽 {res.get('total_topics', 0)}개 · 스캔 {res.get('pages_scanned', 0)}",
+        f"📊 토픽 {res.get('total_topics', 0)}개 · 스캔 {res.get('pages_scanned', 0)}"
+        + (f" · 📌 보존확정 {res.get('acked_singletons', 0)}개 제외"
+           if res.get("acked_singletons") else ""),
     ]
     # No truncation — _split_for_telegram chunks long lists across
     # messages, and the dashboard concatenates them. Show every item.
@@ -12909,9 +12914,26 @@ _WIKI_PRUNE_TTL_SEC = 600
 
 
 async def cmd_wiki_prune(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/wiki_prune — 정체 단일소스(1소스·30일+) 토픽을 LLM으로 분류해
-    노이즈(일반개념)만 일괄 삭제 후보로 제시. /wiki_prune_confirm 실행."""
+    """/wiki_prune [keep_all] — 정체 단일소스(1소스·30일+) 정리.
+    기본: LLM 분류로 노이즈만 삭제 후보 제시 → /wiki_prune_confirm.
+    keep_all: 전부 '보존 확정'(ack) — 삭제 없이 lint 정체 목록에서만
+    영구 제외 (₩0). 새로 정체되는 토픽만 계속 표시."""
     if not _is_owner(update):
+        return
+    if " ".join(ctx.args or []).strip().lower() == "keep_all":
+        status = await update.message.reply_text("📌 전부 보존 확정 처리 중…")
+        try:
+            res = await asyncio.to_thread(wiki.ack_stale_singletons)
+        except Exception as e:
+            log.exception("wiki keep_all failed")
+            await status.edit_text(f"⚠️ 실패: {_explain_error(e)}")
+            return
+        await status.edit_text(
+            f"✅ 정체 단일소스 {res['acked']}개 보존 확정 (누적 "
+            f"{res['total_acked']}개) — lint 정체 목록에서 제외됐어.\n"
+            "대시보드 점검 패널은 다음 렌더 틱(≤15초)에 반영. 앞으로 새로"
+            " 정체되는 토픽만 다시 표시돼. 해제는 data/wiki_lint_ack.json"
+            " 수동 편집.")
         return
     status = await update.message.reply_text(
         "🧹 정체 단일소스 토픽 분류 중… (이름만 LLM 분류, ~₩20)")
@@ -12973,6 +12995,111 @@ async def cmd_wiki_prune_confirm(update: Update,
         await status.edit_text(out[:4000])
     except Exception:
         await update.message.reply_text(out[:4000])
+
+
+# /wiki_fix 2단계 확인용 대기 상태 (10분 유효). LLM 재작성이라 페이지당
+# ~₩55 — 무조건 대상·예상 비용 제시 → 별도 confirm 커맨드로만 실행.
+_WIKI_FIX_PENDING: dict | None = None
+# fire-and-forget 태스크 GC 방지 참조 (실행 중 1개만 존재)
+_WIKI_FIX_TASK: asyncio.Task | None = None
+
+
+async def cmd_wiki_fix(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_fix — `⚠️ 검토 필요`(모순) 마커가 남은 위키 페이지를 LLM
+    재작성으로 해소 시도. 1단계: 대상 목록 + 예상 비용 제시."""
+    if not _is_owner(update):
+        return
+    if _WIKI_FIX_TASK is not None and not _WIKI_FIX_TASK.done():
+        await update.message.reply_text(
+            "🧩 이미 재통합이 실행 중이야 — 끝나면 결과 메시지가 올 거야.")
+        return
+    status = await update.message.reply_text("🔍 모순 페이지 스캔 중… (₩0)")
+    try:
+        res = await asyncio.to_thread(wiki.lint, 30, False)
+    except Exception as e:
+        log.exception("wiki fix lint failed")
+        await status.edit_text(f"⚠️ 스캔 실패: {_explain_error(e)}")
+        return
+    topics = list(res.get("contradictions") or [])
+    if not topics:
+        await status.edit_text("✅ 모순 마커가 남은 페이지 없음 — 할 게 없어.")
+        return
+    global _WIKI_FIX_PENDING
+    _WIKI_FIX_PENDING = {"topics": topics, "ts": time.time()}
+    est = len(topics) * 55
+    head = (f"🧩 모순(⚠️ 검토 필요) 페이지 {len(topics)}개\n"
+            f"• 예상 비용: ~₩{est:,} (페이지당 ~₩55, flash 재작성)\n"
+            f"• 예상 시간: ~{max(1, len(topics) // 3)}분 (순차 실행)\n"
+            f"• 자동 배치 예산(₩1,000)과 별도 계정 — 배치는 안 막힘\n\n"
+            f"시점 차이(실적·전망 변경)는 본문에 시간순으로 흡수하고, 진짜"
+            f" 판단 불가 모순만 남겨. 원본 대비 절반 이하로 줄어드는 출력은"
+            f" 손실 가드로 스킵 (페이지 안 건드림).\n"
+            f"실행: /wiki_fix_confirm (10분 내)\n\n── 대상 ──\n")
+    body = head + ", ".join(topics)
+    pieces = _split_for_telegram(body)
+    try:
+        await status.edit_text(pieces[0])
+    except Exception:
+        await update.message.reply_text(pieces[0])
+    for piece in pieces[1:]:
+        await update.message.reply_text(piece)
+
+
+async def cmd_wiki_fix_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_fix_confirm — 직전 /wiki_fix 대상을 백그라운드로 재통합.
+    56페이지면 ~20분 — 핸들러를 잡아두지 않고 태스크로 돌리고, 진행은
+    상태 메시지 편집, 완료 시 결과 메시지."""
+    if not _is_owner(update):
+        return
+    global _WIKI_FIX_PENDING, _WIKI_FIX_TASK
+    p = _WIKI_FIX_PENDING
+    if not p or (time.time() - p["ts"]) > _WIKI_PRUNE_TTL_SEC:
+        _WIKI_FIX_PENDING = None
+        await update.message.reply_text(
+            "대기 중인 재통합 없음 (또는 10분 만료) — /wiki_fix 먼저.")
+        return
+    if _WIKI_FIX_TASK is not None and not _WIKI_FIX_TASK.done():
+        await update.message.reply_text("🧩 이미 실행 중이야.")
+        return
+    _WIKI_FIX_PENDING = None
+    n = len(p["topics"])
+    status = await update.message.reply_text(
+        f"🧩 {n}개 페이지 재통합 시작… 진행 상황과 최종 결과가 이"
+        f" 메시지에 갱신돼.")
+
+    async def _progress(done: int, total: int):
+        try:
+            await status.edit_text(f"🧩 재통합 진행 {done}/{total}…")
+        except Exception:
+            pass
+
+    async def _run():
+        try:
+            res = await wiki.reintegrate_contradictions(progress_cb=_progress)
+        except Exception as e:
+            log.exception("wiki fix run failed")
+            try:
+                await status.edit_text(f"⚠️ 재통합 실패: {_explain_error(e)}")
+            except Exception:
+                pass
+            return
+        out = (f"✅ 위키 모순 재통합 완료\n"
+               f"• 해소: {res['resolved']}개 · 판단불가 잔존:"
+               f" {res['remaining']}개 · 실패(가드/오류): {res['failed']}개"
+               f" · 이미 깨끗: {res['already_clean']}개\n"
+               f"• 실제 비용: ₩{res['cost_krw']:,.0f}\n"
+               f"대시보드 점검 패널은 다음 렌더 틱(≤15초)에 반영.")
+        if res["remaining_topics"]:
+            out += ("\n\n잔존(직접 봐줘 /wiki <토픽>):\n"
+                    + ", ".join(res["remaining_topics"][:30]))
+        if res["errors"]:
+            out += "\n\n오류:\n" + "\n".join(res["errors"][:10])
+        try:
+            await status.edit_text(out[:4000])
+        except Exception:
+            await update.message.reply_text(out[:4000])
+
+    _WIKI_FIX_TASK = asyncio.create_task(_run())
 
 
 async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -13679,6 +13806,8 @@ def main():
     app.add_handler(CommandHandler("wiki_prune", cmd_wiki_prune))
     app.add_handler(CommandHandler("wiki_prune_confirm",
                                    cmd_wiki_prune_confirm))
+    app.add_handler(CommandHandler("wiki_fix", cmd_wiki_fix))
+    app.add_handler(CommandHandler("wiki_fix_confirm", cmd_wiki_fix_confirm))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
     app.add_handler(MessageHandler(
