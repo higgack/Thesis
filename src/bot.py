@@ -1463,7 +1463,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
   /search_papers (+adv·stats) · /search_patents (+adv·stats)
   🕸 KG(시범): /kg_extract · /kg
 
-📚 <b>위키</b>(매시 정시·요약 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
+📚 <b>위키</b>(매시 정시·요약 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_prune(+_confirm) · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
 📒 <b>학습 노트</b>: /notes · 상세: /notes_guide
 
@@ -1980,6 +1980,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki_drain [한도=20000]</b> 임시 예산 올려서 큐 최대 소진(끝나면 즉시 ₩1000 복귀)
 • <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
 • <b>/wiki_dedup [merge A :: B | merge_all]</b> 유사 중복 토픽 감지(접미사 정규화·부분문자열) — 목록 확인 후 개별/전체 병합
+• <b>/wiki_prune → /wiki_prune_confirm</b> 정체 단일소스(1소스·30일+) 대량 정리 — 이름만 LLM 분류(~₩20)해 일반개념·노이즈(철학/차트/웹3류)만 삭제 후보로 제시, 기업·고유명사는 보존. 목록 확인 후 confirm으로 일괄 영구 삭제(재생성 차단, 10분 유효)
 • <b>/wiki_rename &lt;옛이름&gt; :: &lt;새이름&gt;</b> 토픽명 변경(인덱스+파일+큐+alias 일괄)
 • <b>/wiki_delete &lt;토픽&gt;</b> 토픽 완전 삭제(인덱스+페이지+큐). 삭제 후 backfill·재인제스트로 안 돌아옴(영구)
 • <b>/wiki_backfill [개월|all]</b> 기존 자료도 위키화(적재 ₩0, 매시 배치·일일 예산 캡 내 분산)
@@ -2481,6 +2482,7 @@ DB 엔진(LSM Tree), 이벤트 소싱, 위키피디아 편집 모델 등에서 �
 • 배치 주기: <b>매시 정시</b> (KST) — 큐 자동 머지, 일일 예산 캡 내
 • 알림: 학습 요약 <b>1일 1회</b>(그날 첫 갱신된 정시 직후, 시각 유동) · 예산/모순 알람은 별도 즉시
 • 점검: <b>/wiki_lint</b>(₩0, LLM 없음) — 정체 단일소스·미해결 모순·누락 페이지. 매시 배치가 자동 갱신해 대시보드 위키 상단 점검 패널에 표시(온디맨드 실행도 가능)
+• 정리: <b>/wiki_prune</b>(→ _confirm) — 정체 단일소스를 LLM 분류(~₩20)로 노이즈만 골라 일괄 영구 삭제. 기업·고유명사는 자동 보존
 • <code>WIKI_MIN_SUMMARY_CHARS=600</code> — 이하 요약은 위키 제외
 
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -12900,6 +12902,79 @@ async def cmd_wiki_failed(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(chunk, parse_mode="HTML")
 
 
+# /wiki_prune 2단계 확인용 대기 상태 (10분 유효). 영구 삭제라 무조건
+# 목록 제시 → 별도 confirm 커맨드로만 실행.
+_WIKI_PRUNE_PENDING: dict | None = None
+_WIKI_PRUNE_TTL_SEC = 600
+
+
+async def cmd_wiki_prune(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_prune — 정체 단일소스(1소스·30일+) 토픽을 LLM으로 분류해
+    노이즈(일반개념)만 일괄 삭제 후보로 제시. /wiki_prune_confirm 실행."""
+    if not _is_owner(update):
+        return
+    status = await update.message.reply_text(
+        "🧹 정체 단일소스 토픽 분류 중… (이름만 LLM 분류, ~₩20)")
+    try:
+        res = await wiki.classify_stale_singletons()
+    except Exception as e:
+        log.exception("wiki prune classify failed")
+        await status.edit_text(f"⚠️ 분류 실패: {_explain_error(e)}")
+        return
+    if not res["total"]:
+        await status.edit_text("✅ 정체 단일소스 토픽 없음 — 정리할 게 없어.")
+        return
+    global _WIKI_PRUNE_PENDING
+    _WIKI_PRUNE_PENDING = {"delete": res["delete"], "ts": time.time()}
+    head = (f"🧹 정체 단일소스 {res['total']}개 분류 완료\n"
+            f"• 삭제 후보 (일반개념·노이즈): {len(res['delete'])}개\n"
+            f"• 보존 (기업·고유명사): {len(res['keep'])}개 — 안 건드림\n\n"
+            f"⚠️ 삭제는 영구적 (같은 토픽 재생성도 차단). 아래 후보 목록을"
+            f" 확인하고, 남기고 싶은 게 있으면 말해줘. 실행:"
+            f" /wiki_prune_confirm (10분 내)\n\n── 삭제 후보 ──\n")
+    body = head + (", ".join(res["delete"]) if res["delete"]
+                   else "(없음 — 전부 보존 판정)")
+    pieces = _split_for_telegram(body)
+    try:
+        await status.edit_text(pieces[0])
+    except Exception:
+        await update.message.reply_text(pieces[0])
+    for piece in pieces[1:]:
+        await update.message.reply_text(piece)
+
+
+async def cmd_wiki_prune_confirm(update: Update,
+                                 ctx: ContextTypes.DEFAULT_TYPE):
+    """/wiki_prune_confirm — 직전 /wiki_prune의 삭제 후보를 일괄 삭제."""
+    if not _is_owner(update):
+        return
+    global _WIKI_PRUNE_PENDING
+    p = _WIKI_PRUNE_PENDING
+    if not p or (time.time() - p["ts"]) > _WIKI_PRUNE_TTL_SEC:
+        _WIKI_PRUNE_PENDING = None
+        await update.message.reply_text(
+            "대기 중인 prune 없음 (또는 10분 만료) — /wiki_prune 먼저.")
+        return
+    if not p["delete"]:
+        _WIKI_PRUNE_PENDING = None
+        await update.message.reply_text("삭제 후보가 0개라 실행할 게 없어.")
+        return
+    status = await update.message.reply_text(
+        f"🗑 {len(p['delete'])}개 토픽 영구 삭제 중…")
+    res = await asyncio.to_thread(wiki.bulk_delete_topics, p["delete"])
+    _WIKI_PRUNE_PENDING = None
+    out = (f"✅ 위키 prune 완료 — 삭제 {res['deleted']}개"
+           f" · 오류 {len(res['errors'])}건\n"
+           "매시 정각 lint가 갱신되면 대시보드 점검 패널 숫자도 내려가."
+           " 이어서 /wiki_lint 로 남은 모순 페이지를 재점검해봐.")
+    if res["errors"]:
+        out += "\n\n오류:\n" + "\n".join(res["errors"][:10])
+    try:
+        await status.edit_text(out[:4000])
+    except Exception:
+        await update.message.reply_text(out[:4000])
+
+
 async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """/wiki_dedup [merge A :: B | merge_all] — 유사 토픽 감지 + 병합."""
     if not _is_owner(update):
@@ -13601,6 +13676,9 @@ def main():
     app.add_handler(CommandHandler("wiki_rename", cmd_wiki_rename))
     app.add_handler(CommandHandler("wiki_delete", cmd_wiki_delete))
     app.add_handler(CommandHandler("wiki_dedup", cmd_wiki_dedup))
+    app.add_handler(CommandHandler("wiki_prune", cmd_wiki_prune))
+    app.add_handler(CommandHandler("wiki_prune_confirm",
+                                   cmd_wiki_prune_confirm))
 
     app.add_handler(MessageHandler(filters.ChatType.CHANNEL, on_channel_post))
     app.add_handler(MessageHandler(
