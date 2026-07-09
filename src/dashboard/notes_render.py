@@ -567,6 +567,42 @@ _INDEX_JS = r"""
         .catch(function(err){ setCat(row, badge, prev); alert('변경 실패: '+err.message); });
     });
   });
+  // ── 브라우저 뒤로가기처럼 복원 (wiki 인덱스와 같은 패턴) ──
+  // 상세 페이지에 갔다 '← 노트 목록'으로 돌아와도 검색어·유형/종류
+  // 필터·중요만/메모만 토글·스크롤 위치가 그대로. 필터/스크롤이 바뀔
+  // 때마다 sessionStorage에 저장하고 로드 시 복원 — 새 페이지 로드지만
+  // 사용자에겐 뒤로가기와 동일하게 보인다. scrollRestoration='manual'은
+  // 브라우저 자체 복원(필터 적용 전 높이 기준)과의 충돌 방지.
+  var VK = 'notes-view-state';
+  function saveView(){
+    try{ sessionStorage.setItem(VK, JSON.stringify({
+      q: q ? q.value : '', t: curType, c: curCat,
+      i: curImportant, m: curMemo,
+      y: window.scrollY || window.pageYOffset || 0 })); }catch(e){}
+  }
+  try{
+    if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+    var sv = sessionStorage.getItem(VK);
+    if (sv){
+      sv = JSON.parse(sv);
+      if (q) q.value = sv.q || '';
+      curType = sv.t || 'all'; curCat = sv.c || 'all';
+      curImportant = !!sv.i; curMemo = !!sv.m;
+      document.querySelectorAll('.ftype').forEach(function(x){
+        x.classList.toggle('active', x.getAttribute('data-type')===curType); });
+      document.querySelectorAll('.fcat').forEach(function(x){
+        x.classList.toggle('active', x.getAttribute('data-cat')===curCat); });
+      if (impf) impf.classList.toggle('active', curImportant);
+      if (memof) memof.classList.toggle('active', curMemo);
+      applyFilter();                       // 필터 먼저 (페이지 높이 확정)
+      window.scrollTo(0, sv.y || 0);       // 그 다음 스크롤
+    }
+  }catch(e){}
+  window.addEventListener('scroll', saveView, {passive:true});
+  // 필터를 바꾸는 모든 경로(검색 입력·버튼·토글·초기화)는 applyFilter를
+  // 거치므로 여기 한 곳에서 후킹하면 저장 누락이 없다.
+  var _af = applyFilter;
+  applyFilter = function(){ _af(); saveView(); };
 })();
 """
 
