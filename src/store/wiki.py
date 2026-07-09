@@ -82,6 +82,9 @@ _QUEUE_PATH = config.DATA_DIR / "wiki_queue.json"
 _INDEX_PATH = config.DATA_DIR / "wiki_index.json"
 _LASTRUN_PATH = config.DATA_DIR / "wiki_last_run.json"
 _LINT_PATH = config.DATA_DIR / "wiki_lint.json"
+# 보존 확정된 정체 단일소스 토픽들 — lint의 stale 목록에서 영구 제외
+# (/wiki_prune keep_all). 해제는 이 파일 수동 편집 + 다음 lint.
+_ACK_PATH = config.DATA_DIR / "wiki_lint_ack.json"
 _FAILED_PATH = config.DATA_DIR / "wiki_failed.json"
 _ALIASES_PATH = config.DATA_DIR / "wiki_aliases.json"
 _DELETED_TOPICS_PATH = config.DATA_DIR / "wiki_deleted_topics.json"
@@ -1301,6 +1304,21 @@ async def classify_stale_singletons(stale_days: int = 30) -> dict:
     return {"delete": delete, "keep": keep, "total": len(names)}
 
 
+def ack_stale_singletons() -> dict:
+    """현재 lint의 정체 단일소스 전부를 '보존 확정' 처리 — stale 목록에서
+    영구 제외 (₩0, LLM 없음). 이후 lint를 즉시 재실행·persist해서 대시보드
+    점검 패널이 다음 틱에 바로 내려간다. 새로 정체되는 토픽만 다시 표시."""
+    res = lint(persist=False)
+    stale = [s["topic"] for s in (res.get("stale_singletons") or [])]
+    if not stale:
+        return {"acked": 0, "total_acked": len(_load_json(_ACK_PATH, []))}
+    acked = set(_load_json(_ACK_PATH, []))
+    acked.update(stale)
+    _atomic_write_json(_ACK_PATH, sorted(acked))
+    lint(persist=True)   # 패널 즉시 갱신
+    return {"acked": len(stale), "total_acked": len(acked)}
+
+
 def bulk_delete_topics(topics: list[str]) -> dict:
     """Delete many topics (each via delete_topic → 영구 삭제 + 재생성
     차단). Returns {deleted, errors:[...]}."""
@@ -2142,11 +2160,20 @@ def lint(stale_days: int = 30, persist: bool = True) -> dict:
             if _CONTRA_MARKER in text:
                 contradiction_topics.append(t)
 
+    # 보존 확정(ack) 토픽은 정체 목록에서 제외 — 사용자가 "단일소스여도
+    # 남긴다"고 결정한 것 (2026-07-09, /wiki_prune keep_all). ack는 topic
+    # 단위 영구 (해제 = wiki_lint_ack.json 수동 편집). 새로 정체되는
+    # 토픽만 계속 표시된다.
+    acked = set(_load_json(_ACK_PATH, []))
+    acked_hidden = 0
     stale_singletons = []
     for t in topic_names:
         rec = idx[t]
         upd = (rec.get("updated") or "")[:10]
         if len(rec.get("doc_ids") or []) <= 1 and upd and upd < cutoff:
+            if t in acked:
+                acked_hidden += 1
+                continue
             stale_singletons.append({"topic": t,
                                      "docs": len(rec.get("doc_ids") or []),
                                      "updated": upd})
@@ -2158,6 +2185,7 @@ def lint(stale_days: int = 30, persist: bool = True) -> dict:
         "pages_scanned": pages_scanned,
         "stale_days": stale_days,
         "stale_singletons": stale_singletons,
+        "acked_singletons": acked_hidden,
         "contradictions": sorted(contradiction_topics),
         "missing_pages": sorted(missing_pages),
     }
@@ -2171,6 +2199,145 @@ def lint(stale_days: int = 30, persist: bool = True) -> dict:
 
 def last_lint() -> dict | None:
     return _load_json(_LINT_PATH, None)
+
+
+# ----------------------------------------------------------------------
+# Contradiction reintegration — /wiki_fix (+_confirm)
+# ----------------------------------------------------------------------
+
+_REINTEGRATE_SYSTEM = (
+    "너는 개인 투자 리서치 위키를 유지보수하는 꼼꼼한 에디터다. 주어진 "
+    "위키 페이지에는 과거 자료 통합 중 발견된 모순을 적어둔 "
+    "`## ⚠️ 검토 필요` 섹션이 있다. 페이지 전체를 다시 써서 이 모순들을 "
+    "해소하라.\n\n"
+    "## 해소 규칙\n"
+    "- 각 모순 항목(`- 기존: … / 신규: …`)을 본문의 해당 섹션에 통합한다.\n"
+    "- **시점 차이**(실적·주가·전망·정책이 시간이 지나 바뀐 것)는 모순이 "
+    "아니다 — '기존 ~였으나 이후 ~' 형태로 시간 순서를 밝혀 본문에 "
+    "흡수한다. 최신 수치를 앞세우되 과거 수치도 한 줄로 남긴다.\n"
+    "- 한쪽이 더 구체적이거나 출처가 명확하면 그쪽을 본문에 반영하되, "
+    "폐기한 주장도 짧게 남긴다 (정보 손실 금지).\n"
+    "- 본문만으로 판단이 불가능한 진짜 모순만 `## ⚠️ 검토 필요`에 남긴다. "
+    "해소된 항목은 그 섹션에서 지우고, 전부 해소되면 섹션 자체를 없앤다.\n"
+    "- 그 외 본문의 내용·구조·`— 출처: [[…]]` 표기·표는 그대로 보존한다. "
+    "요약하거나 줄이지 말고, 새로운 사실을 지어내지도 않는다.\n"
+    "- 출력은 **페이지 마크다운 전문**만. 맨 마지막 줄에 정확히 "
+    '`<!--WIKI_META {"resolved": <정수>, "remaining": <정수>}-->` 를 '
+    "붙인다 (해소한 항목 수, 남긴 항목 수)."
+)
+
+
+def fix_cost_today_krw() -> float:
+    """오늘(KST) /wiki_fix 재통합에 쓴 ₩. purpose='wiki_fix'로 따로
+    태깅 — 사용자가 명시 승인한 일회성 비용이 자동 배치의 일일 예산
+    (₩1,000)을 잡아먹고 배치를 하루 종일 budget_blocked로 만들지 않게
+    하기 위해서다 (manual /kg_extract가 KG 예산과 무관한 것과 동일)."""
+    try:
+        return float(cost.today_krw().get("by_purpose", {})
+                     .get("wiki_fix", {}).get("cost", 0.0))
+    except Exception:
+        return 0.0
+
+
+async def reintegrate_contradictions(progress_cb=None) -> dict:
+    """`## ⚠️ 검토 필요` 마커가 남은 페이지 전부를 LLM으로 다시 써서
+    모순 섹션 해소를 시도한다 (페이지당 ~₩55). 순차 실행 + 배치 스로틀.
+
+    안전장치: 출력이 원본의 50% 미만이거나 200자 미만이면 손실 위험으로
+    간주하고 그 페이지는 건드리지 않는다 (fail-safe: 불확실하면 안 쓴다).
+    쓰기는 기존 tmp+os.replace 원자 패턴. 끝나면 lint를 재실행·persist해서
+    대시보드 점검 패널이 다음 틱에 반영된다.
+
+    progress_cb: async (done, total) — 5페이지마다 호출 (텔레그램 진행
+    표시용). 실패해도 본 작업은 계속."""
+    import asyncio as _aio
+    from ..llm.gemini import complete
+
+    res = await _aio.to_thread(lint, 30, False)
+    topics = list(res.get("contradictions") or [])
+    out = {"total": len(topics), "resolved": 0, "remaining": 0,
+           "failed": 0, "already_clean": 0, "cost_krw": 0.0,
+           "errors": [], "remaining_topics": []}
+    if not topics:
+        return out
+
+    model = _flag("WIKI_MERGE_MODEL", None) or config.ANSWER_MODEL
+    # 전문 보존 재작성이라 출력 ≈ 입력 길이 — 30K자 한국어 페이지가 12K
+    # 토큰을 넘을 수 있어 소비 배치용 상한(12K)보다 넉넉히 잡는다.
+    # (max_tokens는 상한일 뿐, 실사용량만 과금.)
+    max_tokens = int(_flag("WIKI_FIX_MAX_TOKENS", 24000))
+    throttle = float(_flag("WIKI_BATCH_THROTTLE_SEC", 0.5))
+    cost_before = fix_cost_today_krw()
+
+    for i, topic in enumerate(topics, 1):
+        page = read_page(topic)
+        if not page or _CONTRA_MARKER not in page:
+            out["already_clean"] += 1
+            continue
+        try:
+            raw = await complete(
+                model=model,
+                system=_REINTEGRATE_SYSTEM,
+                user=f"# 토픽: {topic}\n\n{page}",
+                max_tokens=max_tokens,
+                temperature=0.2,
+                purpose="wiki_fix",
+                timeout=240,
+            )
+        except Exception as e:
+            log.warning("wiki fix LLM failed for %s: %s", topic, e)
+            out["failed"] += 1
+            out["errors"].append(f"{topic}: {str(e)[:80]}")
+            continue
+        text = (raw or "").strip()
+        m = _FENCE_RE.match(text)
+        if m:
+            text = m.group(1).strip()
+        text = _META_RE.sub("", text).strip() + "\n"
+        # 손실 가드: 모순 섹션은 본문 대비 작으므로 정상 재작성은 원본과
+        # 비슷한 길이다. 절반 아래로 줄면 출력 잘림/요약 사고 — 안 쓴다.
+        if len(text) < 200 or len(text) < len(page) * 0.5:
+            log.warning("wiki fix output too short for %s (%d→%d) — skipped",
+                        topic, len(page), len(text))
+            out["failed"] += 1
+            out["errors"].append(f"{topic}: 출력이 너무 짧음 (손실 가드)")
+            continue
+        p = _page_path(topic)
+        if p is None:
+            out["failed"] += 1
+            out["errors"].append(f"{topic}: no vault")
+            continue
+        try:
+            tmp = p.with_suffix(p.suffix + f".{os.getpid()}.tmp")
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, p)
+        except Exception as e:
+            log.exception("wiki fix write failed for %s", topic)
+            out["failed"] += 1
+            out["errors"].append(f"{topic}: {str(e)[:80]}")
+            continue
+        if _CONTRA_MARKER in text:
+            out["remaining"] += 1
+            out["remaining_topics"].append(topic)
+        else:
+            out["resolved"] += 1
+        log.info("wiki fix %s: %d→%d chars, marker %s", topic,
+                 len(page), len(text),
+                 "남음" if _CONTRA_MARKER in text else "해소")
+        if progress_cb and i % 5 == 0:
+            try:
+                await progress_cb(i, len(topics))
+            except Exception:
+                pass
+        if throttle > 0:
+            await _aio.sleep(throttle)
+
+    out["cost_krw"] = max(0.0, fix_cost_today_krw() - cost_before)
+    try:
+        await _aio.to_thread(lint, 30, True)   # 대시보드 패널 즉시 갱신
+    except Exception:
+        log.exception("wiki fix post-lint failed")
+    return out
 
 
 def init() -> None:
