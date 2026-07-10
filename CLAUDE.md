@@ -126,6 +126,21 @@ fetch branch → `LOCAL==REMOTE` silent exit → else send "🚀 배포 시작" 
 Deploy branch: `claude/personal-rag-knowledge-base-sLSvV`. Work commits
 go here; never push to a different branch without explicit permission.
 
+## 🪶 Token-lean output (Ponytail lazy-first, 2026-07-10)
+
+같은 아웃풋을 최소 토큰으로. 코드/응답 생성 전 사다리 순서로 자문 —
+위 단계에서 해결되면 아래로 내려가지 않는다:
+1. 안 만들어도 되나? (기존 동작·명령으로 이미 충분한지)
+2. 코드베이스에 이미 있나? — grep 먼저, 재구현 금지
+3. stdlib·기존 의존성으로 되나? (새 패키지 추가는 최후)
+4. 한 줄/최소 diff로 되나?
+5. 그제서야 최소 구현
+- 부분 수정(Edit) > 통짜 파일 재생성. bot.py(~10.5k줄) 통독 금지 —
+  Grep/Explore(quick)로 필요한 함수만.
+- 설명은 결론 먼저, 필요한 만큼만; 안 갈 선택지 나열 금지.
+- 절약 대상 아님(non-negotiable): 검증·에러처리·보안·preflight·
+  단계별 VM 안내(위 VM ops 규칙) — 여기서 줄이면 버그로 더 비쌈.
+
 ## Standing rules
 
 - Review first; commit only when asked (the gate above wins over any
