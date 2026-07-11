@@ -141,6 +141,17 @@ go here; never push to a different branch without explicit permission.
 - 절약 대상 아님(non-negotiable): 검증·에러처리·보안·preflight·
   단계별 VM 안내(위 VM ops 규칙) — 여기서 줄이면 버그로 더 비쌈.
 
+## 🔍 완료 보고 전 검증 (verify-before-report)
+
+"완료/배포됨/통과/확인됨" 같은 상태를 보고하기 전, 이번 세션의 실제 tool
+결과와 대조한다. 근거 없이 좋게 말하지 않는다:
+- 확인 못 한 항목은 "미검증"이라고 명시. 테스트/스크립트가 실패했으면
+  실제 출력(에러 메시지)을 인용. 스킵한 단계는 스킵했다고 말할 것.
+- 백그라운드 작업(예: `/wiki_fix_confirm`) 진행상황 보고도 동일 —
+  progress_cb가 실제로 찍은 값만 보고, 추정치를 완료로 포장하지 않는다.
+- 배포 완료 보고는 VM의 실제 "✅ 배포 완료 <sha>" 알림 기준 (VM ops
+  섹션의 auto_pull.sh 동작과 일치해야 함), 푸시만 하고 완료라 부르지 않기.
+
 ## Standing rules
 
 - Review first; commit only when asked (the gate above wins over any
