@@ -160,7 +160,7 @@ def _looks_like_denial(title: str, body: str) -> bool:
     return any(m in hay for m in _DENIAL_MARKERS)
 
 
-async def ingest_url(url: str) -> dict:
+async def ingest_url(url: str, on_stage: StageCb = None) -> dict:
     # Resolve URL shorteners FIRST so dedup, blocked-host check, and
     # canonicalisation operate on the real destination. Without this,
     # every buly.kr/bit.ly-laced digest gets all its URLs silent-blocked
@@ -193,6 +193,7 @@ async def ingest_url(url: str) -> dict:
         log.info("ingest_url skip — auto-blocked host: %s", canonical[:120])
         return {"status": "blocked", "title": canonical, "source": canonical,
                 "detail": "auto-blocked (반복 추출 실패)"}
+    _emit(on_stage, "URL 로드")
     title, body, hint, outlinks = await load_url(canonical)
     if not body or _looks_like_denial(title, body):
         url_blocklist.record_failure(canonical)
@@ -202,7 +203,7 @@ async def ingest_url(url: str) -> dict:
     # Body extracted OK — reset any prior failure count for this host.
     url_blocklist.record_success(canonical)
     body = _strip_disclaimer(body)
-    result = await _ingest("url", canonical, title, body, hint)
+    result = await _ingest("url", canonical, title, body, hint, on_stage=on_stage)
     # Surface in-post links the author embedded so the bot can offer
     # them as optional follow-up ingests (the user picks which). Only on
     # a fresh successful learn — duplicates/empties have nothing new.
