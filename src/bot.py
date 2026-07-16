@@ -10556,7 +10556,7 @@ def _is_retryable(e: BaseException) -> bool:
 
 
 async def _ingest_one_url(url: str, notify_chat_id: int,
-                          *, scan_links: bool = True) -> dict:
+                          *, scan_links: bool = True, on_stage=None) -> dict:
     """Resume-safe single-URL ingest shared by the main message path and
     the in-post link buttons. Honours the ignored / previously-failed
     skip lists, enqueues an in-flight marker BEFORE the pipeline call so
@@ -10575,7 +10575,7 @@ async def _ingest_one_url(url: str, notify_chat_id: int,
     url_retry = {"kind": "url", "url": url}
     url_item = _enqueue_with_inflight({**url_retry, "chat_id": notify_chat_id})
     try:
-        r = await pipeline.ingest_url(url)
+        r = await pipeline.ingest_url(url, on_stage=on_stage)
         r.setdefault("source", url)
         r.setdefault("title", url)
         if r.get("status") in ("empty", "error"):
@@ -10757,7 +10757,10 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
             async with url_sem:
                 # _ingest_one_url owns ignore / failed-log skips, the
                 # in-flight enqueue (resume-safety), and status mapping.
-                return await _ingest_one_url(u, notify_chat_id)
+                # on_stage is a shared job_id slot across the fan-out —
+                # last URL to update wins, an acceptable approximation
+                # for a status display (not correctness-critical).
+                return await _ingest_one_url(u, notify_chat_id, on_stage=on_stage)
         url_results = await asyncio.gather(*[_do_url(u) for u in urls])
         results.extend(url_results)
 
