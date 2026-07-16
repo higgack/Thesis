@@ -379,7 +379,8 @@ STT_MAX_BYTES = 20 * 1024 * 1024
 
 
 async def ingest_audio(audio_bytes: bytes, source_label: str, caption: str = "",
-                       mime_type: str = "audio/ogg") -> dict:
+                       mime_type: str = "audio/ogg",
+                       on_stage: StageCb = None) -> dict:
     """Voice note / audio file → Gemini STT → text ingest. Caption is
     prepended to the transcript so any user-provided context survives.
 
@@ -395,6 +396,7 @@ async def ingest_audio(audio_bytes: bytes, source_label: str, caption: str = "",
                 "title": f"오디오 {mb}MB — STT 한도 20MB 초과 (20분 안팎으로 분할해서 다시)"}
     if existing := meta.find_by_source(source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    _emit(on_stage, "STT 변환")
     transcript = await transcribe_audio_async(audio_bytes, mime_type=mime_type)
     if not transcript:
         return {"status": "empty", "title": "audio"}
@@ -403,11 +405,12 @@ async def ingest_audio(audio_bytes: bytes, source_label: str, caption: str = "",
     first_line = body.strip().splitlines()[0] if body.strip() else ""
     title = (caption.splitlines()[0][:80] if caption
              else first_line[:80] if first_line else "음성 메모")
-    return await _ingest("audio", source_label, title, body, None)
+    return await _ingest("audio", source_label, title, body, None, on_stage=on_stage)
 
 
 async def ingest_image(img_bytes: bytes, source_label: str, caption: str = "",
-                       mime_type: str = "image/jpeg") -> dict:
+                       mime_type: str = "image/jpeg",
+                       on_stage: StageCb = None) -> dict:
     """Standalone photo: caption-first, OCR fallback.
 
     Default: caption ≥ 80 chars uses caption only (free path).
@@ -427,13 +430,14 @@ async def ingest_image(img_bytes: bytes, source_label: str, caption: str = "",
     if len(caption_clean) >= 80 and not force_ocr:
         body = caption_clean
     else:
+        _emit(on_stage, "Vision OCR")
         ocr_text = await ocr_image_async(img_bytes, mime_type=mime_type)
         if not ocr_text and not caption_clean:
             return {"status": "empty", "title": "image"}
         body = (caption_clean + "\n\n" + ocr_text).strip() if caption_clean else ocr_text
     first = body.strip().splitlines()[0] if body.strip() else "image"
     title = first[:80]
-    return await _ingest("image", source_label, title, body, None)
+    return await _ingest("image", source_label, title, body, None, on_stage=on_stage)
 
 
 # Drop patterns: text bodies matching these are silently skipped at
@@ -455,7 +459,8 @@ _TEXT_DROP_PATTERNS = (
 )
 
 
-async def ingest_text(text: str, label: str = "text") -> dict:
+async def ingest_text(text: str, label: str = "text",
+                      on_stage: StageCb = None) -> dict:
     for pat in _TEXT_DROP_PATTERNS:
         if pat.search(text):
             log.info("ingest text dropped (pattern %r): %s",
@@ -475,7 +480,7 @@ async def ingest_text(text: str, label: str = "text") -> dict:
     if existing := meta.find_text_by_hash(hash8):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     title = text.strip().splitlines()[0][:80] if text.strip() else label
-    return await _ingest("text", src, title, text, None)
+    return await _ingest("text", src, title, text, None, on_stage=on_stage)
 
 
 _META_EXTRACT_PROMPT = (
@@ -546,6 +551,7 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
     doc_id = _doc_id(source)
     log.info("ingest %s %s (%d chars, hint=%s)",
              doc_type, source, len(body), bool(hint))
+    _emit(on_stage, "dedup")
 
     # Cross-format body dedup: catches the case where the SAME source
     # material was already ingested in a different file format (PDF

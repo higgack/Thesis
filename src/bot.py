@@ -10497,7 +10497,8 @@ def _audio_too_big(size: int | None) -> dict | None:
     return None
 
 
-async def _ingest_voice_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
+async def _ingest_voice_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE,
+                                   on_stage=None) -> dict:
     """Telegram voice note (msg.voice) — OGG/Opus."""
     import io
     voice = msg.voice
@@ -10509,11 +10510,12 @@ async def _ingest_voice_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
     label = f"tg-voice:{voice.file_unique_id}"
     return await pipeline.ingest_audio(
         bio.getvalue(), label, caption=msg.caption or "",
-        mime_type=voice.mime_type or "audio/ogg",
+        mime_type=voice.mime_type or "audio/ogg", on_stage=on_stage,
     )
 
 
-async def _ingest_audio_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
+async def _ingest_audio_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE,
+                                   on_stage=None) -> dict:
     """Telegram audio (msg.audio) — uploaded music/audio file."""
     import io
     audio = msg.audio
@@ -10528,11 +10530,12 @@ async def _ingest_audio_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
     full_caption = "\n".join(p for p in [title_hint, caption_part] if p)
     return await pipeline.ingest_audio(
         bio.getvalue(), label, caption=full_caption,
-        mime_type=audio.mime_type or "audio/mpeg",
+        mime_type=audio.mime_type or "audio/mpeg", on_stage=on_stage,
     )
 
 
-async def _ingest_photo_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
+async def _ingest_photo_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE,
+                                   on_stage=None) -> dict:
     """Standalone photo (screenshot, table capture). Caption ≥80 chars
     skips OCR; otherwise Gemini Vision extracts text."""
     import io
@@ -10543,7 +10546,7 @@ async def _ingest_photo_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE) -> dict:
     label = f"tg-photo:{photo.file_unique_id}"
     return await pipeline.ingest_image(
         bio.getvalue(), label, caption=msg.caption or "",
-        mime_type="image/jpeg",
+        mime_type="image/jpeg", on_stage=on_stage,
     )
 
 
@@ -10635,7 +10638,7 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
             )
             try:
                 rcap = await pipeline.ingest_text(
-                    cap, f"tg-doc-caption:{msg.message_id}",
+                    cap, f"tg-doc-caption:{msg.message_id}", on_stage=on_stage,
                 )
                 if rcap.get("status") in ("empty", "error"):
                     rcap["retry_payload"] = cap_retry
@@ -10664,7 +10667,7 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
             {**photo_retry, "chat_id": notify_chat_id}
         )
         try:
-            r = await _ingest_photo_attachment(msg, ctx)
+            r = await _ingest_photo_attachment(msg, ctx, on_stage=on_stage)
             if r.get("status") in ("empty", "error"):
                 r["retry_payload"] = photo_retry
             results.append(r)
@@ -10693,7 +10696,7 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
             {**voice_retry, "chat_id": notify_chat_id}
         )
         try:
-            r = await _ingest_voice_attachment(msg, ctx)
+            r = await _ingest_voice_attachment(msg, ctx, on_stage=on_stage)
             if r.get("status") in ("empty", "error"):
                 r["retry_payload"] = voice_retry
             results.append(r)
@@ -10724,7 +10727,7 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
             {**audio_retry, "chat_id": notify_chat_id}
         )
         try:
-            r = await _ingest_audio_attachment(msg, ctx)
+            r = await _ingest_audio_attachment(msg, ctx, on_stage=on_stage)
             if r.get("status") in ("empty", "error"):
                 r["retry_payload"] = audio_retry
             results.append(r)
@@ -10775,7 +10778,8 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
             {**text_retry, "chat_id": notify_chat_id}
         )
         try:
-            r = await pipeline.ingest_text(plain, f"tg-msg:{msg.message_id}")
+            r = await pipeline.ingest_text(
+                plain, f"tg-msg:{msg.message_id}", on_stage=on_stage)
             if r.get("status") in ("empty", "error"):
                 r["retry_payload"] = text_retry
             results.append(r)
