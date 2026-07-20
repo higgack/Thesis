@@ -839,9 +839,12 @@ _CORP_SUFFIXES = re.compile(
 
 
 def _dedup_key(name: str) -> str:
-    """Normalize a topic name for duplicate detection."""
+    """Normalize a topic name for duplicate detection. Delimiter set
+    matches _split_multi_topic's (,;/·) plus whitespace/_/- so '항공
+    우주' and '항공/우주' normalize to the same key — a bare slash used
+    to survive this strip and slip the dedup scan (missed pair, 2026-07-20)."""
     k = _CORP_SUFFIXES.sub("", name).strip()
-    k = re.sub(r"[\s_\-·]+", "", k).lower()
+    k = re.sub(r"[\s_\-·,;/]+", "", k).lower()
     return k
 
 

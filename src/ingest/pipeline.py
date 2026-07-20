@@ -456,6 +456,12 @@ _TEXT_DROP_PATTERNS = (
     # here too in case the message slipped through (legacy retry-queue
     # entries, manual paste, etc.).
     re.compile(r"알파\s*스캐너", re.UNICODE),
+    # forward_listener._notify_unsupported_urls sends this notice into
+    # the same chat the bot ingests from — without this drop it gets
+    # learned as content, and the channel name (getfeed/benineb9) gets
+    # KG-extracted as a fake entity with a new relation per domain name
+    # (818-edge "getfeed" pollution incident, 2026-07-20).
+    re.compile(r"자동 ingest 미지원 도메인", re.UNICODE),
 )
 
 

@@ -27,6 +27,11 @@ _ENT_STOP = {
     "gpt", "정부", "중국", "미국", "유럽", "한국", "일본", "세계", "전세계",
     "글로벌", "시장", "기업", "회사", "업계", "산업", "국가", "지역",
     "전체", "기타", "관련", "내용",
+    # forward_listener URL-only curation channel names — never real
+    # entities. Leaked in via _notify_unsupported_urls notices before
+    # the ingest-side drop pattern existed (818-edge "getfeed"
+    # incident, 2026-07-20).
+    "getfeed", "benineb9",
 }
 
 
