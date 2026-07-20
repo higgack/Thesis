@@ -169,12 +169,13 @@ async def ingest_url(url: str, on_stage: StageCb = None) -> dict:
     from .loaders import unshorten_url
     url = await unshorten_url(url)
     canonical = _canonical_url(url)
-    if existing := meta.find_by_source(canonical):
+    if existing := await asyncio.to_thread(meta.find_by_source, canonical):
         return {"status": "duplicate", "doc_id": existing["id"],
                 "title": existing["title"], "source": canonical}
     # Also catch the raw form (older entries may have been stored
     # without canonicalisation).
-    if canonical != url and (existing := meta.find_by_source(url)):
+    if canonical != url and (
+            existing := await asyncio.to_thread(meta.find_by_source, url)):
         return {"status": "duplicate", "doc_id": existing["id"],
                 "title": existing["title"], "source": url}
     # Blocked host short-circuit: paywalls / X / URL shorteners / forum
@@ -241,10 +242,11 @@ def _filter_outlinks(links: list[dict]) -> list[dict]:
 async def ingest_pdf(path: Path, source_label: str,
                      on_stage: StageCb = None) -> dict:
     _emit(on_stage, "dedup")
-    if existing := meta.find_by_source(source_label):
+    if existing := await asyncio.to_thread(meta.find_by_source, source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     file_hash = _hash_file(path)
-    if file_hash and (existing := meta.find_by_file_hash(file_hash)):
+    if file_hash and (
+            existing := await asyncio.to_thread(meta.find_by_file_hash, file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"],
                 "title": existing["title"]}
     _emit(on_stage, "PDF 로드")
@@ -330,10 +332,11 @@ async def extend_pdf_ocr(pdf_path: Path, doc_id: str,
 async def ingest_pptx(path: Path, source_label: str,
                       on_stage: StageCb = None) -> dict:
     _emit(on_stage, "dedup")
-    if existing := meta.find_by_source(source_label):
+    if existing := await asyncio.to_thread(meta.find_by_source, source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     file_hash = _hash_file(path)
-    if file_hash and (existing := meta.find_by_file_hash(file_hash)):
+    if file_hash and (
+            existing := await asyncio.to_thread(meta.find_by_file_hash, file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     _emit(on_stage, "PPT 로드")
     title, body, hint = await load_pptx_async(path)
@@ -346,10 +349,11 @@ async def ingest_pptx(path: Path, source_label: str,
 async def ingest_docx(path: Path, source_label: str,
                       on_stage: StageCb = None) -> dict:
     _emit(on_stage, "dedup")
-    if existing := meta.find_by_source(source_label):
+    if existing := await asyncio.to_thread(meta.find_by_source, source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     file_hash = _hash_file(path)
-    if file_hash and (existing := meta.find_by_file_hash(file_hash)):
+    if file_hash and (
+            existing := await asyncio.to_thread(meta.find_by_file_hash, file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     _emit(on_stage, "DOCX 로드")
     title, body, hint = await load_docx_async(path)
@@ -362,10 +366,11 @@ async def ingest_docx(path: Path, source_label: str,
 async def ingest_xlsx(path: Path, source_label: str,
                       on_stage: StageCb = None) -> dict:
     _emit(on_stage, "dedup")
-    if existing := meta.find_by_source(source_label):
+    if existing := await asyncio.to_thread(meta.find_by_source, source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     file_hash = _hash_file(path)
-    if file_hash and (existing := meta.find_by_file_hash(file_hash)):
+    if file_hash and (
+            existing := await asyncio.to_thread(meta.find_by_file_hash, file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     _emit(on_stage, "XLSX 로드")
     title, body, hint = await load_xlsx_async(path)
@@ -394,7 +399,7 @@ async def ingest_audio(audio_bytes: bytes, source_label: str, caption: str = "",
         mb = len(audio_bytes) // (1024 * 1024)
         return {"status": "empty",
                 "title": f"오디오 {mb}MB — STT 한도 20MB 초과 (20분 안팎으로 분할해서 다시)"}
-    if existing := meta.find_by_source(source_label):
+    if existing := await asyncio.to_thread(meta.find_by_source, source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     _emit(on_stage, "STT 변환")
     transcript = await transcribe_audio_async(audio_bytes, mime_type=mime_type)
@@ -418,7 +423,7 @@ async def ingest_image(img_bytes: bytes, source_label: str, caption: str = "",
     OCR alongside the caption — useful when the caption is a long
     analyst note but the image itself is a chart/table whose numbers
     matter (caption + OCR text are concatenated)."""
-    if existing := meta.find_by_source(source_label):
+    if existing := await asyncio.to_thread(meta.find_by_source, source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     caption = (caption or "").strip()
     force_ocr = "[OCR]" in caption.upper()
@@ -481,9 +486,9 @@ async def ingest_text(text: str, label: str = "text",
     # where the wrapping msg_id changes but the body is byte-identical —
     # without this, every digest expansion re-summarises and re-embeds
     # already-known text at ~₩0.5 / doc plus minutes of pipeline time.
-    if existing := meta.find_by_source(src):
+    if existing := await asyncio.to_thread(meta.find_by_source, src):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
-    if existing := meta.find_text_by_hash(hash8):
+    if existing := await asyncio.to_thread(meta.find_text_by_hash, hash8):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
     title = text.strip().splitlines()[0][:80] if text.strip() else label
     return await _ingest("text", src, title, text, None, on_stage=on_stage)
@@ -567,7 +572,7 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
     # summary + embedding entirely.
     body_hash = meta.compute_body_hash(body)
     if body_hash:
-        existing = meta.find_by_body_hash(body_hash)
+        existing = await asyncio.to_thread(meta.find_by_body_hash, body_hash)
         if existing and existing.get("id") != doc_id:
             log.info("ingest body-hash duplicate of %s for %s",
                      existing["id"], source)
@@ -588,8 +593,13 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
     # arrives with slightly different body wording (re-posted, paraphrased)
     # but exactly the same headline. body_signature cross-check rescues
     # the legit same-title-different-content case.
-    title_existing = meta.find_by_normalized_title(
-        title, body_signature=body_signature
+    # to_thread: this does a synchronous Python-level scan over up to
+    # 5000 fetched rows with NO await point inside — run directly on the
+    # loop it starves the loop's own callbacks for the scan's full
+    # duration, including asyncio.wait_for's cancellation timer (35min
+    # "저장"-stage stall with the 15min guard never firing, 2026-07-20).
+    title_existing = await asyncio.to_thread(
+        meta.find_by_normalized_title, title, body_signature=body_signature
     )
     if title_existing and title_existing.get("id") != doc_id:
         log.info("ingest title-norm duplicate of %s for %s",
@@ -671,15 +681,15 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
     # lost the race, roll back the chunks we just added under our doc_id
     # so Chroma doesn't accumulate orphan vectors, and report duplicate.
     if body_hash:
-        existing = meta.find_by_body_hash(body_hash)
+        existing = await asyncio.to_thread(meta.find_by_body_hash, body_hash)
         if existing and existing.get("id") != doc_id:
             log.info("ingest body-hash duplicate (late) of %s for %s",
                      existing["id"], source)
             await asyncio.to_thread(vector.delete_doc, doc_id)
             return {"status": "duplicate", "doc_id": existing["id"],
                     "title": existing["title"]}
-    title_existing = meta.find_by_normalized_title(
-        title, body_signature=body_signature
+    title_existing = await asyncio.to_thread(
+        meta.find_by_normalized_title, title, body_signature=body_signature
     )
     if title_existing and title_existing.get("id") != doc_id:
         log.info("ingest title-norm duplicate (late) of %s for %s",
@@ -688,10 +698,10 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
         return {"status": "duplicate", "doc_id": title_existing["id"],
                 "title": title_existing["title"]}
 
-    meta.upsert_doc(doc_id, source, doc_type, title, summary, obsidian_path,
-                    metadata=metadata or None, file_hash=file_hash,
-                    body_hash=body_hash or None,
-                    body_signature=body_signature or None)
+    await asyncio.to_thread(
+        meta.upsert_doc, doc_id, source, doc_type, title, summary, obsidian_path,
+        metadata=metadata or None, file_hash=file_hash,
+        body_hash=body_hash or None, body_signature=body_signature or None)
 
     # LLM Wiki (additive, dormant unless WIKI_ENABLED=1): queue this doc
     # for the nightly synthesis batch. No LLM / network here — a cheap
