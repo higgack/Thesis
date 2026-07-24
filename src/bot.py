@@ -14030,13 +14030,16 @@ def main():
             _startup_smoke, when=180, name="startup_smoke",
         )
 
-        # One-shot: backfill/refresh 종류별 category (주식/공부/그외).
+        # One-shot: backfill/refresh 종류별 category
+        # (주식/반도체/AI/대학원/공부/그외).
         # New notes get it inline from synth. Notes missing a category are
         # always classified. _NOTES_CAT_VERSION gates a *full* re-classify:
         # bump it whenever the classifier prompt changes and every note is
         # re-classified once on the next boot (cheap Flash-Lite, one call
         # each), then a marker file suppresses repeats.
-        _NOTES_CAT_VERSION = 3  # v3: 주식=종목/회사분석 중심, 부동산·거시→그외
+        # v3: 주식=종목/회사분석 중심, 부동산·거시→그외
+        # v4: 반도체/AI/대학원 3개 카테고리 추가 (2026-07-24)
+        _NOTES_CAT_VERSION = 4
         async def _notes_category_backfill(_ctx):
             try:
                 import json as _json

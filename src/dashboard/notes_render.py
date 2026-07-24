@@ -193,11 +193,20 @@ white-space:nowrap;cursor:pointer;user-select:none}
 .cat:hover{filter:brightness(1.08);outline:1px solid currentColor}
 .cat-주식{background:rgba(16,185,129,.15);color:#059669;
 border:1px solid rgba(16,185,129,.4)}
+.cat-반도체{background:rgba(249,115,22,.15);color:#ea580c;
+border:1px solid rgba(249,115,22,.4)}
+.cat-AI{background:rgba(168,85,247,.15);color:#9333ea;
+border:1px solid rgba(168,85,247,.4)}
+.cat-대학원{background:rgba(20,184,166,.15);color:#0d9488;
+border:1px solid rgba(20,184,166,.4)}
 .cat-공부{background:rgba(59,130,246,.15);color:#2563eb;
 border:1px solid rgba(59,130,246,.4)}
 .cat-그외{background:rgba(148,163,184,.15);color:var(--muted);
 border:1px solid var(--border)}
 [data-theme=dark] .cat-주식{color:#34d399}
+[data-theme=dark] .cat-반도체{color:#fb923c}
+[data-theme=dark] .cat-AI{color:#c084fc}
+[data-theme=dark] .cat-대학원{color:#2dd4bf}
 [data-theme=dark] .cat-공부{color:#60a5fa}
 .empty{text-align:center;padding:60px 20px;color:var(--muted)}
 .back{color:var(--muted);font-size:13px;display:inline-block;margin-bottom:16px}
@@ -542,10 +551,10 @@ _INDEX_JS = r"""
         .catch(function(err){ alert('삭제 실패: '+err.message); });
     });
   });
-  // 종류별 manual override: click the badge to cycle 주식→공부→그외.
+  // 종류별 manual override: click the badge to cycle through all cats.
   // Optimistic update; POST locks it server-side so auto-reclassify
   // won't overwrite. Revert on failure.
-  var CATS = ['주식','공부','그외'];
+  var CATS = ['주식','반도체','AI','대학원','공부','그외'];
   function setCat(row, badge, cat){
     row.dataset.cat = cat;
     badge.textContent = cat;
@@ -649,7 +658,9 @@ def _render_index(token: str, notes: list[dict],
             f"<button class='nstar{' on' if imp else ''}' type='button' "
             f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
-            f"<span class='cat cat-{_esc(cat)}' title='클릭: 종류 변경 (주식↔공부↔그외)'>{_esc(cat)}</span>"
+            f"<span class='cat cat-{_esc(cat)}' "
+            f"title='클릭: 종류 변경 (주식↔반도체↔AI↔대학원↔공부↔그외)'>"
+            f"{_esc(cat)}</span>"
             f"<span class='stype'>{_esc(n.get('source_type') or '')}</span>"
             f"<span class='meta'>학습 {_esc(learned)}</span>"
             f"<button class='ndel' type='button' title='노트 삭제'>🗑</button>"
@@ -687,6 +698,9 @@ def _render_index(token: str, notes: list[dict],
         "<div class='fbar'><span class='flabel'>종류별</span>"
         "<button class='fbtn fcat active' data-cat='all'>전체</button>"
         "<button class='fbtn fcat' data-cat='주식'>📈 주식</button>"
+        "<button class='fbtn fcat' data-cat='반도체'>🔬 반도체</button>"
+        "<button class='fbtn fcat' data-cat='AI'>🤖 AI</button>"
+        "<button class='fbtn fcat' data-cat='대학원'>🎓 대학원</button>"
         "<button class='fbtn fcat' data-cat='공부'>📚 공부</button>"
         "<button class='fbtn fcat' data-cat='그외'>🗂 그 외</button></div>",
         "<div class='controls'><input id='q' type='text' "
