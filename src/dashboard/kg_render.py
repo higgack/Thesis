@@ -16,6 +16,10 @@ from .. import config
 
 log = logging.getLogger(__name__)
 
+# Initial static-page row cap; '더 보기' fetches the rest via /kg/more
+# in this same increment (browse-everything without one giant DOM dump).
+_INITIAL_EDGE_LIMIT = 1200
+
 
 def _esc(s) -> str:
     return html.escape(str(s if s is not None else ""))
@@ -149,6 +153,9 @@ _JS = r"""
   var impf=document.getElementById('impfilter');
   var memof=document.getElementById('memofilter');
   var sortbtn=document.getElementById('sortbtn');
+  var morebtn=document.getElementById('morebtn');
+  var moreOrigText=morebtn?morebtn.textContent:'';
+  var moreOrigOffset=morebtn?morebtn.dataset.offset:'0';
   var listEl=document.getElementById('kg-list');
   var origList=listEl?listEl.innerHTML:'';
   var tpl=document.getElementById('eetpl');
@@ -345,7 +352,36 @@ _JS = r"""
     if(impf)impf.classList.remove('active');
     if(memof)memof.classList.remove('active');
     if(sortbtn){sortbtn.textContent='↕ 최신순'; sortbtn.classList.add('active');}
+    if(morebtn){ morebtn.style.display=''; morebtn.disabled=false;
+      morebtn.textContent=moreOrigText; morebtn.dataset.offset=moreOrigOffset; }
     apply();});
+  // '더 보기': 정적 페이지의 초기 캡(_INITIAL_EDGE_LIMIT) 이후를 이어서
+  // /kg/more로 가져와 renderEdge()로 붙인다(loadEntity와 같은 렌더 경로).
+  if(morebtn)morebtn.addEventListener('click',function(){
+    var off=parseInt(morebtn.dataset.offset,10)||0;
+    morebtn.disabled=true; morebtn.textContent='불러오는 중…';
+    fetch('/'+token+'/kg/more?offset='+off+'&limit=5000&order='+curSort)
+      .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+      .then(function(d){
+        var edges=d.edges||[];
+        if(edges.length&&listEl){
+          listEl.insertAdjacentHTML('beforeend', edges.map(renderEdge).join(''));
+        }
+        morebtn.dataset.offset=d.next_offset;
+        var loaded=Math.min(d.next_offset,d.total);
+        if(d.has_more){
+          morebtn.textContent='더 보기 ('+loaded.toLocaleString()+' / '+d.total.toLocaleString()+')';
+          morebtn.disabled=false;
+        } else {
+          morebtn.textContent='전체 로드됨 ('+d.total.toLocaleString()+')';
+          morebtn.style.display='none';
+        }
+        apply();  // 새로 붙은 행에도 현재 검색/필터 적용
+      })
+      .catch(function(err){
+        morebtn.disabled=false; morebtn.textContent='불러오기 실패 — 다시 시도';
+      });
+  });
   document.querySelectorAll('.chip').forEach(function(ch){
     ch.addEventListener('click',function(){ loadEntity(ch.dataset.name||''); });
   });
@@ -377,10 +413,11 @@ def render_kg(token: str) -> int:
         if not st.get("edges"):
             return 0
         tops = kg.top_entities(30)
-        # 초기엔 상위 1200개만(최신순) 렌더 → DOM 경량화. 더 깊은 관계는
-        # 칩 클릭(개체 전체) / 검색으로. ★·메모·알람 표시된 엣지는 아래에서
-        # 합집합으로 항상 포함시켜 '중요만/메모만' 필터가 안 깨지게 한다.
-        edges = kg.all_edges(1200, order="date")
+        # 초기엔 상위 _INITIAL_EDGE_LIMIT개만(최신순) 렌더 → DOM 경량화.
+        # 나머지는 '더 보기' 버튼이 /kg/more로 이어서 가져온다(전체 스캔은
+        # 칩 클릭(개체 전체) / 검색으로도 가능). ★·메모·알람 표시된 엣지는
+        # 아래에서 합집합으로 항상 포함시켜 '중요만/메모만' 필터가 안 깨지게.
+        edges = kg.all_edges(_INITIAL_EDGE_LIMIT, order="date")
     except Exception:
         log.exception("kg_render: store read failed")
         return 0
@@ -538,6 +575,11 @@ def render_kg(token: str) -> int:
         f"<div class='sec'>관계 (<span id='cnt'>{len(edges)}</span>) — "
         "☆ 중요 표시 · 📝 메모·알람 · 🗑 영구 삭제(재학습돼도 안 생김)</div>",
         f"<div id='kg-list'>{chr(10).join(rows)}</div>",
+        "<div id='more-wrap' style='text-align:center;margin:14px 0'>"
+        f"<button id='morebtn' type='button' class='reset' "
+        f"data-offset='{_INITIAL_EDGE_LIMIT}' data-order='date'>"
+        f"더 보기 ({min(_INITIAL_EDGE_LIMIT, st['edges']):,} / "
+        f"{st['edges']:,})</button></div>",
         "<template id='eetpl'>"
         "<div class='ent-memo' data-id=\"__EID__\">"
         "<textarea placeholder='이 관계에 대한 내 생각…'></textarea>"

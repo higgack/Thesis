@@ -74,8 +74,8 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _NOTE_DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+?)/?$")
 # Study-note 종류별 manual override: POST /<token>/notes/<id>/category
 _NOTE_CAT_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+)/category/?$")
-_NOTE_CATS = ("종목", "산업", "전략", "마인드", "반도체", "AI", "대학원",
-             "스터디", "부동산", "공부", "그외")
+_NOTE_CATS = ("종목", "산업", "전략", "스터디", "반도체", "AI", "공부",
+             "부동산", "그외")
 # Study-note 중요 표시 토글: POST /<token>/notes/<id>/important {important:bool}
 _NOTE_IMPORTANT_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+)/important/?$")
 _ASK_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/?$")
@@ -83,8 +83,15 @@ _ASK_GET_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/(\d+)/?$")
 # GET /<token>/kg/entity?e=<name> → all edges for an entity (full degree set,
 # not just the top-3000-by-confidence the static KG page loads).
 _KG_ENTITY_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/kg/entity/?$")
+# GET /<token>/kg/more?offset=N&limit=M&order=date|conf → next batch past
+# the static page's initial cap ('더 보기' pagination, browse-everything).
+_KG_MORE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/kg/more/?$")
+_KG_MORE_MAX_LIMIT = 5000
 # Delete one KG relation (dashboard 🗑): POST /<token>/kg/<edge_id>/delete
 _KG_DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/kg/(\d+)/delete/?$")
+# Delete one wiki topic (dashboard 🗑, mirrors /wiki_delete): POST
+# /<token>/wiki/<topic>/delete — topic is url-encoded, decoded below.
+_WIKI_DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/wiki/(.+)/delete/?$")
 # Live-update signal: GET /<token>/version → per-section content counts so
 # an open page auto-refreshes ONLY when something new actually arrived.
 _VERSION_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/version/?$")
@@ -174,6 +181,16 @@ class Handler(SimpleHTTPRequestHandler):
             ename = (parse_qs(parsed.query).get("e") or [""])[0]
             self._handle_kg_entity(mke.group(1), ename)
             return
+        mkm = _KG_MORE_RE.match(parsed.path)
+        if mkm:
+            qs = parse_qs(parsed.query)
+            self._handle_kg_more(
+                mkm.group(1),
+                offset=(qs.get("offset") or ["0"])[0],
+                limit=(qs.get("limit") or ["1500"])[0],
+                order=(qs.get("order") or ["date"])[0],
+            )
+            return
         m = _ASK_GET_RE.match(self.path)
         if m:
             self._handle_ask_get(m.group(1), int(m.group(2)))
@@ -260,6 +277,55 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json({"edges": out, "count": len(out)})
         except Exception as e:
             log.exception("kg entity lookup failed")
+            self.send_error(500, f"lookup failed: {e}")
+
+    def _handle_kg_more(self, token: str, offset: str, limit: str, order: str):
+        """'더 보기' pagination past the static page's initial cap — same
+        enrichment shape as _handle_kg_entity so the client reuses
+        renderEdge() to append rows without a second render path."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self.send_error(403, "forbidden")
+            return
+        try:
+            off = max(0, int(offset))
+        except (TypeError, ValueError):
+            off = 0
+        try:
+            lim = max(1, min(_KG_MORE_MAX_LIMIT, int(limit)))
+        except (TypeError, ValueError):
+            lim = 1500
+        order = order if order in ("date", "conf") else "date"
+        try:
+            from ..store import kg as _kg, meta as _meta, marks as _marks
+            edges = _kg.all_edges(limit=lim, order=order, offset=off)
+            total = _kg.stats().get("edges", 0)
+            doc_ids = list({e.get("doc_id") for e in edges if e.get("doc_id")})
+            docs = _meta.get_docs_batch(doc_ids) if doc_ids else {}
+            imp = _marks.marked("kg_edge")
+            memos = _marks.memos("kg_edge")
+            alarms = _marks.alarm_map("kg_edge")
+            out = []
+            for e in edges:
+                eid = str(e.get("id") or "")
+                d = docs.get(e.get("doc_id") or "") or {}
+                al = alarms.get(eid, {})
+                out.append({
+                    "id": eid, "src": e["src"], "rel": e["rel"], "dst": e["dst"],
+                    "c": round(e.get("confidence") or 0, 2),
+                    "important": 1 if eid in imp else 0,
+                    "memo": (memos.get(eid) or "").strip(),
+                    "src_title": (d.get("title") or "").strip(),
+                    "src_url": (d.get("source") or "").strip(),
+                    "ahhmm": al.get("hhmm", "") or "",
+                    "adate": al.get("date", "") or "",
+                    "ts": e.get("ts") or "",
+                })
+            self._send_json({
+                "edges": out, "next_offset": off + len(out),
+                "total": total, "has_more": (off + len(out)) < total,
+            })
+        except Exception as e:
+            log.exception("kg more lookup failed")
             self.send_error(500, f"lookup failed: {e}")
 
     def _handle_ingest_post(self, token: str):
@@ -394,6 +460,29 @@ class Handler(SimpleHTTPRequestHandler):
             log.exception("kg edge delete failed")
             self.send_error(500, f"delete failed: {e}")
 
+    def _delete_wiki_topic(self, token: str, topic: str):
+        """Delete one wiki topic (dashboard 🗑) — index entry, .md file,
+        queue entries, and marks it permanently deleted so it can't revive
+        on re-ingest. Mirrors bot.py's /wiki_delete; local file/JSON only,
+        safe in the 200MB dashboard container (no Gemini call)."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self.send_error(403, "forbidden")
+            return
+        topic = (topic or "").strip()
+        if not topic:
+            self._send_json({"error": "빈 토픽"}, 400)
+            return
+        try:
+            from ..store import wiki
+            res = wiki.delete_topic(topic)
+            if res.get("error"):
+                self._send_json({"error": res["error"]}, 404)
+                return
+            self._send_ok(1)
+        except Exception as e:
+            log.exception("wiki topic delete failed")
+            self.send_error(500, f"delete failed: {e}")
+
     def do_HEAD(self):
         if not self._check_basic_auth():
             return
@@ -423,6 +512,10 @@ class Handler(SimpleHTTPRequestHandler):
         mkd = _KG_DELETE_RE.match(self.path)
         if mkd:
             self._delete_kg_edge(mkd.group(1), int(mkd.group(2)))
+            return
+        mwd = _WIKI_DELETE_RE.match(self.path)
+        if mwd:
+            self._delete_wiki_topic(mwd.group(1), unquote(mwd.group(2)))
             return
         mk = _MARK_RE.match(self.path)
         if mk:

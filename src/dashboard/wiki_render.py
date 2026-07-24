@@ -656,6 +656,11 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
   margin-left: 6px; transition: 0.12s; }
 .wiki-card .wstar:hover { color: var(--important); transform: scale(1.15); }
 .wiki-card .wstar.on { color: var(--important); }
+.wiki-card .wdel { cursor: pointer; background: transparent; border: 0;
+  color: var(--muted); font-size: 15px; line-height: 1; padding: 0 4px;
+  margin-left: 2px; opacity: 0.6; transition: 0.12s; }
+.wiki-card .wdel:hover { color: #ef4444; opacity: 1; transform: scale(1.15); }
+.wiki-card.removing { opacity: 0; transform: scale(0.97); transition: 0.2s; }
 .wiki-card[data-important="1"] { border-color: rgba(245,158,11,0.55);
   background: rgba(245,158,11,0.06); }
 .wiki-filter.wstarfilter.active { background: var(--important); border-color: var(--important); color: #fff; }
@@ -911,6 +916,23 @@ _WIKI_STAR_JS = """
           btn.classList.toggle('on', !now);
           alert('중요 표시 변경 실패: '+err.message);
         });
+    });
+  });
+  document.querySelectorAll('.wiki-card .wdel').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      var card = btn.closest('.wiki-card'); if(!card) return;
+      var topic = card.getAttribute('data-topic'); if(!topic) return;
+      if(!confirm('이 위키 페이지를 영구 삭제할까요?\\n\\n'+topic
+        +'\\n\\n재학습돼도 다시 생기지 않습니다.')) return;
+      fetch('/'+token+'/wiki/'+encodeURIComponent(topic)+'/delete',
+        {method:'POST'})
+        .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .then(function(){
+          card.classList.add('removing');
+          setTimeout(function(){ card.remove(); }, 220);
+        })
+        .catch(function(err){ alert('삭제 실패: '+err.message); });
     });
   });
 })();
@@ -1249,7 +1271,9 @@ def _render_index_page(topics_data: list[dict], token: str,
             f'<h3><a href="{_topic_filename(topic)}">'
             f"{html.escape(display)}</a>{badge}"
             f"<button type='button' class='wstar{' on' if imp else ''}' "
-            f"title='중요 표시 토글'>{'★' if imp else '☆'}</button></h3>"
+            f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
+            f"<button type='button' class='wdel' "
+            f"title='이 위키 페이지 영구 삭제 (재학습돼도 안 생김)'>🗑</button></h3>"
             f'<div class="card-meta">'
             f"{doc_count} sources · {updated}</div>"
             f'<div class="card-excerpt">{excerpt}</div>'
