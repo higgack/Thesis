@@ -14043,7 +14043,9 @@ def main():
         # v6: 부동산 카테고리 분리 (그외에서 독립) (2026-07-24)
         # v7: 마인드/대학원 삭제 → 종목/산업/전략/스터디/반도체/AI/공부/
         #     부동산/그외 9종 체계로 정리 (2026-07-24)
-        _NOTES_CAT_VERSION = 7
+        # v8: 대학원 복원(실수로 삭제) — 종목/산업/전략/스터디/반도체/AI/
+        #     공부/대학원/부동산/그외 10종, 대학원은 공부 뒤 배치 (2026-07-24)
+        _NOTES_CAT_VERSION = 8
         async def _notes_category_backfill(_ctx):
             try:
                 import json as _json

@@ -207,6 +207,8 @@ border:1px solid rgba(236,72,153,.4)}
 border:1px solid rgba(185,28,28,.4)}
 .cat-공부{background:rgba(59,130,246,.15);color:#2563eb;
 border:1px solid rgba(59,130,246,.4)}
+.cat-대학원{background:rgba(202,138,4,.15);color:#a16207;
+border:1px solid rgba(202,138,4,.4)}
 .cat-그외{background:rgba(148,163,184,.15);color:var(--muted);
 border:1px solid var(--border)}
 [data-theme=dark] .cat-종목{color:#34d399}
@@ -217,6 +219,7 @@ border:1px solid var(--border)}
 [data-theme=dark] .cat-스터디{color:#f472b6}
 [data-theme=dark] .cat-부동산{color:#f87171}
 [data-theme=dark] .cat-공부{color:#60a5fa}
+[data-theme=dark] .cat-대학원{color:#facc15}
 .empty{text-align:center;padding:60px 20px;color:var(--muted)}
 .back{color:var(--muted);font-size:13px;display:inline-block;margin-bottom:16px}
 .note-body{background:var(--panel);border:1px solid var(--border);
@@ -563,7 +566,7 @@ _INDEX_JS = r"""
   // 종류별 manual override: click the badge to cycle through all cats.
   // Optimistic update; POST locks it server-side so auto-reclassify
   // won't overwrite. Revert on failure.
-  var CATS = ['종목','산업','전략','스터디','반도체','AI','공부','부동산','그외'];
+  var CATS = ['종목','산업','전략','스터디','반도체','AI','공부','대학원','부동산','그외'];
   function setCat(row, badge, cat){
     row.dataset.cat = cat;
     badge.textContent = cat;
@@ -669,7 +672,7 @@ def _render_index(token: str, notes: list[dict],
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
             f"<span class='cat cat-{_esc(cat)}' "
             f"title='클릭: 종류 변경 "
-            f"(종목↔산업↔전략↔스터디↔반도체↔AI↔공부↔부동산↔그외)'>"
+            f"(종목↔산업↔전략↔스터디↔반도체↔AI↔공부↔대학원↔부동산↔그외)'>"
             f"{_esc(cat)}</span>"
             f"<span class='stype'>{_esc(n.get('source_type') or '')}</span>"
             f"<span class='meta'>학습 {_esc(learned)}</span>"
@@ -714,6 +717,7 @@ def _render_index(token: str, notes: list[dict],
         "<button class='fbtn fcat' data-cat='반도체'>🔬 반도체</button>"
         "<button class='fbtn fcat' data-cat='AI'>🤖 AI</button>"
         "<button class='fbtn fcat' data-cat='공부'>📚 공부</button>"
+        "<button class='fbtn fcat' data-cat='대학원'>🎓 대학원</button>"
         "<button class='fbtn fcat' data-cat='부동산'>🏠 부동산</button>"
         "<button class='fbtn fcat' data-cat='그외'>🗂 그 외</button></div>",
         "<div class='controls'><input id='q' type='text' "

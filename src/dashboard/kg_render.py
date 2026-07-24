@@ -415,8 +415,9 @@ def render_kg(token: str) -> int:
         tops = kg.top_entities(30)
         # 초기엔 상위 _INITIAL_EDGE_LIMIT개만(최신순) 렌더 → DOM 경량화.
         # 나머지는 '더 보기' 버튼이 /kg/more로 이어서 가져온다(전체 스캔은
-        # 칩 클릭(개체 전체) / 검색으로도 가능). ★·메모·알람 표시된 엣지는
-        # 아래에서 합집합으로 항상 포함시켜 '중요만/메모만' 필터가 안 깨지게.
+        # 칩 클릭(개체 전체) / 검색으로도 가능). ★·메모·알람 표시가 있어도
+        # 순서·1페이지 포함 여부는 그대로 최신순/신뢰도순을 따른다 — 오래된
+        # 중요 엣지를 앞으로 끌어올리지 않음(사용자 요청, 2026-07-24).
         edges = kg.all_edges(_INITIAL_EDGE_LIMIT, order="date")
     except Exception:
         log.exception("kg_render: store read failed")
@@ -447,19 +448,8 @@ def render_kg(token: str) -> int:
     except Exception:
         _edge_imp, _edge_memos, _edge_alarms = set(), {}, {}
 
-    # ★/메모/알람 표시된 엣지가 상위 1200 밖이면 합집합으로 추가(필터 보존).
-    try:
-        _present = {str(e.get("id")) for e in edges}
-        _extra = (set(_edge_imp) | set(_edge_memos.keys())
-                  | set(_edge_alarms.keys())) - _present
-        if _extra:
-            edges = edges + kg.edges_by_ids(_extra)
-    except Exception:
-        pass
-
     # 기본 정렬: 최신순(ts 내림차순), 동점이면 신뢰도 내림차순. reverse=True가
-    # 두 키 모두 내림차순으로 적용 → ts desc, confidence desc. (합집합으로
-    # 끼어든 ★/메모/알람 엣지까지 한 번에 올바른 순서로.)
+    # 두 키 모두 내림차순으로 적용 → ts desc, confidence desc.
     try:
         edges.sort(key=lambda e: (e.get("ts") or "", e.get("confidence") or 0),
                    reverse=True)
