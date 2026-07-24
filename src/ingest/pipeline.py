@@ -707,10 +707,15 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
     # for the nightly synthesis batch. No LLM / network here — a cheap
     # local append that self-guards on enabled() + swallows all errors,
     # so it can NEVER slow or break ingest. See src/store/wiki.py.
+    # to_thread: enqueue() is still a plain sync function (JSON read+
+    # rewrite of the whole queue file under a threading.Lock, plus topic/
+    # alias index lookups) — same "unguarded sync work on the loop" class
+    # as the find_by_normalized_title bug (2026-07-24 "저장"-stage stall,
+    # recurred here for a photo ingest after that fix shipped).
     try:
-        wiki.enqueue(doc_id=doc_id, title=title, summary=summary,
-                     doc_type=doc_type, source=source,
-                     metadata=metadata or None)
+        await asyncio.to_thread(
+            wiki.enqueue, doc_id=doc_id, title=title, summary=summary,
+            doc_type=doc_type, source=source, metadata=metadata or None)
     except Exception:
         log.exception("wiki enqueue hook failed (ignored)")
 
