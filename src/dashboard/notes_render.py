@@ -128,6 +128,10 @@ box-shadow:0 0 0 3px rgba(16,185,129,.15)}
 .controls .reset{background:var(--primary);border:0;color:#fff;padding:8px 18px;
 border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
 .controls .reset:hover{opacity:.9}
+.controls .sortsel{background:var(--panel);border:1px solid var(--border);
+color:var(--text);padding:8px 12px;border-radius:8px;font-size:13px;
+font-weight:500;cursor:pointer;outline:none}
+.controls .sortsel:hover{border-color:var(--primary)}
 .note-row{background:var(--panel);border:1px solid var(--border);
 border-radius:10px;padding:13px 16px;margin-bottom:8px;box-shadow:var(--shadow);
 display:flex;align-items:center;gap:12px;flex-wrap:wrap;
@@ -491,6 +495,38 @@ _INDEX_JS = r"""
     });
     var c=document.getElementById('note-count'); if(c) c.textContent=shown;
   }
+  // 정렬: 날짜순(서버가 이미 최신순으로 내려주므로 원본 DOM 순서로 복귀)
+  // / 종류별·유형별(고정 우선순위 배열 내 위치, 동순위는 최신순 유지).
+  var listEl = document.getElementById('notes-list');
+  var origOrder = listEl ? Array.prototype.slice.call(
+    listEl.querySelectorAll('.note-row')) : [];
+  var TYPE_ORDER = ['문서','텍스트','블로그','웹','유튜브'];
+  var sortSel = document.getElementById('sortSel');
+  var curSort = 'date';
+  function sortRows(mode){
+    if(!listEl) return;
+    if(mode === 'date'){
+      origOrder.forEach(function(r){ listEl.appendChild(r); });
+      return;
+    }
+    var order = mode === 'cat' ? CATS : TYPE_ORDER;
+    var attr = mode === 'cat' ? 'cat' : 'tbucket';
+    var rows = Array.prototype.slice.call(listEl.querySelectorAll('.note-row'));
+    rows.sort(function(a, b){
+      var ia = order.indexOf(a.dataset[attr] || '');
+      var ib = order.indexOf(b.dataset[attr] || '');
+      if(ia < 0) ia = order.length;
+      if(ib < 0) ib = order.length;
+      if(ia !== ib) return ia - ib;
+      // 동순위는 날짜(최신) 유지 — data-updated 문자열 비교(ISO라 안전).
+      var ta = a.dataset.updated || '', tb = b.dataset.updated || '';
+      return ta < tb ? 1 : (ta > tb ? -1 : 0);
+    });
+    rows.forEach(function(r){ listEl.appendChild(r); });
+  }
+  if(sortSel) sortSel.addEventListener('change', function(){
+    curSort = sortSel.value; sortRows(curSort); saveView();
+  });
   function wireGroup(sel, attr, set){
     var btns=document.querySelectorAll(sel);
     btns.forEach(function(b){ b.addEventListener('click', function(){
@@ -520,6 +556,7 @@ _INDEX_JS = r"""
     document.querySelectorAll('.fbtn').forEach(function(x){
       x.classList.toggle('active', x.getAttribute('data-type')==='all'
         || x.getAttribute('data-cat')==='all'); });
+    curSort='date'; if(sortSel) sortSel.value='date'; sortRows('date');
     applyFilter();
   });
   // ★ 중요 표시 토글 — optimistic update, POST persists server-side,
@@ -598,7 +635,7 @@ _INDEX_JS = r"""
   function saveView(){
     try{ sessionStorage.setItem(VK, JSON.stringify({
       q: q ? q.value : '', t: curType, c: curCat,
-      i: curImportant, m: curMemo,
+      i: curImportant, m: curMemo, s: curSort,
       y: window.scrollY || window.pageYOffset || 0 })); }catch(e){}
   }
   try{
@@ -609,13 +646,16 @@ _INDEX_JS = r"""
       if (q) q.value = sv.q || '';
       curType = sv.t || 'all'; curCat = sv.c || 'all';
       curImportant = !!sv.i; curMemo = !!sv.m;
+      curSort = sv.s || 'date';
       document.querySelectorAll('.ftype').forEach(function(x){
         x.classList.toggle('active', x.getAttribute('data-type')===curType); });
       document.querySelectorAll('.fcat').forEach(function(x){
         x.classList.toggle('active', x.getAttribute('data-cat')===curCat); });
       if (impf) impf.classList.toggle('active', curImportant);
       if (memof) memof.classList.toggle('active', curMemo);
-      applyFilter();                       // 필터 먼저 (페이지 높이 확정)
+      if (sortSel) sortSel.value = curSort;
+      sortRows(curSort);                   // 정렬 먼저
+      applyFilter();                       // 필터 (페이지 높이 확정)
       window.scrollTo(0, sv.y || 0);       // 그 다음 스크롤
     }
   }catch(e){}
@@ -648,9 +688,9 @@ def _render_index(token: str, notes: list[dict],
         _nmemos = _marks.memos("note")
     except Exception:
         _nmemos = {}
+    sec_title_html = ("<div class='sec-title'>전체 노트 "
+                      f"(<span id='note-count'>{len(notes)}</span>)</div>")
     rows = []
-    rows.append("<div class='sec-title'>전체 노트 "
-                f"(<span id='note-count'>{len(notes)}</span>)</div>")
     if not notes:
         rows.append("<div class='empty'>아직 노트가 없어요. 학습 채널에 "
                     "자료를 올리면 여기에 노트로 쌓입니다.</div>")
@@ -666,7 +706,8 @@ def _render_index(token: str, notes: list[dict],
             f"<div class='note-row' data-id=\"{_esc(n['id'])}\" "
             f"data-text=\"{_esc(hay)}\" data-tbucket=\"{_esc(tbucket)}\" "
             f"data-cat=\"{_esc(cat)}\" data-important=\"{imp}\" "
-            f"data-hasmemo=\"{hasmemo}\" data-memo=\"{_esc(_memo_txt)}\">"
+            f"data-hasmemo=\"{hasmemo}\" data-memo=\"{_esc(_memo_txt)}\" "
+            f"data-updated=\"{_esc(n.get('updated') or '')}\">"
             f"<button class='nstar{' on' if imp else ''}' type='button' "
             f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
@@ -726,8 +767,14 @@ def _render_index(token: str, notes: list[dict],
         "★ 중요만</button>"
         "<button id='memofilter' type='button' class='reset memofilter'>"
         "📝 메모만</button>"
+        "<select id='sortSel' class='sortsel' title='정렬 기준'>"
+        "<option value='date'>🕐 날짜순</option>"
+        "<option value='cat'>🏷 종류별</option>"
+        "<option value='type'>📁 유형별</option>"
+        "</select>"
         "<button id='reset' type='button' class='reset'>초기화</button></div>",
-        "\n".join(rows),
+        sec_title_html,
+        f"<div id='notes-list'>{chr(10).join(rows)}</div>",
         "<div class='footer'>대시보드는 읽기 전용 · 🗑 = 노트 삭제</div>",
         f"<script>{_INDEX_JS}</script>",
         _widgets.live_reload_js("notes"),
