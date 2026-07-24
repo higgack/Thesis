@@ -191,24 +191,33 @@ border-radius:8px;padding:1px 6px}
 .cat{font-size:10px;font-weight:700;border-radius:8px;padding:1px 7px;
 white-space:nowrap;cursor:pointer;user-select:none}
 .cat:hover{filter:brightness(1.08);outline:1px solid currentColor}
-.cat-주식{background:rgba(16,185,129,.15);color:#059669;
+.cat-종목{background:rgba(16,185,129,.15);color:#059669;
 border:1px solid rgba(16,185,129,.4)}
+.cat-산업{background:rgba(8,145,178,.15);color:#0e7490;
+border:1px solid rgba(8,145,178,.4)}
+.cat-전략{background:rgba(79,70,229,.15);color:#4f46e5;
+border:1px solid rgba(79,70,229,.4)}
+.cat-마인드{background:rgba(162,28,175,.15);color:#a21caf;
+border:1px solid rgba(162,28,175,.4)}
 .cat-반도체{background:rgba(249,115,22,.15);color:#ea580c;
 border:1px solid rgba(249,115,22,.4)}
 .cat-AI{background:rgba(168,85,247,.15);color:#9333ea;
 border:1px solid rgba(168,85,247,.4)}
-.cat-대학원{background:rgba(20,184,166,.15);color:#0d9488;
-border:1px solid rgba(20,184,166,.4)}
+.cat-대학원{background:rgba(202,138,4,.15);color:#a16207;
+border:1px solid rgba(202,138,4,.4)}
 .cat-스터디{background:rgba(236,72,153,.15);color:#db2777;
 border:1px solid rgba(236,72,153,.4)}
 .cat-공부{background:rgba(59,130,246,.15);color:#2563eb;
 border:1px solid rgba(59,130,246,.4)}
 .cat-그외{background:rgba(148,163,184,.15);color:var(--muted);
 border:1px solid var(--border)}
-[data-theme=dark] .cat-주식{color:#34d399}
+[data-theme=dark] .cat-종목{color:#34d399}
+[data-theme=dark] .cat-산업{color:#22d3ee}
+[data-theme=dark] .cat-전략{color:#818cf8}
+[data-theme=dark] .cat-마인드{color:#e879f9}
 [data-theme=dark] .cat-반도체{color:#fb923c}
 [data-theme=dark] .cat-AI{color:#c084fc}
-[data-theme=dark] .cat-대학원{color:#2dd4bf}
+[data-theme=dark] .cat-대학원{color:#facc15}
 [data-theme=dark] .cat-스터디{color:#f472b6}
 [data-theme=dark] .cat-공부{color:#60a5fa}
 .empty{text-align:center;padding:60px 20px;color:var(--muted)}
@@ -557,7 +566,7 @@ _INDEX_JS = r"""
   // 종류별 manual override: click the badge to cycle through all cats.
   // Optimistic update; POST locks it server-side so auto-reclassify
   // won't overwrite. Revert on failure.
-  var CATS = ['주식','반도체','AI','대학원','스터디','공부','그외'];
+  var CATS = ['종목','산업','전략','마인드','반도체','AI','대학원','스터디','공부','그외'];
   function setCat(row, badge, cat){
     row.dataset.cat = cat;
     badge.textContent = cat;
@@ -662,7 +671,8 @@ def _render_index(token: str, notes: list[dict],
             f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
             f"<span class='cat cat-{_esc(cat)}' "
-            f"title='클릭: 종류 변경 (주식↔반도체↔AI↔대학원↔스터디↔공부↔그외)'>"
+            f"title='클릭: 종류 변경 "
+            f"(종목↔산업↔전략↔마인드↔반도체↔AI↔대학원↔스터디↔공부↔그외)'>"
             f"{_esc(cat)}</span>"
             f"<span class='stype'>{_esc(n.get('source_type') or '')}</span>"
             f"<span class='meta'>학습 {_esc(learned)}</span>"
@@ -700,7 +710,10 @@ def _render_index(token: str, notes: list[dict],
         "<button class='fbtn ftype' data-type='유튜브'>▶ 유튜브</button></div>",
         "<div class='fbar'><span class='flabel'>종류별</span>"
         "<button class='fbtn fcat active' data-cat='all'>전체</button>"
-        "<button class='fbtn fcat' data-cat='주식'>📈 주식</button>"
+        "<button class='fbtn fcat' data-cat='종목'>📈 종목</button>"
+        "<button class='fbtn fcat' data-cat='산업'>🏭 산업</button>"
+        "<button class='fbtn fcat' data-cat='전략'>♟ 전략</button>"
+        "<button class='fbtn fcat' data-cat='마인드'>🧠 마인드</button>"
         "<button class='fbtn fcat' data-cat='반도체'>🔬 반도체</button>"
         "<button class='fbtn fcat' data-cat='AI'>🤖 AI</button>"
         "<button class='fbtn fcat' data-cat='대학원'>🎓 대학원</button>"

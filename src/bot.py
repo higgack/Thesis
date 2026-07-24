@@ -14039,7 +14039,8 @@ def main():
         # each), then a marker file suppresses repeats.
         # v3: 주식=종목/회사분석 중심, 부동산·거시→그외
         # v4: 반도체/AI/대학원 3개 카테고리 추가 (2026-07-24)
-        _NOTES_CAT_VERSION = 4
+        # v5: 주식 삭제 → 종목/산업/전략/마인드 4개로 세분화 (2026-07-24)
+        _NOTES_CAT_VERSION = 5
         async def _notes_category_backfill(_ctx):
             try:
                 import json as _json
