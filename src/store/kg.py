@@ -248,13 +248,18 @@ def delete_edge(edge_id) -> dict | None:
         return None
 
 
-def all_edges(limit: int = 3000) -> list[dict]:
-    """Every edge (confidence-desc) for the dashboard KG view."""
+def all_edges(limit: int = 3000, order: str = "conf") -> list[dict]:
+    """Every edge for the dashboard KG view. order='conf' (default,
+    confidence-desc — Universe page) or 'date' (ts-desc — KG page 최신순
+    default, so the 1200-row cap keeps truly-recent low-confidence edges
+    instead of only the highest-confidence subset)."""
     init()
+    order_sql = ("ts DESC, confidence DESC" if order == "date"
+                 else "confidence DESC, ts DESC")
     with _conn() as c:
         rows = c.execute(
-            "SELECT id,src,rel,dst,confidence,doc_id,ts FROM edges "
-            "ORDER BY confidence DESC, ts DESC LIMIT ?", (limit,)).fetchall()
+            f"SELECT id,src,rel,dst,confidence,doc_id,ts FROM edges "
+            f"ORDER BY {order_sql} LIMIT ?", (limit,)).fetchall()
     return [dict(r) for r in rows]
 
 

@@ -153,7 +153,7 @@ _JS = r"""
   var origList=listEl?listEl.innerHTML:'';
   var tpl=document.getElementById('eetpl');
   var token=location.pathname.split('/').filter(Boolean)[0]||'';
-  var curImp=false, curMemo=false, curSort='conf';
+  var curImp=false, curMemo=false, curSort='date';
   function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   function apply(){
@@ -341,10 +341,10 @@ _JS = r"""
     sortList(curSort); apply();});
   if(reset)reset.addEventListener('click',function(){
     if(listEl){ listEl.innerHTML=origList; }   // 위임이라 재-와이어링 불필요
-    if(q)q.value=''; curImp=false; curMemo=false; curSort='conf';
+    if(q)q.value=''; curImp=false; curMemo=false; curSort='date';
     if(impf)impf.classList.remove('active');
     if(memof)memof.classList.remove('active');
-    if(sortbtn){sortbtn.textContent='↕ 신뢰도순'; sortbtn.classList.remove('active');}
+    if(sortbtn){sortbtn.textContent='↕ 최신순'; sortbtn.classList.add('active');}
     apply();});
   document.querySelectorAll('.chip').forEach(function(ch){
     ch.addEventListener('click',function(){ loadEntity(ch.dataset.name||''); });
@@ -377,10 +377,10 @@ def render_kg(token: str) -> int:
         if not st.get("edges"):
             return 0
         tops = kg.top_entities(30)
-        # 초기엔 상위 1200개만(신뢰도순) 렌더 → DOM 경량화. 더 깊은 관계는
+        # 초기엔 상위 1200개만(최신순) 렌더 → DOM 경량화. 더 깊은 관계는
         # 칩 클릭(개체 전체) / 검색으로. ★·메모·알람 표시된 엣지는 아래에서
         # 합집합으로 항상 포함시켜 '중요만/메모만' 필터가 안 깨지게 한다.
-        edges = kg.all_edges(1200)
+        edges = kg.all_edges(1200, order="date")
     except Exception:
         log.exception("kg_render: store read failed")
         return 0
@@ -420,11 +420,11 @@ def render_kg(token: str) -> int:
     except Exception:
         pass
 
-    # 기본 정렬: 신뢰도 내림차순, 동점이면 최신순(ts 내림차순). reverse=True가
-    # 두 키 모두 내림차순으로 적용 → confidence desc, ts desc. (합집합으로
+    # 기본 정렬: 최신순(ts 내림차순), 동점이면 신뢰도 내림차순. reverse=True가
+    # 두 키 모두 내림차순으로 적용 → ts desc, confidence desc. (합집합으로
     # 끼어든 ★/메모/알람 엣지까지 한 번에 올바른 순서로.)
     try:
-        edges.sort(key=lambda e: (e.get("confidence") or 0, e.get("ts") or ""),
+        edges.sort(key=lambda e: (e.get("ts") or "", e.get("confidence") or 0),
                    reverse=True)
     except Exception:
         pass
@@ -532,8 +532,8 @@ def render_kg(token: str) -> int:
         "★ 중요만</button>"
         "<button id='memofilter' type='button' class='reset memofilter'>"
         "📝 메모만</button>"
-        "<button id='sortbtn' type='button' class='reset sortbtn' "
-        "title='정렬 기준 전환'>↕ 신뢰도순</button>"
+        "<button id='sortbtn' type='button' class='reset sortbtn active' "
+        "title='정렬 기준 전환'>↕ 최신순</button>"
         "<button id='reset' type='button' class='reset'>초기화</button></div>",
         f"<div class='sec'>관계 (<span id='cnt'>{len(edges)}</span>) — "
         "☆ 중요 표시 · 📝 메모·알람 · 🗑 영구 삭제(재학습돼도 안 생김)</div>",
