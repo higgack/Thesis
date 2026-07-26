@@ -42,6 +42,8 @@ _NOTES_GUIDE_TEXT = """📒 <b>학습 노트 사용법</b>
 • URL · 유튜브 · PDF · PPTX · DOCX · XLSX · 텍스트
 • 🎙 <b>음성/오디오</b> (mp3·m4a·wav 등, 파일 첨부도 OK) — Gemini STT
   전사 → 노트. 캡션을 달면 전사문 앞에 붙음.
+• 🎬 <b>영상</b> (최대 20MB) — Gemini가 화면(텍스트/차트)+음성을 통째로
+  읽어서 노트. 20MB 넘으면 짧게 잘라서 다시.
 • 🖼 <b>사진</b> — 캡션 ≥80자면 캡션으로(무료), 짧으면 Vision OCR.
   캡션에 [OCR] 넣으면 강제 OCR.
 • 올리면 DM으로 <i>📒 노트 만드는 중…</i> → 완료/실패 알림
@@ -117,6 +119,7 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     doc = getattr(msg, "document", None)
     voice = getattr(msg, "voice", None)
     audio = getattr(msg, "audio", None)
+    video = getattr(msg, "video", None)
     photo = getattr(msg, "photo", None)
     # 오디오가 일반 파일 첨부(document)로 오면 음성 경로로 재라우팅 —
     # 두뇌(RAG) 학습과 동일하게 모든 인입 타입을 지원한다 (2026-07 요청).
@@ -128,6 +131,7 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         ("음성 메모" if voice else None) or \
         ((getattr(audio, "file_name", None) or getattr(audio, "title", None)
           or "오디오") if audio else None) or \
+        ("영상" if video else None) or \
         ("사진" if photo else None) or \
         (url_m.group(0) if url_m else "텍스트")
     log.info("study post received: %s", src_label)
@@ -179,6 +183,30 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                     "audio", ref, body,
                     title=None if src_label in ("음성 메모", "오디오")
                     else src_label)
+                if nid:
+                    note_ids.append(nid)
+        # 0-a) 영상 → 두뇌 경로와 같은 Gemini 네이티브 비디오 이해(화면+
+        #      음성 한 번에) → 텍스트로 노트. 오디오와 같은 20MB inline
+        #      한도(다운로드 전에 file_size로 먼저 거른다).
+        elif video:
+            from ..ingest.loaders import transcribe_video_async
+            from ..ingest.pipeline import VIDEO_MAX_BYTES
+            size = int(getattr(video, "file_size", 0) or 0)
+            if size > VIDEO_MAX_BYTES:
+                raise ValueError(
+                    f"영상 {size // (1024 * 1024)}MB — 처리 한도 20MB 초과. "
+                    "짧게 잘라서 다시 올리거나, 긴 영상은 유튜브 업로드 후 "
+                    "링크로 보내줘.")
+            mime = getattr(video, "mime_type", None) or "video/mp4"
+            tf = await ctx.bot.get_file(video.file_id)
+            data = bytes(await tf.download_as_bytearray())
+            transcript = await transcribe_video_async(data, mime_type=mime)
+            if transcript:
+                cap = (msg.caption or "").strip()
+                body = (cap + "\n\n" + transcript).strip() if cap \
+                    else transcript
+                ref = f"tg-video:{video.file_unique_id}"
+                nid = await channel.ingest_text("video", ref, body)
                 if nid:
                     note_ids.append(nid)
         # 0-b) 사진 → 캡션 우선, 부족하면 Vision OCR (두뇌 경로와 동일
@@ -251,9 +279,9 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                "JS 렌더링/로그인 전용/차단 페이지일 수 있어. 잠시 후 다시 "
                "시도하거나, 원문 본문을 복사해서 텍스트로 붙여넣어줘. "
                "(미리보기 요약으로 가짜 노트를 만들지 않으려고 일부러 중단함)")
-    elif voice or audio:
+    elif voice or audio or video:
         out = (f"⚠️ 노트를 못 만들었어 ({src_label})\n"
-               "음성 전사(STT)가 비었어 — 무음/음악 위주 파일이거나 "
+               "음성 전사(STT)/영상 분석이 비었어 — 무음/음악 위주거나 "
                "전사 실패일 수 있어. 다시 보내보거나 짧게 잘라서 시도해봐.")
     else:
         out = (f"⚠️ 노트를 못 만들었어 ({src_label})\n"
