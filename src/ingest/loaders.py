@@ -1494,6 +1494,53 @@ async def transcribe_audio_async(audio_bytes: bytes, mime_type: str = "audio/ogg
         _transcribe_audio, audio_bytes, mime_type, model, max_tokens, purpose)
 
 
+def _transcribe_video(video_bytes: bytes, mime_type: str = "video/mp4") -> str:
+    """Gemini native video understanding — one call reads both the
+    visual track (on-screen text/charts/tables) and the audio track.
+    No ffmpeg/frame-extraction needed (unlike Claude, which lacks this
+    natively). Inline byte limit is ~20MB, same request cap as
+    _transcribe_audio/_ocr_image — fits short clips/screen recordings,
+    not long lectures (those should go through YouTube ingest, which
+    already handles hour-long video via transcript/audio fallback)."""
+    if len(video_bytes) > 20 * 1024 * 1024:
+        log.warning("video ingest refused: %dMB > 20MB inline limit",
+                    len(video_bytes) // (1024 * 1024))
+        return ""
+    try:
+        from google.genai import types
+        from .. import config
+        from ..store import cost as _cost
+    except Exception:
+        return ""
+    client = config.make_genai_client()
+    prompt = (
+        "이 영상의 내용을 정리하세요. 화면에 나오는 텍스트/차트/표는 그대로 "
+        "옮기고, 음성으로 설명되는 내용은 받아쓰기하듯 정리하세요. "
+        "설명/코멘트 없이 정리된 본문만 출력하세요."
+    )
+    try:
+        resp = client.models.generate_content(
+            model=config.ANSWER_MODEL,
+            contents=[
+                types.Part.from_bytes(data=video_bytes, mime_type=mime_type),
+                types.Part.from_text(text=prompt),
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=8192,
+            ),
+        )
+        _cost.record_resp(config.ANSWER_MODEL, resp, purpose="ingest")
+        return (resp.text or "").strip()
+    except Exception:
+        return ""
+
+
+async def transcribe_video_async(video_bytes: bytes,
+                                 mime_type: str = "video/mp4") -> str:
+    return await asyncio.to_thread(_transcribe_video, video_bytes, mime_type)
+
+
 async def _load_pdf_from_bytes(data: bytes, source_url: str) -> tuple[str, str, str | None]:
     """When a URL fetch returns PDF bytes (brokerage shortlinks like
     bbn.kiwoom.com → PDF redirect), save to a temp file and reuse the

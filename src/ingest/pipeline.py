@@ -8,7 +8,7 @@ from typing import Callable, Optional
 from .. import config
 from ..store import meta, vector, obsidian, wiki
 from .chunker import split
-from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async, load_xlsx_async, ocr_image_async, transcribe_audio_async
+from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async, load_xlsx_async, ocr_image_async, transcribe_audio_async, transcribe_video_async
 from .summarize import summarize, summarize_and_extract
 
 log = logging.getLogger(__name__)
@@ -411,6 +411,40 @@ async def ingest_audio(audio_bytes: bytes, source_label: str, caption: str = "",
     title = (caption.splitlines()[0][:80] if caption
              else first_line[:80] if first_line else "음성 메모")
     return await _ingest("audio", source_label, title, body, None, on_stage=on_stage)
+
+
+VIDEO_MAX_BYTES = 20 * 1024 * 1024
+
+
+async def ingest_video(video_bytes: bytes, source_label: str, caption: str = "",
+                       mime_type: str = "video/mp4",
+                       on_stage: StageCb = None) -> dict:
+    """Video file (screen recording, phone clip forwarded on Telegram —
+    NOT a YouTube link, that's ingest_url) → Gemini native video
+    understanding → text ingest. Caption is prepended so any
+    user-provided context survives.
+
+    HARD size cap (VIDEO_MAX_BYTES=20MB): same Gemini inline-request
+    limit as ingest_audio — a bigger file can never process inline, and
+    building the base64 request first would spike RAM for nothing
+    (mirrors the 2026-07-04 audio incident this guard was added for)."""
+    if len(video_bytes) > VIDEO_MAX_BYTES:
+        mb = len(video_bytes) // (1024 * 1024)
+        return {"status": "empty",
+                "title": f"영상 {mb}MB — 처리 한도 20MB 초과 "
+                         f"(짧게 잘라서 다시, 긴 영상은 유튜브 업로드 후 링크로)"}
+    if existing := await asyncio.to_thread(meta.find_by_source, source_label):
+        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    _emit(on_stage, "영상 분석")
+    transcript = await transcribe_video_async(video_bytes, mime_type=mime_type)
+    if not transcript:
+        return {"status": "empty", "title": "video"}
+    caption = (caption or "").strip()
+    body = (caption + "\n\n" + transcript).strip() if caption else transcript
+    first_line = body.strip().splitlines()[0] if body.strip() else ""
+    title = (caption.splitlines()[0][:80] if caption
+             else first_line[:80] if first_line else "영상")
+    return await _ingest("video", source_label, title, body, None, on_stage=on_stage)
 
 
 async def ingest_image(img_bytes: bytes, source_label: str, caption: str = "",

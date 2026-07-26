@@ -1482,8 +1482,8 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 <b>【4. 자연어 트리거】</b>
 🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 📑 disclosures "[회사] 공시" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL" · 회사+실적 질문→📌 실적 표(YoY·QoQ)+가이던스
 
-<b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·YouTube·텍스트 전송
-• PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · [OCR] 강제 · 음성=Gemini STT · YouTube=자막→Jina · <b>.txt/.md/.csv 학습 제외</b>
+<b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·영상·YouTube·텍스트 전송
+• PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · [OCR] 강제 · 음성=Gemini STT · 영상=Gemini 네이티브 이해(20MB 한도) · YouTube=자막→Jina · <b>.txt/.md/.csv 학습 제외</b>
 차단: LinkedIn/FB/IG · Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
 <b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
@@ -9301,7 +9301,7 @@ async def on_private(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     # Attachments — always ingest, never reach agent.
-    if msg.document or msg.photo or msg.voice or msg.audio:
+    if msg.document or msg.photo or msg.voice or msg.audio or msg.video:
         await _ingest_message(msg, ctx, notify_chat_id=msg.chat.id)
         return
 
@@ -10204,6 +10204,12 @@ def _retry_payload_from_msg(msg, chat_id: int) -> dict | None:
                 "file_name": a.file_name or "", "title": a.title or "",
                 "mime_type": a.mime_type or "audio/mpeg",
                 "caption": msg.caption or "", "chat_id": chat_id}
+    if msg.video:
+        v = msg.video
+        return {"kind": "video", "file_id": v.file_id,
+                "file_unique_id": v.file_unique_id,
+                "mime_type": v.mime_type or "video/mp4",
+                "caption": msg.caption or "", "chat_id": chat_id}
     urls, plain = _collect_message_urls(msg)
     if urls:
         return {"kind": "url", "url": urls[0], "chat_id": chat_id}
@@ -10534,6 +10540,38 @@ async def _ingest_audio_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE,
     )
 
 
+def _video_too_big(size: int | None) -> dict | None:
+    """Pre-download size gate for msg.video — same rationale as
+    _audio_too_big (20MB Gemini inline cap; don't pull a big video into
+    RAM just to refuse it after)."""
+    from .ingest.pipeline import VIDEO_MAX_BYTES
+    if size and size > VIDEO_MAX_BYTES:
+        mb = size // (1024 * 1024)
+        return {"status": "empty",
+                "title": f"영상 {mb}MB — 처리 한도 20MB 초과 "
+                         f"(짧게 잘라서 다시, 긴 영상은 유튜브 업로드 후 링크로)"}
+    return None
+
+
+async def _ingest_video_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE,
+                                   on_stage=None) -> dict:
+    """Telegram video upload (msg.video) — screen recording/clip, NOT a
+    YouTube link (that goes through pipeline.ingest_url). Gemini reads
+    the video natively (visual + audio) in one call."""
+    import io
+    video = msg.video
+    if blocked := _video_too_big(getattr(video, "file_size", 0)):
+        return blocked
+    file = await ctx.bot.get_file(video.file_id)
+    bio = io.BytesIO()
+    await file.download_to_memory(out=bio)
+    label = f"tg-video:{video.file_unique_id}"
+    return await pipeline.ingest_video(
+        bio.getvalue(), label, caption=msg.caption or "",
+        mime_type=video.mime_type or "video/mp4", on_stage=on_stage,
+    )
+
+
 async def _ingest_photo_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE,
                                    on_stage=None) -> dict:
     """Standalone photo (screenshot, table capture). Caption ≥80 chars
@@ -10744,6 +10782,35 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
                                 "error": _explain_error(e),
                                 "retry_payload": audio_retry})
 
+    if msg.video:
+        video = msg.video
+        video_retry = {
+            "kind": "video",
+            "file_id": video.file_id,
+            "file_unique_id": video.file_unique_id,
+            "mime_type": video.mime_type or "video/mp4",
+            "caption": msg.caption or "",
+        }
+        video_item = _enqueue_with_inflight(
+            {**video_retry, "chat_id": notify_chat_id}
+        )
+        try:
+            r = await _ingest_video_attachment(msg, ctx, on_stage=on_stage)
+            if r.get("status") in ("empty", "error"):
+                r["retry_payload"] = video_retry
+            results.append(r)
+            _finish_inflight(video_item, "done")
+        except Exception as e:
+            log.exception("video ingest failed")
+            if _is_retryable(e):
+                _finish_inflight(video_item, "retry")
+                results.append({"status": "queued", "title": "video"})
+            else:
+                _finish_inflight(video_item, "done")
+                results.append({"status": "error",
+                                "error": _explain_error(e),
+                                "retry_payload": video_retry})
+
     urls, plain = _collect_message_urls(msg)
     if urls:
         # URL loop is fanned out — a 9-URL Korean digest previously
@@ -10768,7 +10835,8 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
         results.extend(url_results)
 
     if (plain and not msg.document and not msg.photo
-            and not msg.voice and not msg.audio and len(plain) >= 80):
+            and not msg.voice and not msg.audio and not msg.video
+            and len(plain) >= 80):
         text_retry = {
             "kind": "text",
             "text": plain,
@@ -11835,6 +11903,17 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 r = await pipeline.ingest_audio(
                     bio.getvalue(), label, caption=cap,
                     mime_type=item.get("mime_type", "audio/ogg"),
+                )
+            elif kind == "video":
+                import io as _io
+                file = await ctx.bot.get_file(item["file_id"])
+                bio = _io.BytesIO()
+                await file.download_to_memory(out=bio)
+                label = f"tg-video:{item['file_unique_id']}"
+                r = await pipeline.ingest_video(
+                    bio.getvalue(), label,
+                    caption=item.get("caption", ""),
+                    mime_type=item.get("mime_type", "video/mp4"),
                 )
             elif kind == "text":
                 r = await pipeline.ingest_text(

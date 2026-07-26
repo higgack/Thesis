@@ -1713,6 +1713,27 @@ def _parse_merge(raw: str) -> tuple[str, dict]:
     return text + "\n", meta
 
 
+def _backup_page(topic: str, content: str) -> None:
+    """Snapshot a page's content right before an LLM rewrite overwrites
+    it, so a plausible-looking but still-lossy rewrite (one that clears
+    the 50%-length guard yet quietly drops a real fact) can be manually
+    recovered later — the length guard catches the extreme case, this
+    catches the rest (lean-ctx's "reversible pruning" idea, applied
+    without a full content-addressed store since a flat per-topic
+    history file is enough for a personal wiki). Best-effort: a backup
+    failure must never block consolidation itself."""
+    if not (content or "").strip():
+        return
+    try:
+        hist_dir = Path(config.DATA_DIR) / "wiki_history"
+        hist_dir.mkdir(parents=True, exist_ok=True)
+        safe = re.sub(r"[^\w가-힣.-]", "_", topic)[:80] or "topic"
+        ts = datetime.now(_KST).strftime("%Y%m%d_%H%M%S")
+        (hist_dir / f"{safe}_{ts}.md").write_text(content, encoding="utf-8")
+    except Exception:
+        log.exception("wiki pre-rewrite backup failed for %s", topic)
+
+
 def _append_docs(topic: str, existing: str, docs: list[dict]) -> dict:
     """Append new docs as dated sections — NO LLM call, ₩0 cost.
     Used when the page is below CONSOLIDATION_CHARS. The page grows
@@ -1789,10 +1810,30 @@ async def _consolidate_topic(topic: str, existing: str, docs: list[dict]) -> dic
     if len(page.strip()) < 20:
         return {"topic": topic, "ok": False, "docs": len(docs),
                 "contradictions": 0, "error": "empty consolidation output"}
+    # 손실 가드 (reintegrate_contradictions/wiki_fix와 동일 기준을 자동
+    # 컨솔리데이션 경로에도 적용 — 이 경로가 실제로 "236-source AI 페이지
+    # 초기 정보 유실" 사고의 원인이었음, CLAUDE.md 기록. /wiki_fix는 그
+    # 사고 이후 가드가 붙었는데 정작 매일 밤 도는 이 경로엔 없었음).
+    # 정상 재작성은 기존 분량과 비슷하거나 늘어난다; 절반 아래로 줄면
+    # 출력 잘림/과압축 사고로 보고 기존 페이지를 지우지 않는다. 대신 새
+    # 자료는 ₩0 append 경로로 그대로 흡수해 큐를 멈추지 않는다 — 이번
+    # 배치에서 안전하게 처리되는 것이지, 실패로 남아 매번 재시도되는 게
+    # 아니다.
+    if existing.strip() and len(page) < len(existing) * 0.5:
+        log.warning("wiki consolidate output too short for %s (%d→%d) — "
+                    "falling back to safe append", topic, len(existing), len(page))
+        fallback = _append_docs(topic, existing, docs)
+        fallback["mode"] = "consolidate_guarded_append"
+        fallback["error"] = (
+            f"컨솔리데이션 스킵(손실 가드, {len(existing)}→{len(page)}자) — "
+            "원문 그대로 append로 대체"
+        )
+        return fallback
     p = _page_path(topic)
     if p is None:
         return {"topic": topic, "ok": False, "docs": len(docs),
                 "contradictions": 0, "error": "no vault"}
+    _backup_page(topic, existing)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(p.suffix + f".{os.getpid()}.tmp")
@@ -2310,6 +2351,7 @@ async def reintegrate_contradictions(progress_cb=None) -> dict:
             out["failed"] += 1
             out["errors"].append(f"{topic}: no vault")
             continue
+        _backup_page(topic, page)
         try:
             tmp = p.with_suffix(p.suffix + f".{os.getpid()}.tmp")
             tmp.write_text(text, encoding="utf-8")
