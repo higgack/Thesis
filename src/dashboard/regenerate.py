@@ -25,6 +25,7 @@ from __future__ import annotations
 import html
 import logging
 import os
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -34,6 +35,85 @@ from ..store import qna, cost, meta as meta_store, vector as vector_store
 log = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
+
+
+def _pct(numer: int, denom: int) -> str:
+  if denom <= 0:
+    return "N/A"
+  return f"{(numer * 100.0 / denom):.1f}%"
+
+
+def _ops_kpi_snapshot() -> dict:
+  """Best-effort operational KPI snapshot for the dashboard cards.
+
+  Pulls from local SQLite stores; on any failure returns N/A-friendly
+  defaults so dashboard rendering never breaks.
+  """
+  from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+  out = {
+    "qna_success_rate": "N/A",
+    "qna_avg_latency_sec": None,
+    "ingest_success_rate": "N/A",
+    "ingest_processed": 0,
+    "ingest_pending": 0,
+    "wiki_today_krw": 0.0,
+  }
+  try:
+    kst = _tz(_td(hours=9))
+    day_start = _dt.now(kst).strftime("%Y-%m-%d 00:00:00")
+
+    dq = config.DATA_DIR / "dash_queries.db"
+    if dq.exists():
+      with sqlite3.connect(str(dq), timeout=5) as c:
+        row = c.execute(
+          "SELECT "
+          "SUM(CASE WHEN status='done' THEN 1 ELSE 0 END), "
+          "SUM(CASE WHEN status='error' THEN 1 ELSE 0 END), "
+          "COUNT(*) "
+          "FROM queries WHERE ts >= ?",
+          (day_start,),
+        ).fetchone()
+        done = int(row[0] or 0)
+        err = int(row[1] or 0)
+        total = int(row[2] or 0)
+        out["qna_success_rate"] = _pct(done, total)
+        lat = c.execute(
+          "SELECT AVG((julianday(done_ts)-julianday(ts))*86400.0) "
+          "FROM queries WHERE status='done' AND done_ts IS NOT NULL "
+          "AND ts >= ?",
+          (day_start,),
+        ).fetchone()
+        if lat and lat[0] is not None:
+          out["qna_avg_latency_sec"] = float(lat[0])
+
+    di = config.DATA_DIR / "dash_ingest.db"
+    if di.exists():
+      with sqlite3.connect(str(di), timeout=5) as c:
+        row = c.execute(
+          "SELECT "
+          "SUM(CASE WHEN status IN ('done','duplicate') THEN 1 ELSE 0 END), "
+          "SUM(CASE WHEN status NOT IN ('pending','running') THEN 1 ELSE 0 END), "
+          "SUM(CASE WHEN status IN ('pending','running') THEN 1 ELSE 0 END) "
+          "FROM ingests"
+        ).fetchone()
+        succ = int(row[0] or 0)
+        processed = int(row[1] or 0)
+        pending = int(row[2] or 0)
+        out["ingest_success_rate"] = _pct(succ, processed)
+        out["ingest_processed"] = processed
+        out["ingest_pending"] = pending
+  except Exception:
+    log.exception("ops KPI snapshot failed")
+
+  try:
+    out["wiki_today_krw"] = float(
+      cost.today_krw().get("by_purpose", {}).get("wiki", {})
+      .get("cost", 0.0)
+    )
+  except Exception:
+    out["wiki_today_krw"] = 0.0
+  return out
 
 _BASE_CSS = """
 /* Linear-style: near-white/black surfaces, thin borders (minimal shadow),
@@ -1372,6 +1452,9 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
     today_calls = stats.get("today_calls", 0)
     mtd_day = stats.get("mtd_day", 1) or 1
     avg_daily = (stats["mtd_krw"] / mtd_day) if stats.get("mtd_krw") else 0
+    qna_lat = stats.get("qna_avg_latency_sec")
+    qna_lat_txt = (f"{qna_lat:.1f}s" if isinstance(qna_lat, (int, float))
+             else "N/A")
 
     parts = [
         "<!DOCTYPE html><html lang='ko'><head>",
@@ -1417,6 +1500,29 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
               if stats.get("total_first_day") else "")
            if stats.get("total_cost_krw") else "")
         + "</div>",
+        "</div>",
+        "</div>",
+
+        "<div class='stats'>",
+        "<div class='stat-card'>",
+        "<div class='label'>🎯 KPI: 질의 성공률 (오늘)</div>",
+        f"<div class='value'>{stats.get('qna_success_rate', 'N/A')}</div>",
+        f"<div class='sub'>평균 응답지연 {qna_lat_txt}</div>",
+        "</div>",
+        "<div class='stat-card'>",
+        "<div class='label'>📥 KPI: 인입 성공률</div>",
+        f"<div class='value'>{stats.get('ingest_success_rate', 'N/A')}</div>",
+        f"<div class='sub'>처리 {stats.get('ingest_processed', 0):,}건 · 대기 {stats.get('ingest_pending', 0):,}건</div>",
+        "</div>",
+        "<div class='stat-card'>",
+        "<div class='label'>🧩 KPI: 문서당 청크</div>",
+        f"<div class='value'>{stats.get('chunks_per_doc', 0):.1f}</div>",
+        f"<div class='sub'>문서 {stats['docs']:,}개 기준</div>",
+        "</div>",
+        "<div class='stat-card'>",
+        "<div class='label'>📚 KPI: 위키 비용 (오늘)</div>",
+        f"<div class='value'>₩{stats.get('wiki_today_krw', 0.0):,.0f}</div>",
+        "<div class='sub'>목적 태그 purpose=wiki 기준</div>",
         "</div>",
         "</div>",
 
@@ -2065,6 +2171,7 @@ def regenerate() -> None:
         rows = qna.recent(limit=2000)
         today = cost.today_krw()
         mtd = cost.month_to_date_krw()
+        ops = _ops_kpi_snapshot()
         try:
             alltime = cost.total_krw()
         except Exception:
@@ -2075,6 +2182,10 @@ def regenerate() -> None:
             "total_qna": qna.count(),
             "docs": meta_store.count(),
             "chunks": vector_store.chunk_count(),
+          "chunks_per_doc": (
+            float(vector_store.chunk_count()) / float(meta_store.count())
+            if meta_store.count() > 0 else 0.0
+          ),
             "today_krw": today["total_krw"],
             "today_calls": today["calls"],
             "mtd_krw": mtd["total_krw"],
@@ -2084,6 +2195,12 @@ def regenerate() -> None:
             "total_cost_krw": alltime["total_krw"],
             "total_first_day": alltime["first_day"],
             "generated_at": generated_at,
+            "qna_success_rate": ops["qna_success_rate"],
+            "qna_avg_latency_sec": ops["qna_avg_latency_sec"],
+            "ingest_success_rate": ops["ingest_success_rate"],
+            "ingest_processed": ops["ingest_processed"],
+            "ingest_pending": ops["ingest_pending"],
+            "wiki_today_krw": ops["wiki_today_krw"],
         }
         # Atomic index write so the http.server never serves a
         # half-written page. pid-suffixed tmp: the bot and the dashboard
