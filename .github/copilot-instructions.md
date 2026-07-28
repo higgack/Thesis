@@ -177,3 +177,27 @@ than pushing straight to it, so the two agents' in-flight work doesn't
 silently clobber each other. Don't force-push shared branches. If you find
 uncommitted changes or an unfamiliar branch, assume it's the other agent's
 in-progress work — investigate before overwriting or deleting it.
+
+## About higgack/second-brain-vault (important)
+
+- `higgack/second-brain-vault` is NOT a code dependency of this repo.
+  It is not a submodule and has no clone/build/test relationship with this
+  repository. It is an output-only repository containing auto-generated
+  markdown notes.
+- The only linkage is two environment variables on the production VM `.env`
+  (not in this repo): `OBSIDIAN_VAULT_PATH` (bot-container local path, e.g.
+  `/data/vault`) and `OBSIDIAN_GIT_REMOTE` (URL like
+  `https://x-access-token:<PAT>@github.com/higgack/second-brain-vault.git`).
+- Writer code lives here: `src/store/obsidian.py` and `src/store/wiki.py`.
+  For each ingested document, the bot renders one markdown file (YAML
+  frontmatter + Summary/Source/Original sections) under
+  `SecondBrain/{Papers,Web,YouTube,Notes,Misc}/`, then runs `git add`
+  + `commit` + `push` in background. Push failures are guarded by a circuit
+  breaker so ingest is not blocked.
+- Therefore, Copilot should NOT clone, inspect, lint, review, or modify the
+  `second-brain-vault` repository for normal work in this codebase.
+  Unknown auto-commits such as `add: <title>` in that repo are expected bot
+  sync behavior, not human or agent edits.
+- If storage format must change (frontmatter schema, folder layout), change
+  code in this repo (`src/store/obsidian.py` / `src/store/wiki.py`) instead
+  of editing the vault repository directly.
