@@ -89,7 +89,7 @@ docker compose up --build
 bash scripts/preflight.sh
 
 # Windows PowerShell
-powershell -ExecutionPolicy Bypass -File scripts/preflight.ps1
+scripts\\preflight.cmd
 ```
 
 전체 파일 점검은 `--all` 옵션을 사용합니다.
