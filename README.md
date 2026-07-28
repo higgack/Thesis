@@ -82,12 +82,43 @@ cp .env.example .env       # 토큰 채우기
 docker compose up --build
 ```
 
+### push 전 점검 (필수)
+
+```bash
+# Linux/macOS
+bash scripts/preflight.sh
+
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File scripts/preflight.ps1
+```
+
+전체 파일 점검은 `--all` 옵션을 사용합니다.
+
 ## 배포 (Fly.io 무료 티어)
+
+### 1) AI Studio 방식 (기본)
 
 ```bash
 fly launch --no-deploy
 fly secrets set TELEGRAM_BOT_TOKEN=... GOOGLE_API_KEY=... \
   TELEGRAM_OWNER_ID=... \
+  OBSIDIAN_GIT_REMOTE='https://x-access-token:PAT@github.com/<you>/second-brain-vault.git'
+fly volumes create rag_data --size 1
+fly deploy
+```
+
+### 2) Vertex 방식 (권장 운영)
+
+`src/config.py` 기준으로 `GEMINI_BACKEND=vertex`이면 `GOOGLE_API_KEY` 대신
+`VERTEX_PROJECT`, `VERTEX_LOCATION`(예: us-central1) 설정을 사용합니다.
+
+```bash
+fly launch --no-deploy
+fly secrets set TELEGRAM_BOT_TOKEN=... \
+  TELEGRAM_OWNER_ID=... \
+  GEMINI_BACKEND=vertex \
+  VERTEX_PROJECT=<gcp-project-id> \
+  VERTEX_LOCATION=us-central1 \
   OBSIDIAN_GIT_REMOTE='https://x-access-token:PAT@github.com/<you>/second-brain-vault.git'
 fly volumes create rag_data --size 1
 fly deploy
