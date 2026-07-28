@@ -51,6 +51,14 @@ def _qna_conn(timeout: int = 30) -> sqlite3.Connection:
     """Shared Q&A DB connector for dashboard write/read handlers."""
     return sqlite3.connect(str(_QNA_DB), timeout=timeout)
 
+
+def _ensure_column(conn: sqlite3.Connection, table: str,
+                   column: str, ddl_suffix: str) -> None:
+    """Add a missing sqlite column on demand for legacy/fresh DB files."""
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_suffix}")
+
 _BASIC_USER = os.getenv("DASHBOARD_USER", "").strip()
 _BASIC_PASS = os.getenv("DASHBOARD_PASSWORD", "").strip()
 _BASIC_ENABLED = bool(_BASIC_USER and _BASIC_PASS)
@@ -573,10 +581,8 @@ class Handler(SimpleHTTPRequestHandler):
             with _notes_conn() as c:
                 # Defensive: the column normally exists (bot init_db adds
                 # it), but ensure it so a fresh DB can't 500 the click.
-                cols = {r[1] for r in c.execute("PRAGMA table_info(notes)")}
-                if "category_locked" not in cols:
-                    c.execute("ALTER TABLE notes ADD COLUMN "
-                              "category_locked INTEGER DEFAULT 0")
+                _ensure_column(c, "notes", "category_locked",
+                               "INTEGER DEFAULT 0")
                 n = c.execute(
                     "UPDATE notes SET category=?, category_locked=1 "
                     "WHERE id=?", (cat, nid)).rowcount
@@ -588,12 +594,7 @@ class Handler(SimpleHTTPRequestHandler):
             log.exception("note category set failed")
             self.send_error(500, f"set failed: {e}")
             return
-        body = json.dumps({"ok": True, "category": cat}).encode()
-        self.send_response(200)
-        self.send_header("content-type", "application/json; charset=utf-8")
-        self.send_header("content-length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._send_json({"ok": True, "category": cat})
 
     def _set_note_important(self, token: str, nid: str):
         """Toggle a note's 중요(important) flag from the dashboard ✓ button.
@@ -617,10 +618,8 @@ class Handler(SimpleHTTPRequestHandler):
             return
         try:
             with _notes_conn() as c:
-                cols = {r[1] for r in c.execute("PRAGMA table_info(notes)")}
-                if "important" not in cols:
-                    c.execute("ALTER TABLE notes ADD COLUMN "
-                              "important INTEGER DEFAULT 0")
+                _ensure_column(c, "notes", "important",
+                               "INTEGER DEFAULT 0")
                 n = c.execute("UPDATE notes SET important=? WHERE id=?",
                               (important, nid)).rowcount
             if not n:
@@ -631,12 +630,7 @@ class Handler(SimpleHTTPRequestHandler):
             log.exception("note important set failed")
             self.send_error(500, f"set failed: {e}")
             return
-        body = json.dumps({"ok": True, "important": bool(important)}).encode()
-        self.send_response(200)
-        self.send_header("content-type", "application/json; charset=utf-8")
-        self.send_header("content-length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._send_json({"ok": True, "important": bool(important)})
 
     def _set_mark(self, token: str):
         """Generic 중요 표시 토글 for wiki pages / KG edges via the shared
@@ -769,10 +763,8 @@ class Handler(SimpleHTTPRequestHandler):
             return
         try:
             with _qna_conn() as c:
-                cols = {r[1] for r in c.execute("PRAGMA table_info(qna)")}
-                if "important" not in cols:
-                    c.execute("ALTER TABLE qna ADD COLUMN "
-                              "important INTEGER DEFAULT 0")
+                _ensure_column(c, "qna", "important",
+                               "INTEGER DEFAULT 0")
                 n = c.execute("UPDATE qna SET important=? WHERE id=?",
                               (important, qid)).rowcount
             if not n:
@@ -783,12 +775,7 @@ class Handler(SimpleHTTPRequestHandler):
             log.exception("qna important set failed")
             self.send_error(500, f"set failed: {e}")
             return
-        body = json.dumps({"ok": True, "important": bool(important)}).encode()
-        self.send_response(200)
-        self.send_header("content-type", "application/json; charset=utf-8")
-        self.send_header("content-length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self._send_json({"ok": True, "important": bool(important)})
 
     def _handle_ask_post(self, token: str):
         """Park a dashboard search-box query for the bot to run. Returns
