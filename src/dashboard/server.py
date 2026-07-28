@@ -41,6 +41,16 @@ _DOC_ROOT = _DATA_DIR / "dashboard"
 _QNA_DB = _DATA_DIR / "qna.db"
 _NOTES_DB = _DATA_DIR / "notes.db"
 
+
+def _notes_conn(timeout: int = 30) -> sqlite3.Connection:
+    """Shared notes DB connector for dashboard write/read handlers."""
+    return sqlite3.connect(str(_NOTES_DB), timeout=timeout)
+
+
+def _qna_conn(timeout: int = 30) -> sqlite3.Connection:
+    """Shared Q&A DB connector for dashboard write/read handlers."""
+    return sqlite3.connect(str(_QNA_DB), timeout=timeout)
+
 _BASIC_USER = os.getenv("DASHBOARD_USER", "").strip()
 _BASIC_PASS = os.getenv("DASHBOARD_PASSWORD", "").strip()
 _BASIC_ENABLED = bool(_BASIC_USER and _BASIC_PASS)
@@ -560,7 +570,7 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json({"error": "허용되지 않은 종류"}, 400)
             return
         try:
-            with sqlite3.connect(str(_NOTES_DB), timeout=30) as c:
+            with _notes_conn() as c:
                 # Defensive: the column normally exists (bot init_db adds
                 # it), but ensure it so a fresh DB can't 500 the click.
                 cols = {r[1] for r in c.execute("PRAGMA table_info(notes)")}
@@ -606,7 +616,7 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json({"error": "잘못된 요청"}, 400)
             return
         try:
-            with sqlite3.connect(str(_NOTES_DB), timeout=30) as c:
+            with _notes_conn() as c:
                 cols = {r[1] for r in c.execute("PRAGMA table_info(notes)")}
                 if "important" not in cols:
                     c.execute("ALTER TABLE notes ADD COLUMN "
@@ -758,7 +768,7 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json({"error": "잘못된 요청"}, 400)
             return
         try:
-            with sqlite3.connect(str(_QNA_DB), timeout=30) as c:
+            with _qna_conn() as c:
                 cols = {r[1] for r in c.execute("PRAGMA table_info(qna)")}
                 if "important" not in cols:
                     c.execute("ALTER TABLE qna ADD COLUMN "
@@ -861,7 +871,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(404)
             return
         try:
-            with sqlite3.connect(str(_NOTES_DB), timeout=30) as c:
+            with _notes_conn() as c:
                 row = c.execute(
                     "SELECT md_path FROM notes WHERE id=?", (nid,)).fetchone()
                 md_path = row[0] if row else None
@@ -899,7 +909,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(403, "forbidden")
             return
         try:
-            with sqlite3.connect(str(_QNA_DB), timeout=30) as c:
+            with _qna_conn() as c:
                 cur = c.execute("DELETE FROM qna WHERE id = ?", (qid,))
                 n = cur.rowcount
             log.info("deleted qna #%d (rows=%d)", qid, n)
