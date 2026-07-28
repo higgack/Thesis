@@ -139,6 +139,36 @@ API/service-account config, a GitHub PAT, and dashboard credentials. Never
 print/log/echo its contents. If you ever see it pasted into a prompt or
 issue, flag it and recommend rotation rather than just proceeding.
 
+## A related repo you'll see referenced but should never need to touch
+
+`higgack/second-brain-vault` (private) is the Obsidian vault this bot
+syncs to. It is **not a code dependency of this repo** — no submodule, no
+clone, no build/test relationship. It's pure output: auto-generated
+markdown notes, nothing else.
+
+- **Connection is two env vars only**, set in `.env` on the production VM
+  (not present anywhere in this repo): `OBSIDIAN_VAULT_PATH` (a local
+  directory path inside the bot container, e.g. `/data/vault`) and
+  `OBSIDIAN_GIT_REMOTE` (a `https://x-access-token:<PAT>@github.com/
+  higgack/second-brain-vault.git` URL).
+- **Who writes to it**: `src/store/obsidian.py`. Every ingested doc gets
+  rendered as one markdown file (YAML frontmatter + `## Summary` /
+  `## Source` / `## Original`) under `SecondBrain/{Papers,Web,YouTube,
+  Notes,Misc}/`, then the bot itself runs `git add` + `git commit` + `git
+  push` directly against that repo in a background task (fire-and-forget —
+  a slow/hung remote must never block ingest; there's a push-failure
+  circuit breaker). The wiki batch job does the same via `commit_subtree`
+  in `src/store/wiki.py` for its own pages.
+- **What this means for you**: you will never need to clone, open, or edit
+  `second-brain-vault` to work on this repo. If you ever see it (e.g. a
+  user mentions unfamiliar auto-generated commits like `"add: <title>"`
+  showing up there), that's the bot's own automated sync — not something a
+  human or another agent wrote, and not something to review, lint, or
+  "fix." If a task genuinely requires changing what gets written there
+  (e.g. the frontmatter schema or folder layout), the code to change is
+  `src/store/obsidian.py` / `src/store/wiki.py` in *this* repo — not the
+  vault repo itself.
+
 ## Working alongside Claude Code on this same repo
 
 This repo is being developed by both Claude Code sessions and Copilot.
