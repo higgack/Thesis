@@ -1,0 +1,154 @@
+services:
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    profiles: ["local-api"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TELEGRAM_LOCAL: "1"
+    volumes:
+      - tg-bot-api-data:/var/lib/telegram-bot-api
+
+  bot:
+    build: .
+    env_file: .env
+    # tini as PID 1 (reaps zombies). `python -m src.bot` would otherwise
+    # be PID 1, and yt-dlp's transient children (Deno/yt-dlp-ejs runtime,
+    # ffmpeg) get orphaned and reparented to PID 1; a plain Python process
+    # never wait()s on reparented orphans, so they pile up as <defunct>
+    # (observed 143 zombies on the us-central1 VM). tini reaps them.
+    init: true
+    # HF_HOME inside /app/data so the BGE-reranker download (~380MB)
+    # persists across container rebuilds via the bind mount.
+    environment:
+      HF_HOME: /app/data/hf_cache
+    volumes:
+      - ./data:/app/data
+      - tg-bot-api-data:/var/lib/telegram-bot-api
+    restart: unless-stopped
+    # Sized for the LIVE VM = e2-highmem-2 (2 vCPU, 16 GB RAM — upgraded
+    # 2026-07-05 from e2-standard-2/8GB). The corpus outgrew the old box:
+    # chroma's HNSW keeps every embedding in RAM (3072-dim × 354k chunks
+    # ≈ 4.4 GB and growing with each ingest), so the bot sat at ~93-95%
+    # of the old 5500m cap and the kernel's reclaim thrash stalled the
+    # event loop for 20-40 min at a time (heartbeat alerts, frozen
+    # ingest). 11g leaves the OS + telegram-bot-api + listener +
+    # dashboard + the co-tenant `stock`/`stock-trade` host bots ~5 GB.
+    # NEVER set this above physical RAM (the old 12000m mistake let the
+    # kernel OOM-killer fire on random processes). Paired with
+    # INGEST_SEM_CAPACITY (bot.py, default 6 since the RAM headroom
+    # allows real parallel ingest again).
+    mem_limit: 11g
+    # Default 10s SIGTERM→SIGKILL is too short for any non-trivial
+    # ingest. 120s lets short jobs (URLs, text, photos, small PDFs)
+    # finish cleanly during deploys; longer jobs are still safe
+    # because every live ingest is persisted in retry_queue.json with
+    # in_flight_ts BEFORE work begins (bot.py: _enqueue_with_inflight)
+    # — startup load strips stale in_flight_ts and the retry tick
+    # resumes the work within 10 s of the new container coming up.
+    stop_grace_period: 120s
+    # Vertex ADC fetches the SA token from metadata.google.internal, which
+    # the custom `dns:` below (8.8.8.8) can't resolve — pin the link-local
+    # metadata IP so google-auth works in-container (embed + generation
+    # both failed with "Failed to retrieve metadata.google.internal").
+    extra_hosts:
+      - "metadata.google.internal:169.254.169.254"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
+  # Mirrors a source channel (LISTEN_CHANNEL env) to the bot DM in
+  # real time. Runs as its own container so bot redeploys don't
+  # interrupt the listener — and Docker auto-restarts it if Telethon
+  # disconnects.
+  # Digest mode: only Noah Second Brain's 📋 Telegram and 📰 Substack
+  # digests get expanded into per-source ingests; 🐦 X digests + all
+  # other forwards are dropped. This keeps cost predictable (~₩10k/mo)
+  # while still funnelling the high-value daily summaries.
+  forward-listener:
+    build: .
+    env_file: .env
+    command: ["python", "-m", "src.scripts.forward_listener"]
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - bot
+    restart: unless-stopped
+    mem_limit: 400m
+    extra_hosts:
+      - "metadata.google.internal:169.254.169.254"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
+  # Static-file dashboard with a one-tap delete endpoint. Pure-stdlib
+  # http.server subclass; only DASHBOARD_TOKEN-scoped DELETE writes
+  # back to qna.db. Same image as bot to share deps, but the entry
+  # point is server.py instead of bot.py. Replaces the host-side
+  # systemd unit so containers + dashboard share the same lifecycle
+  # and auto-deploy.
+  dashboard:
+    build: .
+    env_file: .env
+    command: ["python", "-m", "src.dashboard.server"]
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - bot
+    restart: unless-stopped
+    mem_limit: 200m
+    extra_hosts:
+      - "metadata.google.internal:169.254.169.254"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
+  # Local PaddleOCR worker — DORMANT BY DEFAULT (profile gating).
+  # The bot routes Vision OCR through src/ingest/ocr_client.py which
+  # picks a backend from the OCR_BACKEND env var (default 'gemini' =
+  # current behaviour, no worker needed). Set OCR_BACKEND=local or
+  # OCR_BACKEND=hybrid AND start this service to opt into PaddleOCR:
+  #
+  #     docker compose --profile ocr-local up -d ocr-worker
+  #     docker compose up -d --force-recreate bot   # picks up env
+  #
+  # Why dormant: PaddleOCR has a ~1GB image and ~3GB resident memory.
+  # Most users won't need it until daily PDF ingest volume crosses
+  # ~30/day, at which point the Vision OCR bill starts to matter.
+  # cpus: '2' caps the worker at half the VM so the bot retains
+  # full responsiveness even during a 30-PDF batch.
+  ocr-worker:
+    build: ./ocr-worker
+    profiles: ["ocr-local"]
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    cpus: '2'
+    mem_limit: 4g
+    environment:
+      OCR_QUEUE_DIR: /app/data/ocr_queue
+      OCR_RESULT_DIR: /app/data/ocr_results
+      OCR_POLL_INTERVAL: '0.5'
+      # paddle 3.x crashes with 'NotImplementedError: Convert
+      # PirAttribute2RuntimeAttribute not support [pir::Array
+      # Attribute<pir::DoubleAttribute>] at onednn_instruction.cc:
+      # 116' on PaddleOCR's text-detection model. The crash is in
+      # paddle's oneDNN (MKL-DNN) backend's PIR adapter — a
+      # documented paddle 3.x regression. Two flags together to
+      # fully bypass the buggy path:
+      #   FLAGS_enable_pir_in_executor=0  → skip new PIR executor
+      #   FLAGS_use_mkldnn=0              → skip oneDNN backend
+      # PIR-only disable alone didn't work in practice (worker still
+      # routed through oneDNN somewhere); MKL-DNN-off forces every
+      # op to fall back to paddle's standard CPU kernels. Net
+      # impact: ~20-40% slower per page, no correctness change.
+      FLAGS_enable_pir_in_executor: '0'
+      FLAGS_use_mkldnn: '0'
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
+volumes:
+  tg-bot-api-data:

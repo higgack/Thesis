@@ -1,0 +1,34 @@
+; Drop into /etc/systemd/system/second-brain-dashboard.service
+;
+; Serves the static Q&A archive HTML written by
+; src/dashboard/regenerate.py. Bind port can be changed via
+; DASHBOARD_PORT in /etc/default/second-brain-dashboard if you
+; want something other than 8082; pick any non-default port that
+; your ISP+browser combination actually allows (your neighbors
+; 8080/8081 work, so this 8082 should as well).
+;
+; Install:
+;   sudo cp scripts/second-brain-dashboard.service /etc/systemd/system/
+;   sudo systemctl daemon-reload
+;   sudo systemctl enable --now second-brain-dashboard
+;
+; The dashboard URL is then:
+;   http://<external-IP>:8082/<DASHBOARD_TOKEN>/
+;
+[Unit]
+Description=Second Brain static dashboard (python http.server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=higgack
+WorkingDirectory=/home/higgack/Thesis/data/dashboard
+ExecStart=/usr/bin/python3 -m http.server 8082 --bind 0.0.0.0
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

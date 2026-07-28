@@ -1,0 +1,448 @@
+"""KISTI NTIS Open API client (vendored from ansua79/kisti-mcp,
+CC-BY-NC-4.0).
+
+NTIS = 국가과학기술지식정보서비스. Three services unified under a
+single NTIS_API_KEY (each one needs separate 활용신청 on
+ntis.go.kr but the issued key works across all three):
+
+  1. 국가R&D 과제검색 (public_project) — government-funded R&D
+     project search. Returns project ID + 수행기관 + 연구비 +
+     과제번호 + 책임자 + 기간.
+  2. 연관콘텐츠 추천 (ConnectionContent) — given a project ID,
+     surfaces related papers / patents / reports / projects.
+
+No token exchange — just GET with `apprvKey` URL param. JSON or
+XML response depending on endpoint.
+"""
+import json
+import logging
+import os
+import xml.etree.ElementTree as ET
+from typing import Any
+
+import httpx
+
+log = logging.getLogger(__name__)
+
+_NTIS_BASE = "https://www.ntis.go.kr"
+
+
+def _key() -> str:
+    return os.getenv("NTIS_API_KEY", "").strip()
+
+
+def _parse_xml_records(text: str) -> list[dict[str, str]]:
+    """Legacy NTIS schema parser — <result><record>...</record>×N
+    with flat child tags. Returns [] on parse failure or error
+    status. Kept for any classic-schema endpoint that hasn't moved
+    to the new <RESULTSET><HIT> structure yet."""
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as e:
+        log.warning("ntis XML parse failed: %s", e)
+        return []
+    # NTIS error envelope: <result><resultCode>X</resultCode>
+    # <resultMsg>...</resultMsg></result>. Skip when not 00.
+    rc = root.find(".//resultCode")
+    if rc is not None and (rc.text or "").strip() not in ("00", "200"):
+        msg = root.find(".//resultMsg")
+        log.warning("ntis error %s: %r",
+                    rc.text,
+                    (msg.text or "")[:200] if msg is not None else "")
+        return []
+    out: list[dict[str, str]] = []
+    for tag in ("record", "rec", "item", "recommendItem"):
+        for rec in root.findall(f".//{tag}"):
+            row: dict[str, str] = {}
+            for child in rec:
+                if child.text and child.tag:
+                    row[child.tag] = child.text.strip()
+            if row:
+                out.append(row)
+        if out:
+            break
+    return out
+
+
+# Strip <span class="search_word">...</span> HTML highlight markers
+# NTIS injects into matched text. The XML carries them as &lt;span&gt;
+# entities; ElementTree decodes back to literal <span>...</span> in
+# the text() value, and we strip with a non-greedy regex. Multiline
+# safe because none of these spans cross newlines.
+import re as _re
+_SEARCH_HIGHLIGHT_RE = _re.compile(r"<[^>]+>")
+
+
+def _strip_highlight(text: str | None) -> str:
+    if not text:
+        return ""
+    return _SEARCH_HIGHLIGHT_RE.sub("", text).strip()
+
+
+def _ntis_hit_to_dict(hit: "ET.Element") -> dict[str, str]:
+    """Map one <HIT> element from NTIS public_project (new schema,
+    confirmed live 2026-05) into the flat-dict shape the bot's
+    _format_ntis_projects formatter expects (ProjectNumber /
+    ProjectTitle / ResearchLeader / ResearchAgency / Abstract /
+    Goal / Keyword / Researchers).
+
+    New schema example:
+      <HIT NO="1">
+        <ProjectNumber>...</ProjectNumber>
+        <ProjectTitle><Korean>...</Korean><English>...</English></ProjectTitle>
+        <Manager><Name>...</Name></Manager>
+        <OrderAgency><Name>...</Name></OrderAgency>
+        <Researchers><Name>...</Name><ManCount>...</ManCount>
+                     <WomanCount>...</WomanCount></Researchers>
+        <Goal><Full>...</Full><Teaser>...</Teaser></Goal>
+        <Abstract><Full>...</Full><Teaser>...</Teaser></Abstract>
+        <Keyword><Korean>...</Korean><English>...</English></Keyword>
+      </HIT>
+    """
+    out: dict[str, str] = {}
+
+    def _t(path: str) -> str:
+        el = hit.find(path)
+        return _strip_highlight(el.text) if el is not None else ""
+
+    pn = _t("ProjectNumber")
+    if pn:
+        out["ProjectNumber"] = pn
+    title = _t("ProjectTitle/Korean") or _t("ProjectTitle/English")
+    if title:
+        out["ProjectTitle"] = title
+    mgr = _t("Manager/Name")
+    if mgr:
+        out["ResearchLeader"] = mgr
+    agency = _t("OrderAgency/Name")
+    if agency:
+        out["ResearchAgency"] = agency
+    # Researchers — keep the name list (semicolon-separated) +
+    # man/woman count. Useful for "이 과제 누가 했나" type queries.
+    rnames = _t("Researchers/Name")
+    rmc = _t("Researchers/ManCount")
+    rwc = _t("Researchers/WomanCount")
+    if rmc or rwc:
+        bits = []
+        if rmc:
+            bits.append(f"남 {rmc}")
+        if rwc:
+            bits.append(f"여 {rwc}")
+        out["Researchers"] = " · ".join(bits)
+        if rnames:
+            out["ResearcherNames"] = rnames
+    abs_text = _t("Abstract/Teaser") or _t("Abstract/Full")
+    if abs_text:
+        out["Abstract"] = abs_text
+    goal = _t("Goal/Full") or _t("Goal/Teaser")
+    if goal:
+        out["Goal"] = goal
+    effect = _t("Effect/Full") or _t("Effect/Teaser")
+    if effect:
+        out["Effect"] = effect
+    kw = _t("Keyword/Korean")
+    if kw:
+        out["Keyword"] = kw
+    # Year / budget / period fields may show up further in the HIT —
+    # extract opportunistically from any direct text child that looks
+    # like a year (4 digits) or has a known tag name.
+    for child in hit:
+        tag = child.tag
+        if tag in ("ResearchYear", "Year", "ProjectYear") and child.text:
+            out["ResearchYear"] = child.text.strip()
+        elif tag in ("ResearchPeriod", "Period") and child.text:
+            out["ResearchPeriod"] = child.text.strip()
+        elif tag in ("ResearchExpenses", "Budget",
+                     "TotalBudget", "Expense") and child.text:
+            out["ResearchExpenses"] = child.text.strip()
+    return out
+
+
+def _parse_ntis_projects_response(text: str) -> list[dict[str, str]]:
+    """Parse the public_project XML response. Tries the new
+    <RESULT><RESULTSET><HIT> schema first; falls back to the legacy
+    <result><record> shape (or returns [] for genuine empty / error
+    cases)."""
+    # Error envelope: <error>유효한 인증키가 아닙니다. 인증키 : ...</error>
+    if text.lstrip().startswith("<error>") or "<error>" in text[:200]:
+        # Try to extract the message for the log.
+        try:
+            root = ET.fromstring(text)
+            if root.tag == "error":
+                log.warning("ntis error: %r", (root.text or "")[:200])
+                return []
+        except ET.ParseError:
+            log.warning("ntis error response (raw): %r", text[:200])
+            return []
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as e:
+        log.warning("ntis projects XML parse failed: %s "
+                    "(first 200 chars: %r)", e, text[:200])
+        return []
+    # New schema (2026-05+): <RESULT>/<RESULTSET>/<HIT>
+    hits = root.findall(".//HIT")
+    if hits:
+        out = [_ntis_hit_to_dict(h) for h in hits]
+        return [r for r in out if r]
+    # Fall through to legacy parser for endpoints that haven't
+    # migrated (the classification-recommend service might still
+    # return old <record> structure).
+    return _parse_xml_records(text)
+
+
+def _parse_json_records(text: str) -> list[dict[str, Any]]:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        log.warning("ntis JSON parse failed: %s", e)
+        return []
+    # NTIS 연관콘텐츠 returns {"items": [...]} or similar shapes.
+    # Try the common candidates.
+    for path in ("items", "result", "records", "data"):
+        items = data.get(path)
+        if isinstance(items, list):
+            return items
+        if isinstance(items, dict):
+            for sub in ("items", "list", "records"):
+                if isinstance(items.get(sub), list):
+                    return items[sub]
+    # Fallback — return the dict as a single row.
+    return [data] if isinstance(data, dict) else []
+
+
+async def search_projects(query: str, limit: int = 10) -> list[dict[str, Any]]:
+    """국가 R&D 과제 검색. Returns rows with 과제번호 (pjtId),
+    과제명, 수행기관, 연구책임자, 연구기간, 연구비 etc."""
+    key = _key()
+    if not key:
+        log.info("ntis: no NTIS_API_KEY set, skipping projects")
+        return []
+    params = {
+        "apprvKey": key,
+        "userId": "",
+        "collection": "project",
+        "SRWR": query,
+        "searchFd": "",
+        "addQuery": "",
+        "searchRnkn": "",
+        "startPosition": 1,
+        "displayCnt": min(max(1, limit), 100),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.get(f"{_NTIS_BASE}/rndopen/openApi/public_project",
+                               params=params)
+            if r.status_code != 200:
+                log.warning("ntis project %d: %r",
+                            r.status_code, r.text[:200])
+                return []
+            return _parse_ntis_projects_response(r.text)
+    except Exception as e:
+        log.warning("ntis search_projects failed: %s", e)
+        return []
+
+
+
+async def related_content(
+    pjt_id: str, collection_type: str = "researchreport",
+) -> list[dict[str, Any]]:
+    """과제 ID 로 연관 콘텐츠 (논문/특허/보고서/관련과제) 추천.
+    collection_type 옵션:
+      'paper' / 'patent' / 'researchreport' / 'project'."""
+    key = _key()
+    if not (key and pjt_id):
+        return []
+    params = {
+        "apprvKey": key,
+        "pjtId": pjt_id,
+        "collection": collection_type,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.get(
+                f"{_NTIS_BASE}/rndopen/openApi/ConnectionContent",
+                params=params,
+            )
+            if r.status_code != 200:
+                log.warning("ntis related %d: %r",
+                            r.status_code, r.text[:200])
+                return []
+            # 연관콘텐츠 returns JSON unlike the other NTIS endpoints
+            return _parse_json_records(r.text)
+    except Exception as e:
+        log.warning("ntis related_content failed: %s", e)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Additional NTIS "전체용" services applied for 2026-05-20. Endpoints
+# below are best-guess from NTIS naming conventions (public_<thing>);
+# the bot/agent layer treats a 4xx / empty response as graceful zero-
+# rows, and the diagnostic log records the actual URL the first call
+# uses so the right path can be confirmed once approval comes in.
+#
+# Services & expected endpoints:
+#   4번 국가R&D 성과검색      → public_paper / public_patent / public_equipment
+#   6번 수행기관 R&D현황      → public_organization (또는 publicOrgRnd)
+#   7번 국가R&D 연구보고서    → public_report
+#   9번 이슈로보는 R&D        → public_issue (또는 issueRnd)
+#
+# All four reuse the same _parse_ntis_projects_response parser since
+# NTIS uses the unified <RESULT><RESULTSET><HIT> schema across the
+# 2026-05 portal. Per-service field cleanup happens in the bot
+# formatter once we see the actual first-row keys.
+# ---------------------------------------------------------------------------
+
+
+_NTIS_OUTCOME_COLLECTIONS = {
+    "paper":     ("public_paper",     "paper"),
+    "patent":    ("public_patent",    "patent"),
+    "equipment": ("public_equipment", "equipment"),
+}
+
+
+async def search_outcomes(
+    query: str, kind: str = "paper", limit: int = 10,
+) -> list[dict[str, Any]]:
+    """국가R&D 성과검색 (4번, 전체용). kind: 'paper' / 'patent' /
+    'equipment' — 국가R&D 사업에서 산출된 논문 / 특허 / 연구시설장비
+    메타. ScienceON ARTI/PATENT 와는 다른 인덱스 (정부R&D 한정).
+    활용신청 승인 후 실제 endpoint 명세에 맞춰 path/collection 조정
+    필요할 수 있음."""
+    key = _key()
+    if not key:
+        return []
+    endpoint, coll = _NTIS_OUTCOME_COLLECTIONS.get(
+        kind, _NTIS_OUTCOME_COLLECTIONS["paper"]
+    )
+    params = {
+        "apprvKey": key,
+        "userId": "",
+        "collection": coll,
+        "SRWR": query,
+        "searchFd": "",
+        "addQuery": "",
+        "searchRnkn": "",
+        "startPosition": 1,
+        "displayCnt": min(max(1, limit), 100),
+    }
+    url = f"{_NTIS_BASE}/rndopen/openApi/{endpoint}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.get(url, params=params)
+            log.info("ntis outcomes %s → %d (url=%s)",
+                     kind, r.status_code, url)
+            if r.status_code != 200:
+                log.warning("ntis outcomes %d: %r",
+                            r.status_code, r.text[:200])
+                return []
+            return _parse_ntis_projects_response(r.text)
+    except Exception as e:
+        log.warning("ntis search_outcomes(%s) failed: %s", kind, e)
+        return []
+
+
+async def search_research_reports(
+    query: str, limit: int = 10,
+) -> list[dict[str, Any]]:
+    """국가R&D 연구보고서 검색 (7번, 전체용). 정부R&D 과제에서
+    산출된 연구보고서 메타. ScienceON REPORT 와 보완 관계 — NTIS
+    쪽이 예산 / 주관기관 / 과제번호 같은 행정 메타에 더 정확."""
+    key = _key()
+    if not key:
+        return []
+    params = {
+        "apprvKey": key,
+        "userId": "",
+        "collection": "report",
+        "SRWR": query,
+        "searchFd": "",
+        "addQuery": "",
+        "searchRnkn": "",
+        "startPosition": 1,
+        "displayCnt": min(max(1, limit), 100),
+    }
+    url = f"{_NTIS_BASE}/rndopen/openApi/public_report"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.get(url, params=params)
+            log.info("ntis reports → %d (url=%s)", r.status_code, url)
+            if r.status_code != 200:
+                log.warning("ntis reports %d: %r",
+                            r.status_code, r.text[:200])
+                return []
+            return _parse_ntis_projects_response(r.text)
+    except Exception as e:
+        log.warning("ntis search_research_reports failed: %s", e)
+        return []
+
+
+async def search_agency_rnd(
+    query: str, limit: int = 10,
+) -> list[dict[str, Any]]:
+    """국가R&D 수행기관 R&D현황 (6번, 전체용). 기관명으로 그 기관의
+    국가R&D 수행 과제/예산/논문 통계를 조회. 기업 분석, IR 자료
+    작성, KAIST 같은 출연(연) 비교에 유용."""
+    key = _key()
+    if not key:
+        return []
+    params = {
+        "apprvKey": key,
+        "userId": "",
+        "collection": "organization",
+        "SRWR": query,
+        "searchFd": "",
+        "addQuery": "",
+        "searchRnkn": "",
+        "startPosition": 1,
+        "displayCnt": min(max(1, limit), 100),
+    }
+    url = f"{_NTIS_BASE}/rndopen/openApi/public_organization"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.get(url, params=params)
+            log.info("ntis agency → %d (url=%s)", r.status_code, url)
+            if r.status_code != 200:
+                log.warning("ntis agency %d: %r",
+                            r.status_code, r.text[:200])
+                return []
+            return _parse_ntis_projects_response(r.text)
+    except Exception as e:
+        log.warning("ntis search_agency_rnd failed: %s", e)
+        return []
+
+
+async def search_rnd_issues(
+    query: str, limit: int = 10,
+) -> list[dict[str, Any]]:
+    """이슈로보는R&D (9번, 전체용). 최신 과학기술 이슈 + 관련
+    국가R&D 현황 / 키워드 / 트렌드. ScienceON TREND 와 비슷한
+    역할이지만 정부R&D 한정 코퍼스."""
+    key = _key()
+    if not key:
+        return []
+    params = {
+        "apprvKey": key,
+        "userId": "",
+        "collection": "issue",
+        "SRWR": query,
+        "searchFd": "",
+        "addQuery": "",
+        "searchRnkn": "",
+        "startPosition": 1,
+        "displayCnt": min(max(1, limit), 100),
+    }
+    url = f"{_NTIS_BASE}/rndopen/openApi/public_issue"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            r = await http.get(url, params=params)
+            log.info("ntis issues → %d (url=%s)", r.status_code, url)
+            if r.status_code != 200:
+                log.warning("ntis issues %d: %r",
+                            r.status_code, r.text[:200])
+                return []
+            return _parse_ntis_projects_response(r.text)
+    except Exception as e:
+        log.warning("ntis search_rnd_issues failed: %s", e)
+        return []

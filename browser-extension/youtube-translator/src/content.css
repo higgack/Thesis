@@ -1,0 +1,85 @@
+/* ===== Subtitle overlay ===== */
+#ytt-overlay {
+  position: absolute; left: 50%; bottom: 9%; transform: translateX(-50%);
+  max-width: 86%; text-align: center; pointer-events: none; z-index: 60;
+}
+#ytt-overlay .ytt-ov-trans {
+  display: inline-block; background: rgba(8,8,8,0.78); color: #fff;
+  font-size: clamp(16px,2.4vw,30px); font-weight: 600; line-height: 1.35;
+  padding: 2px 10px; border-radius: 4px; text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+}
+#ytt-overlay .ytt-ov-orig {
+  display: none; margin-top: 4px; background: rgba(8,8,8,0.6); color: #ddd;
+  font-size: clamp(13px,1.8vw,22px); padding: 1px 8px; border-radius: 4px;
+}
+/* ===== Script panel ===== */
+#ytt-panel {
+  background: var(--yt-spec-base-background,#0f0f0f);
+  border: 1px solid var(--yt-spec-10-percent-layer,#303030);
+  border-radius: 12px; margin: 0 0 16px 0; overflow: hidden;
+  font-family: "Roboto","Noto Sans KR",Arial,sans-serif;
+  color: var(--yt-spec-text-primary,#f1f1f1);
+}
+#ytt-panel.ytt-floating {
+  position: fixed; top: 80px; right: 16px; width: 360px; max-height: 70vh;
+  z-index: 9999; box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+}
+#ytt-panel .ytt-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; border-bottom: 1px solid var(--yt-spec-10-percent-layer,#303030);
+  flex-wrap: wrap; gap: 6px;
+}
+#ytt-panel .ytt-panel-title { font-size: 15px; font-weight: 700; }
+#ytt-panel .ytt-panel-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+#ytt-panel .ytt-btn {
+  background: var(--yt-spec-badge-chip-background,#272727);
+  color: var(--yt-spec-text-primary,#f1f1f1); border: none; border-radius: 14px;
+  padding: 5px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+#ytt-panel .ytt-btn:hover { background: #3f3f3f; }
+#ytt-panel .ytt-btn:disabled { opacity: 0.5; cursor: default; }
+#ytt-panel .ytt-btn.ytt-save { background: #3ea6ff; color: #0f0f0f; }
+#ytt-panel .ytt-btn.ytt-save:hover { background: #65b8ff; }
+#ytt-panel .ytt-panel-body { max-height: 460px; overflow-y: auto; padding: 4px 0; }
+#ytt-panel.ytt-floating .ytt-panel-body { max-height: calc(70vh - 48px); }
+#ytt-panel.ytt-collapsed .ytt-panel-body { display: none; }
+#ytt-panel .ytt-empty {
+  padding: 20px 14px; color: var(--yt-spec-text-secondary,#aaa);
+  font-size: 13px; text-align: center;
+}
+#ytt-panel .ytt-row {
+  display: flex; gap: 8px; padding: 8px 12px; border-left: 3px solid transparent;
+}
+#ytt-panel .ytt-row:hover { background: rgba(255,255,255,0.05); }
+#ytt-panel .ytt-row.ytt-active {
+  background: rgba(62,166,255,0.12); border-left-color: #3ea6ff;
+}
+#ytt-panel .ytt-ts {
+  flex: 0 0 auto; background: none; border: none; color: #3ea6ff;
+  font-size: 12px; font-weight: 600; cursor: pointer; padding: 0;
+  height: fit-content; min-width: 38px; text-align: left;
+}
+#ytt-panel .ytt-ts:hover { text-decoration: underline; }
+#ytt-panel .ytt-texts { flex: 1 1 auto; min-width: 0; }
+#ytt-panel .ytt-orig {
+  display: none; font-size: 12px; color: var(--yt-spec-text-secondary,#aaa); line-height: 1.4;
+}
+#ytt-panel .ytt-trans {
+  font-size: 13.5px; line-height: 1.45; color: var(--yt-spec-text-primary,#f1f1f1);
+}
+#ytt-panel.ytt-show-orig .ytt-orig { display: block; margin-bottom: 2px; }
+#ytt-panel .ytt-texts:not(:has(.ytt-trans)) .ytt-orig {
+  display: block; color: var(--yt-spec-text-primary,#f1f1f1);
+}
+/* ===== Save toast ===== */
+#ytt-toast {
+  position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%) translateY(20px);
+  background: #1f1f1f; color: #f1f1f1; border: 1px solid #3f3f3f;
+  padding: 10px 18px; border-radius: 10px; font-size: 13.5px; font-weight: 600;
+  font-family: "Roboto","Noto Sans KR",Arial,sans-serif; z-index: 100000;
+  opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.5); max-width: 80vw;
+}
+#ytt-toast.ytt-toast-show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#ytt-toast.ytt-toast-ok { border-color: #2faf6a; }
+#ytt-toast.ytt-toast-err { border-color: #e5484d; }

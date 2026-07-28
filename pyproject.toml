@@ -1,0 +1,56 @@
+[project]
+name = "substacknoah-secondbrain"
+version = "0.1.0"
+description = "Personal Telegram RAG knowledge base"
+requires-python = ">=3.11"
+dependencies = [
+    "python-telegram-bot[ext]>=21.6",
+    "google-genai>=1.0.0",
+    "chromadb>=0.5.20",
+    "trafilatura>=1.12.0",
+    "pypdf>=5.0.0",
+    "pymupdf>=1.24.0",
+    "python-pptx>=1.0.2",
+    "python-docx>=1.1.2",
+    "openpyxl>=3.1.5",
+    "youtube-transcript-api>=0.6.2",
+    # yt-dlp fallback for YouTube captions when youtube-transcript-api
+    # is blocked (GCP server IPs are routinely blocked). yt-dlp uses a
+    # different API path that usually bypasses the block and supports
+    # auto-generated CC + manual subtitles in json3/vtt.
+    #   [default] pulls yt-dlp-ejs — the bundled JS scripts yt-dlp now
+    #   runs through an external runtime (Deno, installed in the
+    #   Dockerfile) to solve YouTube's player challenge. Without the
+    #   EJS layer + a JS runtime, modern YouTube extraction fails.
+    #   The Dockerfile additionally does a best-effort `--pre` upgrade
+    #   to the latest *nightly* on every build, because the stable
+    #   channel lags YouTube changes by weeks; this pin is the floor /
+    #   fallback when a nightly refresh can't be fetched.
+    "yt-dlp[default]>=2026.3.17",
+    "python-dotenv>=1.0.1",
+    "httpx>=0.27.0",
+    # curl_cffi forges a real browser TLS/JA3 fingerprint (not just a UA
+    # string), so it clears Cloudflare/WAF 403s that plain httpx can't.
+    # Used only as a fallback rung in load_url when httpx returns empty/
+    # blocked, before the Jina render fallback. No API key.
+    "curl_cffi>=0.7.0",
+    "tiktoken>=0.8.0",
+    "rank-bm25>=0.2.2",
+    "tenacity>=9.0.0",
+    "beautifulsoup4>=4.12.0",
+    "telethon>=1.36.0",
+    "sentence-transformers>=3.0",
+    "psutil>=5.9.0",
+    # KISTI ScienceON authentication uses AES-CBC encryption to wrap
+    # the {datetime, mac_address} payload sent to /tokenrequest.do.
+    # pycryptodome is pure-Python compatible and the same library
+    # the upstream kisti-mcp package uses.
+    "pycryptodome>=3.19.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
