@@ -42,6 +42,23 @@ def is_junk_entity(e: str) -> bool:
     low = e.lower()
     return "claude" in low or low in _ENT_STOP
 
+
+# Entity canonicalization (graphify-inspired, 2026-07-29 review): without
+# this, "삼성전자"/"삼성 전자"/"삼성전자(주)" extract as three distinct
+# nodes with no shared edges, silently fragmenting the graph. Same
+# normalization idea as wiki.py's _dedup_key for topic names, kept local
+# here (not imported) so kg.py stays a self-contained, trivially-removable
+# trial store per the module docstring.
+_CORP_SUFFIXES = re.compile(
+    r"(주식회사|\(주\)|㈜|Inc\.?|Corp\.?|Co\.,?\s*Ltd\.?|Ltd\.?)",
+    re.IGNORECASE)
+
+
+def _canon_key(name: str) -> str:
+    k = _CORP_SUFFIXES.sub("", name or "")
+    k = re.sub(r"[\s_\-·]+", "", k).lower()
+    return k
+
 log = logging.getLogger(__name__)
 
 _KST = timezone(timedelta(hours=9))
@@ -84,7 +101,31 @@ def init() -> None:
         # Same triple from the same doc shouldn't pile up on re-extract.
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_kg_uniq "
                   "ON edges(src, rel, dst, doc_id)")
+        # norm_key → the first-seen (or merge-chosen) display string for
+        # that normalized entity. New extractions resolve through this so
+        # "삼성전자"/"삼성 전자" land on the same node instead of forking.
+        c.execute(
+            "CREATE TABLE IF NOT EXISTS entity_canon("
+            " norm_key TEXT PRIMARY KEY, canonical TEXT NOT NULL)")
     _inited = True
+
+
+def _resolve_entity(c: sqlite3.Connection, name: str) -> str:
+    """Map an entity string to its canonical display form. First variant
+    seen for a normalized key wins and is remembered; later variants
+    (different spacing/corp suffix) resolve to that same string."""
+    key = _canon_key(name)
+    if not key:
+        return name
+    row = c.execute(
+        "SELECT canonical FROM entity_canon WHERE norm_key=?", (key,)
+    ).fetchone()
+    if row:
+        return row["canonical"]
+    c.execute(
+        "INSERT OR IGNORE INTO entity_canon(norm_key, canonical) "
+        "VALUES(?,?)", (key, name))
+    return name
 
 
 def add_edges(doc_id: str, triples: list[dict]) -> int:
@@ -106,6 +147,8 @@ def add_edges(doc_id: str, triples: list[dict]) -> int:
             dst = (t.get("dst") or "").strip()
             if not src or not rel or not dst:
                 continue
+            src = _resolve_entity(c, src)
+            dst = _resolve_entity(c, dst)
             if kg_ignore.sig(src, rel, dst) in _ignored:
                 continue
             try:
@@ -143,6 +186,68 @@ def purge_junk() -> int:
     if bad:
         log.info("kg purge_junk: removed %d junk edges", len(bad))
     return len(bad)
+
+
+def merge_duplicate_entities() -> int:
+    """One-time-per-boot cleanup (same pattern as purge_junk): canonicalize
+    existing edges whose src/dst are spacing/corp-suffix variants of the
+    same entity ('삼성전자' vs '삼성 전자' vs '삼성전자(주)') so they share
+    one graph node instead of forking into disconnected duplicates.
+    New extractions since 2026-07-29 already resolve through
+    _resolve_entity at insert time; this sweeps up anything from before
+    that (or anything add_edges hasn't seen yet). Idempotent — safe to
+    run every boot. Returns edge-reference rows rewritten."""
+    init()
+    merged = 0
+    with _conn() as c:
+        names = [r[0] for r in c.execute(
+            "SELECT e FROM (SELECT src AS e FROM edges "
+            "UNION SELECT dst AS e FROM edges)")]
+        groups: dict[str, list[str]] = {}
+        for name in names:
+            key = _canon_key(name)
+            if key:
+                groups.setdefault(key, []).append(name)
+        for key, variants in groups.items():
+            if len(variants) == 1:
+                c.execute(
+                    "INSERT OR IGNORE INTO entity_canon(norm_key, canonical)"
+                    " VALUES(?,?)", (key, variants[0]))
+                continue
+            counts = {
+                v: c.execute(
+                    "SELECT count(*) FROM edges WHERE src=? OR dst=?",
+                    (v, v)).fetchone()[0]
+                for v in variants
+            }
+            # Most-used variant wins; shortest string breaks ties (usually
+            # the unadorned form, e.g. "삼성전자" over "삼성전자(주)").
+            canonical = sorted(variants, key=lambda v: (-counts[v], len(v)))[0]
+            c.execute(
+                "INSERT INTO entity_canon(norm_key, canonical) VALUES(?,?) "
+                "ON CONFLICT(norm_key) DO UPDATE SET canonical=excluded.canonical",
+                (key, canonical))
+            for v in variants:
+                if v == canonical:
+                    continue
+                for col in ("src", "dst"):
+                    for row in c.execute(
+                            f"SELECT id FROM edges WHERE {col}=?", (v,)
+                    ).fetchall():
+                        try:
+                            c.execute(
+                                f"UPDATE edges SET {col}=? WHERE id=?",
+                                (canonical, row["id"]))
+                            merged += 1
+                        except sqlite3.IntegrityError:
+                            # Canonical form of this exact triple already
+                            # exists (from the same doc) — this row is now
+                            # a pure duplicate, drop it instead of erroring.
+                            c.execute(
+                                "DELETE FROM edges WHERE id=?", (row["id"],))
+    if merged:
+        log.info("kg merge_duplicate_entities: canonicalized %d refs", merged)
+    return merged
 
 
 def docs_with_edges() -> set:
