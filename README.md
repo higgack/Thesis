@@ -106,3 +106,30 @@ fly deploy
 | `/recent` | 최근 수집 10개 |
 | `/stats` | 문서·청크 수 |
 | `/forget <id>` | 특정 문서 삭제 (vault 파일은 수동 정리) |
+
+## MCP 서버 (Claude Desktop / GitHub Copilot 등 외부 AI 클라이언트 연동)
+
+`src/mcp_server/`가 지식베이스(RAG 아카이브·위키·학습노트·지식그래프)를
+읽기 전용 MCP 툴 7개로 노출합니다(`search_knowledge_base`,
+`list_wiki_topics`, `get_wiki_page`, `search_notes`, `get_note`,
+`kg_query`, `kg_top_entities`). Streamable HTTP 전송, 포트 `8083`
+(`docker compose up -d mcp-server`로 기동, `docker-compose.yml` 참고).
+
+**중요**: `search_knowledge_base`/`search_notes`는 의미기반(semantic)
+검색이 아니라 키워드(FTS5/부분일치) 검색입니다 — 별도 프로세스가 벡터
+인덱스(Chroma)를 또 로드하면 RAM이 거의 2배로 늘어서(운영 VM이 이미
+다른 프로젝트와 RAM을 공유) 의도적으로 뺐습니다.
+
+**설정**: `.env`에 `MCP_TOKEN`(임의의 긴 무작위 문자열) 필수 — 비어있으면
+서버가 모든 요청을 거부합니다. 클라이언트 쪽 설정 예 (`mcp.json` 계열):
+
+```json
+{
+  "mcpServers": {
+    "thesis-knowledge-base": {
+      "url": "http://<VM_IP>:8083/mcp",
+      "headers": { "Authorization": "Bearer <MCP_TOKEN>" }
+    }
+  }
+}
+```

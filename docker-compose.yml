@@ -105,6 +105,27 @@ services:
       - 8.8.8.8
       - 1.1.1.1
 
+  # MCP server — exposes the knowledge base (RAG search, wiki, notes,
+  # KG) to external AI clients (Claude Desktop, GitHub Copilot, etc.)
+  # over Streamable HTTP. Deliberately does NOT import src/store/vector.py
+  # (Chroma) — a second chromadb.PersistentClient in its own process
+  # would roughly double the bot's ~4GB+ vector-index RAM on this shared
+  # VM, so search here is FTS5 keyword-only (see src/mcp_server/server.py
+  # docstring). Same lightweight profile as `dashboard`, no Vertex/Gemini
+  # calls so no metadata-server extra_hosts needed.
+  mcp-server:
+    build: .
+    env_file: .env
+    command: ["python", "-m", "src.mcp_server.server"]
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - bot
+    restart: unless-stopped
+    mem_limit: 256m
+
   # Local PaddleOCR worker — DORMANT BY DEFAULT (profile gating).
   # The bot routes Vision OCR through src/ingest/ocr_client.py which
   # picks a backend from the OCR_BACKEND env var (default 'gemini' =

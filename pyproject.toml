@@ -46,6 +46,14 @@ dependencies = [
     # pycryptodome is pure-Python compatible and the same library
     # the upstream kisti-mcp package uses.
     "pycryptodome>=3.19.0",
+    # MCP server (src/mcp_server/) — exposes the knowledge base to
+    # external AI clients (Claude Desktop, Copilot). Pinned below 2.0
+    # deliberately: 2.0.0 restructured the package (no more
+    # mcp.server.fastmcp.FastMCP in the same shape) and is too fresh to
+    # trust for a production dependency yet; 1.29.0 is the last stable
+    # 1.x release and is what this integration was built/tested against.
+    "mcp>=1.29.0,<2.0.0",
+    "uvicorn>=0.30.0",
 ]
 
 [build-system]
