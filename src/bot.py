@@ -14266,6 +14266,16 @@ def main():
         except Exception:
             log.debug("kg purge_junk failed (ignored)")
     _fts_th.Thread(target=_kg_purge, daemon=True).start()
+    # One-time-per-boot entity canonicalization: merge spacing/corp-suffix
+    # variants of the same entity ("삼성전자" vs "삼성 전자") onto one graph
+    # node. Same fire-and-forget pattern as _kg_purge above.
+    def _kg_merge_entities():
+        try:
+            from .store import kg as _kg
+            _kg.merge_duplicate_entities()
+        except Exception:
+            log.debug("kg merge_duplicate_entities failed (ignored)")
+    _fts_th.Thread(target=_kg_merge_entities, daemon=True).start()
     log.info("bot starting")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
