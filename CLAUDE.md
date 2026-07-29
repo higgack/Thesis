@@ -100,7 +100,34 @@ logs/rm/exec/inspect <CONTAINER>` uses full name:
 | `bot` | `thesis-bot-1` |
 | `forward-listener` | `thesis-forward-listener-1` |
 | `dashboard` | `thesis-dashboard-1` |
+| `mcp-server` | `thesis-mcp-server-1` |
 | `telegram-bot-api` (profile local-api) | `thesis-telegram-bot-api-1` |
+
+## MCP server (external AI clients — Claude Desktop/Copilot, 2026-07-29)
+
+`src/mcp_server/server.py`, port 8083, Streamable HTTP. Exposes 7
+read-only tools (`search_knowledge_base`, `list_wiki_topics`,
+`get_wiki_page`, `search_notes`, `get_note`, `kg_query`,
+`kg_top_entities`) over the RAG archive/wiki/notes/KG. Details + client
+config example in `README.md`.
+
+- **Deliberately no Chroma/semantic search** — `search_knowledge_base`/
+  `search_notes` are FTS5/substring keyword-only. A second
+  `chromadb.PersistentClient` in this process would ~double vector-index
+  RAM (the bot already carries 4GB+ from it) on the shared VM — user
+  chose keyword-only over that risk (2026-07-29). Don't silently add
+  Chroma here without re-raising the RAM tradeoff first.
+- **Auth**: single shared `MCP_TOKEN` (`.env`), checked as `Authorization:
+  Bearer` by hand-rolled middleware — NOT FastMCP's built-in `auth=`/
+  `token_verifier=` (that requires real OAuth resource-server metadata,
+  `issuer_url`+`resource_server_url` mandatory; wrong tool for one shared
+  secret). Empty `MCP_TOKEN` → server 503s every request, fail-closed.
+- `mcp` pinned `>=1.29.0,<2.0.0` in `pyproject.toml` — 2.0.0 restructured
+  the package (no `mcp.server.fastmcp.FastMCP` in the same shape) and is
+  too new to trust yet. Don't bump past 2.0 without re-verifying the API.
+- Read-only by design — never add a write/mutate tool here without
+  explicit request (external agents calling this shouldn't be able to
+  change the knowledge base, only query it).
 
 ## Auto-deploy is ACTIVE — never suggest manual git pull
 
@@ -125,6 +152,23 @@ fetch branch → `LOCAL==REMOTE` silent exit → else send "🚀 배포 시작" 
 
 Deploy branch: `claude/personal-rag-knowledge-base-sLSvV`. Work commits
 go here; never push to a different branch without explicit permission.
+
+**Repo is SHARED with another AI agent (GitHub Copilot, user's work
+account `Noah_Lee@amat.com`) on this SAME deploy branch** — confirmed
+by user 2026-07-29 ("지켜봐, 나중엔 그쪽으로 넘어갈 것" — expect
+ongoing/increasing Copilot commits here; don't intervene unless asked).
+- Before pushing to the deploy branch: `git fetch` then try `git merge
+  --ff-only`. If that fails the branch diverged (Copilot pushed) —
+  never force-push or discard those commits. Inspect with `git log` /
+  `git diff`, dry-run with `git merge-tree <base> <ours> <theirs>` to
+  check for real conflicts, then `git merge --no-ff` (ask the user
+  first if anything looks contentious). Already happened once cleanly
+  (2026-07-29, commit 9821a7b) — same drill each time.
+- `.github/copilot-instructions.md` (Copilot's version of this file)
+  and `AGENT_GUIDE.md` (separate Copilot-authored doc: Korean,
+  non-developer-audience answers, file-edit approval requirement) both
+  exist in the repo now. User declined to reconcile them into one
+  (2026-07-29) — leave all three docs as-is, don't merge/dedupe them.
 
 ## 🪶 Token-lean output (Ponytail lazy-first, 2026-07-10)
 
