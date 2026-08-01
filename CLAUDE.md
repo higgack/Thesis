@@ -140,6 +140,24 @@ fetch branch → `LOCAL==REMOTE` silent exit → else send "🚀 배포 시작" 
 --remove-orphans` (force-remove + retry once on failure) → inspect
 `thesis-bot-1`: running → "✅ 배포 완료 <sha>", else "❌ …" + logs.
 
+- **`scheduler_watchdog.sh` is NOT this project** — it monitors an
+  unrelated legacy host-process system (`~/telegram-bot`'s
+  `scheduler.py`/`bot_listener.py`, non-Docker). Confirmed by reading it
+  2026-08-01. Don't touch it or assume it covers `thesis-bot-1`.
+- `auto_pull.sh` doubles as this project's OWN watchdog on every no-deploy
+  minute (`LOCAL==REMOTE` branch): `check_heartbeat()` — alert-only (by
+  design, see its comment) on `data/bot_heartbeat` going stale >10min;
+  `check_cpu_overload()` (added 2026-08-01) — **auto-restarts**
+  (`docker compose up -d --force-recreate bot`) when `docker stats` CPU%
+  stays ≥90% for ~5 consecutive minutes. Added after `thesis-bot-1` sat
+  pegged 100%+ CPU for 3 days on `_wconn` lock contention (heavy
+  concurrent `fts_upsert` from a forward-listener volume spike) while
+  Telegram message-handling was starved via thread-pool exhaustion —
+  `check_heartbeat` never caught it because the asyncio loop itself kept
+  ticking (heartbeat job stayed fresh) even though user-facing
+  responsiveness was dead. Both checks share the deploy-window mute
+  (`DEPLOY_STAMP_FILE`) so a legitimate build/boot CPU spike never
+  false-triggers a restart.
 - After any push, VM redeploys in 60s + Telegram alert. Correct closing
   line: "푸시 완료 (sha). 1분 내 자동 배포 + 텔레그램 알림 갈 거야."
 - Never tell the user to `git pull` / `compose up` / `restart`.

@@ -125,6 +125,56 @@ check_heartbeat() {
     notify "⚠️ 봇 하트비트 ${mins}분 정지 — 컨테이너는 running이지만 이벤트 루프가 멈춘 듯.${NL}복구: docker compose --profile local-api up -d --force-recreate bot${NL}(30분마다 재알림, 정상화되면 자동 중지)"
 }
 
+# CPU-sustained-overload watchdog (added after the 2026-08-01 incident:
+# thesis-bot-1 pegged 100%+ CPU for 3 days on _wconn lock contention from
+# a forward-listener volume spike — Telegram message-handling was starved
+# via thread-pool exhaustion even though the asyncio loop itself kept
+# ticking, so check_heartbeat() above never caught it (heartbeat stayed
+# fresh throughout). This checks docker-reported CPU% directly instead,
+# and — unlike check_heartbeat, which stays alert-only — actually
+# restarts: a restart here is cheap and safe (resume-safety invariants
+# mean nothing in flight is lost), and the alternative demonstrated is
+# silent multi-day unresponsiveness with no other reliable signal.
+CPU_STATE_FILE="/tmp/thesis_cpu_high_count"
+CPU_THRESHOLD_PCT=90
+CPU_CONSECUTIVE_NEEDED=5   # auto_pull.sh runs every ~60s → ~5분 연속 과부하
+check_cpu_overload() {
+    local status
+    status=$(docker inspect -f '{{.State.Status}}' thesis-bot-1 2>/dev/null || echo missing)
+    [ "$status" = "running" ] || return 0
+
+    # Deploy-window mute — a build/boot legitimately pegs CPU, not a hang.
+    if [ -f "$DEPLOY_STAMP_FILE" ]; then
+        local dts
+        dts=$(tr -dc '0-9' < "$DEPLOY_STAMP_FILE" 2>/dev/null)
+        if [ -n "$dts" ] && [ "$(( $(date +%s) - dts ))" -lt "$DEPLOY_MUTE_SEC" ]; then
+            echo 0 > "$CPU_STATE_FILE"
+            return 0
+        fi
+    fi
+
+    local cpu cpu_int count
+    cpu=$(docker stats --no-stream --format "{{.CPUPerc}}" thesis-bot-1 2>/dev/null | tr -d '%')
+    [ -n "$cpu" ] || return 0
+    cpu_int=${cpu%.*}
+    count=$(cat "$CPU_STATE_FILE" 2>/dev/null || echo 0)
+
+    if [ "$cpu_int" -ge "$CPU_THRESHOLD_PCT" ]; then
+        count=$((count + 1))
+    else
+        count=0
+    fi
+    echo "$count" > "$CPU_STATE_FILE"
+
+    if [ "$count" -ge "$CPU_CONSECUTIVE_NEEDED" ]; then
+        echo "===== $(date) — CPU ${cpu}% sustained ${count}회 연속 → 강제 재시작 =====" >>"$LOG"
+        notify "🚨 thesis-bot CPU ${cpu}% ${CPU_CONSECUTIVE_NEEDED}분+ 지속 — 텔레그램 응답 불가 상태로 판단, 자동 재시작 진행"
+        docker compose --profile local-api up -d --force-recreate bot >>"$LOG" 2>&1
+        echo 0 > "$CPU_STATE_FILE"
+        date +%s > "$DEPLOY_STAMP_FILE"   # mute other checks while it settles
+    fi
+}
+
 git fetch origin "$BRANCH" >/dev/null 2>>"$LOG" || exit 0
 LOCAL=$(git rev-parse HEAD 2>/dev/null || echo none)
 REMOTE=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo none)
@@ -140,6 +190,7 @@ REMOTE=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo none)
 # alert-only — see check_heartbeat() comment for the full rationale.)
 if [ "$LOCAL" = "$REMOTE" ]; then
     check_heartbeat
+    check_cpu_overload
     exit 0
 fi
 
