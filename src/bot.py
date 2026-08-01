@@ -1497,7 +1497,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【8. Retry】</b> 자동1회→/failed(🔁3회후폐기) · in_flight→자동재개
 
-<b>【9. 문제해결】</b> 본문비어→차단 · 막힘→/queue_panic · /reset
+<b>【9. 문제해결】</b> 본문비어→차단 · 막힘→/queue_panic · /reset · CPU 과부하 5분+ 지속시 자동 재시작(VM 감시)
 
 <b>【10. 백엔드】</b> ✅ EPO·ScienceON·NTIS · ⏳ KIPRIS·NTIS 승인대기"""
 
