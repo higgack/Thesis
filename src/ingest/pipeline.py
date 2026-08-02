@@ -244,7 +244,7 @@ async def ingest_pdf(path: Path, source_label: str,
     _emit(on_stage, "dedup")
     if existing := await asyncio.to_thread(meta.find_by_source, source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
-    file_hash = _hash_file(path)
+    file_hash = await asyncio.to_thread(_hash_file, path)
     if file_hash and (
             existing := await asyncio.to_thread(meta.find_by_file_hash, file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"],
@@ -334,7 +334,7 @@ async def ingest_pptx(path: Path, source_label: str,
     _emit(on_stage, "dedup")
     if existing := await asyncio.to_thread(meta.find_by_source, source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
-    file_hash = _hash_file(path)
+    file_hash = await asyncio.to_thread(_hash_file, path)
     if file_hash and (
             existing := await asyncio.to_thread(meta.find_by_file_hash, file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
@@ -351,7 +351,7 @@ async def ingest_docx(path: Path, source_label: str,
     _emit(on_stage, "dedup")
     if existing := await asyncio.to_thread(meta.find_by_source, source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
-    file_hash = _hash_file(path)
+    file_hash = await asyncio.to_thread(_hash_file, path)
     if file_hash and (
             existing := await asyncio.to_thread(meta.find_by_file_hash, file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
@@ -368,7 +368,7 @@ async def ingest_xlsx(path: Path, source_label: str,
     _emit(on_stage, "dedup")
     if existing := await asyncio.to_thread(meta.find_by_source, source_label):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
-    file_hash = _hash_file(path)
+    file_hash = await asyncio.to_thread(_hash_file, path)
     if file_hash and (
             existing := await asyncio.to_thread(meta.find_by_file_hash, file_hash)):
         return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
@@ -528,68 +528,6 @@ async def ingest_text(text: str, label: str = "text",
     return await _ingest("text", src, title, text, None, on_stage=on_stage)
 
 
-_META_EXTRACT_PROMPT = (
-    "Extract structured metadata from this document. Output JSON only:\n"
-    '{"company": "주 분석/언급 대상 회사명 한 개 (모호하면 빈 문자열)",\n'
-    ' "tags": ["반도체"|"AI"|"바이오"|"방산"|"로봇"|"보고서"|"뉴스"|"실적"|'
-    '"분석"|"차트"|"공시"|"인터뷰"|"리포트" 등 적절한 1~5개],\n'
-    ' "report_date": "본문 내 발행일 YYYY.MM 또는 YYYY.MM.DD, 없으면 빈 문자열",\n'
-    ' "brokerage": "발행 증권사/연구소/언론사 (NH투자증권/신한투자증권/SK증권/'
-    '현대차증권/Goldman Sachs/Bloomberg 등), 없으면 빈 문자열",\n'
-    ' "analyst": "리포트 작성 애널리스트 1명 (본문 첫 페이지/footer/email '
-    '라인에서 추출), 없으면 빈 문자열"}\n\n'
-    "Rules:\n"
-    "- company는 정확한 회사명만. 삼성전자/삼성전기/삼성SDI 구분.\n"
-    "- 산업 동향/매크로/일반 분석이면 company는 빈 문자열.\n"
-    "- 다국적/해외 기업도 OK (예: NVIDIA, TSMC, ARM).\n"
-    "- tags는 일반 카테고리 + 핵심 주제.\n"
-    "- brokerage / analyst 는 본문에 명시된 경우만 채움. 추측 금지."
-)
-
-
-async def _extract_metadata(title: str, body: str, doc_type: str) -> dict:
-    """One Flash-Lite call to tag each ingested doc with company name,
-    topic tags, and report date. Cost ≈ ₩0.5/doc. Failures return {}
-    so they never block ingest."""
-    if len(body) < 100:
-        return {}
-    sample = (body[:1500] + "\n...\n" + body[-300:]) if len(body) > 2000 else body
-    user_msg = (
-        f"Title: {title}\n"
-        f"Type: {doc_type}\n"
-        f"Body:\n{sample}"
-    )
-    try:
-        from ..llm.gemini import complete
-        import json as _json
-        import re as _re
-        resp = await complete(
-            model=config.SUMMARY_MODEL,
-            system="You extract structured metadata. Output JSON only.",
-            user=f"{_META_EXTRACT_PROMPT}\n\n{user_msg}",
-            max_tokens=300,
-            temperature=0.0,
-            purpose="ingest",
-        )
-        match = _re.search(r"\{.*\}", resp, _re.DOTALL)
-        if match:
-            data = _json.loads(match.group(0))
-            company = (data.get("company") or "").strip()
-            tags = data.get("tags") or []
-            if not isinstance(tags, list):
-                tags = []
-            return {
-                "company": company or None,
-                "tags": [t.strip() for t in tags if isinstance(t, str) and t.strip()][:8],
-                "report_date": (data.get("report_date") or "").strip() or None,
-                "brokerage": (data.get("brokerage") or "").strip() or None,
-                "analyst": (data.get("analyst") or "").strip() or None,
-            }
-    except Exception as e:
-        log.warning("metadata extract failed: %s", e)
-    return {}
-
-
 async def _ingest(doc_type: str, source: str, title: str, body: str,
                   hint: str | None, file_hash: str | None = None,
                   on_stage: StageCb = None) -> dict:
@@ -665,6 +603,7 @@ async def _ingest(doc_type: str, source: str, title: str, body: str,
         or source.startswith("tg-photo:")
         or source.startswith("tg-voice:")
         or source.startswith("tg-audio:")
+        or source.startswith("tg-video:")
         or source.startswith("tg-doc-caption:")
         or doc_type == "image"
         or len(body) < 800

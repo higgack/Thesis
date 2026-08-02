@@ -153,10 +153,30 @@ check_cpu_overload() {
         fi
     fi
 
+    # Container-uptime guard (same rationale as check_heartbeat): chroma
+    # HNSW/BM25 warm-up right after a fresh start/restart legitimately
+    # pegs CPU for a bit. Without this, a manual .env-edit restart (which
+    # never stamps DEPLOY_STAMP_FILE, so the mute above doesn't cover it)
+    # could count consecutive high-CPU minutes during its own warm-up and
+    # trigger a self-inflicted restart loop.
+    local started_at started_epoch uptime
+    started_at=$(docker inspect -f '{{.State.StartedAt}}' thesis-bot-1 2>/dev/null)
+    if [ -n "$started_at" ]; then
+        started_epoch=$(date -d "$started_at" +%s 2>/dev/null || echo 0)
+        if [ "$started_epoch" -gt 0 ]; then
+            uptime=$(( $(date +%s) - started_epoch ))
+            if [ "$uptime" -lt "$HEARTBEAT_STALE_SEC" ]; then
+                echo 0 > "$CPU_STATE_FILE"
+                return 0
+            fi
+        fi
+    fi
+
     local cpu cpu_int count
     cpu=$(docker stats --no-stream --format "{{.CPUPerc}}" thesis-bot-1 2>/dev/null | tr -d '%')
     [ -n "$cpu" ] || return 0
     cpu_int=${cpu%.*}
+    case "$cpu_int" in ''|*[!0-9]*) return 0 ;; esac
     count=$(cat "$CPU_STATE_FILE" 2>/dev/null || echo 0)
 
     if [ "$cpu_int" -ge "$CPU_THRESHOLD_PCT" ]; then

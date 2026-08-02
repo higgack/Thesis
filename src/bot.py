@@ -1460,12 +1460,13 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 🛠️ <b>도구</b>
   /search_my_brain · /compare_papers · /web_search · /ingest_url
-  /search_papers (+adv·stats) · /search_patents (+adv·stats)
+  /search_papers · /search_papers_advanced · /paper_stats 상세: /papers_guide
+  /search_patents · /search_patents_advanced · /patent_stats 상세: /patents_guide
   🕸 KG(시범): /kg_extract · /kg
 
-📚 <b>위키</b>(매시 정시·요약 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_prune(+_confirm) · /wiki_fix(+_confirm) · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
+📚 <b>위키</b>(매시 정시·요약 1일1회): /wiki · /wiki_today · /wiki_recent · /wiki_new · /wiki_lint · /wiki_status · /wiki_cost · /wiki_run · /wiki_drain · /wiki_split · /wiki_dedup · /wiki_prune · /wiki_prune_confirm · /wiki_fix · /wiki_fix_confirm · /wiki_rename · /wiki_delete · /wiki_backfill · /wiki_pending · /wiki_failed · /wiki_off · /wiki_on · 상세: /wiki_guide
 
-📒 <b>학습 노트</b>: /notes · 상세: /notes_guide
+📒 <b>학습 노트</b>: /notes · /notes_resync · 상세: /notes_guide
 
 🇰🇷 <b>한국</b>
   KIPRIS: /company_patents · /patent_detail · /citing_patents

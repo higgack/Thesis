@@ -1730,6 +1730,15 @@ def _backup_page(topic: str, content: str) -> None:
         safe = re.sub(r"[^\w가-힣.-]", "_", topic)[:80] or "topic"
         ts = datetime.now(_KST).strftime("%Y%m%d_%H%M%S")
         (hist_dir / f"{safe}_{ts}.md").write_text(content, encoding="utf-8")
+        # No retention policy = unbounded disk growth on a topic that
+        # consolidates weekly for months, on a disk-constrained shared VM.
+        # Keep only the newest N snapshots per topic — filenames sort
+        # lexicographically by timestamp (fixed-width %Y%m%d_%H%M%S), so a
+        # plain reverse name-sort is a correct newest-first order.
+        keep = int(_flag("WIKI_HISTORY_KEEP_PER_TOPIC", 20))
+        snaps = sorted(hist_dir.glob(f"{safe}_*.md"), reverse=True)
+        for stale in snaps[keep:]:
+            stale.unlink(missing_ok=True)
     except Exception:
         log.exception("wiki pre-rewrite backup failed for %s", topic)
 

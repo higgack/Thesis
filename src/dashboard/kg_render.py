@@ -357,15 +357,19 @@ _JS = r"""
     apply();});
   // '더 보기': 정적 페이지의 초기 캡(_INITIAL_EDGE_LIMIT) 이후를 이어서
   // /kg/more로 가져와 renderEdge()로 붙인다(loadEntity와 같은 렌더 경로).
+  // offset은 초기 페이지가 렌더된 순서('date', 서버 렌더 기준)에 대한 커서이므로
+  // order는 항상 'date'로 고정 — curSort로 보내면 오프셋이 다른 정렬 순서를
+  // 가리키게 돼 행이 누락되거나 중복된다. 화면상의 정렬은 sortList()로 별도 적용.
   if(morebtn)morebtn.addEventListener('click',function(){
     var off=parseInt(morebtn.dataset.offset,10)||0;
     morebtn.disabled=true; morebtn.textContent='불러오는 중…';
-    fetch('/'+token+'/kg/more?offset='+off+'&limit=5000&order='+curSort)
+    fetch('/'+token+'/kg/more?offset='+off+'&limit=5000&order=date')
       .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
       .then(function(d){
         var edges=d.edges||[];
         if(edges.length&&listEl){
           listEl.insertAdjacentHTML('beforeend', edges.map(renderEdge).join(''));
+          if(curSort!=='date')sortList(curSort);
         }
         morebtn.dataset.offset=d.next_offset;
         var loaded=Math.min(d.next_offset,d.total);
