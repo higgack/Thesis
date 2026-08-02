@@ -90,11 +90,17 @@ def _frontmatter(doc_id: str, title: str, source: str,
     )
 
 
-async def write_note(*, doc_type: str, title: str, source: str,
+def _write_note_sync(*, doc_type: str, title: str, source: str,
                      summary: str, body: str, doc_id: str,
-                     tags: list[str] | None = None) -> str | None:
-    if not enabled():
-        return None
+                     tags: list[str] | None) -> str:
+    """Synchronous file write — ONLY call via asyncio.to_thread, never
+    directly on the event loop. mkdir/write_text/os.replace are normally
+    microseconds, but under disk contention (concurrent backlog drain,
+    heavy sqlite writes elsewhere) they can stall long enough to freeze
+    the loop itself — which blocks even asyncio.wait_for's own
+    cancellation timer from firing (same 'unguarded sync work on the
+    loop' bug class as pipeline.py's meta.py/wiki.enqueue fixes; this
+    call site caused a 30min+ '저장'-stage stuck-ingest alert, 2026-08-01)."""
     folder = _VAULT / "SecondBrain" / _FOLDERS.get(doc_type, "Misc")
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{_slug(title)}.md"
@@ -112,7 +118,17 @@ async def write_note(*, doc_type: str, title: str, source: str,
     tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
     tmp.write_text(md, encoding="utf-8")
     os.replace(tmp, path)
-    rel = path.relative_to(_VAULT).as_posix()
+    return path.relative_to(_VAULT).as_posix()
+
+
+async def write_note(*, doc_type: str, title: str, source: str,
+                     summary: str, body: str, doc_id: str,
+                     tags: list[str] | None = None) -> str | None:
+    if not enabled():
+        return None
+    rel = await asyncio.to_thread(
+        _write_note_sync, doc_type=doc_type, title=title, source=source,
+        summary=summary, body=body, doc_id=doc_id, tags=tags)
 
     # Fire-and-forget: the .md is already on disk (the note is saved);
     # commit/push runs in the background so a slow/hung remote can NEVER
