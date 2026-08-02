@@ -1081,24 +1081,31 @@ def load_pdf(path: Path, on_stage=None) -> tuple[str, str, str | None, dict | No
     try:
         import fitz  # PyMuPDF
         doc = fitz.open(str(path))
-        page_count = doc.page_count
-        meta_title = (doc.metadata or {}).get("title")
-        if meta_title and meta_title.strip() and _looks_like_title(meta_title):
-            title = meta_title.strip()
-        # Per-page text + structured table extraction. find_tables()
-        # surfaces broker-report tables that page.get_text("text") often
-        # serialises as ragged whitespace; appending the structured rows
-        # gives the embedder a cleaner signal AND lets sparse-text pages
-        # cross the auto-OCR threshold without spending Vision tokens.
-        page_parts: list[str] = []
-        for page in doc:
-            t = page.get_text("text") or ""
-            tables_text = _extract_pdf_tables(page)
-            if tables_text:
-                t = (t + "\n\n[Tables]\n" + tables_text).strip()
-            page_parts.append(t)
-        body = "\n\n".join(page_parts).strip()
-        doc.close()
+        try:
+            page_count = doc.page_count
+            meta_title = (doc.metadata or {}).get("title")
+            if meta_title and meta_title.strip() and _looks_like_title(meta_title):
+                title = meta_title.strip()
+            # Per-page text + structured table extraction. find_tables()
+            # surfaces broker-report tables that page.get_text("text") often
+            # serialises as ragged whitespace; appending the structured rows
+            # gives the embedder a cleaner signal AND lets sparse-text pages
+            # cross the auto-OCR threshold without spending Vision tokens.
+            page_parts: list[str] = []
+            for page in doc:
+                t = page.get_text("text") or ""
+                tables_text = _extract_pdf_tables(page)
+                if tables_text:
+                    t = (t + "\n\n[Tables]\n" + tables_text).strip()
+                page_parts.append(t)
+            body = "\n\n".join(page_parts).strip()
+        finally:
+            # finally, not a trailing call — an exception mid-extraction
+            # (a malformed page, find_tables() raising) used to skip
+            # doc.close() entirely and leak the file handle, since the
+            # bare `except Exception: body = ""` below only catches AFTER
+            # the fact.
+            doc.close()
     except Exception:
         body = ""
 
@@ -1257,127 +1264,129 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = OCR_DPI,
     # inline Gemini path bit-identical; local/hybrid route to the
     # ocr-worker container via the file queue (dormant unless
     # docker-compose --profile ocr-local is up).
-    from . import ocr_client as _ocr_client
+    try:
+        from . import ocr_client as _ocr_client
 
-    import hashlib as _hashlib
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    from ..store import meta as _meta
-    pages_out: list[tuple[int, str]] = []  # (page_idx, text) — sorted at end
-    ocrd = 0
-    skipped = 0
-    cached_hits = 0
-    blank_skips = 0
-    end_page = start_page + max_pages - 1
+        import hashlib as _hashlib
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from ..store import meta as _meta
+        pages_out: list[tuple[int, str]] = []  # (page_idx, text) — sorted at end
+        ocrd = 0
+        skipped = 0
+        cached_hits = 0
+        blank_skips = 0
+        end_page = start_page + max_pages - 1
 
-    # First pass (sequential, fast): decide per-page action — skip,
-    # cache hit, blank, or queue for Vision. Renders happen here too
-    # because PyMuPDF page objects aren't thread-safe.
-    work_items: list[tuple[int, bytes, str]] = []  # (page_idx, img_bytes, img_hash)
-    for i, page in enumerate(doc, 1):
-        if i < start_page:
-            continue
-        if i > end_page:
-            pages_out.append((i, f"-- Page {i}+ truncated --"))
-            break
-        existing_text = (page.get_text("text") or "").strip()
-        if len(existing_text) >= skip_if_text_chars:
-            skipped += 1
-            continue
-        try:
-            pix = page.get_pixmap(dpi=dpi)
-            img_bytes = pix.tobytes("png")
-        except Exception as e:
-            pages_out.append((i, f"-- Page {i} --\n[render error: {type(e).__name__}]"))
-            continue
-        # L: blank / boilerplate skip
-        if _page_is_blank(img_bytes, existing_text):
-            blank_skips += 1
-            continue
-        # K: cross-doc OCR cache hit — no Vision call needed
-        img_hash = _hashlib.sha1(img_bytes).hexdigest()
-        cached_text = _meta.ocr_cache_get(img_hash)
-        if cached_text is not None:
-            if cached_text.strip():
-                pages_out.append((i, f"-- Page {i} --\n{cached_text}"))
-            cached_hits += 1
-            continue
-        work_items.append((i, img_bytes, img_hash))
+        # First pass (sequential, fast): decide per-page action — skip,
+        # cache hit, blank, or queue for Vision. Renders happen here too
+        # because PyMuPDF page objects aren't thread-safe.
+        work_items: list[tuple[int, bytes, str]] = []  # (page_idx, img_bytes, img_hash)
+        for i, page in enumerate(doc, 1):
+            if i < start_page:
+                continue
+            if i > end_page:
+                pages_out.append((i, f"-- Page {i}+ truncated --"))
+                break
+            existing_text = (page.get_text("text") or "").strip()
+            if len(existing_text) >= skip_if_text_chars:
+                skipped += 1
+                continue
+            try:
+                pix = page.get_pixmap(dpi=dpi)
+                img_bytes = pix.tobytes("png")
+            except Exception as e:
+                pages_out.append((i, f"-- Page {i} --\n[render error: {type(e).__name__}]"))
+                continue
+            # L: blank / boilerplate skip
+            if _page_is_blank(img_bytes, existing_text):
+                blank_skips += 1
+                continue
+            # K: cross-doc OCR cache hit — no Vision call needed
+            img_hash = _hashlib.sha1(img_bytes).hexdigest()
+            cached_text = _meta.ocr_cache_get(img_hash)
+            if cached_text is not None:
+                if cached_text.strip():
+                    pages_out.append((i, f"-- Page {i} --\n{cached_text}"))
+                cached_hits += 1
+                continue
+            work_items.append((i, img_bytes, img_hash))
 
-    # Second pass (parallel): OCR queued pages concurrently via the
-    # configured backend (Gemini direct / local worker / hybrid).
-    # max_workers=7 caps in-flight calls so Gemini per-min quota isn't
-    # bumped even with multiple PDFs ingesting; for local mode the
-    # worker itself is the bottleneck (single-process) but the queue
-    # serialises naturally, so multiple threads just block on the
-    # queue read — harmless.
+        # Second pass (parallel): OCR queued pages concurrently via the
+        # configured backend (Gemini direct / local worker / hybrid).
+        # max_workers=7 caps in-flight calls so Gemini per-min quota isn't
+        # bumped even with multiple PDFs ingesting; for local mode the
+        # worker itself is the bottleneck (single-process) but the queue
+        # serialises naturally, so multiple threads just block on the
+        # queue read — harmless.
 
-    def _ocr_one(item):
-        i, img_bytes, img_hash = item
-        try:
-            text = _ocr_client.ocr_one_page(img_bytes, page_idx=i)
-            if text and not text.startswith("[OCR error"):
-                _meta.ocr_cache_put(img_hash, text)
-            return (i, text)
-        except Exception as e:
-            return (i, f"[OCR error: {type(e).__name__}: {e}]")
+        def _ocr_one(item):
+            i, img_bytes, img_hash = item
+            try:
+                text = _ocr_client.ocr_one_page(img_bytes, page_idx=i)
+                if text and not text.startswith("[OCR error"):
+                    _meta.ocr_cache_put(img_hash, text)
+                return (i, text)
+            except Exception as e:
+                return (i, f"[OCR error: {type(e).__name__}: {e}]")
 
-    def _run_batch(items, completed_offset, total):
-        """OCR a list of work items in parallel and collect results."""
-        results: list[tuple[int, str]] = []
-        if not items:
+        def _run_batch(items, completed_offset, total):
+            """OCR a list of work items in parallel and collect results."""
+            results: list[tuple[int, str]] = []
+            if not items:
+                return results
+            max_workers = min(len(items), 7)
+            completed = completed_offset
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(_ocr_one, w): w for w in items}
+                for fut in as_completed(futures):
+                    completed += 1
+                    if on_stage:
+                        on_stage(f"Vision OCR {completed}/{total} 페이지")
+                    results.append(fut.result())
             return results
-        max_workers = min(len(items), 7)
-        completed = completed_offset
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(_ocr_one, w): w for w in items}
-            for fut in as_completed(futures):
-                completed += 1
-                if on_stage:
-                    on_stage(f"Vision OCR {completed}/{total} 페이지")
-                results.append(fut.result())
-        return results
 
-    if work_items:
-        total = len(work_items)
-        if on_stage:
-            on_stage(f"Vision OCR 0/{total} 페이지")
+        if work_items:
+            total = len(work_items)
+            if on_stage:
+                on_stage(f"Vision OCR 0/{total} 페이지")
 
-        if progressive and len(work_items) > _OCR_PROGRESSIVE_PROBE_PAGES:
-            # Probe: run the first N pages. Decide whether the
-            # remainder is worth the Vision spend based on real text
-            # yield (excludes [OCR error] markers).
-            probe = work_items[:_OCR_PROGRESSIVE_PROBE_PAGES]
-            rest = work_items[_OCR_PROGRESSIVE_PROBE_PAGES:]
-            probe_results = _run_batch(probe, 0, total)
-            probe_text_len = sum(
-                len(t) for _, t in probe_results
-                if t and not t.startswith("[OCR error")
-            )
-            if probe_text_len < _OCR_PROGRESSIVE_MIN_TEXT:
-                log.info(
-                    "progressive OCR: probe %d pages → %d chars "
-                    "(threshold %d) — skipping remaining %d pages",
-                    len(probe), probe_text_len,
-                    _OCR_PROGRESSIVE_MIN_TEXT, len(rest),
+            if progressive and len(work_items) > _OCR_PROGRESSIVE_PROBE_PAGES:
+                # Probe: run the first N pages. Decide whether the
+                # remainder is worth the Vision spend based on real text
+                # yield (excludes [OCR error] markers).
+                probe = work_items[:_OCR_PROGRESSIVE_PROBE_PAGES]
+                rest = work_items[_OCR_PROGRESSIVE_PROBE_PAGES:]
+                probe_results = _run_batch(probe, 0, total)
+                probe_text_len = sum(
+                    len(t) for _, t in probe_results
+                    if t and not t.startswith("[OCR error")
                 )
-                batch_results = probe_results
+                if probe_text_len < _OCR_PROGRESSIVE_MIN_TEXT:
+                    log.info(
+                        "progressive OCR: probe %d pages → %d chars "
+                        "(threshold %d) — skipping remaining %d pages",
+                        len(probe), probe_text_len,
+                        _OCR_PROGRESSIVE_MIN_TEXT, len(rest),
+                    )
+                    batch_results = probe_results
+                else:
+                    rest_results = _run_batch(
+                        rest, len(probe_results), total,
+                    )
+                    batch_results = probe_results + rest_results
             else:
-                rest_results = _run_batch(
-                    rest, len(probe_results), total,
-                )
-                batch_results = probe_results + rest_results
-        else:
-            batch_results = _run_batch(work_items, 0, total)
+                batch_results = _run_batch(work_items, 0, total)
 
-        for page_idx, text in batch_results:
-            if text:
-                pages_out.append((page_idx, f"-- Page {page_idx} --\n{text}"))
-            ocrd += 1
+            for page_idx, text in batch_results:
+                if text:
+                    pages_out.append((page_idx, f"-- Page {page_idx} --\n{text}"))
+                ocrd += 1
 
-    # Sort by page index so output order matches reading order.
-    pages_out.sort(key=lambda t: t[0])
-    pages_out_str = [t[1] for t in pages_out]
-    doc.close()
+        # Sort by page index so output order matches reading order.
+        pages_out.sort(key=lambda t: t[0])
+        pages_out_str = [t[1] for t in pages_out]
+    finally:
+        doc.close()
     if cached_hits or blank_skips:
         log.info("ocr cache hits=%d, blank skips=%d", cached_hits, blank_skips)
     return {

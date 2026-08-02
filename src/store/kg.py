@@ -196,19 +196,27 @@ def merge_duplicate_entities() -> int:
     New extractions since 2026-07-29 already resolve through
     _resolve_entity at insert time; this sweeps up anything from before
     that (or anything add_edges hasn't seen yet). Idempotent — safe to
-    run every boot. Returns edge-reference rows rewritten."""
+    run every boot. Returns edge-reference rows rewritten.
+
+    Commits ONE canon group (norm_key) per transaction instead of the
+    whole sweep at once — a single multi-thousand-row transaction would
+    hold the write lock long enough to push concurrent add_edges() past
+    its 30s busy_timeout, and add_edges() swallows that OperationalError
+    silently (bare except), which was a real data-loss risk on any boot
+    that overlapped with active ingest."""
     init()
-    merged = 0
     with _conn() as c:
         names = [r[0] for r in c.execute(
             "SELECT e FROM (SELECT src AS e FROM edges "
             "UNION SELECT dst AS e FROM edges)")]
-        groups: dict[str, list[str]] = {}
-        for name in names:
-            key = _canon_key(name)
-            if key:
-                groups.setdefault(key, []).append(name)
-        for key, variants in groups.items():
+    groups: dict[str, list[str]] = {}
+    for name in names:
+        key = _canon_key(name)
+        if key:
+            groups.setdefault(key, []).append(name)
+    merged = 0
+    for key, variants in groups.items():
+        with _conn() as c:
             if len(variants) == 1:
                 c.execute(
                     "INSERT OR IGNORE INTO entity_canon(norm_key, canonical)"
@@ -227,24 +235,34 @@ def merge_duplicate_entities() -> int:
                 "INSERT INTO entity_canon(norm_key, canonical) VALUES(?,?) "
                 "ON CONFLICT(norm_key) DO UPDATE SET canonical=excluded.canonical",
                 (key, canonical))
-            for v in variants:
-                if v == canonical:
+            var_set = set(variants)
+            placeholders = ",".join("?" * len(variants))
+            rows = c.execute(
+                f"SELECT id, src, dst FROM edges "
+                f"WHERE src IN ({placeholders}) OR dst IN ({placeholders})",
+                variants + variants).fetchall()
+            # One UPDATE per row covering BOTH columns — a row whose src
+            # AND dst are both variants of the same entity (self-referencing
+            # edge) used to be visited twice (once per column) as two
+            # separate UPDATEs; if the second collided with an existing
+            # canonical triple, the DELETE fallback discarded the row even
+            # though the first UPDATE had already landed correctly.
+            for row in rows:
+                new_src = canonical if row["src"] in var_set else row["src"]
+                new_dst = canonical if row["dst"] in var_set else row["dst"]
+                if new_src == row["src"] and new_dst == row["dst"]:
                     continue
-                for col in ("src", "dst"):
-                    for row in c.execute(
-                            f"SELECT id FROM edges WHERE {col}=?", (v,)
-                    ).fetchall():
-                        try:
-                            c.execute(
-                                f"UPDATE edges SET {col}=? WHERE id=?",
-                                (canonical, row["id"]))
-                            merged += 1
-                        except sqlite3.IntegrityError:
-                            # Canonical form of this exact triple already
-                            # exists (from the same doc) — this row is now
-                            # a pure duplicate, drop it instead of erroring.
-                            c.execute(
-                                "DELETE FROM edges WHERE id=?", (row["id"],))
+                try:
+                    c.execute(
+                        "UPDATE edges SET src=?, dst=? WHERE id=?",
+                        (new_src, new_dst, row["id"]))
+                    merged += 1
+                except sqlite3.IntegrityError:
+                    # Canonical form of this exact triple already exists
+                    # (from the same doc) — this row is now a pure
+                    # duplicate, drop it instead of erroring.
+                    c.execute(
+                        "DELETE FROM edges WHERE id=?", (row["id"],))
     if merged:
         log.info("kg merge_duplicate_entities: canonicalized %d refs", merged)
     return merged

@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import unicodedata
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -39,11 +40,22 @@ def _today() -> date:
 
 # ---------------------------------------------------------------- db ---
 
-def _conn() -> sqlite3.Connection:
+@contextmanager
+def _conn():
+    # A plain sqlite3.Connection's own context manager only commits/rolls
+    # back a transaction — it never closes the connection. Every "with
+    # _conn() as c:" call site (15 in this file) was leaking an open
+    # connection + WAL file handle, relying on GC to eventually reclaim
+    # it. Wrap it as a real contextmanager (same pattern as kg.py's
+    # _conn) so the connection is always closed on exit.
     c = sqlite3.connect(str(_DB_PATH), timeout=30)
     c.execute("PRAGMA journal_mode=WAL")
     c.row_factory = sqlite3.Row
-    return c
+    try:
+        yield c
+        c.commit()
+    finally:
+        c.close()
 
 
 def init_db() -> None:

@@ -12,6 +12,13 @@ below is FTS5 keyword search over meta.db (already built for the
 dashboard/BM25 path) — not semantic search. Everything else here is
 sqlite/file reads, same low footprint as src/dashboard/server.py.
 
+Every tool is `async def` and wraps its actual sqlite/file work in
+`asyncio.to_thread(...)` — FastMCP calls plain `def` tools directly on
+the event loop (verified against the installed `mcp` package source,
+2026-08-02), so a slow sqlite call (e.g. hitting meta.db's documented
+`_wconn` lock contention) would otherwise stall this server for every
+concurrent client, not just the slow request.
+
 Auth: a single shared bearer token (MCP_TOKEN), checked in
 _BearerAuthMiddleware. Deliberately NOT using FastMCP's built-in
 auth=/token_verifier= machinery — that requires standing up real OAuth
@@ -23,6 +30,7 @@ this repo).
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import os
@@ -43,9 +51,12 @@ mcp = FastMCP(
     "thesis-knowledge-base",
     instructions=(
         "개인 텔레그램 RAG 지식베이스(학습된 자료, 자동 합성 위키, 지식그래프, "
-        "학습노트) 조회 전용 서버. 전부 읽기 전용 — 아무 것도 수정/삭제하지 "
-        "않는다. search_knowledge_base는 의미기반(semantic) 검색이 아니라 "
-        "키워드(FTS5) 매칭이므로 정확한 용어/고유명사로 질의할 것."
+        "학습노트) 조회 전용 서버. 사실상 읽기 전용 — 클라이언트가 직접 "
+        "수정/삭제할 수 있는 툴은 없다(get_wiki_page가 별칭 미등록 토픽을 "
+        "매칭시키면 내부적으로 별칭 하나를 저장하는 부수효과가 있을 뿐, "
+        "지식 내용 자체는 절대 바뀌지 않는다). search_knowledge_base는 "
+        "의미기반(semantic) 검색이 아니라 키워드(FTS5) 매칭이므로 정확한 "
+        "용어/고유명사로 질의할 것."
     ),
     # This server is reached over the VM's public IP by remote MCP
     # clients (Claude Desktop/Copilot on the user's laptop), not from a
@@ -59,15 +70,7 @@ mcp = FastMCP(
 )
 
 
-@mcp.tool()
-def search_knowledge_base(query: str, k: int = 10) -> list[dict]:
-    """RAG 아카이브(학습된 문서)에서 키워드로 검색.
-
-    Args:
-        query: 검색어 (한국어/영어, 정확한 용어일수록 결과가 좋음)
-        k: 최대 결과 수 (기본 10)
-    """
-    k = max(1, min(k, 50))
+def _search_knowledge_base_sync(query: str, k: int) -> list[dict]:
     hits = meta.fts_search(query, k=k * 3)
     if not hits:
         return []
@@ -94,20 +97,25 @@ def search_knowledge_base(query: str, k: int = 10) -> list[dict]:
 
 
 @mcp.tool()
-def list_wiki_topics() -> list[dict]:
-    """자동 합성된 위키 토픽 전체 목록 (최신 갱신순). 각 항목은
-    {topic, docs, updated, created}."""
-    return wiki.list_topics()
+async def search_knowledge_base(query: str, k: int = 10) -> list[dict]:
+    """RAG 아카이브(학습된 문서)에서 키워드로 검색.
+
+    Args:
+        query: 검색어 (한국어/영어, 정확한 용어일수록 결과가 좋음)
+        k: 최대 결과 수 (기본 10)
+    """
+    k = max(1, min(k, 50))
+    return await asyncio.to_thread(_search_knowledge_base_sync, query, k)
 
 
 @mcp.tool()
-def get_wiki_page(topic: str) -> dict:
-    """위키 토픽 하나의 전체 페이지(마크다운)를 가져온다. 정확한 이름이
-    아니어도 별칭/부분일치로 기존 토픽에 매칭을 시도한다.
+async def list_wiki_topics() -> list[dict]:
+    """자동 합성된 위키 토픽 전체 목록 (최신 갱신순). 각 항목은
+    {topic, docs, updated, created}."""
+    return await asyncio.to_thread(wiki.list_topics)
 
-    Args:
-        topic: 토픽 이름 (예: '삼성전자', 'HBM')
-    """
+
+def _get_wiki_page_sync(topic: str) -> dict:
     resolved = wiki.resolve_topic(topic)
     md = wiki.read_page(resolved)
     if md is None:
@@ -117,17 +125,17 @@ def get_wiki_page(topic: str) -> dict:
 
 
 @mcp.tool()
-def search_notes(query: str, k: int = 10) -> list[dict]:
-    """학습노트를 제목/카테고리 키워드로 검색 (의미기반 아님, 부분일치).
+async def get_wiki_page(topic: str) -> dict:
+    """위키 토픽 하나의 전체 페이지(마크다운)를 가져온다. 정확한 이름이
+    아니어도 별칭/부분일치로 기존 토픽에 매칭을 시도한다.
 
     Args:
-        query: 검색어
-        k: 최대 결과 수 (기본 10)
+        topic: 토픽 이름 (예: '삼성전자', 'HBM')
     """
-    q = (query or "").strip().lower()
-    if not q:
-        return []
-    k = max(1, min(k, 50))
+    return await asyncio.to_thread(_get_wiki_page_sync, topic)
+
+
+def _search_notes_sync(q: str, k: int) -> list[dict]:
     out = []
     for n in notes_store.list_notes():
         hay = f"{n.get('title', '')} {n.get('category', '')}".lower()
@@ -143,8 +151,21 @@ def search_notes(query: str, k: int = 10) -> list[dict]:
 
 
 @mcp.tool()
-def get_note(note_id: str) -> dict:
-    """학습노트 하나의 전체 내용(마크다운 본문 포함)을 id로 가져온다."""
+async def search_notes(query: str, k: int = 10) -> list[dict]:
+    """학습노트를 제목/카테고리 키워드로 검색 (의미기반 아님, 부분일치).
+
+    Args:
+        query: 검색어
+        k: 최대 결과 수 (기본 10)
+    """
+    q = (query or "").strip().lower()
+    if not q:
+        return []
+    k = max(1, min(k, 50))
+    return await asyncio.to_thread(_search_notes_sync, q, k)
+
+
+def _get_note_sync(note_id: str) -> dict:
     n = notes_store.get_note(note_id)
     if not n:
         return {"id": note_id, "found": False}
@@ -152,7 +173,13 @@ def get_note(note_id: str) -> dict:
 
 
 @mcp.tool()
-def kg_query(entity: str, limit: int = 40) -> list[dict]:
+async def get_note(note_id: str) -> dict:
+    """학습노트 하나의 전체 내용(마크다운 본문 포함)을 id로 가져온다."""
+    return await asyncio.to_thread(_get_note_sync, note_id)
+
+
+@mcp.tool()
+async def kg_query(entity: str, limit: int = 40) -> list[dict]:
     """지식그래프에서 엔티티(회사/개념 등) 관련 관계(트리플)를 부분일치로
     검색한다.
 
@@ -160,14 +187,14 @@ def kg_query(entity: str, limit: int = 40) -> list[dict]:
         entity: 엔티티 이름 (예: '삼성전자', 'HBM')
         limit: 최대 결과 수 (기본 40)
     """
-    return kg.neighbors(entity, limit=max(1, min(limit, 200)))
+    return await asyncio.to_thread(kg.neighbors, entity, max(1, min(limit, 200)))
 
 
 @mcp.tool()
-def kg_top_entities(limit: int = 15) -> list[dict]:
+async def kg_top_entities(limit: int = 15) -> list[dict]:
     """지식그래프에서 연결이 가장 많은(=중요한) 엔티티 목록. 각 항목은
     {name, deg}."""
-    return kg.top_entities(limit=max(1, min(limit, 100)))
+    return await asyncio.to_thread(kg.top_entities, max(1, min(limit, 100)))
 
 
 # ------------------------------------------------------------ auth ---

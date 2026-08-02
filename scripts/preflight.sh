@@ -29,9 +29,15 @@ warn=0
 if [[ "${1:-}" == "--all" ]]; then
     mapfile -t PYFILES < <(git ls-files '*.py')
 else
-    # staged + unstaged changes vs HEAD, .py only, still-existing
+    # staged + unstaged changes vs HEAD, PLUS untracked new files (`git
+    # diff` never sees a file that hasn't been `git add`ed at all — a
+    # brand-new .py with a syntax error was invisible to section 1 until
+    # staged; --others --exclude-standard covers it without pulling in
+    # .gitignore'd junk).
     mapfile -t PYFILES < <(
-        { git diff --name-only HEAD -- '*.py'; git diff --name-only --cached -- '*.py'; } \
+        { git diff --name-only HEAD -- '*.py'
+          git diff --name-only --cached -- '*.py'
+          git ls-files --others --exclude-standard -- '*.py'; } \
         | sort -u | while read -r f; do [[ -f "$f" ]] && echo "$f"; done
     )
 fi
@@ -102,8 +108,14 @@ PY
 
 # ---- 4. command handler ↔ help cross-check — WARN --------------------
 # Every registered /command should appear somewhere in _HELP_TEXT
-# (directly or in brace-shorthand like /kipris_{search,pub,...}).
-# Heuristic — warns only, since shorthand can hide a name.
+# (directly, or as one item of a brace-shorthand like
+# /kipris_{search,pub,...}). The old heuristic fell back to "prefix
+# before the first underscore appears ANYWHERE in the help text", which
+# passes for basically any command sharing a family prefix (e.g.
+# wiki_prune_confirm passes just because "/wiki" appears elsewhere for
+# unrelated wiki commands) — confirmed false-clean on wiki_prune_confirm/
+# wiki_fix_confirm/kipris_status. Replaced with: exact "/full_name"
+# match, or exact membership in an expanded /{prefix}_{a,b,c} group.
 echo "── 4. command handlers present in _HELP_TEXT ──"
 python3 - <<'PY'
 import re
@@ -111,12 +123,17 @@ src = open("src/bot.py", encoding="utf-8").read()
 reg = set(re.findall(r'CommandHandler\(\s*"([^"]+)"', src))
 help_m = re.search(r'_HELP_TEXT\s*=\s*"""(.*?)"""', src, re.S)
 help_txt = help_m.group(1) if help_m else ""
+
+brace_expanded = set()
+for prefix, items in re.findall(r'/(\w+)_\{([^}]+)\}', help_txt):
+    for item in items.split(","):
+        item = item.strip()
+        if item:
+            brace_expanded.add(f"{prefix}_{item}")
+
 missing = []
 for c in sorted(reg):
-    # direct mention, or any token of the name (covers brace-shorthand
-    # /kipris_{search,...} and "+adv·stats" style listings)
-    base = c.split("_")[0]
-    if c in help_txt or f"/{base}" in help_txt or base in help_txt:
+    if f"/{c}" in help_txt or c in brace_expanded:
         continue
     missing.append(c)
 if missing:
