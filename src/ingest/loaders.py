@@ -1313,8 +1313,12 @@ def _ocr_pdf_pages(path: Path, max_pages: int = 80, dpi: int = OCR_DPI,
 
         # Second pass (parallel): OCR queued pages concurrently via the
         # configured backend (Gemini direct / local worker / hybrid).
-        # max_workers=7 caps in-flight calls so Gemini per-min quota isn't
-        # bumped even with multiple PDFs ingesting; for local mode the
+        # max_workers=7 only bounds THIS PDF's page fan-out — with several
+        # large PDFs ingesting at once (up to INGEST_SEM_CAPACITY=4), that's
+        # up to 28 threads process-wide, which was the actual cause of a
+        # 10min+ frozen event loop on 2026-08-04 (GIL contention on the
+        # 2-vCPU VM). The real cross-PDF cap is ocr_client.py's
+        # _GLOBAL_OCR_SEM around the actual Gemini call. For local mode the
         # worker itself is the bottleneck (single-process) but the queue
         # serialises naturally, so multiple threads just block on the
         # queue read — harmless.

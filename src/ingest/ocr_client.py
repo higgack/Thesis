@@ -39,6 +39,7 @@ enough that a stuck local backend doesn't pin an ingest slot.
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -46,6 +47,19 @@ from pathlib import Path
 from .. import config
 
 log = logging.getLogger(__name__)
+
+# Global cap on concurrent Gemini Vision OCR calls, across ALL PDFs
+# ingesting at once. loaders.py's per-PDF ThreadPoolExecutor(max_workers=7)
+# only bounds ONE PDF's page fan-out; with INGEST_SEM_CAPACITY=4 concurrent
+# PDFs each opening their own 7-worker pool, up to 28 OS threads (each
+# creating a fresh genai client + making a Vision call) could pile up at
+# once on the 2-vCPU VM. That's the exact GIL-starvation signature already
+# documented in CLAUDE.md from 2026-07-05 (10min+ frozen event loop) —
+# recurred 2026-08-04 while several large broker-report PDFs OCR'd
+# concurrently. This semaphore caps TOTAL in-flight Vision OCR calls
+# process-wide, independent of how many PDFs are ingesting simultaneously.
+_GLOBAL_OCR_SEM = threading.BoundedSemaphore(
+    max(1, int(os.getenv("OCR_GLOBAL_CONCURRENCY", "6"))))
 
 
 def _backend() -> str:
@@ -146,18 +160,19 @@ def _gemini_ocr_sync(img_bytes: bytes) -> str:
         "텍스트만 출력하세요."
     )
     try:
-        client = config.make_genai_client()
-        resp = client.models.generate_content(
-            model=config.SUMMARY_MODEL,
-            contents=[
-                types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
-                types.Part.from_text(text=prompt),
-            ],
-            config=types.GenerateContentConfig(
-                temperature=0.0,
-                max_output_tokens=2048,
-            ),
-        )
+        with _GLOBAL_OCR_SEM:
+            client = config.make_genai_client()
+            resp = client.models.generate_content(
+                model=config.SUMMARY_MODEL,
+                contents=[
+                    types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
+                    types.Part.from_text(text=prompt),
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    max_output_tokens=2048,
+                ),
+            )
         _cost.record_resp(config.SUMMARY_MODEL, resp, purpose="ingest")
         return (resp.text or "").strip()
     except Exception as e:
