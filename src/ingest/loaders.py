@@ -9,8 +9,16 @@ from youtube_transcript_api import YouTubeTranscriptApi
 
 log = logging.getLogger(__name__)
 
+# Kept in sync with pipeline.py's _YOUTUBE_ID_RE (m.youtube.com/embed/
+# added 2026-08-04 — the study-notes channel calls is_youtube() directly
+# on the raw URL with no canonicalization step first, unlike the main RAG
+# pipeline which runs _canonical_url() before ever reaching here. Without
+# these two patterns, a mobile-shared youtube link (m.youtube.com/watch?v=)
+# or an embed link silently fell through to the generic web-scrape path in
+# the notes channel and failed instead of learning the video).
 _YOUTUBE_RE = re.compile(
-    r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)([\w-]{11})"
+    r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/|"
+    r"youtube\.com/embed/|m\.youtube\.com/watch\?v=)([\w-]{11})"
 )
 _ARXIV_RE = re.compile(r"arxiv\.org/(?:abs|pdf)/([\w.\-]+)")
 
