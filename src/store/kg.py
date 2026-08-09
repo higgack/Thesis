@@ -59,6 +59,20 @@ def _canon_key(name: str) -> str:
     k = re.sub(r"[\s_\-·]+", "", k).lower()
     return k
 
+
+# Relation canonicalization (graphify-inspired, 2026-08-09 review): same
+# fragmentation problem as entity names, one level down — Gemini extracts
+# a freeform relation string per triple, so "works_at" / "works at" /
+# "Works-At" fork into separate-looking edges on the dashboard even though
+# they're the same relation, just formatted differently. Deliberately
+# format-only (whitespace/case/separator normalization), NOT a synonym
+# merger — "employed_by" and "works_at" are genuine synonyms but this does
+# NOT merge them, for the same reason context_for()'s docstring gives for
+# entities: merging on meaning (not just formatting) risks collapsing
+# distinct relations an LLM pass would need to judge case-by-case.
+def _canon_relation_key(rel: str) -> str:
+    return re.sub(r"[\s_\-·]+", "", (rel or "")).lower()
+
 log = logging.getLogger(__name__)
 
 _KST = timezone(timedelta(hours=9))
@@ -107,6 +121,11 @@ def init() -> None:
         c.execute(
             "CREATE TABLE IF NOT EXISTS entity_canon("
             " norm_key TEXT PRIMARY KEY, canonical TEXT NOT NULL)")
+        # Same idea, one level down: norm_key → canonical relation string,
+        # so "works_at"/"works at"/"Works-At" share one edge label.
+        c.execute(
+            "CREATE TABLE IF NOT EXISTS relation_canon("
+            " norm_key TEXT PRIMARY KEY, canonical TEXT NOT NULL)")
     _inited = True
 
 
@@ -126,6 +145,23 @@ def _resolve_entity(c: sqlite3.Connection, name: str) -> str:
         "INSERT OR IGNORE INTO entity_canon(norm_key, canonical) "
         "VALUES(?,?)", (key, name))
     return name
+
+
+def _resolve_relation(c: sqlite3.Connection, rel: str) -> str:
+    """Map a relation string to its canonical display form. Same
+    first-seen-wins pattern as _resolve_entity."""
+    key = _canon_relation_key(rel)
+    if not key:
+        return rel
+    row = c.execute(
+        "SELECT canonical FROM relation_canon WHERE norm_key=?", (key,)
+    ).fetchone()
+    if row:
+        return row["canonical"]
+    c.execute(
+        "INSERT OR IGNORE INTO relation_canon(norm_key, canonical) "
+        "VALUES(?,?)", (key, rel))
+    return rel
 
 
 def add_edges(doc_id: str, triples: list[dict]) -> int:
@@ -149,6 +185,7 @@ def add_edges(doc_id: str, triples: list[dict]) -> int:
                 continue
             src = _resolve_entity(c, src)
             dst = _resolve_entity(c, dst)
+            rel = _resolve_relation(c, rel)
             if kg_ignore.sig(src, rel, dst) in _ignored:
                 continue
             try:
@@ -265,6 +302,63 @@ def merge_duplicate_entities() -> int:
                         "DELETE FROM edges WHERE id=?", (row["id"],))
     if merged:
         log.info("kg merge_duplicate_entities: canonicalized %d refs", merged)
+    return merged
+
+
+def merge_duplicate_relations() -> int:
+    """One-time-per-boot cleanup, same pattern as merge_duplicate_entities
+    but for the `rel` column: canonicalize existing edges whose relation
+    strings are formatting variants of each other ('works_at' vs
+    'works at' vs 'Works-At'). New extractions already resolve through
+    _resolve_relation at insert time; this sweeps up anything from before
+    that. Simpler than the entity sweep — `rel` is a single column, so no
+    self-referencing-row double-visit case to worry about. Idempotent —
+    safe to run every boot. Returns edge rows rewritten."""
+    init()
+    with _conn() as c:
+        rels = [r[0] for r in c.execute("SELECT DISTINCT rel FROM edges")]
+    groups: dict[str, list[str]] = {}
+    for rel in rels:
+        key = _canon_relation_key(rel)
+        if key:
+            groups.setdefault(key, []).append(rel)
+    merged = 0
+    for key, variants in groups.items():
+        with _conn() as c:
+            if len(variants) == 1:
+                c.execute(
+                    "INSERT OR IGNORE INTO relation_canon(norm_key, canonical)"
+                    " VALUES(?,?)", (key, variants[0]))
+                continue
+            counts = {
+                v: c.execute(
+                    "SELECT count(*) FROM edges WHERE rel=?", (v,)
+                ).fetchone()[0]
+                for v in variants
+            }
+            canonical = sorted(variants, key=lambda v: (-counts[v], len(v)))[0]
+            c.execute(
+                "INSERT INTO relation_canon(norm_key, canonical) VALUES(?,?) "
+                "ON CONFLICT(norm_key) DO UPDATE SET canonical=excluded.canonical",
+                (key, canonical))
+            for v in variants:
+                if v == canonical:
+                    continue
+                rows = c.execute(
+                    "SELECT id FROM edges WHERE rel=?", (v,)).fetchall()
+                for row in rows:
+                    try:
+                        c.execute(
+                            "UPDATE edges SET rel=? WHERE id=?",
+                            (canonical, row["id"]))
+                        merged += 1
+                    except sqlite3.IntegrityError:
+                        # Canonical form of this exact triple already exists
+                        # (from the same doc) — pure duplicate, drop it.
+                        c.execute(
+                            "DELETE FROM edges WHERE id=?", (row["id"],))
+    if merged:
+        log.info("kg merge_duplicate_relations: canonicalized %d refs", merged)
     return merged
 
 

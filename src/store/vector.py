@@ -185,6 +185,30 @@ async def query(text: str, k: int = 5, kind: str | None = None,
     return out
 
 
+async def get_by_ids(ids: list[str]) -> dict[str, str]:
+    """Fetch chunk text for exact chunk ids ("<doc_id>:<idx>"). Used for
+    context expansion — pulling in the chunks immediately before/after a
+    reranked top hit so the LLM sees surrounding context, not just an
+    isolated 1000-token slice. Missing ids are silently omitted (a
+    neighbor may not exist — first/last chunk of a doc, or a chunk that
+    was deduped away). Returns {} on any failure; caller treats that as
+    "no expansion available", never a hard error."""
+    if not ids:
+        return {}
+    try:
+        async with _CHROMA_LOCK:
+            res = await asyncio.to_thread(_collection.get, ids=ids)
+    except Exception:
+        log.warning("vector.get_by_ids failed", exc_info=True)
+        return {}
+    out = {}
+    for i, cid in enumerate(res.get("ids") or []):
+        docs = res.get("documents") or []
+        if i < len(docs) and docs[i] is not None:
+            out[cid] = docs[i]
+    return out
+
+
 _BM25_CACHE: dict = {"count": -1, "data": None, "building": False, "ts": 0.0}
 _BM25_LOCK = threading.Lock()
 # Debounce the corpus rescan: rebuilding the snapshot (and the BM25 index
