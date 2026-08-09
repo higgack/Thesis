@@ -737,6 +737,78 @@ def _scan_orphan_files() -> list[Path]:
     return sorted(survivors, key=lambda p: p.name)
 
 
+_FILES_RETENTION_DAYS = int(os.getenv("FILES_RETENTION_DAYS", "90"))
+
+
+def _prune_old_ingested_files() -> list[str]:
+    """Delete raw copies under data/files/ that are BOTH successfully
+    ingested (filename matches a meta.documents source — the text is
+    already extracted into chunks + embeddings in Chroma/meta.db, so the
+    raw file is pure backup) AND older than _FILES_RETENTION_DAYS by
+    mtime. Never touches a file that isn't confirmed ingested (orphan,
+    mid-retry, in /failed) — those still need their raw copy. This is a
+    permanent delete of the raw backup only; the learned content itself
+    (searchable via RAG) is completely unaffected. If a pruned doc ever
+    needs re-OCR/re-extraction, it must be re-uploaded. data/files/ had
+    no retention policy before this (2026-08-09) — unlike wiki_history's
+    20-snapshot cap, unbounded disk growth on every single ingest.
+    Returns the list of deleted filenames."""
+    files_dir = Path(config.DATA_DIR) / "files"
+    if not files_dir.exists():
+        return []
+    try:
+        all_files = {p.name: p for p in files_dir.iterdir() if p.is_file()}
+    except Exception:
+        log.exception("file retention: dir list failed")
+        return []
+    if not all_files:
+        return []
+    known: set[str] = set()
+    import sqlite3
+    db_path = config.DATA_DIR / "meta.db"
+    try:
+        with sqlite3.connect(str(db_path), timeout=30) as c:
+            c.execute("PRAGMA journal_mode=WAL")
+            for (src,) in c.execute("SELECT source FROM documents"):
+                if not src:
+                    continue
+                if src.startswith("tg-doc:"):
+                    parts = src.split(":", 2)
+                    if len(parts) == 3:
+                        known.add(parts[2])
+                elif src.startswith("local:"):
+                    known.add(src.split(":", 1)[1])
+    except Exception:
+        log.exception("file retention: db query failed")
+        return []
+    cutoff = time.time() - _FILES_RETENTION_DAYS * 86400
+    deleted = []
+    for name, path in all_files.items():
+        if name not in known:
+            continue  # not confirmed ingested — never auto-delete
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                deleted.append(name)
+        except Exception:
+            log.exception("file retention: delete failed for %s", name)
+    return deleted
+
+
+async def _periodic_file_retention(ctx) -> None:
+    """Daily: prune raw data/files/ copies past _FILES_RETENTION_DAYS
+    whose content is already ingested (see _prune_old_ingested_files).
+    Quiet by design (log only, no Telegram notification) — same
+    low-key convention as the wiki_history snapshot cap."""
+    try:
+        deleted = await asyncio.to_thread(_prune_old_ingested_files)
+        if deleted:
+            log.info("file retention: deleted %d file(s) older than %dd",
+                     len(deleted), _FILES_RETENTION_DAYS)
+    except Exception:
+        log.exception("periodic file retention failed")
+
+
 def _enqueue_orphan_recovery(orphans: list[Path], chat_id: int) -> int:
     """Push orphan files onto the retry queue as kind='local_file'.
     The existing _retry_pending_ingest tick (2 min interval, single
@@ -14087,6 +14159,16 @@ def main():
             interval=3600,
             first=1800,
             name="periodic_orphan_scan",
+        )
+        # Once/day: prune data/files/ raw copies older than 90 days
+        # whose content is already ingested (2026-08-09 — this directory
+        # previously had no retention policy at all, unbounded disk
+        # growth on every single ingest).
+        app.job_queue.run_repeating(
+            _periodic_file_retention,
+            interval=86400,
+            first=3600,
+            name="periodic_file_retention",
         )
         # Every 60s: if the retry queue is empty (= bot is idle),
         # ask the user about every URL whose body extraction failed.
