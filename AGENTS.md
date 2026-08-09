@@ -437,6 +437,25 @@ bot `mem_limit: 11g` + `INGEST_SEM_CAPACITY=4` — **RAM은 늘었어도 2 vCPU
   kept per-topic to the newest 20 snapshots — 2026-08-09 — so history
   doesn't grow unbounded).
 
+## Study notes (`src/notes/`, 체화 channel)
+
+Separate subsystem from the main RAG archive/wiki — own vault
+(`data/notes/*.md`) + own SQLite (`data/notes.db`), no daily cost cap
+(user decision 2026-08-09: capped wiki/KG instead, left this one open).
+
+- **Content-level dedup** (`notes.content_hash`, 2026-08-09):
+  `channel.ingest_text()`'s original dedup was `store.note_id_by_source()`
+  — an exact match on `source_ref` (URL or filename) only. Reproduced the
+  gap against a scratch DB: the same article reposted under a URL that
+  only differs by a `?utm_source=...` tracking param, or the same file
+  re-uploaded under a different filename, both sailed past that check and
+  paid for a full LLM synth twice. Fix adds `content_hash` =
+  `meta.compute_body_hash(raw_text)` (reused from the RAG archive's own
+  dedup, not reimplemented), checked via `note_id_by_content_hash()`
+  BEFORE `synth.synthesize()` is called — a hit skips the LLM call
+  itself, not just the duplicate note file. Legacy notes (predate the
+  column) have `content_hash=NULL` and never false-positive match.
+
 ## Knowledge graph (`src/store/kg.py`)
 
 SQLite-only trial store (`data/kg.db`), no graph DB — (src, relation,

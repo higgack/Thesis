@@ -106,6 +106,19 @@ async def ingest_text(source_type: str, source_ref: str, raw_text: str,
             log.info("notes ingest: duplicate source '%s' → skip (note %s)",
                      source_ref, dup)
             return dup
+    # Content-level dedup fallback (2026-08-09): the source_ref check above
+    # only catches an exact URL/filename repeat — it misses the same
+    # article reposted under a tracking-param URL variant, or the same
+    # file re-uploaded under a different name. Checked before synth() so
+    # a hit skips the LLM call entirely, not just the duplicate note file.
+    from ..store import meta as _meta
+    content_hash = _meta.compute_body_hash(raw_text or "")
+    if content_hash:
+        dup = await asyncio.to_thread(store.note_id_by_content_hash, content_hash)
+        if dup:
+            log.info("notes ingest: duplicate content (hash=%s) → skip (note %s)",
+                     content_hash, dup)
+            return dup
     log.info("notes ingest: %s '%s' (%d chars)",
              source_type, source_ref, len((raw_text or "")))
     note = await synth.synthesize(source_type, source_ref, raw_text, title)
@@ -113,6 +126,7 @@ async def ingest_text(source_type: str, source_ref: str, raw_text: str,
         log.info("notes ingest: no note (synth skipped/failed) for %s",
                  source_ref)
         return None
+    note["content_hash"] = content_hash or None
     nid = store.save_note(note)
     log.info("notes ingest: saved note %s from %s", nid, source_ref)
     return nid

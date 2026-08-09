@@ -118,6 +118,22 @@ def init_db() -> None:
                       "INTEGER DEFAULT 0")
         if "important" not in cols:
             c.execute("ALTER TABLE notes ADD COLUMN important INTEGER DEFAULT 0")
+        if "content_hash" not in cols:
+            # Content-level dedup (2026-08-09): source_ref-based dedup
+            # (note_id_by_source) only catches an exact URL/filename
+            # repeat — it misses the same article reposted under a
+            # tracking-param URL variant, or the same file re-uploaded
+            # under a different filename, both of which paid for a full
+            # LLM synth twice (reproduced against a scratch DB before
+            # this fix: two notes, same content, URLs differing only by
+            # utm params — note_id_by_source returned None for the
+            # second one). content_hash is meta.compute_body_hash() of
+            # the raw extracted text, checked in channel.ingest_text()
+            # BEFORE calling synth so a hit skips the LLM call entirely,
+            # not just the duplicate note file.
+            c.execute("ALTER TABLE notes ADD COLUMN content_hash TEXT")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_notes_content_hash "
+                      "ON notes(content_hash)")
 
 
 # ------------------------------------------------------------- vault ---
@@ -155,7 +171,8 @@ def _atomic_write_text(path: Path, text: str) -> None:
 def save_note(note: dict) -> str:
     """Persist a synthesised note. `note` keys:
         title, source_type, source_ref, md (markdown body),
-        questions: [{question, answer, q_type}]
+        questions: [{question, answer, q_type}],
+        content_hash (optional — see note_id_by_content_hash)
     Writes the .md file, inserts the notes row, seeds SRS state
     (due tomorrow so it enters the next review queue), and stores the
     recall questions. Returns the note id.
@@ -172,13 +189,14 @@ def save_note(note: dict) -> str:
     with _conn() as c:
         c.execute(
             "INSERT INTO notes(id,title,source_type,source_ref,md_path,"
-            "created,updated,cost_krw,gen_seconds,category) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "created,updated,cost_krw,gen_seconds,category,content_hash) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (note_id, note.get("title") or note_id, note.get("source_type"),
              note.get("source_ref"), str(md_path), now, now,
              float(note.get("cost_krw") or 0.0),
              float(note.get("gen_seconds") or 0.0),
-             note.get("category") or "그외"),
+             note.get("category") or "그외",
+             note.get("content_hash") or None),
         )
         c.execute(
             "INSERT INTO note_srs(note_id,ease,interval_days,reps,lapses,"
@@ -290,6 +308,22 @@ def note_id_by_source(source_ref: str) -> str | None:
         r = c.execute(
             "SELECT id FROM notes WHERE source_ref=? "
             "ORDER BY updated DESC LIMIT 1", (source_ref,)).fetchone()
+    return r["id"] if r else None
+
+
+def note_id_by_content_hash(content_hash: str) -> str | None:
+    """Most recent note id whose content_hash matches, or None. Content-
+    level dedup fallback for when source_ref differs (URL tracking-param
+    variant, re-uploaded file under a different name) but the underlying
+    text is the same article — see the content_hash column comment in
+    init_db() for the reproduced failure case this covers."""
+    if not content_hash:
+        return None
+    init_db()
+    with _conn() as c:
+        r = c.execute(
+            "SELECT id FROM notes WHERE content_hash=? "
+            "ORDER BY updated DESC LIMIT 1", (content_hash,)).fetchone()
     return r["id"] if r else None
 
 
