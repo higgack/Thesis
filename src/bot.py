@@ -6576,32 +6576,45 @@ def _record_command_qna(update, question: str, body: str,
     trigger a regen so the card shows up immediately. Errors are
     swallowed — archiving must never block the user reply. Strips
     HTML tags from the answer body so the dashboard's _esc() doesn't
-    render them as literal <b> source."""
+    render them as literal <b> source.
+
+    Stays a plain sync function (18 call sites call it fire-and-forget,
+    no await) but both the qna.record() SQLite write and the dashboard
+    regenerate() rewrite now run in the thread pool via one
+    run_in_executor call, instead of qna.record() blocking the event
+    loop inline before the regen was offloaded. Exceptions are caught
+    inside the executor closure since they can't propagate back to a
+    caller that isn't awaiting this."""
     try:
         chat_id = (update.effective_chat.id if update.effective_chat
                    else update.message.chat.id)
         plain_answer = _strip_html(body)
-        qna.record(
-            chat_id=chat_id,
-            question=question,
-            answer=plain_answer,
-            sources=sources or [],
-            tools=tools,
-            model=model,
-        )
     except Exception:
         log.exception("command qna record failed (q=%r)", question[:60])
         return
-    try:
-        # Offload to the thread pool — regenerate() rewrites the detail
-        # pages and would otherwise block the event loop for the whole
-        # write. Fire-and-forget: the non-blocking lock inside
-        # regenerate() makes a concurrent/queued call a safe no-op.
-        from .dashboard import regenerate as dashboard_regen
-        asyncio.get_running_loop().run_in_executor(
-            None, dashboard_regen.regenerate)
-    except Exception:
-        log.exception("dashboard regenerate after command qna failed")
+
+    def _persist_and_regen():
+        try:
+            qna.record(
+                chat_id=chat_id,
+                question=question,
+                answer=plain_answer,
+                sources=sources or [],
+                tools=tools,
+                model=model,
+            )
+        except Exception:
+            log.exception("command qna record failed (q=%r)", question[:60])
+            return
+        try:
+            # regenerate()'s own non-blocking lock makes a concurrent/
+            # queued call from another command a safe no-op.
+            from .dashboard import regenerate as dashboard_regen
+            dashboard_regen.regenerate()
+        except Exception:
+            log.exception("dashboard regenerate after command qna failed")
+
+    asyncio.get_running_loop().run_in_executor(None, _persist_and_regen)
 
 
 

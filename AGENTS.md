@@ -504,6 +504,14 @@ recoverable). `docker-compose.yml` `stop_grace_period: 120s`. Any sqlite
 closes — a plain `sqlite3.Connection`'s own context manager only commits,
 never closes (`notes/store.py` leaked one per call this way until fixed
 2026-08-09; `kg.py`'s `_conn()` is the reference pattern to copy).
+- `documents.title_norm` (`meta.py`, added 2026-08-09) is a precomputed/
+  indexed copy of `_normalize_title(title)` that `find_by_normalized_title()`
+  dedup-lookup relies on instead of pulling up to 5000 rows and
+  normalising each in Python. Any code path that writes `documents.title`
+  outside `upsert_doc()`/`update_title()` (both already keep it in sync)
+  must set `title_norm` in the same statement or dedup silently goes
+  stale for that row — `init()` only backfills NULL rows (i.e. ones that
+  predate the column), not ones a raw UPDATE just made incorrect.
 
 ## Disk retention policies
 

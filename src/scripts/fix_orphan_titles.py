@@ -36,6 +36,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .. import config
+from ..store.meta import _normalize_title
 
 
 # Clearly-broken title patterns. Conservative on purpose — we'd rather
@@ -224,8 +225,8 @@ def main() -> int:
     with con:
         for doc_id, _, new in problems:
             con.execute(
-                "UPDATE documents SET title=? WHERE id=?",
-                (new, doc_id),
+                "UPDATE documents SET title=?, title_norm=? WHERE id=?",
+                (new, _normalize_title(new), doc_id),
             )
     print(f"✓ updated {len(problems)} documents.")
     return 0
