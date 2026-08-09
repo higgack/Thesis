@@ -266,12 +266,22 @@ async def _gemini_rerank(query: str, candidates: list[dict], k: int) -> list[dic
         return candidates[:k]
 
 
-async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
-    """Summary-first retrieval with document diversity + Gemini rerank.
+# Reciprocal Rank Fusion constant. k=60 is the standard choice (Cormack
+# et al. 2009; also what Cerebras's internal RAG writeup uses) — large
+# enough that a #1 vs #2 rank difference doesn't swing the fused score
+# wildly, small enough that rank position still matters more than noise.
+_RRF_K = 60
 
-    1. Pull a wider candidate set (k * 4) from dense + BM25 hybrid.
-    2. Dedupe so each saved document contributes at most one chunk.
-    3. Ask Gemini Flash-Lite to rerank by query relevance, return top k.
+
+async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
+    """Summary-first retrieval with document diversity + local/Gemini rerank.
+
+    1. Pull a wider candidate set (k * 4) from dense + keyword search.
+    2. Fuse the two rankings via Reciprocal Rank Fusion (RRF) — combines
+       differently-scaled systems (cosine similarity vs FTS5 bm25) by rank
+       position instead of a hand-tuned score weight.
+    3. Dedupe so each saved document contributes at most one chunk.
+    4. Rerank (local cross-encoder, falling back to Gemini) and return top k.
     """
     over = max(k * 4, 25)
     # Embed the query ONCE and reuse for both kind-filtered searches —
@@ -284,49 +294,61 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
         vector.query(query, k=over, kind="chunk", vec=qvec),
     )
 
-    dense = {h["id"]: (1.0 - h["distance"], h) for h in summary_hits + chunk_hits}
+    # Dense ranking, best (lowest distance) first.
+    dense_hits = sorted(summary_hits + chunk_hits, key=lambda h: h["distance"])
+    dense_rank = {h["id"]: i for i, h in enumerate(dense_hits)}
+    hit_by_id = {h["id"]: h for h in dense_hits}
 
     # Keyword half: FTS5 (persistent, scales past BM25_MAX_CHUNKS, ~0 RAM).
     # Supersedes the in-memory rank_bm25, which disabled itself above 50k
-    # chunks → dense-only at our corpus size. Fuse normalized keyword
-    # scores into the dense map; an FTS-only hit (keyword match outside the
-    # dense top) is added with metadata reconstructed from the chunk id
+    # chunks → dense-only at our corpus size. FTS-only hits (keyword match
+    # outside the dense top) are reconstructed from the chunk id
     # ("<doc_id>:<idx>", idx=-1 → summary). FTS unavailable/empty → the
-    # loop is simply skipped (dense-only = prior behavior).
+    # fts_rank map stays empty (dense-only fusion = prior behavior).
     fts_hits = await asyncio.to_thread(meta.fts_search, query, over)
-    if fts_hits:
-        max_s = max((h["score"] for h in fts_hits), default=0.0)
-        for h in fts_hits:
-            cid = h["id"]
-            n = (h["score"] / max_s) if max_s else 0
-            if cid in dense:
-                old, hit = dense[cid]
-                dense[cid] = (old + 0.4 * n, hit)
-            elif n > 0.55:
-                try:
-                    idx = int(cid.rsplit(":", 1)[1])
-                except Exception:
-                    idx = 0
-                dense[cid] = (0.4 * n, {
-                    "id": cid, "text": h["text"],
-                    "metadata": {"doc_id": h["doc_id"],
-                                 "kind": "summary" if idx == -1 else "chunk",
-                                 "idx": idx},
-                    "distance": 1.0 - n,
-                })
+    fts_hits_sorted = sorted(fts_hits, key=lambda h: h["score"], reverse=True)
+    fts_rank = {h["id"]: i for i, h in enumerate(fts_hits_sorted)}
+    for h in fts_hits_sorted:
+        cid = h["id"]
+        if cid in hit_by_id:
+            continue
+        try:
+            idx = int(cid.rsplit(":", 1)[1])
+        except Exception:
+            idx = 0
+        hit_by_id[cid] = {
+            "id": cid, "text": h["text"],
+            "metadata": {"doc_id": h["doc_id"],
+                         "kind": "summary" if idx == -1 else "chunk",
+                         "idx": idx},
+        }
+
+    # RRF: sum of 1/(k + rank) across every ranking a hit appears in.
+    # Replaces the old ad-hoc "0.4 * normalized FTS score" blend, which
+    # required calibrating a weight between two differently-scaled
+    # systems; RRF needs no such tuning and degrades gracefully when one
+    # side is empty.
+    fused: dict[str, float] = {}
+    for cid in set(dense_rank) | set(fts_rank):
+        s = 0.0
+        if cid in dense_rank:
+            s += 1.0 / (_RRF_K + dense_rank[cid])
+        if cid in fts_rank:
+            s += 1.0 / (_RRF_K + fts_rank[cid])
+        fused[cid] = s
 
     # Batch-fetch parent doc metadata in one query (offloaded to thread
     # so we never block the event loop on SQLite).
     needed_ids = list({
-        h["metadata"].get("doc_id")
-        for _, (_, h) in dense.items()
-        if h["metadata"].get("doc_id")
+        hit_by_id[cid]["metadata"].get("doc_id")
+        for cid in fused
+        if hit_by_id[cid]["metadata"].get("doc_id")
     })
     docs_map = await asyncio.to_thread(meta.get_docs_batch, needed_ids)
 
     mod_cache: dict[str, float] = {}
-    for cid in list(dense.keys()):
-        s, h = dense[cid]
+    for cid in list(fused.keys()):
+        h = hit_by_id[cid]
         doc_id = h["metadata"].get("doc_id")
         if not doc_id:
             continue
@@ -337,13 +359,14 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
                 if d.get("ingested_at") else 1.0
             )
             mod_cache[doc_id] = recency * _depth_bonus(d)
-        dense[cid] = (s * mod_cache[doc_id], h)
+        fused[cid] *= mod_cache[doc_id]
 
-    ranked = sorted(dense.values(), key=lambda x: x[0], reverse=True)
+    ranked = sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
 
     seen_docs: set[str] = set()
     candidates: list[dict] = []
-    for _, h in ranked:
+    for cid, _ in ranked:
+        h = hit_by_id[cid]
         doc_id = h["metadata"].get("doc_id")
         if doc_id in seen_docs:
             continue
@@ -353,6 +376,62 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
             break
 
     local = await _local_rerank(query, candidates, k)
-    if local is not None:
-        return local
-    return await _gemini_rerank(query, candidates, k)
+    top = local if local is not None else await _gemini_rerank(query, candidates, k)
+    return await _expand_context(top)
+
+
+# Only splice in a short window from each neighbor chunk, not the full
+# ~1000-token chunk — a full-chunk splice on both sides could triple the
+# prompt tokens for every hit (k=10 hits × up to 3x = real cost on every
+# Q&A). A few hundred chars of lead-in/lead-out context still fixes the
+# "cut off mid-sentence/mid-table" problem the reranked chunk alone has,
+# at a small, bounded token cost.
+_EXPAND_CHARS = 300
+
+
+async def _expand_context(hits: list[dict]) -> list[dict]:
+    """Splice in a short window from the immediately-adjacent chunk (same
+    doc, idx±1) around each reranked chunk hit, so the LLM sees a bit of
+    surrounding context instead of an isolated slice cut at an arbitrary
+    chunk boundary (Cerebras's RAG writeup calls this out as a cheap,
+    high-value step after reranking). Summary hits (idx=-1) and any hit
+    missing doc_id/idx are left untouched — 'summary' isn't part of the
+    chunk sequence. Best-effort: a fetch failure just skips expansion for
+    that hit."""
+    want_ids: list[str] = []
+    for h in hits:
+        md = h.get("metadata") or {}
+        if md.get("kind") != "chunk":
+            continue
+        doc_id, idx = md.get("doc_id"), md.get("idx")
+        if not doc_id or not isinstance(idx, int) or idx < 0:
+            continue
+        if idx > 0:
+            want_ids.append(f"{doc_id}:{idx - 1}")
+        want_ids.append(f"{doc_id}:{idx + 1}")
+    if not want_ids:
+        return hits
+    neighbor_text = await vector.get_by_ids(want_ids)
+    if not neighbor_text:
+        return hits
+    out = []
+    for h in hits:
+        md = h.get("metadata") or {}
+        if md.get("kind") != "chunk":
+            out.append(h)
+            continue
+        doc_id, idx = md.get("doc_id"), md.get("idx")
+        if not doc_id or not isinstance(idx, int) or idx < 0:
+            out.append(h)
+            continue
+        before_full = neighbor_text.get(f"{doc_id}:{idx - 1}", "") if idx > 0 else ""
+        after_full = neighbor_text.get(f"{doc_id}:{idx + 1}", "")
+        if not before_full and not after_full:
+            out.append(h)
+            continue
+        before = ("…" + before_full[-_EXPAND_CHARS:]) if before_full else ""
+        after = (after_full[:_EXPAND_CHARS] + "…") if after_full else ""
+        expanded = dict(h)
+        expanded["text"] = "\n\n".join(t for t in (before, h["text"], after) if t)
+        out.append(expanded)
+    return out

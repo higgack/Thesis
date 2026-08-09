@@ -14277,6 +14277,15 @@ def main():
         except Exception:
             log.debug("kg merge_duplicate_entities failed (ignored)")
     _fts_th.Thread(target=_kg_merge_entities, daemon=True).start()
+    # Same idea, one level down: merge formatting variants of the same
+    # relation string ("works_at" vs "works at") onto one canonical label.
+    def _kg_merge_relations():
+        try:
+            from .store import kg as _kg
+            _kg.merge_duplicate_relations()
+        except Exception:
+            log.debug("kg merge_duplicate_relations failed (ignored)")
+    _fts_th.Thread(target=_kg_merge_relations, daemon=True).start()
     log.info("bot starting")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
