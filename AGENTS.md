@@ -390,8 +390,12 @@ bot `mem_limit: 11g` + `INGEST_SEM_CAPACITY=4` — **RAM은 늘었어도 2 vCPU
 
 ## Wiki system (don't regress)
 
-- **Daily budget** ₩1,000 (`config.WIKI_DAILY_BUDGET_KRW`). Single source;
-  no hardcoded fallbacks; no `.env` override.
+- **Daily budget** ₩2,000 (`config.WIKI_DAILY_BUDGET_KRW`, raised from
+  ₩1,000 2026-08-09 per user request; `.env`-overridable like any
+  `os.getenv` default — `.env.example` already showed 2000 while the
+  code default was still 1000, so this also closes that drift. If the
+  live VM `.env` has this var set explicitly, it still wins over the
+  code default — verify there too if the actual cap doesn't match).
 - **Batch** hourly on the hour KST: `run_repeating(3600, first=next
   top-of-hour)`, recomputed each boot. Daily ₩ cap resets KST midnight;
   once hit, rest of day no-ops. `WIKI_BATCH_HOUR` DEPRECATED (back-compat).
@@ -410,7 +414,7 @@ bot `mem_limit: 11g` + `INGEST_SEM_CAPACITY=4` — **RAM은 늘었어도 2 vCPU
   Revive only by hand-edit + restart.
 - **Drain temp budget clears immediately**: `drain_queue()` try/finally
   `clear_temp_budget()` (skipped only on `CancelledError`) → reverts to
-  ₩1,000 instantly, not at midnight.
+  the daily cap instantly, not at midnight.
 - **Query-first** (`WIKI_QUERY_FIRST=1` default): Q&A includes wiki
   knowledge before vector-only RAG.
 - **Channel dup suppression**: an all-duplicate channel ingest sends no
@@ -440,6 +444,10 @@ dst, confidence, doc_id, ts) triples extracted per-document via Gemini
 Flash-Lite. Self-contained/trivially-removable by design; don't import
 other project modules into it beyond `config` and lazy `kg_ignore`.
 
+- **Daily budget** ₩2,000 (`config.KG_DAILY_BUDGET_KRW`, raised from
+  ₩300 2026-08-09 per user request — same change, same day, as the wiki
+  budget raise). Past the cap the auto-extract hook skips silently until
+  KST midnight; manual `/kg_extract` is unaffected.
 - **Entity canonicalization** (2026-07-29): `_canon_key()` strips
   whitespace/corp-suffix formatting so "삼성전자"/"삼성 전자"/
   "삼성전자(주)" resolve to one node — live at insert time

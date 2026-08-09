@@ -18,7 +18,7 @@ TELEGRAM_BASE_URL = os.getenv("TELEGRAM_BASE_URL", "").strip() or None
 # bulk channel import can't run up a surprise bill — past the cap, the
 # hook skips silently until KST midnight. Manual /kg_extract is unaffected.
 KG_AUTO = os.getenv("KG_AUTO", "1") == "1"
-KG_DAILY_BUDGET_KRW = float(os.getenv("KG_DAILY_BUDGET_KRW", "300"))
+KG_DAILY_BUDGET_KRW = float(os.getenv("KG_DAILY_BUDGET_KRW", "2000"))
 
 # Optional now: only used when GEMINI_BACKEND=aistudio (the default).
 # A Vertex deployment authenticates via ADC, so a vertex-only .env
@@ -143,4 +143,4 @@ WIKI_PARALLEL = int(os.getenv("WIKI_PARALLEL", "3"))
 # Daily spend circuit breaker (KST). When today's wiki cost reaches this
 # many ₩, the batch BLOCKS for the rest of the KST day and fires an
 # actionable alert; queued docs resume next day. 0 = no cap.
-WIKI_DAILY_BUDGET_KRW = float(os.getenv("WIKI_DAILY_BUDGET_KRW", "1000"))
+WIKI_DAILY_BUDGET_KRW = float(os.getenv("WIKI_DAILY_BUDGET_KRW", "2000"))
