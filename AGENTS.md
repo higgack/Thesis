@@ -497,6 +497,21 @@ closes — a plain `sqlite3.Connection`'s own context manager only commits,
 never closes (`notes/store.py` leaked one per call this way until fixed
 2026-08-09; `kg.py`'s `_conn()` is the reference pattern to copy).
 
+## Disk retention policies
+
+- **`data/files/`** (raw copies of ingested PDFs/docs): `_prune_old_ingested_files()`
+  (`bot.py`), daily job `periodic_file_retention`, deletes a file ONLY when
+  BOTH its filename matches a `meta.documents` source (i.e. already fully
+  ingested — chunks + embeddings already in Chroma/meta.db, so the raw
+  file is pure backup) AND its mtime is older than `FILES_RETENTION_DAYS`
+  (default 90). Never touches an unconfirmed/orphan/in-flight file. Added
+  2026-08-09 — this directory previously had NO retention at all, growing
+  unbounded on every single ingest (unlike `data/wiki_history/`, which
+  already had the 20-snapshot-per-topic cap below).
+- **`data/wiki_history/`** (pre-rewrite consolidation snapshots): capped
+  at `WIKI_HISTORY_KEEP_PER_TOPIC` (default 20) per topic — see Wiki
+  system section above.
+
 ## Backlog (not active until the user asks)
 
 - **Wiki 팩트 테이블 (Phase 2)**: extract atomic facts to a `wiki_facts`
