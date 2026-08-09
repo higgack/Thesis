@@ -88,6 +88,31 @@ def init():
             c.execute("SELECT body_signature FROM documents LIMIT 1")
         except sqlite3.OperationalError:
             c.execute("ALTER TABLE documents ADD COLUMN body_signature TEXT")
+        # title_norm: _normalize_title(title), stored + indexed so
+        # find_by_normalized_title() can do an indexed lookup instead of
+        # pulling up to 5000 rows and comparing in Python on every
+        # ingest (2026-08-09 — normalisation is a Python regex function,
+        # not something SQLite can filter by directly, so it has to be
+        # precomputed at write time). Kept in sync by upsert_doc() and
+        # update_title(); a NULL row here means it predates this column
+        # and gets backfilled once below.
+        try:
+            c.execute("SELECT title_norm FROM documents LIMIT 1")
+        except sqlite3.OperationalError:
+            c.execute("ALTER TABLE documents ADD COLUMN title_norm TEXT")
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_docs_title_norm "
+            "ON documents(title_norm)"
+        )
+        stale = c.execute(
+            "SELECT id, title FROM documents WHERE title_norm IS NULL"
+        ).fetchall()
+        if stale:
+            c.executemany(
+                "UPDATE documents SET title_norm=? WHERE id=?",
+                [(_normalize_title(r["title"] or ""), r["id"]) for r in stale],
+            )
+            log.info("meta: backfilled title_norm for %d doc(s)", len(stale))
         # Chunk-level embedding cache ([B] cost cut, 2026-05): maps a
         # SHA1 of normalised chunk text to the Chroma id of the first
         # chunk that carried it. When a future doc produces the same
@@ -317,22 +342,25 @@ def upsert_doc(doc_id: str, source: str, doc_type: str, title: str,
                body_signature: str | None = None) -> None:
     import json as _json
     metadata_json = _json.dumps(metadata, ensure_ascii=False) if metadata else None
+    title_norm = _normalize_title(title or "")
     with _wconn() as c:
         c.execute(
             """INSERT INTO documents(id, source, type, title, summary,
                                      obsidian_path, ingested_at, metadata,
-                                     file_hash, body_hash, body_signature)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                                     file_hash, body_hash, body_signature,
+                                     title_norm)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                  title=excluded.title, summary=excluded.summary,
                  obsidian_path=excluded.obsidian_path,
                  metadata=excluded.metadata,
                  file_hash=excluded.file_hash,
                  body_hash=excluded.body_hash,
-                 body_signature=excluded.body_signature""",
+                 body_signature=excluded.body_signature,
+                 title_norm=excluded.title_norm""",
             (doc_id, source, doc_type, title, summary, obsidian_path,
              datetime.utcnow().isoformat(), metadata_json, file_hash,
-             body_hash, body_signature),
+             body_hash, body_signature, title_norm),
         )
 
 
@@ -488,17 +516,17 @@ def find_by_normalized_title(title: str,
     norm = _normalize_title(title or "")
     if len(norm) < 6:
         return None
-    # Pull every recent doc's title and compare normalised — cheap on
-    # a ~10K-doc corpus (the index hits in ms) and avoids storing yet
-    # another column.
+    # Indexed lookup on the precomputed title_norm column (idx_docs_title_norm)
+    # instead of pulling up to 5000 rows and normalising each in Python —
+    # that scan reran on every ingest that fell through file_hash/body_hash
+    # dedup, and grew linearly with corpus size (2026-08-09 fix).
     with _conn() as c:
         rows = c.execute(
             "SELECT id, title, source, body_signature FROM documents "
-            "ORDER BY ingested_at DESC LIMIT 5000"
+            "WHERE title_norm=? ORDER BY ingested_at DESC",
+            (norm,),
         ).fetchall()
     for row in rows:
-        if _normalize_title(row["title"] or "") != norm:
-            continue
         row_sig = row["body_signature"]
         # Skip when the new doc has a signature and the row's doesn't
         # match (either differs or is NULL because the row predates
@@ -1013,8 +1041,9 @@ def update_title(doc_id: str, new_title: str) -> bool:
     if not doc_id or not new_title:
         return False
     with _wconn() as c:
-        cur = c.execute("UPDATE documents SET title=? WHERE id=?",
-                        (new_title, doc_id))
+        cur = c.execute(
+            "UPDATE documents SET title=?, title_norm=? WHERE id=?",
+            (new_title, _normalize_title(new_title), doc_id))
         return cur.rowcount > 0
 
 
