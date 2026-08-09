@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
@@ -49,10 +50,18 @@ _PRICES_USD = {
 
 _DB_PATH = config.DATA_DIR / "cost.db"
 
+_inited = False
 
-def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(str(_DB_PATH), timeout=30)
-    c.execute("PRAGMA journal_mode=WAL")
+
+def _init_once(c: sqlite3.Connection) -> None:
+    # Run the DDL/migration probes once per process, not on every
+    # connection open — record() fires on EVERY Gemini call, so
+    # re-running CREATE TABLE/INDEX + PRAGMA table_info on each one
+    # grabs a brief write lock per call and contends with concurrent
+    # writers (same class of issue kg.py's init() was fixed for).
+    global _inited
+    if _inited:
+        return
     c.execute("""
         CREATE TABLE IF NOT EXISTS calls (
             ts TEXT NOT NULL,
@@ -71,7 +80,26 @@ def _conn() -> sqlite3.Connection:
         c.execute("ALTER TABLE calls ADD COLUMN purpose TEXT NOT NULL DEFAULT 'unknown'")
     if "cached_tokens" not in cols:
         c.execute("ALTER TABLE calls ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0")
-    return c
+    _inited = True
+
+
+@contextmanager
+def _conn():
+    # A plain sqlite3.Connection's own context manager only commits/
+    # rolls back a transaction — it never closes the connection. Every
+    # "with _conn() as c:" call site here was leaking an open connection
+    # + WAL file handle on EVERY record() call (i.e. every single Gemini
+    # API call), relying on GC to eventually reclaim it. Wrapped as a
+    # real contextmanager (same pattern as kg.py's _conn) so the
+    # connection is always closed on exit.
+    c = sqlite3.connect(str(_DB_PATH), timeout=30)
+    c.execute("PRAGMA journal_mode=WAL")
+    _init_once(c)
+    try:
+        yield c
+        c.commit()
+    finally:
+        c.close()
 
 
 def _price_krw(model: str, in_tokens: int, out_tokens: int,
@@ -300,27 +328,36 @@ def daily_breakdown(days: int = 7, purpose: str | None = None) -> list[dict]:
     tagged with that purpose are counted (e.g. 'wiki')."""
     today = datetime.now(KST).date()
     days_list = [today - timedelta(days=i) for i in range(days)]
+    range_start = _kst_day_start_utc(days_list[-1]).isoformat(timespec="seconds")
+    range_end = _kst_day_start_utc(
+        days_list[0] + timedelta(days=1)).isoformat(timespec="seconds")
+    # One GROUP BY over the whole range instead of one query per day —
+    # `days` is caller-settable and each iteration used to open+leak its
+    # own connection on top of the redundant scans.
     seen: dict[str, tuple[float, int]] = {}
     with _conn() as c:
-        for d in days_list:
-            start = _kst_day_start_utc(d).isoformat(timespec="seconds")
-            end = _kst_day_start_utc(d + timedelta(days=1)).isoformat(timespec="seconds")
-            if purpose:
-                row = c.execute(
-                    "SELECT SUM(cost_krw), COUNT(*) FROM calls "
-                    "WHERE ts >= ? AND ts < ? AND purpose = ?",
-                    (start, end, purpose),
-                ).fetchone()
-            else:
-                row = c.execute(
-                    "SELECT SUM(cost_krw), COUNT(*) FROM calls "
-                    "WHERE ts >= ? AND ts < ?",
-                    (start, end),
-                ).fetchone()
-            seen[d.isoformat()] = (float(row[0] or 0.0), int(row[1] or 0))
+        if purpose:
+            rows = c.execute(
+                "SELECT ts, cost_krw FROM calls "
+                "WHERE ts >= ? AND ts < ? AND purpose = ?",
+                (range_start, range_end, purpose),
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT ts, cost_krw FROM calls WHERE ts >= ? AND ts < ?",
+                (range_start, range_end),
+            ).fetchall()
+    for ts, cost in rows:
+        try:
+            dt = datetime.fromisoformat(str(ts))
+        except Exception:
+            continue
+        d_key = dt.replace(tzinfo=timezone.utc).astimezone(KST).date().isoformat()
+        prev_cost, prev_n = seen.get(d_key, (0.0, 0))
+        seen[d_key] = (prev_cost + float(cost or 0.0), prev_n + 1)
     return [
         {"date": d.isoformat(),
-         "cost": seen[d.isoformat()][0],
-         "calls": seen[d.isoformat()][1]}
+         "cost": seen.get(d.isoformat(), (0.0, 0))[0],
+         "calls": seen.get(d.isoformat(), (0.0, 0))[1]}
         for d in days_list
     ]

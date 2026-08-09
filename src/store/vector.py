@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import logging
 import os
-import threading
 import time
 
 import chromadb
@@ -209,99 +208,6 @@ async def get_by_ids(ids: list[str]) -> dict[str, str]:
     return out
 
 
-_BM25_CACHE: dict = {"count": -1, "data": None, "building": False, "ts": 0.0}
-_BM25_LOCK = threading.Lock()
-# Debounce the corpus rescan: rebuilding the snapshot (and the BM25 index
-# downstream) on EVERY ingest-driven count change pegged the GIL on a
-# 178k-chunk corpus and starved the event loop for minutes. Rescan only
-# after a meaningful drift AND a min interval; new chunks are still found
-# via live dense search in the meantime, so recall isn't hurt.
-_BM25_DRIFT_MIN = 200
-_BM25_MIN_INTERVAL_SEC = 300
-# Above this many chunks, skip BM25 entirely and use dense-only
-# retrieval. BM25 here is an augmentary signal; on a very large corpus
-# its cold rebuild pegs the GIL on every restart and per-query
-# get_scores is O(n), which made the bot sluggish (the whole reason the
-# watchdog kept firing). Dense (embedding) retrieval handles recall at
-# this scale. Env-tunable; raise it to re-enable BM25 on a big corpus.
-_BM25_MAX_CHUNKS = int(os.getenv("BM25_MAX_CHUNKS", "50000"))
-
-
-def _scan_all_chunks() -> list[tuple[str, str, dict]]:
-    """Paginated scan because Chroma's unbounded get() trips SQLite's
-    bind-parameter limit on large corpora."""
-    out: list[tuple[str, str, dict]] = []
-    BATCH = 500
-    offset = 0
-    while True:
-        res = _collection.get(
-            include=["documents", "metadatas"],
-            limit=BATCH, offset=offset,
-        )
-        ids = res.get("ids") or []
-        if not ids:
-            break
-        out.extend(zip(ids, res["documents"], res["metadatas"]))
-        if len(ids) < BATCH:
-            break
-        offset += BATCH
-    return out
-
-
-def _bm25_build_sync() -> None:
-    """Heavy work: pull every chunk + memoize. Runs on a worker thread
-    so the event loop stays responsive."""
-    try:
-        n = _collection.count()
-        log.info("bm25 corpus scan starting (%d chunks)", n)
-        data = _scan_all_chunks()
-        with _BM25_LOCK:
-            _BM25_CACHE["data"] = data
-            _BM25_CACHE["count"] = n
-            _BM25_CACHE["ts"] = time.time()
-            _BM25_CACHE["building"] = False
-        log.info("bm25 corpus scan done (%d chunks cached)", len(data))
-    except Exception:
-        with _BM25_LOCK:
-            _BM25_CACHE["building"] = False
-        log.exception("bm25 corpus scan failed")
-
-
-def all_documents_text() -> list[tuple[str, str, dict]] | None:
-    """Cached corpus snapshot for BM25 indexing.
-
-    Returns None if the cache isn't ready yet — caller should fall back
-    to dense-only retrieval. Triggers a DEBOUNCED background rebuild:
-    only after the chunk count drifts by ≥_BM25_DRIFT_MIN AND at least
-    _BM25_MIN_INTERVAL_SEC has elapsed since the last build (or on a cold
-    cache). Serves the slightly-stale snapshot otherwise so an ingest
-    burst can't trigger back-to-back full-corpus rescans that starve the
-    loop. Avoids blocking the event loop on multi-thousand-chunk scans.
-
-    Returns None unconditionally once the corpus exceeds _BM25_MAX_CHUNKS
-    (dense-only) — no scan, no build thread, no per-query scoring."""
-    n = _collection.count()
-    if n > _BM25_MAX_CHUNKS:
-        return None
-    cached = _BM25_CACHE["data"]
-    if cached is not None:
-        drift = abs(n - _BM25_CACHE["count"])
-        age = time.time() - _BM25_CACHE.get("ts", 0.0)
-        if drift < _BM25_DRIFT_MIN or age < _BM25_MIN_INTERVAL_SEC:
-            return cached  # debounce: serve stale, skip the rescan
-    with _BM25_LOCK:
-        if not _BM25_CACHE["building"]:
-            _BM25_CACHE["building"] = True
-            threading.Thread(target=_bm25_build_sync, daemon=True).start()
-    return cached  # may still be a stale snapshot, or None on cold start
-
-
-def warm_bm25_cache() -> None:
-    """Kick off the corpus scan immediately so the very first user query
-    doesn't pay the multi-thousand-chunk tax."""
-    all_documents_text()
-
-
 def delete_doc(doc_id: str) -> int:
     from . import meta as _meta
     res = _collection.get(where={"doc_id": doc_id})
@@ -325,8 +231,10 @@ def delete_docs(doc_ids: list[str]) -> int:
     ids = res.get("ids") or []
     if ids:
         _collection.delete(ids=ids)
-    for did in doc_ids:           # keep the keyword index in sync
-        _meta.fts_delete_doc(did)
+    # Batched IN(...) instead of one DELETE per doc — chunk_fts.doc_id is
+    # UNINDEXED (FTS5 gives no secondary index there), so N per-doc
+    # deletes meant N full scans of the whole keyword table.
+    _meta.fts_delete_docs(list(doc_ids))
     return len(ids)
 
 

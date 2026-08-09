@@ -10,6 +10,7 @@ many OCR prompts) or for prompts that fire while the user is asleep.
 import json
 import logging
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 
 from .. import config
@@ -62,10 +63,19 @@ def init() -> None:
         log.exception("pending.init failed")
 
 
-def _conn() -> sqlite3.Connection:
+@contextmanager
+def _conn():
+    # A plain sqlite3.Connection's own context manager only commits/
+    # rolls back — it never closes. Every "with _conn() as c:" call site
+    # in this module (17) was leaking a connection + WAL handle. Wrapped
+    # as a real contextmanager (same pattern as kg.py's _conn).
     c = sqlite3.connect(str(_DB_PATH), timeout=30)
     c.execute("PRAGMA journal_mode=WAL")
-    return c
+    try:
+        yield c
+        c.commit()
+    finally:
+        c.close()
 
 
 def add_ocr(chat_id: int, doc_id: str, title: str, pdf_path: str,

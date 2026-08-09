@@ -976,11 +976,21 @@ def _persist_chat_history() -> None:
 def _record_turn(chat_id: int, role: str, text: str,
                  sources: list[str] | None = None,
                  tools: list[str] | None = None) -> None:
-    """Append one turn to this chat's rolling history. Trims old turns
-    so memory stays bounded; persists to disk so restarts don't drop
-    context. Model turns can also carry the sources/tools that produced
-    them so a follow-up that doesn't trigger a new search still has the
-    previous turn's citations to show."""
+    """Append one turn to this chat's rolling history (in-memory only —
+    pure dict mutation, safe/fast to call directly on the event loop).
+    Trims old turns so memory stays bounded. Model turns can also carry
+    the sources/tools that produced them so a follow-up that doesn't
+    trigger a new search still has the previous turn's citations to show.
+
+    Does NOT persist to disk — callers must separately await
+    `asyncio.to_thread(_persist_chat_history)` after recording a turn
+    (or a pair of turns). This used to persist inline on every call,
+    meaning every single message did a synchronous atomic JSON write of
+    the ENTIRE cross-chat history dict directly on the event loop, TWICE
+    per turn (once for the user message, once for the model reply) — the
+    same 'unguarded sync disk I/O on the loop' bug class that caused the
+    obsidian.py write_note() 30-min stuck-ingest incident (2026-08-01),
+    but firing on every message instead of only every ingest."""
     if not text:
         return
     cap = _HISTORY_USER_CAP if role == "user" else _HISTORY_MODEL_CAP
@@ -995,7 +1005,6 @@ def _record_turn(chat_id: int, role: str, text: str,
     max_msgs = _HISTORY_MAX_TURNS * 2
     if len(h) > max_msgs:
         del h[: len(h) - max_msgs]
-    _persist_chat_history()
 
 
 def _persist_failed_log() -> None:
@@ -8790,7 +8799,7 @@ async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     n = len(_HISTORY.get(chat_id, []))
     _HISTORY.pop(chat_id, None)
-    _persist_chat_history()
+    await asyncio.to_thread(_persist_chat_history)
     await update.message.reply_text(f"대화 메모리 초기화 ({n} 메시지 비움)")
 
 
@@ -9192,13 +9201,19 @@ async def _send_agent_reply(send, result, send_photo=None, inherited: bool = Fal
         suffix_lines.append(result["warning"])
     source_urls = result.get("source_urls") or {}
     if ordered_labels:
-        suffix_lines.append("📚 출처:" + _format_numbered_sources(
-            ordered_labels, source_urls,
-        ))
+        # Off-loop: same unindexed-LIKE-scan shape as _annotate_learn_date
+        # above (meta.search_title() per cited title) — this branch fires
+        # on most Q&A/agent replies (any answer with [N]-style citations),
+        # so running it synchronously on the loop was a confirmed freeze
+        # risk under load, not just a theoretical one.
+        formatted = await asyncio.to_thread(
+            _format_numbered_sources, ordered_labels, source_urls)
+        suffix_lines.append("📚 출처:" + formatted)
     elif result.get("sources"):
-        suffix_lines.append("📚 출처:" + _format_sources_with_url(
-            result["sources"], source_urls=source_urls,
-        ))
+        formatted = await asyncio.to_thread(
+            _format_sources_with_url, result["sources"],
+            source_urls=source_urls)
+        suffix_lines.append("📚 출처:" + formatted)
     audit = _audit_f2_numbers(body)
     if audit:
         suffix_lines.append(
@@ -9449,7 +9464,12 @@ async def _finalize_agent_reply(message, ctx: ContextTypes.DEFAULT_TYPE,
             sources=result.get("sources") or [],
             tools=result.get("tool_calls") or [],
         )
-        qna.record(
+        # One persist covering both turns just recorded (was two
+        # separate synchronous full-history writes per message before
+        # _record_turn stopped persisting inline — see its docstring).
+        await asyncio.to_thread(_persist_chat_history)
+        await asyncio.to_thread(
+            qna.record,
             chat_id=chat_id,
             question=text,
             answer=body,
@@ -11604,7 +11624,9 @@ async def _drain_pending_pro(ctx: ContextTypes.DEFAULT_TYPE):
                 sources=result.get("sources") or [],
                 tools=result.get("tool_calls") or [],
             )
-            qna.record(
+            await asyncio.to_thread(_persist_chat_history)
+            await asyncio.to_thread(
+                qna.record,
                 chat_id=chat_id, question=question, answer=body,
                 sources=result.get("sources") or [],
                 tools=result.get("tool_calls") or [],
@@ -13623,7 +13645,8 @@ async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
             # Archive so the asked question also lands as a dashboard card
             # on the next regenerate, identical to a Telegram-asked one.
             try:
-                qna.record(
+                await asyncio.to_thread(
+                    qna.record,
                     chat_id=config.TELEGRAM_OWNER_ID,
                     question=q,
                     answer=text,
