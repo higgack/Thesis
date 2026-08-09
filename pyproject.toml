@@ -35,7 +35,6 @@ dependencies = [
     # blocked, before the Jina render fallback. No API key.
     "curl_cffi>=0.7.0",
     "tiktoken>=0.8.0",
-    "rank-bm25>=0.2.2",
     "tenacity>=9.0.0",
     "beautifulsoup4>=4.12.0",
     "telethon>=1.36.0",

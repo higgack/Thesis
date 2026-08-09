@@ -7,8 +7,6 @@ import re
 import threading
 from datetime import datetime, timezone
 
-from rank_bm25 import BM25Okapi
-
 from .. import config
 from ..llm.gemini import complete
 from ..store import meta, vector
@@ -121,72 +119,8 @@ def _depth_bonus(doc: dict) -> float:
 
 log = logging.getLogger(__name__)
 
-_TOKEN_RE = re.compile(r"[\w가-힣]+", re.UNICODE)
 _RERANK_INDEX_RE = re.compile(r"\[[\d,\s]+\]")
 _EXPAND_JSON_RE = re.compile(r"\[.*?\]", re.DOTALL)
-
-
-def _tokenize(text: str) -> list[str]:
-    return [t.lower() for t in _TOKEN_RE.findall(text)]
-
-
-# BM25 index cache. Building the index (tokenize every chunk + IDF
-# tables) over the full corpus is the expensive part — on a 176k-chunk
-# corpus it pegged the event loop ~58s PER QUERY (retrieve rebuilt it
-# inline every call), starving the heartbeat → watchdog restarts. Now
-# the index is built once in a daemon thread and reused; per-query we
-# only run get_scores (offloaded). Rebuild triggers when the corpus
-# snapshot drifts; the `building` flag prevents pile-ups during ingest
-# bursts. ids/docs/metas are stored aligned with the index so scoring
-# maps back without an O(n) ids.index() lookup.
-_BM25: dict = {"count": -1, "index": None, "ids": None,
-               "docs": None, "metas": None, "building": False}
-_BM25_LOCK = threading.Lock()
-_BM25_OFF_LOGGED = False
-
-
-def _build_bm25_sync(chunks: list, count: int) -> None:
-    try:
-        ids = [c[0] for c in chunks]
-        docs = [c[1] for c in chunks]
-        metas = [c[2] for c in chunks]
-        index = BM25Okapi([_tokenize(d) for d in docs])
-        with _BM25_LOCK:
-            _BM25.update(count=count, index=index, ids=ids,
-                         docs=docs, metas=metas, building=False)
-        log.info("bm25 index built (%d docs)", len(docs))
-    except Exception:
-        with _BM25_LOCK:
-            _BM25["building"] = False
-        log.exception("bm25 index build failed")
-
-
-def _ensure_bm25() -> dict | None:
-    """Return the cached BM25 bundle, kicking off a background rebuild
-    when the corpus snapshot drifts. Returns None on cold start OR when
-    the corpus exceeds BM25_MAX_CHUNKS (vector layer returns no snapshot
-    → dense-only); returns a possibly-stale bundle while a rebuild is in
-    flight (better recall than dense-only). Returns a dict COPY taken
-    under the lock so callers can't see index/ids from different builds
-    (the multi-key read was a torn-read race)."""
-    snap = vector.all_documents_text()
-    if not snap:
-        return None
-    n = len(snap)
-    with _BM25_LOCK:
-        if _BM25["index"] is not None and _BM25["count"] == n:
-            return dict(_BM25)
-        if not _BM25["building"]:
-            _BM25["building"] = True
-            try:
-                threading.Thread(target=_build_bm25_sync, args=(snap, n),
-                                 daemon=True).start()
-            except Exception:
-                # Thread spawn failure would otherwise leave `building`
-                # stuck True forever → BM25 frozen until restart.
-                _BM25["building"] = False
-                log.exception("bm25 build thread spawn failed")
-        return dict(_BM25) if _BM25["index"] is not None else None
 
 
 async def expand_query(query: str) -> list[str]:
@@ -299,12 +233,13 @@ async def hybrid(query: str, k: int = config.TOP_K) -> list[dict]:
     dense_rank = {h["id"]: i for i, h in enumerate(dense_hits)}
     hit_by_id = {h["id"]: h for h in dense_hits}
 
-    # Keyword half: FTS5 (persistent, scales past BM25_MAX_CHUNKS, ~0 RAM).
-    # Supersedes the in-memory rank_bm25, which disabled itself above 50k
-    # chunks → dense-only at our corpus size. FTS-only hits (keyword match
-    # outside the dense top) are reconstructed from the chunk id
-    # ("<doc_id>:<idx>", idx=-1 → summary). FTS unavailable/empty → the
-    # fts_rank map stays empty (dense-only fusion = prior behavior).
+    # Keyword half: FTS5 (persistent, scales to full corpus size, ~0 RAM).
+    # An earlier in-memory rank_bm25 index that disabled itself above 50k
+    # chunks (→ dense-only) was fully superseded by this and removed
+    # 2026-08-09. FTS-only hits (keyword match outside the dense top) are
+    # reconstructed from the chunk id ("<doc_id>:<idx>", idx=-1 →
+    # summary). FTS unavailable/empty → the fts_rank map stays empty
+    # (dense-only fusion = prior behavior).
     fts_hits = await asyncio.to_thread(meta.fts_search, query, over)
     fts_hits_sorted = sorted(fts_hits, key=lambda h: h["score"], reverse=True)
     fts_rank = {h["id"]: i for i, h in enumerate(fts_hits_sorted)}

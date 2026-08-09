@@ -120,11 +120,12 @@ def init():
         c.execute("CREATE INDEX IF NOT EXISTS idx_summary_cache_ts "
                   "ON summary_cache(ts)")
         # Chunk keyword index (FTS5) — keyword retrieval that scales past
-        # BM25_MAX_CHUNKS. The in-memory rank_bm25 disables itself above
-        # 50k chunks (→ dense-only) and pegs RAM/CPU rebuilding the whole
-        # corpus; FTS5 is persistent + incremental, so keyword search stays
-        # on at full corpus scale for far less RAM. trigram tokenizer gives
-        # Korean/CJK substring matching the whitespace BM25 lacked. If FTS5
+        # what an in-memory rank_bm25 index could handle (that path pegged
+        # RAM/CPU rebuilding the whole corpus above ~50k chunks and was
+        # removed 2026-08-09, fully superseded by this). FTS5 is
+        # persistent + incremental, so keyword search stays on at full
+        # corpus scale for far less RAM. trigram tokenizer gives
+        # Korean/CJK substring matching plain BM25 lacked. If FTS5
         # or the tokenizer is unavailable in this SQLite build, we log and
         # skip — retrieval degrades to dense-only (current behavior), never
         # crashes. Tokenizer is env-tunable (FTS_TOKENIZER) for disk-tight
@@ -239,6 +240,26 @@ def fts_delete_doc(doc_id: str) -> None:
     with _wconn() as c:
         try:
             c.execute("DELETE FROM chunk_fts WHERE doc_id=?", (doc_id,))
+        except sqlite3.OperationalError:
+            pass
+
+
+def fts_delete_docs(doc_ids: list[str]) -> None:
+    """Batch form of fts_delete_doc — one DELETE...IN(...) per chunk of
+    ids instead of one DELETE per doc. chunk_fts's doc_id column is
+    UNINDEXED (FTS5 gives unindexed columns no secondary index), so each
+    per-doc DELETE was a full scan of the whole keyword table; a batch of
+    N docs did N full scans. Chunked to a safe SQLite placeholder count."""
+    if not doc_ids:
+        return
+    BATCH = 500
+    with _wconn() as c:
+        try:
+            for i in range(0, len(doc_ids), BATCH):
+                chunk = doc_ids[i:i + BATCH]
+                ph = ",".join("?" * len(chunk))
+                c.execute(f"DELETE FROM chunk_fts WHERE doc_id IN ({ph})",
+                         chunk)
         except sqlite3.OperationalError:
             pass
 

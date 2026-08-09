@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 
 from .. import config
@@ -17,10 +18,15 @@ log = logging.getLogger(__name__)
 
 _DB_PATH = config.DATA_DIR / "qna.db"
 
+_inited = False
 
-def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(str(_DB_PATH), timeout=30)
-    c.execute("PRAGMA journal_mode=WAL")
+
+def _init_once(c: sqlite3.Connection) -> None:
+    # DDL/migration once per process, not on every connection open —
+    # record() fires on every successful Q&A turn.
+    global _inited
+    if _inited:
+        return
     c.execute("""
         CREATE TABLE IF NOT EXISTS qna (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,7 +47,24 @@ def _conn() -> sqlite3.Connection:
     cols = {r[1] for r in c.execute("PRAGMA table_info(qna)")}
     if "important" not in cols:
         c.execute("ALTER TABLE qna ADD COLUMN important INTEGER DEFAULT 0")
-    return c
+    _inited = True
+
+
+@contextmanager
+def _conn():
+    # See cost.py's _conn for why this must be a real contextmanager: a
+    # plain sqlite3.Connection's own context manager only commits, never
+    # closes — every "with _conn() as c:" call here was leaking a
+    # connection on every Q&A turn (record()) and every dashboard poll
+    # (recent()).
+    c = sqlite3.connect(str(_DB_PATH), timeout=30)
+    c.execute("PRAGMA journal_mode=WAL")
+    _init_once(c)
+    try:
+        yield c
+        c.commit()
+    finally:
+        c.close()
 
 
 def record(chat_id: int, question: str, answer: str,

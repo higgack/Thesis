@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -28,14 +29,19 @@ log = logging.getLogger(__name__)
 _DB_PATH = config.DATA_DIR / "dash_queries.db"
 _KST = timezone(timedelta(hours=9))
 
+_inited = False
+
 
 def _now() -> str:
     return datetime.now(_KST).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(str(_DB_PATH), timeout=30)
-    c.execute("PRAGMA journal_mode=WAL")
+def _init_once(c: sqlite3.Connection) -> None:
+    # DDL once per process (not per connection) — this module is polled
+    # every few seconds by both the dashboard AND bot processes.
+    global _inited
+    if _inited:
+        return
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS queries (
@@ -52,7 +58,24 @@ def _conn() -> sqlite3.Connection:
         """
     )
     c.execute("CREATE INDEX IF NOT EXISTS idx_dq_status ON queries(status)")
-    return c
+    _inited = True
+
+
+@contextmanager
+def _conn():
+    # A plain sqlite3.Connection's own context manager only commits,
+    # never closes — every "with _conn() as c:" call site here was
+    # leaking a connection + WAL handle, on both the dashboard's and the
+    # bot's polling ticks. Wrapped as a real contextmanager (kg.py
+    # pattern).
+    c = sqlite3.connect(str(_DB_PATH), timeout=30)
+    c.execute("PRAGMA journal_mode=WAL")
+    _init_once(c)
+    try:
+        yield c
+        c.commit()
+    finally:
+        c.close()
 
 
 def enqueue(query: str) -> int:
