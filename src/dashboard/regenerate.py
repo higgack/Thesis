@@ -2125,6 +2125,7 @@ def _render_commands_page(token: str, lookup_guide: str,
 # full detail-page rebuild on (re)start (propagating any template/token
 # change) and then only emit new pages incrementally.
 _FIRST_RUN = True
+_LAST_STATS_SNAPSHOT: tuple[int, int] | None = None
 
 
 def regenerate() -> None:
@@ -2144,7 +2145,7 @@ def regenerate() -> None:
         write detail files that don't exist yet. The old code rewrote
         ALL ~2000 detail files every 60s tick, which is what pegged the
         loop."""
-    global _FIRST_RUN
+    global _FIRST_RUN, _LAST_STATS_SNAPSHOT
     token = (os.getenv("DASHBOARD_TOKEN", "") or "").strip()
     if not token:
         log.warning("DASHBOARD_TOKEN unset; static dashboard skipped")
@@ -2178,13 +2179,17 @@ def regenerate() -> None:
             alltime = {"total_krw": 0.0, "first_day": ""}
         from datetime import datetime as _dt, timezone as _tz, timedelta as _td
         generated_at = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d %H:%M")
+        total_qna = qna.count()
+        doc_count = meta_store.count()
+        chunk_count = vector_store.chunk_count()
+        stats_snapshot = (total_qna, doc_count)
         stats = {
-            "total_qna": qna.count(),
-            "docs": meta_store.count(),
-            "chunks": vector_store.chunk_count(),
+            "total_qna": total_qna,
+            "docs": doc_count,
+            "chunks": chunk_count,
           "chunks_per_doc": (
-            float(vector_store.chunk_count()) / float(meta_store.count())
-            if meta_store.count() > 0 else 0.0
+            float(chunk_count) / float(doc_count)
+            if doc_count > 0 else 0.0
           ),
             "today_krw": today["total_krw"],
             "today_calls": today["calls"],
@@ -2222,36 +2227,39 @@ def regenerate() -> None:
                 dtmp.write_text(_render_detail(it, token), encoding="utf-8")
                 os.replace(dtmp, fname)
                 written += 1
-        _FIRST_RUN = False
         if written:
             log.info("dashboard: wrote %d detail page(s)%s", written,
                      " (full rebuild)" if full else "")
-        try:
-            from .wiki_render import render_wiki
-            wiki_pages = render_wiki(token)
-            if wiki_pages:
-                log.info("dashboard: wrote %d wiki page(s)", wiki_pages)
-        except Exception:
-            log.exception("dashboard wiki render failed (non-fatal)")
-        try:
-            from .notes_render import render_notes
-            note_pages = render_notes(token)
-            if note_pages:
-                log.info("dashboard: wrote %d note page(s)", note_pages)
-        except Exception:
-            log.exception("dashboard notes render failed (non-fatal)")
-        try:
-            from .kg_render import render_kg
-            if render_kg(token):
-                log.info("dashboard: wrote KG view")
-        except Exception:
-            log.exception("dashboard kg render failed (non-fatal)")
-        try:
-            from .universe_render import render_universe
-            if render_universe(token):
-                log.info("dashboard: wrote universe view")
-        except Exception:
-            log.exception("dashboard universe render failed (non-fatal)")
+        corpus_changed = _FIRST_RUN or _LAST_STATS_SNAPSHOT != stats_snapshot
+        if corpus_changed:
+            try:
+                from .wiki_render import render_wiki
+                wiki_pages = render_wiki(token)
+                if wiki_pages:
+                    log.info("dashboard: wrote %d wiki page(s)", wiki_pages)
+            except Exception:
+                log.exception("dashboard wiki render failed (non-fatal)")
+            try:
+                from .notes_render import render_notes
+                note_pages = render_notes(token)
+                if note_pages:
+                    log.info("dashboard: wrote %d note page(s)", note_pages)
+            except Exception:
+                log.exception("dashboard notes render failed (non-fatal)")
+            try:
+                from .kg_render import render_kg
+                if render_kg(token):
+                    log.info("dashboard: wrote KG view")
+            except Exception:
+                log.exception("dashboard kg render failed (non-fatal)")
+            try:
+                from .universe_render import render_universe
+                if render_universe(token):
+                    log.info("dashboard: wrote universe view")
+            except Exception:
+                log.exception("dashboard universe render failed (non-fatal)")
+        _FIRST_RUN = False
+        _LAST_STATS_SNAPSHOT = stats_snapshot
         try:
             import sys
             bot_mod = sys.modules.get("src.bot")
