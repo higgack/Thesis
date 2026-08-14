@@ -55,16 +55,12 @@ notify() {
         --data-urlencode "text=$1" >/dev/null || true
 }
 
-# ALERT-ONLY hang watchdog (phase 1, 2026-06). Crashes are recovered by
-# compose 'restart: unless-stopped'; this covers the hung-but-alive case
-# (process up, event loop wedged, heartbeat frozen) — previously the bot
-# just went silently dead until the user noticed. Sends a Telegram alert
-# at most once per WATCHDOG_COOLDOWN_SEC; deliberately does NOT restart:
-# the 2026-05-27 auto-restart version caused a restart loop when the
-# cold BM25 warm-up starved the loop past the stale window. That root
-# cause is gone (heartbeat stamped at boot; warm-up no-ops above
-# BM25_MAX_CHUNKS), but restarts stay manual until this alert proves
-# itself false-positive-free for a few weeks (phase 2: re-add restart).
+# Auto-restart hang watchdog (phase 2, 2026-08). Phase 1 (alert-only,
+# 2026-06) proved false-positive-free: deploy-window mute, container-uptime
+# guard, and 30-min cooldown all worked correctly. Phase 2 re-adds the
+# auto-restart removed 2026-05-27 (BM25 warm-up restart loop) — that root
+# cause is long gone (heartbeat stamped at boot; BM25 warm-up no-ops above
+# BM25_MAX_CHUNKS). All false-positive guards unchanged.
 # No-op and SILENT on every healthy minute.
 check_heartbeat() {
     local status
@@ -121,9 +117,20 @@ check_heartbeat() {
     echo "$now" > "$WATCHDOG_COOLDOWN_FILE"
 
     local mins=$(( age / 60 ))
-    echo "===== $(date) — heartbeat stale ${age}s, ALERT (no restart) =====" >>"$LOG"
-    notify "⚠️ 봇 하트비트 ${mins}분 정지 — 컨테이너는 running이지만 이벤트 루프가 멈춘 듯.${NL}복구: docker compose --profile local-api up -d --force-recreate bot${NL}(30분마다 재알림, 정상화되면 자동 중지)"
+    echo "===== $(date) -- heartbeat stale ${age}s, AUTO-RESTART (phase 2) =====" >>"$LOG"
+    notify "WARNING: bot heartbeat ${mins}min stale -- event loop hung, auto-restarting"
+    docker compose --profile local-api up -d --force-recreate bot >>"$LOG" 2>&1
+    date +%s > "$DEPLOY_STAMP_FILE"
+    sleep 5
+    local new_status
+    new_status=$(docker inspect -f '{{.State.Status}}' thesis-bot-1 2>/dev/null || echo missing)
+    if [ "$new_status" = "running" ]; then
+        notify "OK: bot auto-restart complete (was hung ${mins}min)"
+    else
+        notify "ERROR: bot auto-restart failed -- status: ${new_status}"
+    fi
 }
+
 
 # CPU-sustained-overload watchdog (added after the 2026-08-01 incident:
 # thesis-bot-1 pegged 100%+ CPU for 3 days on _wconn lock contention from
