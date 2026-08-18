@@ -178,6 +178,31 @@ fetch branch → `LOCAL==REMOTE` silent exit → else send "🚀 배포 시작" 
   fresh) even though user-facing responsiveness was dead. Both checks
   share the deploy-window mute (`DEPLOY_STAMP_FILE`) so a legitimate
   build/boot CPU spike never false-triggers a restart.
+- **NEVER run `_run_memory_cleanup()` ungated** (`bot.py`). It is
+  `gc.collect()` (stop-the-world, HOLDS THE GIL for the whole
+  traversal) + `malloc_trim(0)` (walks the entire glibc arena). Its old
+  docstring claimed "cheap (<50ms)" — true on a small heap, badly wrong
+  at this process's 7GB+ RSS (Chroma HNSW keeps every embedding
+  resident). Measured scaling: gc.collect() ≈ 100ms per million tracked
+  objects. `_periodic_memory_cleanup` called it **unconditionally every
+  3 min on the event loop**, which is what produced the 2026-08-09
+  paired alerts — "CPU 100.53% 5분+" (gc is CPU-bound single-threaded)
+  and "heartbeat 21min stale — event loop hung" (the loop couldn't tick,
+  so `_write_heartbeat` stopped stamping). It worsened as the corpus
+  grew. Fixed by gating it on `_MEM_CLEANUP_THRESHOLD` (0.90) like the
+  4 other call sites already were — this was the lone ungated one — and
+  offloading it. Offloading alone is NOT the fix: gc.collect() holds
+  the GIL wherever it runs, so the point is to not run it needlessly.
+- **`_write_heartbeat` runs ON the loop deliberately** — that's what
+  makes a stale heartbeat mean "loop wedged" rather than "thread pool
+  busy". So a stale-heartbeat alert always means something blocked the
+  loop thread; look for sync work on the loop, not for a slow worker.
+  Per-tick sync SQLite is the usual culprit: the dash query/ingest
+  workers' `claim_pending` (2s/3s ticks, a WRITE, `timeout=30` on a DB
+  the dashboard container also writes) ran inline and could freeze the
+  loop up to 30s per call ~72k times/day even while idle — offloaded
+  2026-08-09. Their `complete()`/`release()` calls are the same class
+  but fire only on real work, so they were left inline.
 - **Vision-OCR concurrency is capped process-wide** (`ocr_client.py`'s
   `_GLOBAL_OCR_SEM`, default 6, 2026-08-09) — the per-PDF
   `ThreadPoolExecutor(max_workers=7)` in `loaders.py` only bounds ONE

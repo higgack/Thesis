@@ -483,23 +483,42 @@ def _mem_pressure() -> float:
 def _run_memory_cleanup(reason: str = "scheduled") -> float:
     """Force a Python GC pass + libc heap trim. Returns MB freed
     (negative if RSS grew — possible if another worker allocated
-    during the call). Safe to call any time; cheap (<50ms)."""
+    during the call).
+
+    NOT cheap — the docstring used to claim "<50ms", which was true when
+    this was written against a small heap and is badly wrong now. Both
+    steps scale with heap size, and this process carries 7GB+ RSS
+    (Chroma's HNSW keeps every embedding resident, ~354k chunks):
+      - gc.collect() is a stop-the-world full generational pass that
+        HOLDS THE GIL for its whole traversal — no other Python code,
+        including the asyncio loop, runs meanwhile.
+      - malloc_trim(0) walks the entire glibc arena free-list.
+    So every caller must be behind a real memory-pressure check
+    (_MEM_CLEANUP_THRESHOLD); calling it unconditionally on a timer
+    froze the event loop long enough for the host watchdog to declare
+    the bot hung and restart it (2026-08-09). Elapsed ms is logged so a
+    recurrence is diagnosable from the logs instead of by guesswork."""
     global _LAST_CLEANUP_AT, _LAST_CLEANUP_FREED_MB
     import gc
     import ctypes
+    import time as _t
+    t0 = _t.monotonic()
     before = _process_rss_mb()
     collected = gc.collect()
+    gc_ms = (_t.monotonic() - t0) * 1000.0
     try:
         ctypes.CDLL("libc.so.6").malloc_trim(0)
     except Exception:
         pass
+    total_ms = (_t.monotonic() - t0) * 1000.0
     after = _process_rss_mb()
     freed = before - after
     _LAST_CLEANUP_AT = datetime.utcnow()
     _LAST_CLEANUP_FREED_MB = freed
     log.info(
-        "memory cleanup (%s): %.0f → %.0f MB (freed %.1f MB, gc=%d objs)",
-        reason, before, after, freed, collected,
+        "memory cleanup (%s): %.0f → %.0f MB (freed %.1f MB, gc=%d objs, "
+        "gc=%.0fms total=%.0fms)",
+        reason, before, after, freed, collected, gc_ms, total_ms,
     )
     return freed
 
@@ -2640,7 +2659,10 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"({_LAST_CLEANUP_FREED_MB:+.1f} MB 회수)"
             )
         else:
-            cleanup_line = "\n🧹 마지막 메모리 청소: 아직 없음 (3분 주기 자동)"
+            cleanup_line = (
+                f"\n🧹 마지막 메모리 청소: 아직 없음 "
+                f"(메모리 {_MEM_CLEANUP_THRESHOLD*100:.0f}% 초과 시 자동)"
+            )
         # Active ingest detail — file name + elapsed time per running
         # slot. Sorted by start time (oldest first) so the user sees
         # "what's been running longest, is it stuck?" at a glance.
@@ -9442,7 +9464,7 @@ async def _run_agent(update: Update, ctx: ContextTypes.DEFAULT_TYPE,
     if pressure >= _MEM_REFUSE_THRESHOLD:
         await update.message.reply_text(
             f"⚠️ 메모리 부족 — 현재 {pressure*100:.0f}% 사용 중. "
-            "잠시 후 다시 시도해주세요. (자동 정리 5분 주기 · /status 확인)"
+            "잠시 후 다시 시도해주세요. (자동 정리 3분 주기 · /status 확인)"
         )
         return
     if pressure >= _MEM_CLEANUP_THRESHOLD:
@@ -11190,14 +11212,33 @@ async def _promote_expired_pending(ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def _periodic_memory_cleanup(ctx: ContextTypes.DEFAULT_TYPE):
-    """Idle-only gc + malloc_trim every 3min. Skip when agent runs
-    are active so we don't steal CPU from in-flight answers; the
-    pre-run threshold guard handles the busy-but-pressured case
-    separately."""
+    """Idle-only gc + malloc_trim, gated on ACTUAL memory pressure.
+
+    Was the direct cause of the 2026-08-09 hang/restart alerts: it ran
+    _run_memory_cleanup() unconditionally every 3 min, on the event
+    loop, against a 7.6GB heap. That is a stop-the-world GIL-holding
+    pass (see _run_memory_cleanup) — the loop couldn't tick, so
+    _write_heartbeat stopped stamping and auto_pull.sh's watchdog
+    correctly concluded "event loop hung" and force-recreated the
+    container. Symptoms matched exactly: pegged CPU (gc is CPU-bound
+    single-threaded) and a stale heartbeat, recurring as the corpus —
+    and therefore the GC traversal — kept growing.
+
+    Now it only cleans when RSS is actually elevated, the same
+    _MEM_CLEANUP_THRESHOLD gate every other caller already used; this
+    was the lone ungated one. Below the threshold the tick costs one
+    /proc read. Offloading keeps the malloc_trim half (ctypes releases
+    the GIL) off the loop — gc.collect() still holds the GIL wherever
+    it runs, which is exactly why not running it needlessly is the
+    fix, not merely moving it."""
     if _ACTIVE_AGENT_RUNS > 0:
         return
+    pressure = _mem_pressure()
+    if pressure < _MEM_CLEANUP_THRESHOLD:
+        return
     try:
-        _run_memory_cleanup("periodic")
+        await asyncio.to_thread(
+            _run_memory_cleanup, f"periodic {pressure*100:.0f}%")
     except Exception:
         log.exception("periodic memory cleanup failed")
 
@@ -13550,7 +13591,15 @@ async def _dash_ingest_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
     can't stack pipeline runs and OOM the bot. Sends one concise Telegram
     confirmation to the owner so a click made from the browser is visible."""
     try:
-        pending = dash_ingest.claim_pending(limit=1)
+        # Off the loop: claim_pending is a SELECT + conditional UPDATE
+        # (a WRITE) on dash_ingest.db, which the dashboard container
+        # also writes. sqlite3 is opened with timeout=30, so a lock
+        # held by that other process blocks this call — and it runs on
+        # EVERY tick even when idle, so inline it could freeze the
+        # event loop for up to 30s at a time (2026-08-09). The
+        # completion-path calls below are the same class but only fire
+        # when there is real work, not per-tick.
+        pending = await asyncio.to_thread(dash_ingest.claim_pending, 1)
     except Exception:
         log.exception("ingest worker: claim failed")
         return
@@ -13679,7 +13728,10 @@ async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
     natural-language agent.run(). Serial by design (one per tick) so
     concurrent web asks can't stack agent runs and OOM the bot."""
     try:
-        pending = dash_queries.claim_pending(limit=1)
+        # Off the loop — same reason as _dash_ingest_worker's claim:
+        # a per-tick (2s) SQLite write with a 30s busy timeout, on a DB
+        # shared with the dashboard container.
+        pending = await asyncio.to_thread(dash_queries.claim_pending, 1)
     except Exception:
         log.exception("dash worker: claim failed")
         return
