@@ -163,8 +163,16 @@ fetch branch → `LOCAL==REMOTE` silent exit → else send "🚀 배포 시작" 
   `scheduler.py`/`bot_listener.py`, non-Docker). Confirmed by reading it
   2026-08-01. Don't touch it or assume it covers `thesis-bot-1`.
 - `auto_pull.sh` doubles as this project's OWN watchdog on every no-deploy
-  minute (`LOCAL==REMOTE` branch): `check_heartbeat()` — alert-only (by
-  design, see its comment) on `data/bot_heartbeat` going stale >10min;
+  minute (`LOCAL==REMOTE` branch): `check_heartbeat()` — **auto-restarts**
+  on `data/bot_heartbeat` going stale >10min. Was alert-only through
+  phase 1 (2026-06); Copilot promoted it to phase 2 auto-restart in
+  `8c426cf` (2026-08-14) once phase 1 proved false-positive-free —
+  alert → force-recreate → stamp `DEPLOY_STAMP_FILE` to mute the other
+  watchdogs while it settles → report back, with a 30-min cooldown
+  against restart thrash. (The 2026-05-27 removal of an earlier
+  auto-restart was a BM25 warm-up restart loop; that path is gone.)
+  So a "heartbeat stale → auto-restarting" Telegram pair is this check,
+  and a "CPU ≥90% → auto-restarting" pair is the next one.
   `check_cpu_overload()` (added 2026-08-01) — **auto-restarts**
   (`docker compose up -d --force-recreate bot`) when `docker stats` CPU%
   stays ≥90% for ~5 consecutive minutes, guarded by the same
