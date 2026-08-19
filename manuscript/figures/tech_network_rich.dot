@@ -1,0 +1,103 @@
+digraph TechNetworkRich {
+ rankdir=LR; node[shape=box,style=filled,fontname=Helvetica];
+  "Hybrid Bonding" [fillcolor="#e41a1c33"];
+  "TSV" [fillcolor="#ff7f0033"];
+  "CMP" [fillcolor="#ff7f0033"];
+  "Dicing" [fillcolor="#ff7f0033"];
+  "Surface Prep" [fillcolor="#ff7f0033"];
+  "H01L24 (bonding)" [fillcolor="#984ea333"];
+  "H01L21 (front-end)" [fillcolor="#984ea333"];
+  "Chiplet" [fillcolor="#377eb833"];
+  "BSPDN" [fillcolor="#377eb833"];
+  "CPO" [fillcolor="#377eb833"];
+  "HBM" [fillcolor="#4daf4a33"];
+  "AI Accelerator" [fillcolor="#4daf4a33"];
+  "CPU" [fillcolor="#4daf4a33"];
+  "SiC/GaN" [fillcolor="#4daf4a33"];
+  "MicroLED" [fillcolor="#4daf4a33"];
+  "G02B (optics)" [fillcolor="#984ea333"];
+  "Ziptronix
+CII 272.5·SLI 11.1·PFS 99.2" [fillcolor="#a6562833"];
+  "Adeia
+IP origin·SLI 10.5" [fillcolor="#a6562833"];
+  "YMTC
+CII 49.2·SLI 48.5%" [fillcolor="#a6562833"];
+  "TSMC
+CII 71.1·SLI 0.8" [fillcolor="#a6562833"];
+  "Samsung
+CII 24.8·0cite 37%" [fillcolor="#a6562833"];
+  "H01L25 (stacking)" [fillcolor="#984ea333"];
+  "Intel
+CII 4.6·144 pat" [fillcolor="#a6562833"];
+  "Huawei
+SLI 68.4%" [fillcolor="#a6562833"];
+  "Tokyo Electron
+G01N metrology" [fillcolor="#a6562833"];
+  "Applied Materials
+surface prep" [fillcolor="#a6562833"];
+  "Taiwan" [fillcolor="#99999933"];
+  "China" [fillcolor="#99999933"];
+  "Korea" [fillcolor="#99999933"];
+  "Japan" [fillcolor="#99999933"];
+  "US" [fillcolor="#99999933"];
+  "Hybrid Bonding" -> "TSV" [label="requires"];
+  "Hybrid Bonding" -> "CMP" [label="requires"];
+  "Hybrid Bonding" -> "Dicing" [label="requires"];
+  "Hybrid Bonding" -> "Surface Prep" [label="requires"];
+  "Hybrid Bonding" -> "H01L24 (bonding)" [label="realized_in"];
+  "Hybrid Bonding" -> "H01L21 (front-end)" [label="reaches_into"];
+  "Hybrid Bonding" -> "Chiplet" [label="enables"];
+  "Hybrid Bonding" -> "BSPDN" [label="enables"];
+  "Hybrid Bonding" -> "CPO" [label="enables"];
+  "Hybrid Bonding" -> "HBM" [label="applies_to"];
+  "Hybrid Bonding" -> "AI Accelerator" [label="applies_to"];
+  "Hybrid Bonding" -> "CPU" [label="applies_to"];
+  "Hybrid Bonding" -> "SiC/GaN" [label="applies_to"];
+  "Hybrid Bonding" -> "MicroLED" [label="applies_to"];
+  "Chiplet" -> "AI Accelerator" [label="forms"];
+  "BSPDN" -> "H01L21 (front-end)" [label="extends_to"];
+  "CPO" -> "G02B (optics)" [label="couples"];
+  "Surface Prep" -> "H01L24 (bonding)" [label="pairs_with"];
+  "Ziptronix
+CII 272.5·SLI 11.1·PFS 99.2" -> "Adeia
+IP origin·SLI 10.5" [label="part_of"];
+  "Adeia
+IP origin·SLI 10.5" -> "YMTC
+CII 49.2·SLI 48.5%" [label="licenses_to"];
+  "Adeia
+IP origin·SLI 10.5" -> "H01L24 (bonding)" [label="focuses_on"];
+  "Ziptronix
+CII 272.5·SLI 11.1·PFS 99.2" -> "Hybrid Bonding" [label="origin_of"];
+  "TSMC
+CII 71.1·SLI 0.8" -> "H01L21 (front-end)" [label="strategy_SoIC"];
+  "TSMC
+CII 71.1·SLI 0.8" -> "CMP" [label="focuses_on"];
+  "YMTC
+CII 49.2·SLI 48.5%" -> "H01L21 (front-end)" [label="X-Stacking"];
+  "Samsung
+CII 24.8·0cite 37%" -> "H01L25 (stacking)" [label="focuses_on"];
+  "Intel
+CII 4.6·144 pat" -> "G02B (optics)" [label="focuses_on"];
+  "Huawei
+SLI 68.4%" -> "SiC/GaN" [label="power_module"];
+  "Tokyo Electron
+G01N metrology" -> "Dicing" [label="focuses_on"];
+  "Applied Materials
+surface prep" -> "Surface Prep" [label="focuses_on"];
+  "TSMC
+CII 71.1·SLI 0.8" -> "Taiwan" [label="files_at"];
+  "YMTC
+CII 49.2·SLI 48.5%" -> "China" [label="files_at"];
+  "Samsung
+CII 24.8·0cite 37%" -> "Korea" [label="files_at"];
+  "Tokyo Electron
+G01N metrology" -> "Japan" [label="files_at"];
+  "Adeia
+IP origin·SLI 10.5" -> "US" [label="files_at"];
+  "Intel
+CII 4.6·144 pat" -> "US" [label="files_at"];
+  "China" -> "H01L21 (front-end)" [label="process_only_high(RRR2.69)"];
+  "Japan" -> "H01L24 (bonding)" [label="broadest·no_process_only(RRR0.09)"];
+  "Korea" -> "H01L24 (bonding)" [label="breadth≈US"];
+  "Taiwan" -> "H01L21 (front-end)" [label="breadth≈US·process+"];
+}

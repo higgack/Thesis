@@ -1,0 +1,37 @@
+.DS_Store
+experiment-agent/
+docs/superpowers/
+
+# Local working context (codex review logs, hand-off prompts, brief drafts).
+# Anything under .context/ or .codex-rounds/ is per-session scratch and must
+# not be committed.
+.context/
+.codex-rounds/
+# Session resume / hand-off checkpoints (repo-root only). Private working-process
+# notes; must never reach the public repo.
+/checkpoints/
+
+# Python bytecode / pytest cache.
+__pycache__/
+
+# Private ROADMAP is intentionally gitignored and maintained outside this public repo
+ROADMAP.md
+
+# Local tooling scratch directory (not part of the project)
+.gstack/
+
+# RAG-Anything integration: secrets, generated indexes, parser output.
+rag/.env
+rag/rag_storage/
+rag/output/
+rag/sources/*
+!rag/sources/.gitkeep
+
+# Optional tooling (opt-in, see docs/tooling/): keep their local config/assets
+# out of the repo. Enable by copying the matching .example / installing the skill.
+.mcp.json
+.claude/skills/ppt-master/
+# kg-gen / OpenKB local outputs (opt-in tools)
+rag/kg_output/
+rag/openkb/
+rag/hyper_extract_output/
