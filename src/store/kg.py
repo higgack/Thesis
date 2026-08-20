@@ -32,6 +32,10 @@ _ENT_STOP = {
     # exactly the same character as 시장/기업/업계 already listed here.
     # Exact-match only, so "기관투자자" / "투자자 보호" still survive.
     "투자자", "투자자들",
+    # Analyst ratings, not entities — "BUY" sat at 1,186 edges on the
+    # 주요 개체 chips (2026-08-20). Exact-match, so a real ticker or
+    # company that merely contains these letters is unaffected.
+    "buy", "sell", "hold",
     # forward_listener URL-only curation channel names — never real
     # entities. Leaked in via _notify_unsupported_urls notices before
     # the ingest-side drop pattern existed (818-edge "getfeed"

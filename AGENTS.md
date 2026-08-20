@@ -548,10 +548,20 @@ other project modules into it beyond `config` and lazy `kg_ignore`.
 - **Adding a term to `_ENT_STOP` DELETES data.** `purge_junk()` runs at
   every boot (`bot.py`) and removes every edge touching a stopword
   entity, so a one-word edit is an irreversible mass delete: "투자자"
-  (added 2026-08-20 by user request, alongside the 시장/기업/업계
-  generics already there) drops ~1,162 edges on the next deploy.
-  Matching is EXACT, so "기관투자자" / "투자자 보호" survive. Confirm
-  the edge count with the user before adding a term.
+  (~1,162 edges) and the analyst ratings "buy"/"sell"/"hold" (BUY alone
+  ~1,186) were added 2026-08-20 by user request, alongside the
+  시장/기업/업계 generics already there. Matching is EXACT, so
+  "기관투자자" · "투자자 보호" · Buyback · Sellside · Holdings · HBM all
+  survive. Confirm the edge count with the user before adding a term.
+- **Do NOT "optimize" the boot sweeps into an early exit.** They cost
+  ~206s per boot on the live graph even with nothing to do (42s purge +
+  79s entity + 85s relation, all full scans) and that looks wasteful,
+  but the obvious guard — skip when no new edges arrived — silently
+  breaks the case that matters: adding a stopword or alias changes what
+  counts as junk/duplicate WITHOUT adding any edge, so the sweep would
+  skip and the change would never apply. That is exactly the failure
+  that hid the 투자자 stoplist entry for two deploys. Any future guard
+  has to key on the STOPLIST/ALIAS contents too, not just edge counts.
 - **Hub-entity view**: `top_entities()` is already the "important nodes"
   query (`GROUP BY entity ORDER BY count DESC`) — don't reinvent this.
 
