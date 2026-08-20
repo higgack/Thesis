@@ -101,7 +101,60 @@ for name in ("_LOOKUP_GUIDE_TEXT", "_PATENTS_GUIDE_TEXT", "_PAPERS_GUIDE_TEXT",
     if not g or not g.group(1).strip():
         print(f"  \033[31mFAIL\033[0m {name} missing/empty"); ok = False
     else:
-        print(f"  \033[32mOK\033[0m {name} ({len(g.group(1))} chars)")
+        body = g.group(1)
+        # Telegram-send safety. These constants are sent with
+        # parse_mode="HTML" through _split_for_telegram(), which only
+        # splits on paragraph/line boundaries — so a chunk is valid only
+        # if every tag it opens also closes inside it, and it fits the
+        # 4000-char soft limit. A tag left open across a split makes
+        # Telegram reject that message with a parse error, and until now
+        # this check only verified the constant was non-empty. Mirrors
+        # bot.py's _split_for_telegram exactly.
+        LIMIT = 4000
+        def _split(text, limit=LIMIT):
+            if len(text) <= limit:
+                return [text]
+            chunks, buf = [], ""
+            for para in text.split("\n\n"):
+                if len(para) > limit:
+                    if buf:
+                        chunks.append(buf); buf = ""
+                    lb = ""
+                    for line in para.split("\n"):
+                        cand = (lb + "\n" + line) if lb else line
+                        if len(cand) > limit and lb:
+                            chunks.append(lb); lb = line
+                        else:
+                            lb = cand
+                    if lb:
+                        buf = lb
+                    continue
+                cand = (buf + "\n\n" + para) if buf else para
+                if len(cand) > limit and buf:
+                    chunks.append(buf); buf = para
+                else:
+                    buf = cand
+            if buf:
+                chunks.append(buf)
+            return chunks
+        problems = []
+        for i, ch in enumerate(_split(body), 1):
+            if len(ch) > LIMIT:
+                problems.append(f"chunk {i} is {len(ch)} > {LIMIT}")
+            for tg in ("b", "i", "code", "a", "u", "s", "pre"):
+                o = len(re.findall(rf'<{tg}(?:\s[^>]*)?>', ch))
+                c = len(re.findall(rf'</{tg}>', ch))
+                if o != c:
+                    problems.append(
+                        f"chunk {i}: <{tg}> {o} open / {c} close")
+        if problems:
+            print(f"  \033[31mFAIL\033[0m {name} would break on send:")
+            for pr in problems:
+                print(f"      {pr}")
+            ok = False
+        else:
+            print(f"  \033[32mOK\033[0m {name} ({len(body)} chars, "
+                  f"{len(_split(body))} tg chunk(s), tags balanced)")
 sys.exit(0 if ok else 1)
 PY
 [[ $? -ne 0 ]] && fail=1
@@ -118,9 +171,16 @@ PY
 # match, or exact membership in an expanded /{prefix}_{a,b,c} group.
 echo "── 4. command handlers present in _HELP_TEXT ──"
 python3 - <<'PY'
-import re
+import glob, re
 src = open("src/bot.py", encoding="utf-8").read()
-reg = set(re.findall(r'CommandHandler\(\s*"([^"]+)"', src))
+# Handlers are not all registered in bot.py — src/notes/telegram.py adds
+# its own (/notes, /notes_guide). Scanning bot.py alone reported "all 112
+# handlers traceable" while silently skipping those two, so a study-notes
+# command could drop out of the help text without this check noticing.
+reg = set()
+for f in sorted(glob.glob("src/**/*.py", recursive=True)):
+    with open(f, encoding="utf-8") as fh:
+        reg |= set(re.findall(r'CommandHandler\(\s*"([^"]+)"', fh.read()))
 help_m = re.search(r'_HELP_TEXT\s*=\s*"""(.*?)"""', src, re.S)
 help_txt = help_m.group(1) if help_m else ""
 

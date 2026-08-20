@@ -49,9 +49,16 @@ with the operational rules below.
 ## ✅ Pre-push verification (block on every push)
 
 Run `bash scripts/preflight.sh` FIRST — automates AST syntax (changed
-.py), ruff F821, `_HELP_TEXT` ≤4000 + guide-constant render, handler↔help
-cross-check. Exit 1 = BLOCKING (syntax/help cap), don't push. F821 +
-handler warnings = human glance (lazy-import / forward-ref `"ET.Element"`
+.py), ruff F821, `_HELP_TEXT` ≤4000, **Telegram-send safety for every
+guide constant** (splits each with `_split_for_telegram`'s exact logic
+and fails if any chunk exceeds 4000 or leaves an HTML tag open across
+the split — a tag left open makes Telegram reject that message; this
+used to only check the constant was non-empty, 2026-08-20), handler↔help
+cross-check (scans **all of `src/`**, not just `bot.py` — `notes/
+telegram.py` registers `/notes` + `/notes_guide`, and they were being
+skipped while the check reported "all 112 traceable"). Exit 1 =
+BLOCKING (syntax/help cap/guide-send), don't push. F821 + handler
+warnings = human glance (lazy-import / forward-ref `"ET.Element"`
 strings are expected false positives). `--all` scans every tracked .py.
 Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
 
@@ -348,8 +355,14 @@ filename → `_IGNORED_FILENAMES` (`data/ignored_filenames.json`); add URL →
 `_IGNORED_URLS` (`data/ignored_urls.json`); orphan scan also deletes the
 `data/files/` copy. The item is GONE — not pending/retry/waiting.
 Suppressed across orphan scan, URL ingest, forward relay, re-forward
-dedup. Revive only by hand-editing those JSONs + restart. Never describe
-it as "moved to pending".
+dedup. Never describe it as "moved to pending".
+- **Revival is `/unignore <url|조각>`** (substring match; `/unignore all`
+  clears every ignored URL), which also updates the in-memory sets so no
+  restart is needed. This section used to say "revive only by
+  hand-editing those JSONs + restart" — that predates the command and
+  was still there on 2026-08-20; don't send the user editing JSON by
+  hand. `_LOOKUP_GUIDE_TEXT` likewise called `/failed_clear` "복구 불가",
+  fixed in the same pass.
 
 ## Cost defaults (don't change without asking)
 

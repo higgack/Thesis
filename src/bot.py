@@ -1703,7 +1703,12 @@ Gemini 2.5 Pro 강제 사용. 기본 답변은 Flash, /deep 만 Pro (비용 ~4�
 실패 큐 전체 한번에 재시도.
 
 <b>/failed_clear</b>
-실패 큐 전체 영구 무시 — [🗑] 일괄. 복구 불가.
+실패 큐 전체 영구 무시 — [🗑] 일괄. 되돌리려면 /unignore.
+
+<b>/unignore &lt;url|조각&gt;</b>
+영구 무시 해제 — /failed_clear · [🗑] 의 역연산. 조각만 넣어도 부분일치로
+찾는다(예: 유튜브 video id 하나로 그 URL 전부). /unignore all 은 URL 전체
+해제. 메모리 목록까지 즉시 갱신돼 재시작 없이 바로 다시 학습 가능.
 
 <b>/queue</b>
 자동 재처리 대기/진행 중인 인입 항목. 처리 실패 시 자동 1회 후 /failed로 이동(거기서 🔁 수동 재시도, 3 cycle 초과 시 자동 폐기). 항목별 종류·제목·시도 횟수 표시.
@@ -1820,6 +1825,12 @@ yt-dlp 가 깨져있던 동안 stub 으로 학습된 YouTube 자료를 찾아
 본문에 그대로 들어간 케이스를 정확히 식별 (실제 자막에는 없는
 마커 매칭). bare = 미리보기, <code>confirm</code> = 실행.
 실행 후 다음 retry tick(≈60s)부터 nightly yt-dlp + Deno 로 재추출.
+
+<b>/fix_placeholder_titles</b>
+앱 기본 제목('PowerPoint 프레젠테이션' 등)으로 저장된 자료의 제목을
+출처 파일명으로 교체 — 제자리 수정이라 청크·임베딩은 그대로(재학습 불필요).
+파일명을 쓸 수 있는 자료만 고치고, 나머지는 건너뜀으로 보고(그건 /forget 후
+재전송 필요). bare = 미리보기, <code>confirm</code> = 실행.
 
 ⚠️ 모든 삭제는 2단계 confirm — 첫 명령은 항상 미리보기.
 영구 무시 (/failed [🗑]) 와 다름: /forget 은 자료만 지움, ignored 등록 X.
@@ -2122,6 +2133,8 @@ WIKI_ENABLED=0(Chroma/meta.db 안 건드려 끄면 기존 RAG 그대로) · 상�
 <b>명령어</b>
 • <b>/notes</b> 노트 개수 + 대시보드 링크
 • <b>/notes_guide</b> 학습 노트 상세 사용법(자료 넣기·노트 구성·대시보드·비용)
+• <b>/notes_resync [N]</b> 제목만 보고 잘못 합성된 URL·유튜브 노트를 다시
+  가져와 재합성(제자리 — id·복습진도·중요·메모 유지). N 기본 10, 최대 50.
 """
 
 

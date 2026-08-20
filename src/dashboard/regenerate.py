@@ -2028,10 +2028,16 @@ def _render_commands_page(token: str, lookup_guide: str,
         anchor = f"sec-{idx}"
         sec["anchor"] = anchor
         n = len(sec["entries"])
+        # Two sections ("대시보드 기록 정책", "비용 모델 요약") are policy
+        # prose with no <b>/command</b> entries at all, so the count is
+        # legitimately 0 — but rendering "(0)" next to them made working
+        # reference material look broken/empty. Label them for what they
+        # are instead of showing a zero.
+        badge = f"({n})" if n else "안내"
         toc_items.append(
             f"<li><a href='#{anchor}'>{sec['title']}</a> "
             f"<span style='color:var(--muted);font-size:11px'>"
-            f"({n})</span></li>"
+            f"{badge}</span></li>"
         )
 
     parts = [
