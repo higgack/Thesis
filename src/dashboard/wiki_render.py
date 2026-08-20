@@ -1202,7 +1202,7 @@ def _render_index_page(topics_data: list[dict], token: str,
     total_docs = wiki_stats.get("docs", 0)
     queue = wiki_stats.get("queue", 0)
     today_cost = wiki_stats.get("today_cost", 0)
-    budget = wiki_stats.get("budget", 1000)
+    budget = wiki_stats.get("budget", config.WIKI_DAILY_BUDGET_KRW)
     month_cost = wiki_stats.get("month_cost", 0)
     total_cost = wiki_stats.get("total_cost", 0)
 
@@ -1484,10 +1484,41 @@ def render_wiki(token: str) -> int:
                 except OSError:
                     pass
 
+    # ★/memo/alarm are baked into each topic page by _render_topic_page,
+    # but a mark edit never touches the topic's .md — so keying staleness
+    # on mtime alone meant a memo left on a wiki page was rendered into
+    # HTML only if the page happened to be re-merged later, and otherwise
+    # never showed up (the dashboard's mark/memo POST handlers write to
+    # marks.db and do not trigger a re-render). Fold a per-topic mark
+    # fingerprint into the staleness test: three small whole-table reads
+    # here, and only the topics whose marks actually moved re-render —
+    # unlike putting marks in `fp`, which would force all ~2,000 pages.
+    try:
+        from ..store import marks as _marks_store
+        _imp_set = _marks_store.marked("wiki")
+        _memo_map = _marks_store.memos("wiki")
+        _alarm_map = _marks_store.alarm_map("wiki")
+    except Exception:
+        log.debug("wiki marks unavailable; mark-driven refresh disabled")
+        _imp_set, _memo_map, _alarm_map = set(), {}, {}
+
+    def _mark_fp(topic: str) -> str:
+        # sha1, not hash(): this value is persisted in
+        # wiki_render_cache.json, and str hashing is salted per process —
+        # every restart would otherwise look like a mark change and
+        # re-render every memo-bearing page.
+        raw = "\x00".join([
+            "1" if topic in _imp_set else "0",
+            (_memo_map.get(topic) or "").strip(),
+            repr(sorted((_alarm_map.get(topic) or {}).items())),
+        ])
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
     # Decide which pages actually need re-rendering before touching the
     # heavy 32k-row title maps.
     stale: list[Path] = []
     mtimes: dict[str, float] = {}
+    mark_fps: dict[str, str] = {}
     for md_file in md_files:
         topic = md_file.stem
         try:
@@ -1495,8 +1526,11 @@ def render_wiki(token: str) -> int:
         except OSError:
             continue
         mtimes[topic] = mt
+        mfp = _mark_fp(topic)
+        mark_fps[topic] = mfp
         ent = entries.get(topic)
         if (full or not isinstance(ent, dict) or ent.get("mtime") != mt
+                or ent.get("mark_fp") != mfp
                 or not (target / _topic_filename(topic)).exists()):
             stale.append(md_file)
 
@@ -1520,6 +1554,13 @@ def render_wiki(token: str) -> int:
     topics_data: list[dict] = []
     pages_written = 0
     total_docs = 0
+    # DISTINCT source docs. This used to be a running sum of each topic's
+    # doc_ids length, which counts one document once per topic it appears
+    # in — and wiki topics deliberately share sources (that overlap is
+    # exactly what universe_render draws its dashed "shared document"
+    # links from), so the "Sources Integrated" headline was inflated by
+    # every multi-topic document.
+    all_doc_ids: set[str] = set()
     pid = os.getpid()
 
     for md_file in md_files:
@@ -1537,8 +1578,10 @@ def render_wiki(token: str) -> int:
         if not isinstance(meta, dict):
             meta = {}
 
-        doc_count = len(meta.get("doc_ids") or [])
+        _doc_ids = meta.get("doc_ids") or []
+        doc_count = len(_doc_ids)   # per-topic card count — correct as-is
         total_docs += doc_count
+        all_doc_ids.update(_doc_ids)
 
         search_text = ""
         if topic in stale_names:
@@ -1582,7 +1625,8 @@ def render_wiki(token: str) -> int:
             search_text = (entries.get(topic) or {}).get("search_text", "")
 
         new_entries[topic] = {"mtime": mtimes[topic], "excerpt": excerpt,
-                              "search_text": search_text}
+                              "search_text": search_text,
+                              "mark_fp": mark_fps.get(topic, "")}
         topics_data.append({
             "topic": topic,
             "title": meta.get("title") or topic,
@@ -1615,7 +1659,7 @@ def render_wiki(token: str) -> int:
             pass
 
     today_cost = 0.0
-    budget = 1000.0
+    budget = float(config.WIKI_DAILY_BUDGET_KRW)
     month_cost = 0.0
     total_cost = 0.0
     try:
@@ -1629,7 +1673,7 @@ def render_wiki(token: str) -> int:
 
     wiki_stats = {
         "pages": len(topics_data),
-        "docs": total_docs,
+        "docs": len(all_doc_ids),
         "queue": queue_size,
         "today_cost": today_cost,
         "budget": budget,

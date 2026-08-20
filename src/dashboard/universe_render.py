@@ -53,6 +53,11 @@ _REL_CAP = 12      # KG relations per topic panel
 _DEG_CAP = 8       # keep at most this many links per node (hairball guard)
 _LINK_CAP = 600    # global link cap
 _DOC_FANOUT_MAX = 6  # a doc in more topics than this is too generic to link
+# Topic<->topic links are derived from a SAMPLE of the KG, not all of it:
+# at 648k edges a full pass would be far too slow for a 15s render tick.
+# The footer states the sample size so the map is not mistaken for the
+# complete graph.
+_KG_EDGE_SAMPLE = 3000
 
 
 def _norm(s: str) -> str:
@@ -95,6 +100,17 @@ def _build_payload() -> dict | None:
     for key, rec in idx.items():
         if not isinstance(rec, dict):
             continue
+        # "기타" is the catch-all bucket for docs no topic could be
+        # derived for — every other consumer already refuses to treat it
+        # as a real topic: wiki.enqueue() skips it, wiki.run_batch()
+        # drops it ("unclassified docs have no coherent theme and produce
+        # an unreadable mega-page"), and wiki_render has it in
+        # _SKIP_TOPICS. This view read wiki_index.json directly and so
+        # missed that rule, which made the bucket the single largest node
+        # in the graph and the #1 keyword chip (2,768 docs — about half
+        # of all wiki sources), pushing real topics out of the top-10.
+        if key == "기타":
+            continue
         topics[key] = rec
         norm2key.setdefault(_norm(key), key)
         title = rec.get("title") or ""
@@ -108,7 +124,7 @@ def _build_payload() -> dict | None:
     kg_pairs: dict[tuple[str, str], int] = defaultdict(int)
     rels: dict[str, list] = defaultdict(list)
     try:
-        edges = kg.all_edges(limit=3000)
+        edges = kg.all_edges(limit=_KG_EDGE_SAMPLE)
     except Exception:
         log.warning("universe: kg edges unavailable", exc_info=True)
         edges = []
@@ -223,7 +239,25 @@ def _build_payload() -> dict | None:
         deg[l["t"]] += 1
         links.append(l)
 
-    return {"nodes": nodes, "links": links, "total_docs": len(all_doc_ids)}
+    # COUNT(*) directly, NOT kg.stats() — stats() also computes the
+    # distinct-entity count, whose UNION over src+dst measures 420ms on a
+    # 648k-edge graph, while this count is ~2ms. Read-only URI so the
+    # render never takes kg.db's write lock.
+    kg_total = 0
+    try:
+        import sqlite3 as _sq
+        _kgp = config.DATA_DIR / "kg.db"
+        if _kgp.exists():
+            _c = _sq.connect(f"file:{_kgp}?mode=ro", uri=True, timeout=5)
+            try:
+                kg_total = int(_c.execute(
+                    "SELECT COUNT(*) FROM edges").fetchone()[0] or 0)
+            finally:
+                _c.close()
+    except Exception:
+        kg_total = 0
+    return {"nodes": nodes, "links": links, "total_docs": len(all_doc_ids),
+            "kg_sampled": len(edges), "kg_total": kg_total}
 
 
 def _render_html(payload: dict, token: str) -> str:
@@ -341,7 +375,9 @@ svg#svg{width:100%%;height:100%%;display:block;cursor:grab;touch-action:none}
     <div class="ph"><h2 class="ptitle" id="ptitle"></h2><div class="pmeta" id="pmeta"></div></div>
     <div class="plist" id="plist"></div></div>
   <div id="foot"><b>%(n_topics)s</b>개 토픽 · <b>%(n_links)s</b>개 연결 · 문서 <b>%(n_docs)s</b>편<br>
-    ● 크기=문서 수 · <span class="sw"></span>KG 관계 · <span class="sw dash"></span>공유 문서</div>
+    ● 크기=문서 수 · <span class="sw"></span>KG 관계 · <span class="sw dash"></span>공유 문서<br>
+    <span style="opacity:.72">연결선은 최신 KG 관계 %(kg_sample)s개 표본 기준 (전체 %(kg_total)s개) ·
+    미분류 ‘기타’ 버킷 제외</span></div>
   <div id="ctrls"><button id="dice" title="랜덤">🎲</button><button id="zin">+</button>
     <button id="zout">−</button><button id="zfit">⤢</button></div>
   <div id="tip"></div>
@@ -490,6 +526,8 @@ addEventListener('resize',()=>{W=stage.clientWidth;H=stage.clientHeight;
 </body></html>""" % {
         "C_NODE": _C_NODE, "C_ACCENT": _C_ACCENT, "tok": tok,
         "n_topics": n_topics, "n_links": n_links, "n_docs": n_docs,
+        "kg_sample": f'{payload.get("kg_sampled", 0):,}',
+        "kg_total": f'{payload.get("kg_total", 0):,}',
         "data": data, "reload_js": _widgets.live_reload_js("universe"),
         "theme_js": _THEME_JS,
     }
@@ -501,7 +539,7 @@ def _pre_signature() -> str | None:
     import sqlite3
     try:
         idx_path = config.DATA_DIR / "wiki_index.json"
-        parts = [str(int(idx_path.stat().st_mtime)) if idx_path.exists()
+        parts = [str(idx_path.stat().st_mtime_ns) if idx_path.exists()
                  else "0"]
         for db, table in (("kg.db", "edges"), ("notes.db", "notes"),
                           ("meta.db", "documents")):

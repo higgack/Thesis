@@ -151,6 +151,20 @@ def count() -> int:
         return int(cur.fetchone()[0])
 
 
+def distinct_days() -> int:
+    """Number of distinct KST calendar days that carry at least one Q&A.
+
+    `ts` is stored as naive UTC (see record()), so shift by +9h before
+    taking the date — same conversion the dashboard's _kst_day() does in
+    Python. The dashboard used to derive this from recent(limit=2000) by
+    counting the days present in that page, which silently under-reports
+    once the archive passes 2000 rows; this counts the whole table."""
+    with _conn() as c:
+        cur = c.execute(
+            "SELECT COUNT(DISTINCT date(ts, '+9 hours')) FROM qna")
+        return int(cur.fetchone()[0] or 0)
+
+
 def delete(qna_id: int) -> int:
     """Drop one Q&A row by primary key. Returns rows affected."""
     try:

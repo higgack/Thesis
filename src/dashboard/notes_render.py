@@ -36,6 +36,11 @@ log = logging.getLogger(__name__)
 # skip rewriting unchanged note pages every 15s tick.
 _PAGE_STAMPS: dict[str, str] = {}
 
+# Whole-view fingerprint (note count + newest `updated` + marks.db mtime
+# + KST date). None until the first successful render, so a fresh process
+# always rebuilds once and picks up template changes on deploy.
+_LAST_SIG: str | None = None
+
 
 def _esc(s) -> str:
     return html.escape(str(s) if s is not None else "")
@@ -866,6 +871,41 @@ def render_notes(token: str) -> int:
         return 0
 
     base = Path(config.DATA_DIR) / "dashboard" / token / "notes"
+    # Bail out before the expensive part when nothing this page shows has
+    # changed. _PAGE_STAMPS already skips unchanged per-note pages, but
+    # the index was rewritten unconditionally AND full_map below calls
+    # get_note() for EVERY note (~3 SQLite queries + one .md read each —
+    # ~3,100 queries and ~1,047 file reads at the current note count) to
+    # build the search haystack. That ran on every tick.
+    # list_notes() is one query we already have, so (count, newest
+    # `updated`) is free; marks.db mtime catches ★/memo/alarm edits,
+    # whose POST handlers write there without triggering a re-render;
+    # the KST date rolls the 'today' cost card over at midnight.
+    global _LAST_SIG
+    index_file = base / "index.html"
+    try:
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        _marks_db = config.DATA_DIR / "marks.db"
+        _mparts = []
+        for _p in (_marks_db, _marks_db.with_name("marks.db-wal")):
+            try:
+                # ns, not whole seconds — a memo saved in the same second
+                # as the last render would otherwise be invisible.
+                _mparts.append(str(_p.stat().st_mtime_ns))
+            except OSError:
+                _mparts.append("0")
+        sig = "-".join([
+            _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d"),
+            str(len(notes)),
+            str(max((str(n.get("updated") or "") for n in notes),
+                    default="")),
+            *_mparts,
+        ])
+    except Exception:
+        sig = None  # fail open — never freeze the page on a signature bug
+    if sig is not None and sig == _LAST_SIG and index_file.exists():
+        return 0
+
     base.mkdir(parents=True, exist_ok=True)
     pid = os.getpid()
 
@@ -904,6 +944,10 @@ def render_notes(token: str) -> int:
             _atomic(fname, _render_note(token, full))
             _PAGE_STAMPS[n["id"]] = stamp
             written += 1
+        # Only after every page landed — a partial write must not mark
+        # this signature as rendered, or the failure would stick until
+        # the next unrelated change.
+        _LAST_SIG = sig
     except Exception:
         log.exception("notes_render: write failed")
     return written

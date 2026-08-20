@@ -20,6 +20,65 @@ log = logging.getLogger(__name__)
 # in this same increment (browse-everything without one giant DOM dump).
 _INITIAL_EDGE_LIMIT = 1200
 
+# Cheap change-fingerprint of everything this page renders, so an
+# unchanged graph costs a few ms instead of ~950ms. Measured on a
+# production-sized kg.db (648k edges): the entity count alone
+# (count of UNION src,dst) is 420ms and top_entities(30) is 495ms,
+# against ~2.6ms for this whole fingerprint — roughly 300x cheaper
+# than the work it guards. Mirrors universe_render's _pre_signature().
+_LAST_SIG: str | None = None
+
+
+def _pre_signature() -> str | None:
+    """Fingerprint of this view's inputs — no heavy reads. None → could
+    not compute, in which case the caller must fail OPEN and render.
+
+    Covers edge inserts/deletes (COUNT+MAX(id)), ★/memo/alarm edits
+    (marks.db mtime — the dashboard's mark/memo POST handlers write
+    there without triggering a re-render), and the KST date so the
+    'today' cost card resets at midnight. A KG spend that produces no
+    edge (a failed extraction) is not covered and lags until the next
+    edge lands; that is deliberate — keying on cost.db mtime would
+    re-render on every unrelated LLM call in the system.
+    """
+    import sqlite3
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    try:
+        parts: list[str] = [
+            _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d")
+        ]
+        kg_path = config.DATA_DIR / "kg.db"
+        if not kg_path.exists():
+            return None
+        # Read-only URI: never take kg.db's write lock from the render
+        # path (the bot writes it during ingest).
+        c = sqlite3.connect(f"file:{kg_path}?mode=ro", uri=True, timeout=5)
+        try:
+            # Two statements on purpose. Asking for COUNT(*) and MAX(id)
+            # together costs 33ms because the planner drops MAX's O(1)
+            # rowid shortcut and scans a covering index for both
+            # (EXPLAIN: "SCAN edges USING COVERING INDEX idx_kg_doc").
+            # Split, MAX(id) becomes "SEARCH edges" at 0.2ms and the
+            # pair totals 2.6ms — same answer, 12x cheaper.
+            n_edges = c.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+            max_id = c.execute(
+                "SELECT COALESCE(MAX(id),0) FROM edges").fetchone()[0]
+        finally:
+            c.close()
+        parts.append(f"{n_edges}:{max_id}")
+        marks_path = config.DATA_DIR / "marks.db"
+        for p in (marks_path, marks_path.with_name("marks.db-wal")):
+            try:
+                # st_mtime_ns, NOT int(st_mtime): whole-second resolution
+                # loses a mark saved in the same second as the previous
+                # render, and the change would then never be picked up.
+                parts.append(str(p.stat().st_mtime_ns))
+            except OSError:
+                parts.append("0")
+        return "-".join(parts)
+    except Exception:
+        return None
+
 
 def _esc(s) -> str:
     return html.escape(str(s if s is not None else ""))
@@ -408,8 +467,25 @@ _JS = r"""
 
 def render_kg(token: str) -> int:
     """Write data/dashboard/<token>/kg/index.html. Returns 1 if written,
-    0 when the graph is empty / on error. Never raises."""
+    0 when the graph is empty / unchanged / on error. Never raises.
+
+    Self-gating (2026-08-20): this is the most expensive render in the
+    dashboard (~950ms of SQL per call on a 648k-edge graph), and it had
+    no change detection of its own — regenerate()'s outer gate was the
+    only thing stopping it from running every 15s tick. That outer gate
+    keyed on (total_qna, doc_count), which this page does not display,
+    so it both let the page go stale and was the wrong place for the
+    decision. The cheap fingerprint below is ~500x cheaper than the work
+    it guards, so the caller can now invoke this every tick and get both
+    freshness and a lower cost than the outer gate delivered."""
+    global _LAST_SIG
     if not token:
+        return 0
+    out_file = Path(config.DATA_DIR) / "dashboard" / token / "kg" / "index.html"
+    sig = _pre_signature()
+    # Fail open on sig=None (couldn't fingerprint) so a signature bug can
+    # never freeze the page permanently.
+    if sig is not None and sig == _LAST_SIG and out_file.exists():
         return 0
     try:
         from ..store import kg
@@ -596,4 +672,7 @@ def render_kg(token: str) -> int:
     tmp = base / f"index.html.{pid}.tmp"
     tmp.write_text(page, encoding="utf-8")
     os.replace(tmp, base / "index.html")
+    # Only after a successful write — a crash mid-render must not mark
+    # this signature as rendered.
+    _LAST_SIG = sig
     return 1

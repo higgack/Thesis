@@ -1456,6 +1456,24 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
     qna_lat_txt = (f"{qna_lat:.1f}s" if isinstance(qna_lat, (int, float))
              else "N/A")
 
+    # These two KPIs only measure the DASHBOARD's own queues — the web
+    # ask-box (dash_queries.db) and the browser-extension ingest queue
+    # (dash_ingest.db). Neither covers Telegram Q&A or the main ingest
+    # pipeline, and the ingest one is all-time while its neighbour is
+    # today-only. Unlabelled, a bare "N/A · 처리 0건" sitting next to
+    # "학습 자료 99,933개" reads as "ingestion is broken" when it really
+    # means "nobody used the browser extension". Name the scope in the
+    # label and say so explicitly when there is simply no data.
+    qna_rate = stats.get("qna_success_rate", "N/A")
+    qna_sub = (f"평균 응답지연 {qna_lat_txt}" if qna_rate != "N/A"
+               else "오늘 웹 질의 없음 · 텔레그램 Q&amp;A는 위 ‘총 Q&amp;A’")
+    ing_processed = stats.get("ingest_processed", 0)
+    ing_pending = stats.get("ingest_pending", 0)
+    ing_rate = stats.get("ingest_success_rate", "N/A")
+    ing_sub = (f"처리 {ing_processed:,}건 · 대기 {ing_pending:,}건"
+               if (ing_processed or ing_pending)
+               else "확장앱 인입 기록 없음 · 텔레그램 인입은 위 ‘학습 자료’")
+
     parts = [
         "<!DOCTYPE html><html lang='ko'><head>",
         "<meta charset='utf-8'>",
@@ -1479,7 +1497,10 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "<div class='stat-card'>",
         "<div class='label'>📊 총 Q&amp;A</div>",
         f"<div class='value'>{stats['total_qna']:,}건</div>",
-        f"<div class='sub'>{len(days_sorted)}일에 걸쳐 누적</div>",
+        # `or` not .get(default): the key is always present, and 0 means
+        # the whole-table count failed — fall back to the page-derived
+        # day count rather than rendering "0일에 걸쳐 누적".
+        f"<div class='sub'>{stats.get('qna_days') or len(days_sorted):,}일에 걸쳐 누적</div>",
         "</div>",
         "<div class='stat-card'>",
         "<div class='label'>📚 학습 자료</div>",
@@ -1505,14 +1526,14 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
 
         "<div class='stats'>",
         "<div class='stat-card'>",
-        "<div class='label'>🎯 KPI: 질의 성공률 (오늘)</div>",
-        f"<div class='value'>{stats.get('qna_success_rate', 'N/A')}</div>",
-        f"<div class='sub'>평균 응답지연 {qna_lat_txt}</div>",
+        "<div class='label'>🎯 KPI: 웹 질의 성공률 (오늘)</div>",
+        f"<div class='value'>{qna_rate}</div>",
+        f"<div class='sub'>{qna_sub}</div>",
         "</div>",
         "<div class='stat-card'>",
-        "<div class='label'>📥 KPI: 인입 성공률</div>",
-        f"<div class='value'>{stats.get('ingest_success_rate', 'N/A')}</div>",
-        f"<div class='sub'>처리 {stats.get('ingest_processed', 0):,}건 · 대기 {stats.get('ingest_pending', 0):,}건</div>",
+        "<div class='label'>📥 KPI: 확장앱 인입 성공률 (전체 기간)</div>",
+        f"<div class='value'>{ing_rate}</div>",
+        f"<div class='sub'>{ing_sub}</div>",
         "</div>",
         "<div class='stat-card'>",
         "<div class='label'>🧩 KPI: 문서당 청크</div>",
@@ -2125,7 +2146,6 @@ def _render_commands_page(token: str, lookup_guide: str,
 # full detail-page rebuild on (re)start (propagating any template/token
 # change) and then only emit new pages incrementally.
 _FIRST_RUN = True
-_LAST_STATS_SNAPSHOT: tuple[int, int] | None = None
 
 
 def regenerate() -> None:
@@ -2145,7 +2165,7 @@ def regenerate() -> None:
         write detail files that don't exist yet. The old code rewrote
         ALL ~2000 detail files every 60s tick, which is what pegged the
         loop."""
-    global _FIRST_RUN, _LAST_STATS_SNAPSHOT
+    global _FIRST_RUN
     token = (os.getenv("DASHBOARD_TOKEN", "") or "").strip()
     if not token:
         log.warning("DASHBOARD_TOKEN unset; static dashboard skipped")
@@ -2182,9 +2202,16 @@ def regenerate() -> None:
         total_qna = qna.count()
         doc_count = meta_store.count()
         chunk_count = vector_store.chunk_count()
-        stats_snapshot = (total_qna, doc_count)
+        try:
+            # Whole-table count. `days_sorted` in _render_index only sees
+            # the recent(2000) page, so it under-reports past 2000 Q&As.
+            qna_days = qna.distinct_days()
+        except Exception:
+            log.exception("qna.distinct_days failed; falling back to page count")
+            qna_days = 0
         stats = {
             "total_qna": total_qna,
+            "qna_days": qna_days,
             "docs": doc_count,
             "chunks": chunk_count,
           "chunks_per_doc": (
@@ -2230,36 +2257,56 @@ def regenerate() -> None:
         if written:
             log.info("dashboard: wrote %d detail page(s)%s", written,
                      " (full rebuild)" if full else "")
-        corpus_changed = _FIRST_RUN or _LAST_STATS_SNAPSHOT != stats_snapshot
-        if corpus_changed:
-            try:
-                from .wiki_render import render_wiki
-                wiki_pages = render_wiki(token)
-                if wiki_pages:
-                    log.info("dashboard: wrote %d wiki page(s)", wiki_pages)
-            except Exception:
-                log.exception("dashboard wiki render failed (non-fatal)")
-            try:
-                from .notes_render import render_notes
-                note_pages = render_notes(token)
-                if note_pages:
-                    log.info("dashboard: wrote %d note page(s)", note_pages)
-            except Exception:
-                log.exception("dashboard notes render failed (non-fatal)")
-            try:
-                from .kg_render import render_kg
-                if render_kg(token):
-                    log.info("dashboard: wrote KG view")
-            except Exception:
-                log.exception("dashboard kg render failed (non-fatal)")
-            try:
-                from .universe_render import render_universe
-                if render_universe(token):
-                    log.info("dashboard: wrote universe view")
-            except Exception:
-                log.exception("dashboard universe render failed (non-fatal)")
+        # Each sub-render below now decides for itself whether its own
+        # inputs moved, so they are called unconditionally.
+        #
+        # They used to be wrapped in `if _FIRST_RUN or _LAST_STATS_SNAPSHOT
+        # != (total_qna, doc_count)` (2026-08-13) to stop four heavy
+        # renders from running every 15s tick. The cost problem was real,
+        # but that key describes the ARCHIVE view — none of these four
+        # pages display total_qna or doc_count, so it silently froze them:
+        #   - a study note lives in notes.db and never touches
+        #     meta.documents, so new notes moved neither number and the
+        #     notes view could not update at all;
+        #   - KG-only changes (manual /kg_extract, edge delete) likewise;
+        #   - ★/memo/alarm saved from the dashboard write marks.db, and
+        #     those POST handlers do not trigger a re-render either.
+        # The decision belongs where the knowledge of "what changed"
+        # lives, so each render got a cheap fingerprint of its OWN inputs
+        # (wiki: per-topic .md mtime + mark fingerprint; notes: count +
+        # newest `updated` + marks mtime; kg: edge count/max-id + marks
+        # mtime; universe: pre-existing _pre_signature). An idle tick now
+        # costs a few ms of stat()/COUNT(*) across all four — measured on
+        # a production-sized graph, kg's guard is ~2ms against the ~950ms
+        # of SQL it protects — so this is both fresher AND cheaper than
+        # the outer gate it replaces.
+        try:
+            from .wiki_render import render_wiki
+            wiki_pages = render_wiki(token)
+            if wiki_pages:
+                log.info("dashboard: wrote %d wiki page(s)", wiki_pages)
+        except Exception:
+            log.exception("dashboard wiki render failed (non-fatal)")
+        try:
+            from .notes_render import render_notes
+            note_pages = render_notes(token)
+            if note_pages:
+                log.info("dashboard: wrote %d note page(s)", note_pages)
+        except Exception:
+            log.exception("dashboard notes render failed (non-fatal)")
+        try:
+            from .kg_render import render_kg
+            if render_kg(token):
+                log.info("dashboard: wrote KG view")
+        except Exception:
+            log.exception("dashboard kg render failed (non-fatal)")
+        try:
+            from .universe_render import render_universe
+            if render_universe(token):
+                log.info("dashboard: wrote universe view")
+        except Exception:
+            log.exception("dashboard universe render failed (non-fatal)")
         _FIRST_RUN = False
-        _LAST_STATS_SNAPSHOT = stats_snapshot
         try:
             import sys
             bot_mod = sys.modules.get("src.bot")
