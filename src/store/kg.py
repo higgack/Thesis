@@ -313,13 +313,26 @@ def merge_duplicate_entities() -> int:
         if key:
             groups.setdefault(key, []).append(name)
     merged = 0
-    for key, variants in groups.items():
+    # Singles first, in batches. Nearly every group has exactly one
+    # variant (429,882 of them on the live graph), and the old loop
+    # opened a fresh connection + transaction for EACH one just to write
+    # a single INSERT OR IGNORE — ~430k connection open/commit/close
+    # round-trips, which made this boot sweep run for many minutes on a
+    # 2-vCPU box while contending with the bot's own writes. Batching
+    # them keeps the point of the per-group commits below (never hold
+    # the write lock long enough to push a concurrent add_edges() past
+    # its 30s busy_timeout) because each chunk is still a short, bounded
+    # transaction.
+    singles = [(k, v[0]) for k, v in groups.items() if len(v) == 1]
+    multis = {k: v for k, v in groups.items() if len(v) > 1}
+    _CHUNK = 5000
+    for i in range(0, len(singles), _CHUNK):
         with _conn() as c:
-            if len(variants) == 1:
-                c.execute(
-                    "INSERT OR IGNORE INTO entity_canon(norm_key, canonical)"
-                    " VALUES(?,?)", (key, variants[0]))
-                continue
+            c.executemany(
+                "INSERT OR IGNORE INTO entity_canon(norm_key, canonical)"
+                " VALUES(?,?)", singles[i:i + _CHUNK])
+    for key, variants in multis.items():
+        with _conn() as c:
             counts = {
                 v: c.execute(
                     "SELECT count(*) FROM edges WHERE src=? OR dst=?",
@@ -389,13 +402,26 @@ def merge_duplicate_relations() -> int:
         if key:
             groups.setdefault(key, []).append(rel)
     merged = 0
-    for key, variants in groups.items():
+    # Singles first, in batches. Nearly every group has exactly one
+    # variant (429,882 of them on the live graph), and the old loop
+    # opened a fresh connection + transaction for EACH one just to write
+    # a single INSERT OR IGNORE — ~430k connection open/commit/close
+    # round-trips, which made this boot sweep run for many minutes on a
+    # 2-vCPU box while contending with the bot's own writes. Batching
+    # them keeps the point of the per-group commits below (never hold
+    # the write lock long enough to push a concurrent add_edges() past
+    # its 30s busy_timeout) because each chunk is still a short, bounded
+    # transaction.
+    singles = [(k, v[0]) for k, v in groups.items() if len(v) == 1]
+    multis = {k: v for k, v in groups.items() if len(v) > 1}
+    _CHUNK = 5000
+    for i in range(0, len(singles), _CHUNK):
         with _conn() as c:
-            if len(variants) == 1:
-                c.execute(
-                    "INSERT OR IGNORE INTO relation_canon(norm_key, canonical)"
-                    " VALUES(?,?)", (key, variants[0]))
-                continue
+            c.executemany(
+                "INSERT OR IGNORE INTO relation_canon(norm_key, canonical)"
+                " VALUES(?,?)", singles[i:i + _CHUNK])
+    for key, variants in multis.items():
+        with _conn() as c:
             counts = {
                 v: c.execute(
                     "SELECT count(*) FROM edges WHERE rel=?", (v,)

@@ -66,6 +66,16 @@ def _pre_signature() -> str | None:
         finally:
             c.close()
         parts.append(f"{n_edges}:{max_id}")
+        # kg.db mtime too, because COUNT/MAX(id) miss an in-place rewrite:
+        # merge_duplicate_entities() folds entity variants by UPDATE-ing
+        # src/dst on existing rows, so neither number moves and the page
+        # would keep showing the pre-merge entity names (엔비디아 next to
+        # NVIDIA) until some unrelated ingest changed the count.
+        for p in (kg_path, kg_path.with_name("kg.db-wal")):
+            try:
+                parts.append(str(p.stat().st_mtime_ns))
+            except OSError:
+                parts.append("0")
         marks_path = config.DATA_DIR / "marks.db"
         for p in (marks_path, marks_path.with_name("marks.db-wal")):
             try:
