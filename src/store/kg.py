@@ -75,15 +75,18 @@ _ENTITY_ALIASES = {
     "오픈ai": "OpenAI",
     "스페이스x": "SpaceX",
     "앤트로픽": "Anthropic",
+    # "메타" is the one entry that isn't purely a transliterated company
+    # name — bare 메타 is also the ordinary Korean prefix for "meta-", so
+    # folding it merges ~1,895 edges that may not all be about the
+    # company. Raised with the user and included on their explicit call
+    # (2026-08-20): in an investment-research corpus where 메타 (1,895)
+    # sits directly beside Meta (1,721), the standalone form is the
+    # company in practice. If a "메타버스"-style false merge ever shows
+    # up on the 주요 개체 chips, drop this line — but note the merge
+    # rewrites edge rows, so the original 메타 strings are not
+    # recoverable without re-extracting those documents.
+    "메타": "Meta",
 }
-# Deliberately NOT here: "메타" → "Meta". Every other key above is
-# unambiguously a transliterated company name, but bare "메타" is also
-# the ordinary Korean prefix/noun for "meta-", so folding it would merge
-# ~1,895 edges that may not all be about the company. Excluded on the
-# user's call (2026-08-20) — the graph keeps 메타 and Meta as separate
-# nodes, which is the pre-existing behaviour, not a regression. Add the
-# line back only with evidence that the standalone form always means the
-# company here.
 
 
 def _norm_token(s: str) -> str:

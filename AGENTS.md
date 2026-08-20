@@ -532,10 +532,12 @@ other project modules into it beyond `config` and lazy `kg_ignore`.
   normalization cannot fold "엔비디아" into "NVIDIA" (no shared
   characters), so the graph carried both as separate top nodes —
   엔비디아 3,315 vs NVIDIA 1,759, plus OpenAI/오픈AI, SpaceX/스페이스X,
-  Anthropic/앤트로픽. **"메타"→"Meta" is deliberately excluded**: unlike
-  the others it is also the ordinary Korean prefix for "meta-", so
-  folding it could merge ~1,895 edges that aren't all the company (user
-  call, 2026-08-20). It is a hand-curated 1:1
+  Anthropic/앤트로픽, 메타/Meta. "메타" is the one entry that is not
+  purely a transliterated company name (it is also the Korean prefix for
+  "meta-"); the risk was raised and the user included it anyway
+  (2026-08-20) since in this corpus 메타 1,895 sits beside Meta 1,721.
+  Dropping an alias later does NOT undo a merge — the sweep rewrites
+  edge rows, so the folded-away spelling is gone. It is a hand-curated 1:1
   transliteration dict, NOT an algorithm, and only lists pairs observed
   with both spellings live. `_canon_key()` folds the variant onto the
   English key; `_ALIAS_CANONICAL` pins the display form so
