@@ -105,6 +105,27 @@ _KG_ENTITY_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/kg/entity/?$")
 # the static page's initial cap ('더 보기' pagination, browse-everything).
 _KG_MORE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/kg/more/?$")
 _KG_MORE_MAX_LIMIT = 5000
+
+
+def _kg_filter_params(y: str, m: str, d: str,
+                      minc: str) -> tuple[str | None, float | None]:
+    """Validate the KG filter query params into (date_prefix, min_conf).
+
+    Strict shape validation; a month/day without its parent level is
+    ignored (the UI disables those selects, but the URL is
+    user-editable). Values reach SQL only as bound parameters."""
+    y = y if re.fullmatch(r"\d{4}", y or "") else ""
+    m = m if (y and re.fullmatch(r"\d{2}", m or "")) else ""
+    d = d if (m and re.fullmatch(r"\d{2}", d or "")) else ""
+    date_prefix = f"{y}-{m}-{d}" if d else f"{y}-{m}" if m else (y or None)
+    min_conf: float | None = None
+    try:
+        if minc:
+            min_conf = max(0.0, min(1.0, float(minc)))
+    except (TypeError, ValueError):
+        min_conf = None
+    return date_prefix, min_conf
+
 # Delete one KG relation (dashboard 🗑): POST /<token>/kg/<edge_id>/delete
 _KG_DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/kg/(\d+)/delete/?$")
 # Delete one wiki topic (dashboard 🗑, mirrors /wiki_delete): POST
@@ -207,6 +228,10 @@ class Handler(SimpleHTTPRequestHandler):
                 offset=(qs.get("offset") or ["0"])[0],
                 limit=(qs.get("limit") or ["1500"])[0],
                 order=(qs.get("order") or ["date"])[0],
+                y=(qs.get("y") or [""])[0],
+                m=(qs.get("m") or [""])[0],
+                d=(qs.get("d") or [""])[0],
+                minc=(qs.get("minc") or [""])[0],
             )
             return
         m = _ASK_GET_RE.match(self.path)
@@ -297,10 +322,19 @@ class Handler(SimpleHTTPRequestHandler):
             log.exception("kg entity lookup failed")
             self.send_error(500, f"lookup failed: {e}")
 
-    def _handle_kg_more(self, token: str, offset: str, limit: str, order: str):
+    def _handle_kg_more(self, token: str, offset: str, limit: str, order: str,
+                        y: str = "", m: str = "", d: str = "",
+                        minc: str = ""):
         """'더 보기' pagination past the static page's initial cap — same
         enrichment shape as _handle_kg_entity so the client reuses
-        renderEdge() to append rows without a second render path."""
+        renderEdge() to append rows without a second render path.
+
+        y/m/d/minc (2026-08-20): server-side 날짜/신뢰도 filter. The KG
+        page's selects used to filter only the DOM rows already loaded —
+        at 646k edges that meant ~130 '더 보기' clicks to reach an old
+        date. With a filter present this returns matching rows from the
+        WHOLE graph (paginated the same way) and `total` becomes the
+        filtered count so the '더 보기 (n/total)' label stays truthful."""
         if not _TOKEN or not _eq(token, _TOKEN):
             self.send_error(403, "forbidden")
             return
@@ -313,10 +347,14 @@ class Handler(SimpleHTTPRequestHandler):
         except (TypeError, ValueError):
             lim = 1500
         order = order if order in ("date", "conf") else "date"
+        date_prefix, min_conf = _kg_filter_params(y, m, d, minc)
         try:
             from ..store import kg as _kg, meta as _meta, marks as _marks
-            edges = _kg.all_edges(limit=lim, order=order, offset=off)
-            total = _kg.stats().get("edges", 0)
+            edges = _kg.all_edges(limit=lim, order=order, offset=off,
+                                  date_prefix=date_prefix, min_conf=min_conf)
+            # count_edges, not stats(): stats() also computes the 420ms
+            # distinct-entity UNION this handler never used.
+            total = _kg.count_edges(date_prefix, min_conf)
             doc_ids = list({e.get("doc_id") for e in edges if e.get("doc_id")})
             docs = _meta.get_docs_batch(doc_ids) if doc_ids else {}
             imp = _marks.marked("kg_edge")

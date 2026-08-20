@@ -562,20 +562,74 @@ def delete_edge(edge_id) -> dict | None:
 
 
 def all_edges(limit: int = 3000, order: str = "conf",
-             offset: int = 0) -> list[dict]:
+             offset: int = 0, date_prefix: str | None = None,
+             min_conf: float | None = None) -> list[dict]:
     """Every edge for the dashboard KG view. order='conf' (default,
     confidence-desc — Universe page) or 'date' (ts-desc — KG page 최신순
     default, so the 1200-row cap keeps truly-recent low-confidence edges
     instead of only the highest-confidence subset). offset supports the
-    KG page's '더 보기' pagination past the initial page."""
+    KG page's '더 보기' pagination past the initial page.
+
+    date_prefix/min_conf (2026-08-20): server-side filters for the KG
+    page's 날짜/신뢰도 selects. Client-side filtering only saw the rows
+    already loaded into the DOM — at 646k edges and 5,000 per '더 보기'
+    click, reaching an old date meant ~130 clicks. ts is a KST ISO
+    string, so a plain prefix match ("2026", "2026-08", "2026-08-10")
+    selects year/month/day without date parsing; both stamp shapes
+    ("...T10:00:00+09:00" and legacy bare dates) match. Caller
+    validates the prefix shape; values are bound parameters."""
     init()
     order_sql = ("ts DESC, confidence DESC" if order == "date"
                  else "confidence DESC, ts DESC")
+    where, params = [], []
+    if date_prefix:
+        where.append("ts LIKE ?")
+        params.append(date_prefix + "%")
+    if min_conf is not None:
+        where.append("confidence >= ?")
+        params.append(min_conf)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
     with _conn() as c:
         rows = c.execute(
-            f"SELECT id,src,rel,dst,confidence,doc_id,ts FROM edges "
-            f"ORDER BY {order_sql} LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+            f"SELECT id,src,rel,dst,confidence,doc_id,ts FROM edges"
+            f"{where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+            (*params, limit, offset)).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_edges(date_prefix: str | None = None,
+                min_conf: float | None = None) -> int:
+    """COUNT(*) under the same filters as all_edges — the paginated
+    '더 보기 (n/total)' label needs the filtered total, and the
+    unfiltered case is a ~2ms replacement for stats() when only the
+    edge count is wanted (stats() also computes the 420ms distinct-
+    entity UNION the caller would throw away)."""
+    init()
+    where, params = [], []
+    if date_prefix:
+        where.append("ts LIKE ?")
+        params.append(date_prefix + "%")
+    if min_conf is not None:
+        where.append("confidence >= ?")
+        params.append(min_conf)
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    with _conn() as c:
+        return int(c.execute(
+            f"SELECT COUNT(*) FROM edges{where_sql}", params).fetchone()[0])
+
+
+def date_histogram() -> list[tuple[str, int]]:
+    """(YYYY-MM-DD, edge count) for every calendar day in the graph.
+    Baked into the static KG page so the 연/월/일 selects can offer every
+    date that actually has relations — deriving options from loaded DOM
+    rows only offered dates present in the newest few thousand edges."""
+    init()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT substr(ts,1,10) AS day, COUNT(*) FROM edges "
+            "WHERE ts IS NOT NULL AND length(ts) >= 10 "
+            "GROUP BY day ORDER BY day").fetchall()
+    return [(r[0], int(r[1])) for r in rows]
 
 
 def edge_by_id(edge_id) -> dict | None:

@@ -8,6 +8,7 @@ Runs from regenerate() in the bot container (sqlite-only, lightweight).
 from __future__ import annotations
 
 import html
+import json
 import logging
 import os
 from pathlib import Path
@@ -250,32 +251,79 @@ _JS = r"""
   function tsY(e){return (e.dataset.ts||'').slice(0,4);}
   function tsM(e){return (e.dataset.ts||'').slice(5,7);}
   function tsD(e){return (e.dataset.ts||'').slice(8,10);}
-  function setOpts(sel, vals, allLabel, keep){
+  // 연/월/일 options come from the BAKED full-graph histogram
+  // (__KG_DATE_TREE__, rendered server-side), not from loaded DOM rows —
+  // otherwise an older month wasn't even offered until ~130 '더 보기'
+  // clicks happened to load it. Keys: {yyyy:{mm:{dd:count}}}.
+  var DTREE=(typeof __KG_DATE_TREE__!=='undefined'&&__KG_DATE_TREE__)||{};
+  var entityMode=false;   // chip view: rows are complete, filter locally
+  function keysDesc(o){return Object.keys(o||{}).sort().reverse();}
+  function setOpts(sel, vals, allLabel){
     if(!sel)return;
-    var prev=keep?sel.value:'';
+    var prev=sel.value;
     sel.innerHTML='<option value="">'+allLabel+'</option>'
       +vals.map(function(v){return '<option value="'+v+'">'+v+'</option>';}).join('');
     sel.value=(prev&&vals.indexOf(prev)>=0)?prev:'';
     sel.disabled=vals.length===0;
     sel.classList.toggle('on', !!sel.value);
   }
-  function uniqSorted(arr){
-    var seen={}, out=[];
-    arr.forEach(function(v){if(v&&!seen[v]){seen[v]=1;out.push(v);}});
-    return out.sort().reverse();          // newest first, like the list
+  function popM(){var y=fy?fy.value:'';
+    setOpts(fm, y?keysDesc(DTREE[y]):[], '월 전체');}
+  function popD(){var y=fy?fy.value:'', m=fm?fm.value:'';
+    setOpts(fd, (y&&m)?keysDesc((DTREE[y]||{})[m]):[], '일 전체');}
+  function filterQS(){
+    var p='';
+    if(fy&&fy.value)p+='&y='+fy.value;
+    if(fm&&fm.value)p+='&m='+fm.value;
+    if(fd&&fd.value)p+='&d='+fd.value;
+    if(fc&&fc.value)p+='&minc='+fc.value;
+    return p;
   }
-  // Repopulate 연/월/일 from the rows currently in the DOM. Months are
-  // limited to the chosen year and days to the chosen month, so a
-  // combination that has no relations is never offered.
-  function rebuildDateOpts(){
-    var rows=Array.prototype.slice.call(document.querySelectorAll('.edge'));
-    setOpts(fy, uniqSorted(rows.map(tsY)), '연도 전체', true);
-    var y=fy?fy.value:'';
-    var mRows=y?rows.filter(function(e){return tsY(e)===y;}):rows;
-    setOpts(fm, y?uniqSorted(mRows.map(tsM)):[], '월 전체', true);
-    var m=fm?fm.value:'';
-    var dRows=m?mRows.filter(function(e){return tsM(e)===m;}):mRows;
-    setOpts(fd, (y&&m)?uniqSorted(dRows.map(tsD)):[], '일 전체', true);
+  // Server-side filter: fetch matching rows from the WHOLE graph via
+  // /kg/more's y/m/d/minc params, replacing the list. Client-side
+  // filtering only saw loaded rows — reaching an old date meant ~130
+  // '더 보기' clicks. Cleared filter → restore the original first page.
+  // Guards against a stale async response clobbering newer state: each
+  // filter change bumps fseq; a response only applies if its sequence is
+  // still current. Without this, quickly changing selects (or clearing
+  // them) let an older, slower response land last and overwrite the list.
+  var fseq=0;
+  function serverFilter(){
+    var fp=filterQS();
+    if(!fp){
+      fseq++;   // invalidate any in-flight filtered response
+      if(listEl)listEl.innerHTML=origList;
+      if(morebtn){morebtn.style.display=''; morebtn.disabled=false;
+        morebtn.textContent=moreOrigText;
+        morebtn.dataset.offset=moreOrigOffset; morebtn.dataset.filter='';}
+      if(fhint)fhint.textContent='';
+      apply(); return;
+    }
+    var seq=++fseq;
+    if(fhint)fhint.textContent='서버에서 검색 중…';
+    fetch('/'+token+'/kg/more?offset=0&limit=5000&order=date'+fp)
+      .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+      .then(function(d){
+        if(seq!==fseq)return;   // superseded by a newer change
+        var edges=d.edges||[];
+        if(listEl)listEl.innerHTML=edges.length?edges.map(renderEdge).join('')
+          :"<div style='color:var(--muted);padding:14px'>조건에 맞는 관계 없음</div>";
+        if(morebtn){
+          morebtn.dataset.offset=d.next_offset; morebtn.dataset.filter='1';
+          if(d.has_more){
+            morebtn.style.display=''; morebtn.disabled=false;
+            morebtn.textContent='더 보기 ('
+              +Math.min(d.next_offset,d.total).toLocaleString()
+              +' / '+d.total.toLocaleString()+')';
+          } else { morebtn.style.display='none'; }
+        }
+        if(fhint)fhint.textContent='조건 일치 '+d.total.toLocaleString()+'건';
+        if(curSort!=='date')sortList(curSort);
+        apply();
+      })
+      .catch(function(err){
+        if(seq===fseq&&fhint)fhint.textContent='불러오기 실패 — 다시 선택해 주세요';
+      });
   }
   function apply(){
     var t=(q?q.value:'').trim(), tl=t.toLowerCase(), shown=0;
@@ -296,26 +344,21 @@ _JS = r"""
       }
     });
     var c=document.getElementById('cnt'); if(c)c.textContent=shown;
-    // Filtering only sees rows already in the DOM. While '더 보기' is
-    // still offering more, say so — otherwise an empty result reads as
-    // "no such data" when it really means "not loaded yet".
-    if(fhint){
-      var filtering=!!(y||m||d||minc!==null);
-      var more=morebtn&&morebtn.style.display!=='none';
-      fhint.textContent=(filtering&&more)
-        ? '※ 현재 불러온 행 기준 — 전체를 보려면 아래 ‘더 보기’' : '';
-    }
   }
-  function onDateChange(level){
-    if(level==='y'&&fm){fm.value='';}
-    if((level==='y'||level==='m')&&fd){fd.value='';}
-    rebuildDateOpts(); apply();
+  function onFilterChange(level){
+    if(level==='y'){if(fm)fm.value=''; if(fd)fd.value=''; popM(); popD();}
+    if(level==='m'){if(fd)fd.value=''; popD();}
+    [fy,fm,fd,fc].forEach(function(s){if(s)s.classList.toggle('on',!!s.value);});
+    // Entity view (chip click) already holds that entity's full edge set
+    // (≤1200), so filter locally; the global list filters on the server.
+    if(entityMode){apply(); return;}
+    serverFilter();
   }
-  if(fy)fy.addEventListener('change',function(){onDateChange('y');});
-  if(fm)fm.addEventListener('change',function(){onDateChange('m');});
-  if(fd)fd.addEventListener('change',apply);
-  if(fc)fc.addEventListener('change',apply);
-  rebuildDateOpts();
+  if(fy)fy.addEventListener('change',function(){onFilterChange('y');});
+  if(fm)fm.addEventListener('change',function(){onFilterChange('m');});
+  if(fd)fd.addEventListener('change',function(){onFilterChange('d');});
+  if(fc)fc.addEventListener('change',function(){onFilterChange('c');});
+  setOpts(fy, keysDesc(DTREE), '연도 전체'); popM(); popD();
   // 정렬: 'conf'=신뢰도순(동점이면 최신순) / 'date'=최신순(동점이면 신뢰도순).
   // 열려있는 인라인 편집기는 위치가 꼬이므로 정렬 전에 닫는다(미저장 입력 폐기).
   function sortList(mode){
@@ -468,7 +511,7 @@ _JS = r"""
           :"<div style='color:var(--muted);padding:14px'>관계 없음</div>";
         // 위임 리스너라 재-와이어링 불필요(listEl은 유지됨).
         if(curSort!=='conf')sortList(curSort);
-        if(q)q.value=name; rebuildDateOpts(); apply();
+        if(q)q.value=name; entityMode=true; apply();
         if(listEl.scrollIntoView)listEl.scrollIntoView({block:'start'});
       })
       .catch(function(err){
@@ -493,7 +536,10 @@ _JS = r"""
     if(morebtn){ morebtn.style.display=''; morebtn.disabled=false;
       morebtn.textContent=moreOrigText; morebtn.dataset.offset=moreOrigOffset; }
     if(fy)fy.value=''; if(fm)fm.value=''; if(fd)fd.value=''; if(fc)fc.value='';
-    rebuildDateOpts();
+    popM(); popD(); entityMode=false;
+    if(morebtn)morebtn.dataset.filter='';
+    [fy,fm,fd,fc].forEach(function(s){if(s)s.classList.remove('on');});
+    if(fhint)fhint.textContent='';
     apply();});
   // '더 보기': 정적 페이지의 초기 캡(_INITIAL_EDGE_LIMIT) 이후를 이어서
   // /kg/more로 가져와 renderEdge()로 붙인다(loadEntity와 같은 렌더 경로).
@@ -502,10 +548,15 @@ _JS = r"""
   // 가리키게 돼 행이 누락되거나 중복된다. 화면상의 정렬은 sortList()로 별도 적용.
   if(morebtn)morebtn.addEventListener('click',function(){
     var off=parseInt(morebtn.dataset.offset,10)||0;
+    // In filter mode the offset walks the FILTERED result set, so the
+    // same y/m/d/minc params must ride along or rows repeat/skip.
+    var fp=(morebtn.dataset.filter==='1')?filterQS():'';
+    var seq=fseq;   // drop the append if the filter changes mid-flight
     morebtn.disabled=true; morebtn.textContent='불러오는 중…';
-    fetch('/'+token+'/kg/more?offset='+off+'&limit=5000&order=date')
+    fetch('/'+token+'/kg/more?offset='+off+'&limit=5000&order=date'+fp)
       .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
       .then(function(d){
+        if(seq!==fseq)return;   // filter changed while this page loaded
         var edges=d.edges||[];
         if(edges.length&&listEl){
           listEl.insertAdjacentHTML('beforeend', edges.map(renderEdge).join(''));
@@ -520,9 +571,6 @@ _JS = r"""
           morebtn.textContent='전체 로드됨 ('+d.total.toLocaleString()+')';
           morebtn.style.display='none';
         }
-        // Newly loaded rows can carry dates the selects never listed,
-        // so refresh the 연/월/일 options before re-filtering.
-        rebuildDateOpts();
         apply();  // 새로 붙은 행에도 현재 검색/필터 적용
       })
       .catch(function(err){
@@ -583,6 +631,16 @@ def render_kg(token: str) -> int:
         # 순서·1페이지 포함 여부는 그대로 최신순/신뢰도순을 따른다 — 오래된
         # 중요 엣지를 앞으로 끌어올리지 않음(사용자 요청, 2026-07-24).
         edges = kg.all_edges(_INITIAL_EDGE_LIMIT, order="date")
+        # Full-graph date histogram, baked into the page as the source of
+        # the 연/월/일 select options. Deriving options from loaded DOM
+        # rows only offered dates present in the newest few thousand
+        # edges — an older month wasn't even selectable. ~230ms on 648k
+        # edges, and this whole function runs behind _pre_signature.
+        date_tree: dict = {}
+        for day, n in kg.date_histogram():
+            yy, mm, dd = day[0:4], day[5:7], day[8:10]
+            if yy.isdigit() and mm.isdigit() and dd.isdigit():
+                date_tree.setdefault(yy, {}).setdefault(mm, {})[dd] = n
     except Exception:
         log.exception("kg_render: store read failed")
         return 0
@@ -766,6 +824,9 @@ def render_kg(token: str) -> int:
         + "</div></template>",
         "<div class='footer'>읽기 전용 · 텔레그램 /kg 와 동일 데이터 · "
         "백그라운드 자동 축적</div>",
+        "<script>var __KG_DATE_TREE__="
+        + json.dumps(date_tree, ensure_ascii=False, separators=(",", ":"))
+        + ";</script>",
         f"<script>{_JS}</script>",
         f"<script>{_widgets.ALARM_JS}</script>",
         _widgets.live_reload_js("kg"),
