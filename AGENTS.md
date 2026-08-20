@@ -489,6 +489,17 @@ Separate subsystem from the main RAG archive/wiki — own vault
 (`data/notes/*.md`) + own SQLite (`data/notes.db`), no daily cost cap
 (user decision 2026-08-09: capped wiki/KG instead, left this one open).
 
+- **Dedup is notes-internal ONLY — do NOT re-add the RAG cross-check.**
+  `channel.ingest_file()` used to skip the note when the file's hash was
+  already in the RAG archive (meta.db) — added 사용자 요청 2026-07-24,
+  **REVERSED by the same user 2026-08-20** ("♻️ 이미 학습된 자료라 노트는
+  생략했어" blocked noting docs that were RAG-learned but never noted).
+  The archive serves retrieval; the notes serve re-reading/체화 — being
+  in one must not block the other. Only a duplicate within notes itself
+  (same `source_ref`, or same `content_hash`) is skipped. The
+  `ArchiveDuplicate` exception + its telegram.py handler were removed in
+  the same pass.
+
 - **Content-level dedup** (`notes.content_hash`, 2026-08-09):
   `channel.ingest_text()`'s original dedup was `store.note_id_by_source()`
   — an exact match on `source_ref` (URL or filename) only. Reproduced the

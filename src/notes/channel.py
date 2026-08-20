@@ -191,33 +191,22 @@ async def ingest_youtube(url: str, video_id: str | None = None) -> str | None:
     return await ingest_text("youtube", url, body, title)
 
 
-class ArchiveDuplicate(Exception):
-    """Raised when the file is already learned into the main RAG archive
-    (meta.db, by content hash) — the caller shows a clean skip message
-    instead of a generic failure."""
-
-
 async def ingest_file(path: str | Path, source_type: str | None = None) -> str | None:
-    """Dispatch a local file to the right loader by extension."""
+    """Dispatch a local file to the right loader by extension.
+
+    Dedup is NOTES-INTERNAL ONLY (source_ref + content_hash inside
+    notes.db, both checked in ingest_text). There used to be a
+    cross-system check here — "already in the RAG archive (meta.db file
+    hash) → skip the note too", added 사용자 요청 2026-07-24 — but the
+    same user REVERSED it on 2026-08-20: the archive is for retrieval and
+    the 체화 notes are for re-reading/recall, so a doc learned into RAG
+    but never noted must still be noteable by sending it to the study
+    channel. Being in one system must not block the other; only a
+    duplicate within notes itself is skipped. Don't re-add the archive
+    check without asking."""
     p = Path(path)
     ext = p.suffix.lower().lstrip(".")
     stype = source_type or ext
-    # RAG-archive dedup: if this exact file was already learned into the
-    # main archive (두뇌 학습), skip the note too instead of re-spending
-    # LLM synth on content already known — mirrors "기존 학습"'s own
-    # duplicate handling (사용자 요청, 2026-07-24).
-    try:
-        from ..ingest.pipeline import _hash_file
-        from ..store import meta as _meta
-        fhash = await asyncio.to_thread(_hash_file, p)
-        existing = (await asyncio.to_thread(_meta.find_by_file_hash, fhash)
-                   if fhash else None)
-        if existing:
-            raise ArchiveDuplicate(existing.get("title") or p.name)
-    except ArchiveDuplicate:
-        raise
-    except Exception:
-        pass  # dedup check is best-effort; never block note creation on it
     try:
         if ext == "pdf":
             # Phase 1: triage-gated extraction; fall back to the full

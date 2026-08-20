@@ -146,7 +146,6 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     urls = _URL_RE.findall(text)
     note_ids: list[str] = []
     err: str | None = None
-    dup_title: str | None = None
     try:
         # 0) 음성/오디오 → 두뇌 경로와 같은 Gemini STT → 전사문으로 노트.
         #    임시 파일로 받고 전사 후 즉시 삭제 (노트는 텍스트만 보존;
@@ -253,8 +252,6 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             nid = await channel.ingest_text("text", "study-text", text)
             if nid:
                 note_ids.append(nid)
-    except channel.ArchiveDuplicate as e:
-        dup_title = str(e)[:160]
     except Exception as e:
         log.exception("study post failed")
         err = str(e)[:160]
@@ -268,8 +265,6 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             link = _dash_link(nid)
             lines.append(f"• <b>{title}</b>" + (f"\n  🔗 {link}" if link else ""))
         out = "\n".join(lines)
-    elif dup_title:
-        out = f"♻️ 이미 학습된 자료라 노트는 생략했어: {dup_title}"
     elif err:
         out = f"⚠️ 노트 생성 실패: {err}"
     elif urls:
