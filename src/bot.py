@@ -278,10 +278,30 @@ def _stamp_heartbeat() -> None:
         log.exception("heartbeat write failed")
 
 
+# ── Event-loop stall stack dumper ────────────────────────────────────
+# When the loop hangs long enough for the host watchdog to restart the
+# container, the old container's logs are destroyed with it — every hang
+# so far has had to be diagnosed by reconstruction and guesswork. This
+# in-process monitor watches the same signal the watchdog uses (the
+# heartbeat, stamped ON the loop) and, once the loop has been silent
+# past the threshold, logs the loop thread's LIVE stack:
+#   - a sync call stuck on the loop shows the exact blocking frame;
+#   - pure asyncio/selector frames mean the loop is runnable but starved
+#     of the GIL by CPU-heavy worker threads (the 2026-07-05 / 08-04
+#     heavy-ingest pattern).
+# Those two failure classes need opposite fixes, and until now nothing
+# could tell them apart after the fact.
+_LOOP_BEAT_MONO = 0.0
+_STALL_DUMP_AFTER_SEC = 120     # well before the watchdog's 10min restart
+_STALL_DUMP_COOLDOWN_SEC = 300  # at most one dump per 5min while stalled
+
+
 async def _write_heartbeat(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """JobQueue tick → stamp _HEARTBEAT_PATH. Runs on the asyncio loop so
     a wedged loop freezes the stamp, which the host watchdog
     (auto_pull.sh) uses to detect + restart a hung bot."""
+    global _LOOP_BEAT_MONO
+    _LOOP_BEAT_MONO = time.monotonic()
     _stamp_heartbeat()
 
 
@@ -14472,6 +14492,40 @@ def main():
                 # stoplist/alias changes went missing.
                 log.exception("kg %s failed", label)
     _fts_th.Thread(target=_kg_boot_maintenance, daemon=True).start()
+
+    # Loop-stall stack dumper — see the _LOOP_BEAT_MONO block up top.
+    # run_polling() runs the event loop on THIS (main) thread, so the
+    # main thread's live stack is the loop's stack.
+    def _loop_stall_dumper():
+        import sys as _sys
+        import traceback as _tb
+        main_ident = _fts_th.main_thread().ident
+        last_dump = 0.0
+        peak_lag = 0.0
+        while True:
+            time.sleep(15)
+            beat = _LOOP_BEAT_MONO
+            if not beat:
+                continue          # loop hasn't stamped once yet (booting)
+            lag = time.monotonic() - beat
+            if lag >= _STALL_DUMP_AFTER_SEC:
+                peak_lag = max(peak_lag, lag)
+                if time.monotonic() - last_dump >= _STALL_DUMP_COOLDOWN_SEC:
+                    last_dump = time.monotonic()
+                    frame = _sys._current_frames().get(main_ident)
+                    stack = ("".join(_tb.format_stack(frame)) if frame
+                             else "<loop thread frame unavailable>")
+                    log.warning(
+                        "event loop silent %.0fs — loop thread stack "
+                        "(a sync call on the loop shows the blocker; pure "
+                        "asyncio frames = GIL starvation by workers):\n%s",
+                        lag, stack)
+            elif peak_lag:
+                log.warning("event loop resumed (stall peaked at ~%.0fs)",
+                            peak_lag)
+                peak_lag = 0.0
+                last_dump = 0.0
+    _fts_th.Thread(target=_loop_stall_dumper, daemon=True).start()
     log.info("bot starting")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
