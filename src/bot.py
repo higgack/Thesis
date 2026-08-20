@@ -14440,35 +14440,38 @@ def main():
     # ready without blocking startup. Skips fast when already in sync.
     import threading as _fts_th
     _fts_th.Thread(target=vector.fts_backfill, daemon=True).start()
-    # One-time KG junk purge: drop edges added before the stoplist filter
-    # (Claude/agent metadata, generic terms). Cheap local delete; no-op once
-    # clean. Background so it never delays startup.
-    def _kg_purge():
-        try:
-            from .store import kg as _kg
-            _kg.purge_junk()
-        except Exception:
-            log.debug("kg purge_junk failed (ignored)")
-    _fts_th.Thread(target=_kg_purge, daemon=True).start()
-    # One-time-per-boot entity canonicalization: merge spacing/corp-suffix
-    # variants of the same entity ("삼성전자" vs "삼성 전자") onto one graph
-    # node. Same fire-and-forget pattern as _kg_purge above.
-    def _kg_merge_entities():
-        try:
-            from .store import kg as _kg
-            _kg.merge_duplicate_entities()
-        except Exception:
-            log.debug("kg merge_duplicate_entities failed (ignored)")
-    _fts_th.Thread(target=_kg_merge_entities, daemon=True).start()
-    # Same idea, one level down: merge formatting variants of the same
-    # relation string ("works_at" vs "works at") onto one canonical label.
-    def _kg_merge_relations():
-        try:
-            from .store import kg as _kg
-            _kg.merge_duplicate_relations()
-        except Exception:
-            log.debug("kg merge_duplicate_relations failed (ignored)")
-    _fts_th.Thread(target=_kg_merge_relations, daemon=True).start()
+    # Boot-time kg.db maintenance, in ONE background thread and in this
+    # order: junk purge (stoplist edges), then entity canonicalization
+    # (spacing/corp-suffix + cross-script aliases), then the same for
+    # relation labels.
+    #
+    # These used to be three threads started at once. All three WRITE
+    # kg.db, so they fought each other for the single SQLite writer:
+    # with the entity sweep issuing a transaction per canon group
+    # (~430k of them before that was batched), the purge could sit out
+    # its full 30s busy_timeout and lose — and the failure was logged at
+    # DEBUG, i.e. invisible at the running level. Net effect on the live
+    # graph: adding "투자자" to the stoplist appeared to do nothing at
+    # all, with nothing in the logs to say why (2026-08-20). Serialising
+    # them removes the self-inflicted contention, and the handlers below
+    # now report failures loudly instead of swallowing them.
+    def _kg_boot_maintenance():
+        from .store import kg as _kg
+        for label, fn in (("purge_junk", _kg.purge_junk),
+                          ("merge_duplicate_entities",
+                           _kg.merge_duplicate_entities),
+                          ("merge_duplicate_relations",
+                           _kg.merge_duplicate_relations)):
+            try:
+                t0 = time.monotonic()
+                n = fn()
+                log.info("kg %s: %s rows in %.1fs",
+                         label, n, time.monotonic() - t0)
+            except Exception:
+                # NOT log.debug — a silent failure here is exactly how the
+                # stoplist/alias changes went missing.
+                log.exception("kg %s failed", label)
+    _fts_th.Thread(target=_kg_boot_maintenance, daemon=True).start()
     log.info("bot starting")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
