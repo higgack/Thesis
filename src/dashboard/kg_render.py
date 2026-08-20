@@ -200,6 +200,16 @@ color:var(--muted)}
 .controls .memofilter{background:var(--panel);border:1px solid var(--border);
 color:var(--muted)}
 .controls .memofilter.active{background:var(--memo);border-color:var(--memo);color:#fff}
+.controls.filters{flex-wrap:wrap;align-items:center;margin:0 0 4px}
+.controls .flabel{font-size:12px;color:var(--muted);font-weight:600}
+.controls .fsel{background:var(--panel);border:1px solid var(--border);
+color:var(--text);padding:7px 10px;border-radius:8px;font-size:13px;
+cursor:pointer;outline:none}
+.controls .fsel:hover:not(:disabled){border-color:var(--primary)}
+.controls .fsel:disabled{opacity:.45;cursor:default}
+.controls .fsel.on{border-color:var(--primary);color:var(--primary);
+font-weight:600}
+.controls .fhint{font-size:11.5px;color:var(--muted);margin-left:auto}
 .controls .sortbtn{background:var(--panel);border:1px solid var(--border);
 color:var(--muted);white-space:nowrap}
 .controls .sortbtn:hover{border-color:var(--primary)}
@@ -230,14 +240,54 @@ _JS = r"""
   var tpl=document.getElementById('eetpl');
   var token=location.pathname.split('/').filter(Boolean)[0]||'';
   var curImp=false, curMemo=false, curSort='date';
+  var fy=document.getElementById('fy'), fm=document.getElementById('fm');
+  var fd=document.getElementById('fd'), fc=document.getElementById('fc');
+  var fhint=document.getElementById('fhint');
   function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  // data-ts is a KST ISO stamp ("2026-08-20T13:45:12+09:00"); older rows
+  // may carry just "2026-08-20". Fixed-offset slicing handles both.
+  function tsY(e){return (e.dataset.ts||'').slice(0,4);}
+  function tsM(e){return (e.dataset.ts||'').slice(5,7);}
+  function tsD(e){return (e.dataset.ts||'').slice(8,10);}
+  function setOpts(sel, vals, allLabel, keep){
+    if(!sel)return;
+    var prev=keep?sel.value:'';
+    sel.innerHTML='<option value="">'+allLabel+'</option>'
+      +vals.map(function(v){return '<option value="'+v+'">'+v+'</option>';}).join('');
+    sel.value=(prev&&vals.indexOf(prev)>=0)?prev:'';
+    sel.disabled=vals.length===0;
+    sel.classList.toggle('on', !!sel.value);
+  }
+  function uniqSorted(arr){
+    var seen={}, out=[];
+    arr.forEach(function(v){if(v&&!seen[v]){seen[v]=1;out.push(v);}});
+    return out.sort().reverse();          // newest first, like the list
+  }
+  // Repopulate 연/월/일 from the rows currently in the DOM. Months are
+  // limited to the chosen year and days to the chosen month, so a
+  // combination that has no relations is never offered.
+  function rebuildDateOpts(){
+    var rows=Array.prototype.slice.call(document.querySelectorAll('.edge'));
+    setOpts(fy, uniqSorted(rows.map(tsY)), '연도 전체', true);
+    var y=fy?fy.value:'';
+    var mRows=y?rows.filter(function(e){return tsY(e)===y;}):rows;
+    setOpts(fm, y?uniqSorted(mRows.map(tsM)):[], '월 전체', true);
+    var m=fm?fm.value:'';
+    var dRows=m?mRows.filter(function(e){return tsM(e)===m;}):mRows;
+    setOpts(fd, (y&&m)?uniqSorted(dRows.map(tsD)):[], '일 전체', true);
+  }
   function apply(){
     var t=(q?q.value:'').trim(), tl=t.toLowerCase(), shown=0;
+    var y=fy?fy.value:'', m=fm?fm.value:'', d=fd?fd.value:'';
+    var minc=fc&&fc.value?parseFloat(fc.value):null;
+    [fy,fm,fd,fc].forEach(function(s){if(s)s.classList.toggle('on',!!s.value);});
     document.querySelectorAll('.edge').forEach(function(e){
       var hay=(e.dataset.text||'').toLowerCase();
       var ok=(!tl||hay.indexOf(tl)>=0)&&(!curImp||e.dataset.important==='1')
-        &&(!curMemo||e.dataset.hasmemo==='1');
+        &&(!curMemo||e.dataset.hasmemo==='1')
+        &&(!y||tsY(e)===y)&&(!m||tsM(e)===m)&&(!d||tsD(e)===d)
+        &&(minc===null||(parseFloat(e.dataset.conf)||0)>=minc-1e-9);
       e.style.display=ok?'':'none'; if(ok)shown++;
       var omp=e.querySelector('.memo-preview'); if(omp)omp.remove();
       if(ok&&curMemo&&e.dataset.memo){
@@ -246,7 +296,26 @@ _JS = r"""
       }
     });
     var c=document.getElementById('cnt'); if(c)c.textContent=shown;
+    // Filtering only sees rows already in the DOM. While '더 보기' is
+    // still offering more, say so — otherwise an empty result reads as
+    // "no such data" when it really means "not loaded yet".
+    if(fhint){
+      var filtering=!!(y||m||d||minc!==null);
+      var more=morebtn&&morebtn.style.display!=='none';
+      fhint.textContent=(filtering&&more)
+        ? '※ 현재 불러온 행 기준 — 전체를 보려면 아래 ‘더 보기’' : '';
+    }
   }
+  function onDateChange(level){
+    if(level==='y'&&fm){fm.value='';}
+    if((level==='y'||level==='m')&&fd){fd.value='';}
+    rebuildDateOpts(); apply();
+  }
+  if(fy)fy.addEventListener('change',function(){onDateChange('y');});
+  if(fm)fm.addEventListener('change',function(){onDateChange('m');});
+  if(fd)fd.addEventListener('change',apply);
+  if(fc)fc.addEventListener('change',apply);
+  rebuildDateOpts();
   // 정렬: 'conf'=신뢰도순(동점이면 최신순) / 'date'=최신순(동점이면 신뢰도순).
   // 열려있는 인라인 편집기는 위치가 꼬이므로 정렬 전에 닫는다(미저장 입력 폐기).
   function sortList(mode){
@@ -399,7 +468,7 @@ _JS = r"""
           :"<div style='color:var(--muted);padding:14px'>관계 없음</div>";
         // 위임 리스너라 재-와이어링 불필요(listEl은 유지됨).
         if(curSort!=='conf')sortList(curSort);
-        if(q)q.value=name; apply();
+        if(q)q.value=name; rebuildDateOpts(); apply();
         if(listEl.scrollIntoView)listEl.scrollIntoView({block:'start'});
       })
       .catch(function(err){
@@ -423,6 +492,8 @@ _JS = r"""
     if(sortbtn){sortbtn.textContent='↕ 최신순'; sortbtn.classList.add('active');}
     if(morebtn){ morebtn.style.display=''; morebtn.disabled=false;
       morebtn.textContent=moreOrigText; morebtn.dataset.offset=moreOrigOffset; }
+    if(fy)fy.value=''; if(fm)fm.value=''; if(fd)fd.value=''; if(fc)fc.value='';
+    rebuildDateOpts();
     apply();});
   // '더 보기': 정적 페이지의 초기 캡(_INITIAL_EDGE_LIMIT) 이후를 이어서
   // /kg/more로 가져와 renderEdge()로 붙인다(loadEntity와 같은 렌더 경로).
@@ -449,6 +520,9 @@ _JS = r"""
           morebtn.textContent='전체 로드됨 ('+d.total.toLocaleString()+')';
           morebtn.style.display='none';
         }
+        // Newly loaded rows can carry dates the selects never listed,
+        // so refresh the 연/월/일 options before re-filtering.
+        rebuildDateOpts();
         apply();  // 새로 붙은 행에도 현재 검색/필터 적용
       })
       .catch(function(err){
@@ -652,6 +726,28 @@ def render_kg(token: str) -> int:
         "<button id='sortbtn' type='button' class='reset sortbtn active' "
         "title='정렬 기준 전환'>↕ 최신순</button>"
         "<button id='reset' type='button' class='reset'>초기화</button></div>",
+        # 2nd control row: date drill-down (연 → 월 → 일, each populated
+        # from the dates actually present) + a minimum-confidence cut.
+        # Options are derived from the loaded rows, so a month/day that
+        # has no relations never appears as a dead choice.
+        "<div class='controls filters'>"
+        "<span class='flabel'>📅 날짜</span>"
+        "<select id='fy' class='fsel'><option value=''>연도 전체</option></select>"
+        "<select id='fm' class='fsel' disabled>"
+        "<option value=''>월 전체</option></select>"
+        "<select id='fd' class='fsel' disabled>"
+        "<option value=''>일 전체</option></select>"
+        "<span class='flabel' style='margin-left:10px'>🎯 신뢰도</span>"
+        "<select id='fc' class='fsel'>"
+        "<option value=''>전체</option>"
+        "<option value='0.95'>0.95 이상</option>"
+        "<option value='0.9'>0.90 이상</option>"
+        "<option value='0.8'>0.80 이상</option>"
+        "<option value='0.7'>0.70 이상</option>"
+        "<option value='0.5'>0.50 이상</option>"
+        "</select>"
+        "<span id='fhint' class='fhint'></span>"
+        "</div>",
         f"<div class='sec'>관계 (<span id='cnt'>{len(edges)}</span>) — "
         "☆ 중요 표시 · 📝 메모·알람 · 🗑 영구 삭제(재학습돼도 안 생김)</div>",
         f"<div id='kg-list'>{chr(10).join(rows)}</div>",
