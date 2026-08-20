@@ -527,6 +527,29 @@ other project modules into it beyond `config` and lazy `kg_ignore`.
   meaning merger — collapsing on meaning risks merging genuinely
   distinct entities/relations an LLM pass would need to judge
   case-by-case.
+- **The ONE exception: `_ENTITY_ALIASES`** (2026-08-20, explicit user
+  decision — canonical form is the **English** spelling). Format-only
+  normalization cannot fold "엔비디아" into "NVIDIA" (no shared
+  characters), so the graph carried both as separate top nodes —
+  엔비디아 3,315 vs NVIDIA 1,759, plus OpenAI/오픈AI, SpaceX/스페이스X,
+  Anthropic/앤트로픽. **"메타"→"Meta" is deliberately excluded**: unlike
+  the others it is also the ordinary Korean prefix for "meta-", so
+  folding it could merge ~1,895 edges that aren't all the company (user
+  call, 2026-08-20). It is a hand-curated 1:1
+  transliteration dict, NOT an algorithm, and only lists pairs observed
+  with both spellings live. `_canon_key()` folds the variant onto the
+  English key; `_ALIAS_CANONICAL` pins the display form so
+  `merge_duplicate_entities()`'s most-used-variant rule can't hand the
+  win back to the more frequent Korean spelling. Extending it = adding
+  one line. Do NOT generalize it into automatic synonym merging — the
+  paragraph above still holds for everything else.
+- **Adding a term to `_ENT_STOP` DELETES data.** `purge_junk()` runs at
+  every boot (`bot.py`) and removes every edge touching a stopword
+  entity, so a one-word edit is an irreversible mass delete: "투자자"
+  (added 2026-08-20 by user request, alongside the 시장/기업/업계
+  generics already there) drops ~1,162 edges on the next deploy.
+  Matching is EXACT, so "기관투자자" / "투자자 보호" survive. Confirm
+  the edge count with the user before adding a term.
 - **Hub-entity view**: `top_entities()` is already the "important nodes"
   query (`GROUP BY entity ORDER BY count DESC`) — don't reinvent this.
 

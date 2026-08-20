@@ -27,6 +27,11 @@ _ENT_STOP = {
     "gpt", "정부", "중국", "미국", "유럽", "한국", "일본", "세계", "전세계",
     "글로벌", "시장", "기업", "회사", "업계", "산업", "국가", "지역",
     "전체", "기타", "관련", "내용",
+    # 2026-08-20 (user decision): "투자자" ranked 1,162 edges on the
+    # dashboard's 주요 개체 chips despite being a generic role noun of
+    # exactly the same character as 시장/기업/업계 already listed here.
+    # Exact-match only, so "기관투자자" / "투자자 보호" still survive.
+    "투자자", "투자자들",
     # forward_listener URL-only curation channel names — never real
     # entities. Leaked in via _notify_unsupported_urls notices before
     # the ingest-side drop pattern existed (818-edge "getfeed"
@@ -54,9 +59,52 @@ _CORP_SUFFIXES = re.compile(
     re.IGNORECASE)
 
 
+# Cross-script aliases (2026-08-20, user chose the ENGLISH form as
+# canonical). The format-only normalization above cannot merge these —
+# "엔비디아" and "NVIDIA" share no characters — so the graph carried both
+# as separate top nodes (엔비디아 3,315 vs NVIDIA 1,759 on the 주요 개체
+# chips, likewise OpenAI/오픈AI, Meta/메타, SpaceX/스페이스X).
+# Deliberately a CURATED 1:1 transliteration list, NOT an automatic
+# synonym merger — everything else in this module is format-only exactly
+# because collapsing on meaning can fuse genuinely distinct entities.
+# Only pairs seen carrying BOTH spellings in the live graph are listed.
+# To extend: add one line, keyed by the canon form (lowercased, spaces
+# and ·/-/_ stripped) of the variant to fold away.
+_ENTITY_ALIASES = {
+    "엔비디아": "NVIDIA",
+    "오픈ai": "OpenAI",
+    "스페이스x": "SpaceX",
+    "앤트로픽": "Anthropic",
+}
+# Deliberately NOT here: "메타" → "Meta". Every other key above is
+# unambiguously a transliterated company name, but bare "메타" is also
+# the ordinary Korean prefix/noun for "meta-", so folding it would merge
+# ~1,895 edges that may not all be about the company. Excluded on the
+# user's call (2026-08-20) — the graph keeps 메타 and Meta as separate
+# nodes, which is the pre-existing behaviour, not a regression. Add the
+# line back only with evidence that the standalone form always means the
+# company here.
+
+
+def _norm_token(s: str) -> str:
+    return re.sub(r"[\s_\-·]+", "", s or "").lower()
+
+
+# canon_key → the display string that MUST win. merge_duplicate_entities
+# otherwise picks the most-used variant, which would keep the Korean
+# spelling (엔비디아 outnumbers NVIDIA ~2:1) and undo the choice above.
+_ALIAS_CANONICAL = {_norm_token(v): v for v in _ENTITY_ALIASES.values()}
+
+
 def _canon_key(name: str) -> str:
     k = _CORP_SUFFIXES.sub("", name or "")
-    k = re.sub(r"[\s_\-·]+", "", k).lower()
+    k = _norm_token(k)
+    # Fold a known cross-script variant onto the English canonical's key
+    # so both spellings resolve to one graph node — at insert time via
+    # _resolve_entity, and retroactively via merge_duplicate_entities.
+    alias = _ENTITY_ALIASES.get(k)
+    if alias:
+        k = _norm_token(alias)
     return k
 
 
@@ -136,6 +184,16 @@ def _resolve_entity(c: sqlite3.Connection, name: str) -> str:
     key = _canon_key(name)
     if not key:
         return name
+    # A pinned cross-script canonical wins over whatever was recorded
+    # first, so an alias added later takes effect immediately instead of
+    # waiting for the next boot's merge_duplicate_entities sweep.
+    pinned = _ALIAS_CANONICAL.get(key)
+    if pinned:
+        c.execute(
+            "INSERT INTO entity_canon(norm_key, canonical) VALUES(?,?) "
+            "ON CONFLICT(norm_key) DO UPDATE SET canonical=excluded.canonical",
+            (key, pinned))
+        return pinned
     row = c.execute(
         "SELECT canonical FROM entity_canon WHERE norm_key=?", (key,)
     ).fetchone()
@@ -267,7 +325,12 @@ def merge_duplicate_entities() -> int:
             }
             # Most-used variant wins; shortest string breaks ties (usually
             # the unadorned form, e.g. "삼성전자" over "삼성전자(주)").
-            canonical = sorted(variants, key=lambda v: (-counts[v], len(v)))[0]
+            # A pinned cross-script canonical (_ENTITY_ALIASES) overrides
+            # the count — otherwise the more frequent Korean spelling
+            # would win and the alias would never take effect.
+            canonical = (_ALIAS_CANONICAL.get(key)
+                         or sorted(variants,
+                                   key=lambda v: (-counts[v], len(v)))[0])
             c.execute(
                 "INSERT INTO entity_canon(norm_key, canonical) VALUES(?,?) "
                 "ON CONFLICT(norm_key) DO UPDATE SET canonical=excluded.canonical",
