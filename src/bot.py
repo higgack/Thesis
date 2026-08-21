@@ -391,13 +391,20 @@ def _ingest_label_from_msg(msg) -> tuple[str, str]:
     return "unknown", "(unknown)"
 
 
-def _register_ingest(label: str, kind: str, chat_id: int) -> str:
+def _register_ingest(label: str, kind: str, chat_id: int,
+                     retry_payload: dict | None = None) -> str:
+    """Claim a slot in the in-flight registry.
+
+    retry_payload is kept so the stuck-slot recovery below can push the
+    item to /failed with its 🔁 button working. Without it a slot that
+    had to be force-released would be a silent drop."""
     job_id = uuid.uuid4().hex
     _ACTIVE_INGESTS[job_id] = {
         "label": label,
         "kind": kind,
         "started_at": time.time(),
         "chat_id": chat_id,
+        "retry_payload": retry_payload,
     }
     return job_id
 
@@ -410,32 +417,130 @@ def _unregister_ingest(job_id: str) -> None:
 # (_INGEST_TIMEOUT_SEC); a slot older than DOUBLE that means the guard
 # didn't fire — exactly the 2026-07-08 silent-stall signature.
 _STUCK_INGEST_ALERT_SEC = 1800
+# Escalation point: still wedged this long → auto-recover (see
+# _check_stuck_ingests). Reached sooner when every slot is stuck, since
+# ingest is then completely dead and waiting buys nothing.
+_STUCK_INGEST_RECOVER_SEC = 3600
 
 
 async def _check_stuck_ingests(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
-    """10-min tick: any ingest holding a slot >30 min → one-shot Telegram
-    alert carrying label + pipeline stage + age, so a silent ingest stall
-    self-diagnoses instead of needing hours of log archaeology. Alert-only
-    (no auto-cancel): if the 15-min wait_for failed to fire, cancellation
-    is suspect too — first occurrence should be diagnosed, not masked."""
+    """10-min tick. A slot older than _STUCK_INGEST_ALERT_SEC (30 min,
+    double the 15-min wait_for) means the per-message timeout never
+    fired — that guard is a loop timer, so a blocked/GIL-starved event
+    loop skips it and the slot is held forever.
+
+    Two stages:
+      1. First detection → Telegram alert with label/stage/age.
+      2. Still stuck at _STUCK_INGEST_RECOVER_SEC (60 min), or every
+         slot occupied and stuck → auto-recover, because at 4/4 no
+         ingest can start at all and the queue silently dies.
+
+    Recovery mirrors /queue_panic, which exists precisely because Python
+    can't cancel a thread wedged inside to_thread/_CHROMA_LOCK: push the
+    stuck items to /failed with their retry payload (🔁 replay intact),
+    set the orphan-scan suppress marker, then exit so Docker restarts
+    with a clean loop. Escalation-only — a single slow-but-live ingest
+    below the threshold is never touched. (Was alert-only through
+    2026-08-20 to get one diagnosed occurrence; that happened — the
+    slot sat 34 min at stage '(미기록)' with 4/4 held and ingest fully
+    stopped — so it is now self-healing.)"""
     now = time.time()
+    stuck: list[tuple[str, dict, float]] = []
     for job_id, slot in list(_ACTIVE_INGESTS.items()):
         age = now - (slot.get("started_at") or now)
-        if age < _STUCK_INGEST_ALERT_SEC or slot.get("stuck_alerted"):
+        if age < _STUCK_INGEST_ALERT_SEC:
+            continue
+        stuck.append((job_id, slot, age))
+        if slot.get("stuck_alerted"):
             continue
         slot["stuck_alerted"] = True
         try:
             await ctx.bot.send_message(
                 config.TELEGRAM_OWNER_ID,
-                "⚠️ 인입 슬롯 정체 감지 (15분 타임아웃 미발동 = 버그 단서)\n"
+                "⚠️ 인입 슬롯 정체 감지 (15분 타임아웃 미발동 = 루프 블로킹 의심)\n"
                 f"자료: {str(slot.get('label') or '?')[:120]}\n"
                 f"단계: {slot.get('stage') or '(미기록)'} · "
                 f"{_fmt_elapsed(age)} 경과\n"
-                f"슬롯 {len(_ACTIVE_INGESTS)}/{_INGEST_SEM_CAPACITY} 점유 중 — "
-                "이 메시지를 Claude에게 그대로 전달해줘.\n"
-                "응급 복구: docker restart thesis-bot-1")
+                f"슬롯 {len(_ACTIVE_INGESTS)}/{_INGEST_SEM_CAPACITY} 점유 중\n"
+                f"→ {_fmt_elapsed(_STUCK_INGEST_RECOVER_SEC)} 경과 또는 전 슬롯 "
+                "점유 시 자동으로 /failed 이동 + 재시작합니다.")
         except Exception:
             log.exception("stuck ingest alert failed")
+
+    if not stuck:
+        return
+    # All slots held by stuck jobs = ingest is fully dead; don't wait out
+    # the longer timer in that case.
+    all_slots_stuck = (len(_ACTIVE_INGESTS) >= _INGEST_SEM_CAPACITY
+                       and len(stuck) >= len(_ACTIVE_INGESTS))
+    oldest = max(age for _, _, age in stuck)
+    if not (all_slots_stuck or oldest >= _STUCK_INGEST_RECOVER_SEC):
+        return
+    await _recover_stuck_ingests(ctx, stuck, all_slots_stuck)
+
+
+async def _recover_stuck_ingests(ctx: "ContextTypes.DEFAULT_TYPE",
+                                 stuck: list, all_slots_stuck: bool) -> None:
+    """Move wedged in-flight items to /failed and restart the process.
+
+    Cancelling isn't an option (a thread stuck in native code ignores
+    it), so the only way to reclaim the semaphore slots is a fresh
+    process — same reasoning as /queue_panic, done automatically."""
+    moved = 0
+    for job_id, slot, age in stuck:
+        try:
+            _record_failure(
+                "stuck",
+                str(slot.get("label") or "(unknown)")[:200],
+                f"슬롯 {_fmt_elapsed(age)} 정체 — 자동 복구로 /failed 이동",
+                retry_payload=slot.get("retry_payload"),
+            )
+            moved += 1
+        except Exception:
+            log.exception("stuck recovery: /failed record failed")
+        _ACTIVE_INGESTS.pop(job_id, None)
+    # Queued items too: the restart kills them mid-flight otherwise.
+    for item in list(_INGEST_RETRY_QUEUE):
+        try:
+            _INGEST_FAILED.append(_retry_item_to_failed_entry(
+                item, "인입 슬롯 정체 자동 복구 — 재시작 전 큐 보존"))
+            moved += 1
+        except Exception:
+            log.exception("stuck recovery: queue drain failed")
+    _INGEST_RETRY_QUEUE.clear()
+    if len(_INGEST_FAILED) > _FAILED_MAX:
+        del _INGEST_FAILED[: len(_INGEST_FAILED) - _FAILED_MAX]
+    try:
+        _persist_retry_queue()
+        _persist_failed_log()
+    except Exception:
+        log.exception("stuck recovery: persist failed")
+    # Keep the boot orphan scan quiet so the restart doesn't instantly
+    # re-enqueue everything we just parked.
+    try:
+        _RECOVERY_SUPPRESS_PATH.touch(exist_ok=True)
+    except Exception:
+        log.exception("stuck recovery: suppress marker failed")
+    log.warning("stuck ingest auto-recovery: %d item(s) → /failed, restarting",
+                moved)
+    try:
+        await ctx.bot.send_message(
+            config.TELEGRAM_OWNER_ID,
+            "🔄 인입 슬롯 정체 — 자동 복구 실행\n"
+            + ("사유: 전 슬롯 점유 (인입 완전 정지)\n" if all_slots_stuck
+               else f"사유: {_fmt_elapsed(_STUCK_INGEST_RECOVER_SEC)} 이상 정체\n")
+            + f"  • /failed 로 이동: {moved}건 (🔁 로 재학습 가능)\n"
+            "  • Orphan 자동 복구 일시 정지 (/recover_orphans 로 재개)\n"
+            "봇 재시작 중 — 3~5초 후 인입 정상화됩니다.")
+    except Exception:
+        log.exception("stuck recovery notify failed")
+
+    async def _exit_for_restart():
+        await asyncio.sleep(1.5)   # let the Telegram POST flush
+        log.warning("stuck ingest recovery — exiting for container restart")
+        import os as _os
+        _os._exit(0)
+    asyncio.create_task(_exit_for_restart())
 
 
 def _fmt_elapsed(seconds: float) -> str:
@@ -1738,6 +1843,7 @@ retry 큐 모두 실패 큐로 강제 이동. 진행중인 in-flight 작업은 �
 
 <b>/queue_panic</b>
 패닉 정리: 큐 → /failed (retry payload 유지) + Pro/Agent/Pending OCR·Pro 모두 비움 + orphan 복구 suppress 마커 + 봇 프로세스 종료(Docker 자동 재시작). in-flight 태스크가 세마포어·_CHROMA_LOCK 잡고 안 풀려서 새 학습까지 느릴 때 사용. 복구는 /failed 의 🔁 #N로 하나씩.
+참고: 인입 슬롯이 정체되면 이제 <b>자동</b>으로 같은 복구가 돈다 — 30분 경과 시 알림, 60분 경과 또는 전 슬롯 점유(=인입 완전 정지) 시 자동으로 /failed 이동 + 재시작. 수동 실행이 필요한 경우는 정체가 아니라 '느림'일 때뿐.
 
 <b>/queue_cancel_all</b>
 retry 큐 전체 취소 — 재시도 안 함, /failed 로도 안 감.
@@ -10394,7 +10500,9 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
     await _await_interactive_idle()
     async with _INGEST_SEM:
         kind, label = _ingest_label_from_msg(msg)
-        job_id = _register_ingest(label, kind, notify_chat_id)
+        job_id = _register_ingest(
+            label, kind, notify_chat_id,
+            retry_payload=_retry_payload_from_msg(msg, notify_chat_id))
 
         # Per-job stage callback — pipeline calls it at each pipeline
         # phase (load → OCR → summary+embed → save), bot updates the
@@ -11976,6 +12084,7 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
     async with _INGEST_SEM:
         retry_job_id = _register_ingest(
             f"[재시도] {title}", item.get("kind", "retry"), chat_id,
+            retry_payload=dict(item),
         )
 
         # Per-job stage callback (same shape as live-upload path) so the

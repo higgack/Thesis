@@ -91,6 +91,29 @@ every keystroke — cursor move, delete, save, quit, intermediate prompts;
 output. Never "open editor and remove the line" / "save and exit" /
 "should work now".
 
+## Stuck ingest slots → auto-recover (don't revert to alert-only)
+
+`_check_stuck_ingests` (`bot.py`, 10-min tick) escalates now, it does
+not just alert. Slot older than `_STUCK_INGEST_ALERT_SEC` (30 min,
+double the 15-min per-message `wait_for`) → Telegram alert; still stuck
+at `_STUCK_INGEST_RECOVER_SEC` (60 min) **or every slot occupied by
+stuck jobs** → auto-recovery: stuck items + the retry queue go to
+`/failed` with their retry payloads (🔁 replay intact), orphan-scan
+suppress marker set, `os._exit(0)` → Docker restarts.
+
+- **Why the 15-min `wait_for` can't be relied on**: it is a LOOP timer.
+  A blocked/GIL-starved event loop (the recurring heavy-ingest pattern)
+  never fires it, so the slot is held forever and at 4/4 ingest dies
+  silently. Cancellation can't fix it either — a thread wedged in
+  native code inside `to_thread`/`_CHROMA_LOCK` ignores cancel, which
+  is exactly why `/queue_panic` exists and why recovery = restart.
+- It was deliberately alert-only until 2026-08-20 ("first occurrence
+  should be diagnosed, not masked"). That occurrence happened — 34 min
+  at stage `(미기록)`, 4/4 held, ingest fully stopped — so the
+  diagnose-first phase is over. Don't downgrade it back.
+- `_register_ingest` stores `retry_payload` for this; a slot
+  force-released without one is a silent data drop.
+
 ## Actionable alerts → ack-button pattern
 
 Deliberate-action alerts (paddle release, ban lifted, cost over budget…)
