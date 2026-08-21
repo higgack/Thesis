@@ -36,8 +36,9 @@ services:
     # dashboard + the co-tenant `stock`/`stock-trade` host bots ~5 GB.
     # NEVER set this above physical RAM (the old 12000m mistake let the
     # kernel OOM-killer fire on random processes). Paired with
-    # INGEST_SEM_CAPACITY (bot.py, default 6 since the RAM headroom
-    # allows real parallel ingest again).
+    # INGEST_SEM_CAPACITY (bot.py, default 3 since 2026-08-21 — the
+    # comment here used to say 6, which was never the live value; 2 vCPUs,
+    # not RAM, are what cap ingest parallelism).
     mem_limit: 11g
     # Default 10s SIGTERM→SIGKILL is too short for any non-trivial
     # ingest. 120s lets short jobs (URLs, text, photos, small PDFs)

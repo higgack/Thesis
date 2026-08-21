@@ -50,10 +50,11 @@ log = logging.getLogger(__name__)
 
 # Global cap on concurrent Gemini Vision OCR calls, across ALL PDFs
 # ingesting at once. loaders.py's per-PDF ThreadPoolExecutor(max_workers=7)
-# only bounds ONE PDF's page fan-out; with INGEST_SEM_CAPACITY=4 concurrent
-# PDFs each opening their own 7-worker pool, up to 28 OS threads (each
-# creating a fresh genai client + making a Vision call) could pile up at
-# once on the 2-vCPU VM. That's the exact GIL-starvation signature already
+# only bounds ONE PDF's page fan-out; with INGEST_SEM_CAPACITY concurrent
+# PDFs each opening their own 7-worker pool, that's 7 × capacity OS threads
+# (each creating a fresh genai client + making a Vision call) piling up at
+# once on the 2-vCPU VM — 28 at the then-4 cap, 21 at today's 3, both far
+# past what 2 cores absorb. That's the exact GIL-starvation signature already
 # documented in CLAUDE.md from 2026-07-05 (10min+ frozen event loop) —
 # recurred 2026-08-04 while several large broker-report PDFs OCR'd
 # concurrently. This semaphore caps TOTAL in-flight Vision OCR calls

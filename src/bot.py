@@ -34,14 +34,21 @@ logging.basicConfig(
 log = logging.getLogger("bot")
 
 # Ingest concurrency cap. Sized for the live VM = e2-highmem-2 (2 vCPU,
-# 16 GB, upgraded 2026-07-05) + 11g bot mem_limit. RAM now allows more,
-# but 2 vCPUs DON'T: raising this to 6 during the post-deploy backlog
-# drain starved the event loop outright (2026-07-05 — CPU-heavy worker
-# threads held the GIL, zero log/heartbeat/command output for 10+ min
-# while memory sat at 52%). 4 is the ceiling until the box has more
-# cores; the real speed win of the resize was eliminating memory-thrash,
-# not parallelism. Override via env (VM .env pins 4 too).
-_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "4"))
+# 16 GB, upgraded 2026-07-05) + 11g bot mem_limit. RAM headroom is NOT
+# the binding constraint — 2 vCPUs are: raising this to 6 during the
+# post-deploy backlog drain starved the event loop outright (2026-07-05
+# — CPU-heavy worker threads held the GIL, zero log/heartbeat/command
+# output for 10+ min while memory sat at 52%).
+# Lowered 4 → 3 on 2026-08-21 (user request) after four 5-20 MB broker
+# PDFs landed at once and filled every slot: RSS sat at 9.2/11 GB (84%)
+# with the whole queue behind them, which is the same pressure pattern
+# that produced today's CPU/heartbeat watchdog restarts. Each large PDF
+# also opens its own OCR thread pool, so the 4th concurrent slot costs
+# far more than 1/4 of throughput — dropping it trades a little
+# parallelism for headroom on both RAM and the GIL.
+# Override via env — the VM .env sets this explicitly, so a change here
+# alone does NOT move the live value; edit .env too and force-recreate.
+_INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "3"))
 _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 # Interactive-priority gate. A user's command (_SustainedTyping bumps
 # _INTERACTIVE_INFLIGHT) or Q&A (_run_agent bumps _ACTIVE_AGENT_RUNS)

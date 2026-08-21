@@ -245,8 +245,9 @@ fetch branch → `LOCAL==REMOTE` silent exit → else send "🚀 배포 시작" 
   `_GLOBAL_OCR_SEM`, default 6, 2026-08-09) — the per-PDF
   `ThreadPoolExecutor(max_workers=7)` in `loaders.py` only bounds ONE
   PDF's page fan-out; several large PDFs OCR'ing at once (up to
-  `INGEST_SEM_CAPACITY`=4 concurrently) could otherwise pile up to 28
-  threads and reproduce the same GIL-starvation freeze pattern above
+  `INGEST_SEM_CAPACITY` concurrently) could otherwise pile up to
+  7 × capacity threads — 28 at the 4 cap in force then, 21 at today's 3 —
+  and reproduce the same GIL-starvation freeze pattern above
   (recurred 2026-08-04). Don't remove the semaphore without re-testing
   concurrent large-PDF ingest first.
 - After any push, VM redeploys in 60s + Telegram alert. Correct closing
@@ -448,10 +449,16 @@ gcloud 명령의 zone은 이제 `us-central1-b`.
 e2-standard-2/8GB에서 승급 — chroma HNSW가 임베딩을 전부 RAM에 들고
 있어(354k청크≈4.4GB, 학습마다 증가) 8GB 박스가 93~95%에서 20~40분씩
 스톨). Static IP `136.115.27.77` (구 `34.50.23.221`) survives stop/start.
-bot `mem_limit: 11g` + `INGEST_SEM_CAPACITY=4` — **RAM은 늘었어도 2 vCPU
+bot `mem_limit: 11g` + `INGEST_SEM_CAPACITY=3` — **RAM은 늘었어도 2 vCPU
 가 병렬 상한: 6으로 올렸다가 백로그 드레인 때 GIL 기아로 루프가 10분+
-무음(2026-07-05, 재현 2026-08-04). 코어 추가 전엔 4 고정** (.env도 4로
-핀). Dashboard index rebuild = 15s. Host SHARED with `~/stock` +
+무음(2026-07-05, 재현 2026-08-04). 코어 추가 전엔 3 고정** (2026-08-21에
+사용자 요청으로 4→3; 5~20MB 브로커 PDF 4개가 동시에 슬롯을 다 채우면서
+RSS 9.2/11GB, CPU/heartbeat 워치독 재시작이 반복됐음. 대용량 PDF는
+슬롯마다 자기 OCR 스레드 풀을 여는 탓에 4번째 슬롯의 실제 비용이
+처리량의 1/4보다 훨씬 크다). **코드 기본값과 VM `.env`는 따로다** —
+`.env`에 이 변수가 명시돼 있으면 그쪽이 이기므로 코드만 고치면 라이브
+값은 안 바뀐다. `.env` 수정 후엔 `restart`가 아니라
+`docker compose up -d --force-recreate bot` (env_file 재읽기). Dashboard index rebuild = 15s. Host SHARED with `~/stock` +
 `~/stock-trade` (separate host-venv bots, also Vertex via
 `GOOGLE_GENAI_USE_VERTEXAI=true`) — don't eat all RAM. Those aren't
 `higgack/thesis` (their `gemini_cache_manager.py:137` still passes
