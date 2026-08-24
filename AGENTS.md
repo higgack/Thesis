@@ -346,6 +346,20 @@ markdown notes, nothing else.
   negative claim은 stale해진다 — 실제로 "₩10만/mo" 비용 가정이 4배 틀린
   채 남아 있었음. wiki는 `wiki.lint()`가 stale single-source >30d를 이미
   자동 플래그(중복 구현 금지).
+- **라이브러리·환경 능력 단정 전 실제 확인.** "이 라이브러리엔 그 기능이
+  없다" / "로그에 그런 건 없다"고 말하기 전에 설치된 버전의 문서·타입·
+  소스를 직접 읽는다. **grep이 빈 결과를 내면 먼저 패턴을 의심할 것** —
+  코드가 실제로 찍는 문자열을 읽고 다시 검색한다 (2026-08-21에
+  `unsupported url` / `미지원`으로 세 번 헛짚었는데, 실제 로그는
+  `unsupported 0`이었고 한글 문구는 로그가 아니라 텔레그램 메시지였다).
+  직접 구현하거나 패키지를 추가하기 전에 이미 설치된 의존성부터 확인.
+- **폴백·호환 경로는 지우지 않는다.** 평소 안 타는 코드 대부분이 실패
+  경로다: `.bak` 로드 폴백, `_triaged_pdf_extract`→전체 로더 폴백("never
+  makes ingest worse"), LLM 재작성 50% 손실 가드, 리랭커 폴백,
+  `content_hash=NULL` 레거시 처리, `WIKI_BATCH_HOUR` back-compat, KG 부팅
+  스윕(early exit 금지). "쓰이지 않는 코드"로 보여도 삭제 전에 어떤 사고가
+  이걸 만들었는지 먼저 찾을 것. 신규 프로젝트용 "하위 호환 버리고 단순화"
+  조언은 사고 이력이 쌓인 이 운영 시스템엔 그대로 적용되지 않는다.
 - Every ingest-pipeline change applies to new ingest AND the retry queue
   — never partial.
 - Update `_HELP_TEXT` (`src/bot.py`) on add/rename/remove command, policy
