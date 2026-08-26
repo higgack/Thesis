@@ -94,7 +94,15 @@ _ENTITY_ALIASES = {
 
 
 def _norm_token(s: str) -> str:
-    return re.sub(r"[\s_\-·]+", "", s or "").lower()
+    # \s 는 Cf(format) 문자를 잡지 못한다: '삼성\u200b전자'가 삼성전자와
+    # 다른 노드로 갈라지는 걸 2026-08-27 재현 확인. zero-width/bidi/BOM/
+    # soft-hyphen/NBSP 를 구분자와 함께 접는다. (ingest 쪽은 textnorm 이
+    # 같은 정리를 하지만, kg 는 자립 모듈 규칙상 import 없이 인라인 —
+    # 과거에 이미 저장된 오염 개체도 부팅 머지 스윕이 이걸로 접는다.)
+    return re.sub(
+        r"[\s_\-·\u200b\u200c\u200e\u200f\u2060\ufeff\u00ad\u180e"
+        r"\u202a-\u202e\u2066-\u2069\u00a0\u202f\u2007]+",
+        "", s or "").lower()
 
 
 # canon_key → the display string that MUST win. merge_duplicate_entities

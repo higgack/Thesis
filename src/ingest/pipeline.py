@@ -531,6 +531,16 @@ async def ingest_text(text: str, label: str = "text",
 async def _ingest(doc_type: str, source: str, title: str, body: str,
                   hint: str | None, file_hash: str | None = None,
                   on_stage: StageCb = None) -> dict:
+    # Invisible-Unicode 정리 — 모든 포맷과 재시도 큐가 이 함수로 합류하므로
+    # 여기 한 곳이면 dedup 해시·청크/FTS·요약·KG 추출 입력이 전부 깨끗해진다.
+    # (기존 DB 행은 정리 전 텍스트로 해시돼 있어, 그런 문서의 첫 재등장
+    # 1회는 중복으로 안 잡힐 수 있다 — 이후부터는 정상.) 근거는 textnorm
+    # 모듈 docstring 참조.
+    from .textnorm import strip_invisible
+    title = strip_invisible(title)
+    body = strip_invisible(body)
+    if hint:
+        hint = strip_invisible(hint)
     doc_id = _doc_id(source)
     log.info("ingest %s %s (%d chars, hint=%s)",
              doc_type, source, len(body), bool(hint))
