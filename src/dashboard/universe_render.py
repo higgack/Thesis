@@ -72,15 +72,13 @@ _DOC_FANOUT_MAX = 6  # a doc in more topics than this is too generic to link
 # The footer states the sample size so the map is not mistaken for the
 # complete graph.
 #
-# Raised 3,000 → 30,000 on 2026-08-26 and it still got FASTER, because the
-# fetch switched from confidence-desc to order='recent' (id DESC) at the
-# same time. Measured on a 705,877-row copy of the live graph: the old
-# 3,000-by-confidence cost 136ms (SCAN + temp B-tree sort), the new
-# 30,000-by-id costs 58ms (no sort — the PK is already in insertion
-# order). The per-edge Python resolution loop adds ~93ms at this size.
-# Ordering by recency also makes the footer's "최신 KG 관계" claim true;
-# it was confidence-ordered while saying 최신.
-_KG_EDGE_SAMPLE = 30_000
+# This sample now feeds ONLY the click-panel relation lists (36 relations
+# per topic at most) — the map's links come from the exact SQL join in
+# kg.topic_pair_counts(). 30,000 was sized for link-building and measured
+# 1,830ms live once it had no reason to be that big; 12,000 keeps panels
+# just as full at a proportionally smaller read. order='recent' (id DESC)
+# stays: it is sort-free and makes the "최신" wording true.
+_KG_EDGE_SAMPLE = 12_000
 
 # Topics that are real wiki pages but meaningless as stars on a relatedness
 # map, so they are dropped from this view only (their wiki pages are
@@ -204,11 +202,13 @@ def _build_payload() -> dict | None:
     # ---- doc metadata (chunked IN() — sqlite has a ~999 placeholder cap)
     docs: dict[str, dict] = {}
     ids = list(all_doc_ids)
+    _t_docs = time.monotonic()
     try:
         for i in range(0, len(ids), 500):
             docs.update(meta_store.get_docs_batch(ids[i:i + 500]))
     except Exception:
         log.warning("universe: doc batch fetch failed", exc_info=True)
+    _MS["docs"] = (time.monotonic() - _t_docs) * 1000.0
 
     # ---- notes attached to topics, provenance first
     # Pass 1 (exact): a note whose source_ref equals one of the topic's
@@ -255,6 +255,7 @@ def _build_payload() -> dict | None:
         return i
 
     nodes = []
+    _t_nodes = time.monotonic()
     for key, rec in sorted(topics.items()):
         doc_ids = rec.get("doc_ids") or []
         stem = (rec.get("file") or "").rsplit(".", 1)[0] or key
@@ -323,6 +324,8 @@ def _build_payload() -> dict | None:
 
     if not nodes:
         return None
+
+    _MS["nodes"] = (time.monotonic() - _t_nodes) * 1000.0
 
     # ---- merge + prune links (weight-desc, per-node degree cap)
     cand = [{"s": a, "t": b, "k": "kg", "w": w}
@@ -433,11 +436,12 @@ g.sel .lk.hot{opacity:.95}
 .node-c{cursor:pointer}
 .lbl{paint-order:stroke;stroke:var(--bg);stroke-width:3px;fill:var(--ink);
   font-weight:600;pointer-events:none;user-select:none}
-/* Wraps instead of scrolling: at 20 chips a single row runs off screen,
-   and the scrollbar is hidden, so half of them would be unreachable
-   without any hint that they exist. */
+/* One row, clipped: fillKwbar() appends chips until the next one would
+   overflow and stops there, so the bar always shows the most chips that
+   fit THIS screen without wrapping over the map (wrapping to three rows
+   buried the stars under chips — 사용자 피드백 2026-08-26). */
 #kwbar{position:absolute;top:10px;left:50%%;transform:translateX(-50%%);z-index:12;
-  display:flex;flex-wrap:wrap;justify-content:center;gap:6px;max-width:92%%;
+  display:flex;flex-wrap:nowrap;gap:6px;max-width:92%%;overflow:hidden;
   padding:4px}
 #kwbar::-webkit-scrollbar{display:none}
 .kw{white-space:nowrap;cursor:pointer;font-size:12px;font-weight:600;padding:6px 12px;
@@ -711,12 +715,26 @@ document.getElementById('plist').addEventListener('click',ev=>{
 function focusNode(d){
   svg.transition().duration(600).call(zoom.transform,
     d3.zoomIdentity.translate(W/2-d.x*1.4,H/2-d.y*1.4).scale(1.4));}
-// ---- chips: top 20 topics by doc count (same measure as star size)
+// ---- chips: top topics by doc count (same measure as star size).
+// Up to 20 candidates, but only as many as fit one row on this screen:
+// append until the bar overflows, then drop the one that overflowed.
+// Re-fitted on resize, so the "best count" tracks the window instead of
+// being a hardcoded guess.
 const kwbar=document.getElementById('kwbar');
-NODES.slice().sort((a,b)=>b.docs-a.docs).slice(0,20).forEach(d=>{
-  const b=document.createElement('button');b.className='kw';
-  b.textContent=`${d.label} ${d.docs}`;
-  b.onclick=()=>{focusNode(d);openPanel(d);};kwbar.appendChild(b);});
+const KWCAND=NODES.slice().sort((a,b)=>b.docs-a.docs).slice(0,20);
+function fillKwbar(){
+  kwbar.textContent='';
+  for(const d of KWCAND){
+    const b=document.createElement('button');b.className='kw';
+    b.textContent=`${d.label} ${d.docs}`;
+    b.onclick=()=>{focusNode(d);openPanel(d);};
+    kwbar.appendChild(b);
+    if(kwbar.scrollWidth>kwbar.clientWidth){b.remove();break;}
+  }
+}
+fillKwbar();
+let _kwT=null;
+addEventListener('resize',()=>{clearTimeout(_kwT);_kwT=setTimeout(fillKwbar,150);});
 // ---- controls
 function fit(){
   if(!NODES.length)return;
@@ -785,6 +803,7 @@ def render_universe(token: str) -> int:
     if payload is None:
         return 0
     _LAST_PRE = pre
+    _t_emit = time.monotonic()
     sig = hashlib.sha1(json.dumps(
         payload, ensure_ascii=False, sort_keys=True,
         separators=(",", ":")).encode("utf-8")).hexdigest()
@@ -799,13 +818,21 @@ def render_universe(token: str) -> int:
     tmp.write_text(html_text, encoding="utf-8")
     os.replace(tmp, out)
     _LAST_SIG = sig
+    _MS["emit"] = (time.monotonic() - _t_emit) * 1000.0
     global _TIMING_LOGGED
     total = (time.monotonic() - _t0) * 1000.0
-    msg = ("universe rebuilt in %.0fms (kg pair query %.0fms → %d pairs, "
-           "recent-edge sample %.0fms, %d nodes, %d links, page %.0fKB)")
+    # Phase breakdown, because the first live rebuild came in at 13.1s
+    # against a ~0.5s synthetic estimate with 8s of it unattributed —
+    # docs = meta.db batch fetch, nodes = per-topic assembly incl. the
+    # note-matching passes, emit = signature dumps + HTML render + write.
+    msg = ("universe rebuilt in %.0fms (pairs %.0fms → %d, sample %.0fms, "
+           "docs %.0fms, nodes %.0fms, emit %.0fms, %d nodes, %d links, "
+           "page %.0fKB)")
     args = (total, _MS.get("pairs", 0.0), int(_MS.get("n_pairs", 0)),
-            _MS.get("sample", 0.0), len(payload["nodes"]),
-            len(payload["links"]), len(html_text) / 1024.0)
+            _MS.get("sample", 0.0), _MS.get("docs", 0.0),
+            _MS.get("nodes", 0.0), _MS.get("emit", 0.0),
+            len(payload["nodes"]), len(payload["links"]),
+            len(html_text) / 1024.0)
     if total >= _SLOW_REBUILD_MS or not _TIMING_LOGGED:
         log.info(msg, *args)
         _TIMING_LOGGED = True
