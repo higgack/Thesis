@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -42,6 +43,16 @@ _LAST_SIG: str | None = None
 # adds constant read pressure to the hottest DBs for a page whose content
 # rarely changed. Skip the heavy reads entirely unless an input moved.
 _LAST_PRE: str | None = None
+# Per-rebuild timings, for the log line in render_universe(). There was no
+# instrumentation here at all, so "how long does the universe rebuild take
+# on the live graph" could not be answered from the logs (2026-08-26).
+_MS: dict[str, float] = {}
+# Log the full timing at INFO the first time after boot (that is the
+# baseline number someone actually wants) and any time a rebuild is slow.
+# In between it is DEBUG: during an ingest burst the kg row count changes
+# every tick, so this path can run every 15s and should not narrate.
+_TIMING_LOGGED = False
+_SLOW_REBUILD_MS = 1500.0
 
 # Validated dark-mode palette (see module docstring).
 _C_NODE = "#6b78e3"
@@ -140,15 +151,19 @@ def _build_payload() -> dict | None:
     # join does its per-edge work inside SQLite, which releases the GIL,
     # instead of in a Python loop that holds it.
     kg_pairs: dict[tuple[str, str], int] = {}
+    _t_pairs = time.monotonic()
     try:
         for a, b, w in kg.topic_pair_counts(norm2key):
             kg_pairs[(a, b)] = w
     except Exception:
         log.warning("universe: kg topic pairs unavailable", exc_info=True)
+    _MS["pairs"] = (time.monotonic() - _t_pairs) * 1000.0
+    _MS["n_pairs"] = float(len(kg_pairs))
     # PANEL RELATIONS still come from the recent-edge sample. A panel shows
     # at most _REL_CAP*3 relations for one clicked topic, so a recent slice
     # is the right shape for it, and it costs ~120ms.
     rels: dict[str, list] = defaultdict(list)
+    _t_sample = time.monotonic()
     try:
         edges = kg.all_edges(limit=_KG_EDGE_SAMPLE, order="recent")
     except Exception:
@@ -161,6 +176,7 @@ def _build_payload() -> dict | None:
             rels[a].append(e)
         if b and b != a and len(rels[b]) < _REL_CAP * 3:
             rels[b].append(e)
+    _MS["sample"] = (time.monotonic() - _t_sample) * 1000.0
 
     # ---- shared-doc signal + doc collection for panels
     doc2topics: dict[str, list[str]] = defaultdict(list)
@@ -667,6 +683,7 @@ def render_universe(token: str) -> int:
     global _LAST_SIG, _LAST_PRE
     out_file = (Path(config.DATA_DIR) / "dashboard" / token
                 / "universe" / "index.html")
+    _t0 = time.monotonic()
     pre = _pre_signature()
     if pre is not None and pre == _LAST_PRE and out_file.exists():
         return 0
@@ -688,4 +705,16 @@ def render_universe(token: str) -> int:
     tmp.write_text(html_text, encoding="utf-8")
     os.replace(tmp, out)
     _LAST_SIG = sig
+    global _TIMING_LOGGED
+    total = (time.monotonic() - _t0) * 1000.0
+    msg = ("universe rebuilt in %.0fms (kg pair query %.0fms → %d pairs, "
+           "recent-edge sample %.0fms, %d nodes, %d links)")
+    args = (total, _MS.get("pairs", 0.0), int(_MS.get("n_pairs", 0)),
+            _MS.get("sample", 0.0), len(payload["nodes"]),
+            len(payload["links"]))
+    if total >= _SLOW_REBUILD_MS or not _TIMING_LOGGED:
+        log.info(msg, *args)
+        _TIMING_LOGGED = True
+    else:
+        log.debug(msg, *args)
     return 1
