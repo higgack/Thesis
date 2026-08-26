@@ -329,4 +329,5 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
         "category": _norm_cat(sections.get("CATEGORY", "")),
         "cost_krw": cost_krw,
         "gen_seconds": gen_seconds,
+        "mode": mode,
     }

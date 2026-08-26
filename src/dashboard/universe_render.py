@@ -755,11 +755,16 @@ addEventListener('resize',()=>{clearTimeout(_kwT);_kwT=setTimeout(fillKwbar,150)
 // ---- controls
 function fit(){
   if(!NODES.length)return;
+  // 칩 바가 stage 위에 떠 있으므로, 그 아래 영역에만 지도를 맞춘다 —
+  // 상단 별들이 키워드 칩 뒤로 숨던 문제 (사용자 요청 2026-08-27).
+  const bar=document.getElementById('kwbar');
+  const TOP=bar?bar.offsetTop+bar.offsetHeight+12:60;
+  const AH=Math.max(120,H-TOP);
   const xs=NODES.map(d=>d.x),ys=NODES.map(d=>d.y);
   const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
-  const s=Math.min(2,.88/Math.max((x1-x0)/W,(y1-y0)/H,.01));
+  const s=Math.min(2,.88/Math.max((x1-x0)/W,(y1-y0)/AH,.01));
   svg.transition().duration(500).call(zoom.transform,
-    d3.zoomIdentity.translate(W/2-s*(x0+x1)/2,H/2-s*(y0+y1)/2).scale(s));}
+    d3.zoomIdentity.translate(W/2-s*(x0+x1)/2,TOP+AH/2-s*(y0+y1)/2).scale(s));}
 document.getElementById('zin').onclick=()=>svg.transition().call(zoom.scaleBy,1.35);
 document.getElementById('zout').onclick=()=>svg.transition().call(zoom.scaleBy,1/1.35);
 document.getElementById('zfit').onclick=fit;

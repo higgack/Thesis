@@ -245,6 +245,9 @@ color:var(--muted)}
 .controls .memofilter{background:var(--panel);border:1px solid var(--border);
 color:var(--muted)}
 .controls .memofilter.active{background:var(--memo);border-color:var(--memo);color:#fff}
+.controls .bookfilter{background:var(--panel);border:1px solid var(--border);
+  color:var(--muted)}
+.controls .bookfilter.active{background:#65a30d;border-color:#65a30d;color:#fff}
 .stype{font-size:10px;color:var(--muted);border:1px solid var(--border);
 border-radius:8px;padding:1px 6px}
 .cat{font-size:10px;font-weight:700;border-radius:8px;padding:1px 7px;
@@ -523,7 +526,8 @@ _INDEX_JS = r"""
   }
   // Combined filter: 유형별(data-tbucket) AND 종류별(data-cat) AND
   // full-text(title + body). Body hits get a highlighted snippet. No bot query.
-  var curType='all', curCat='all', curImportant=false, curMemo=false;
+  var curType='all', curCat='all', curImportant=false, curMemo=false,
+      curBook=false;
   function applyFilter(){
     var t=(q?q.value:'').trim(), tl=t.toLowerCase(), shown=0;
     document.querySelectorAll('.note-row').forEach(function(row){
@@ -536,7 +540,8 @@ _INDEX_JS = r"""
       var okCat  = curCat==='all'  || (row.dataset.cat||'')===curCat;
       var okImp  = !curImportant || (row.dataset.important==='1');
       var okMemo = !curMemo || (row.dataset.hasmemo==='1');
-      var ok = okText && okType && okCat && okImp && okMemo;
+      var okBook = !curBook || (row.dataset.book==='1');
+      var ok = okText && okType && okCat && okImp && okMemo && okBook;
       row.style.display = ok ? '' : 'none';
       var old=row.querySelector('.snippet'); if(old) old.remove();
       var omp=row.querySelector('.memo-preview'); if(omp) omp.remove();
@@ -601,6 +606,12 @@ _INDEX_JS = r"""
     impf.classList.toggle('active', curImportant);
     applyFilter();
   });
+  var bookf = document.getElementById('bookfilter');
+  if(bookf) bookf.addEventListener('click', function(){
+    curBook = !curBook;
+    bookf.classList.toggle('active', curBook);
+    applyFilter();
+  });
   var memof = document.getElementById('memofilter');
   if(memof) memof.addEventListener('click', function(){
     curMemo = !curMemo;
@@ -609,6 +620,7 @@ _INDEX_JS = r"""
   });
   if(reset) reset.addEventListener('click', function(){
     q.value=''; curType='all'; curCat='all'; curImportant=false; curMemo=false;
+    curBook=false; if(bookf) bookf.classList.remove('active');
     if(impf) impf.classList.remove('active');
     if(memof) memof.classList.remove('active');
     document.querySelectorAll('.fbtn').forEach(function(x){
@@ -693,7 +705,7 @@ _INDEX_JS = r"""
   function saveView(){
     try{ sessionStorage.setItem(VK, JSON.stringify({
       q: q ? q.value : '', t: curType, c: curCat,
-      i: curImportant, m: curMemo, s: curSort,
+      i: curImportant, m: curMemo, b: curBook, s: curSort,
       y: window.scrollY || window.pageYOffset || 0 })); }catch(e){}
   }
   try{
@@ -703,7 +715,7 @@ _INDEX_JS = r"""
       sv = JSON.parse(sv);
       if (q) q.value = sv.q || '';
       curType = sv.t || 'all'; curCat = sv.c || 'all';
-      curImportant = !!sv.i; curMemo = !!sv.m;
+      curImportant = !!sv.i; curMemo = !!sv.m; curBook = !!sv.b;
       curSort = sv.s || 'date';
       document.querySelectorAll('.ftype').forEach(function(x){
         x.classList.toggle('active', x.getAttribute('data-type')===curType); });
@@ -711,6 +723,7 @@ _INDEX_JS = r"""
         x.classList.toggle('active', x.getAttribute('data-cat')===curCat); });
       if (impf) impf.classList.toggle('active', curImportant);
       if (memof) memof.classList.toggle('active', curMemo);
+      if (bookf) bookf.classList.toggle('active', curBook);
       if (sortSel) sortSel.value = curSort;
       sortRows(curSort);                   // 정렬 먼저
       applyFilter();                       // 필터 (페이지 높이 확정)
@@ -767,11 +780,13 @@ def _render_index(token: str, notes: list[dict],
         imp = 1 if n.get("important") else 0
         _memo_txt = (_nmemos.get(str(n["id"])) or "").strip()
         hasmemo = 1 if _memo_txt else 0
+        is_book = 1 if (n.get("mode") or "normal") == "book" else 0
         rows.append(
             f"<div class='note-row' data-id=\"{_esc(n['id'])}\" "
             f"data-text=\"{_esc(hay)}\" data-tbucket=\"{_esc(tbucket)}\" "
             f"data-cat=\"{_esc(cat)}\" data-important=\"{imp}\" "
             f"data-hasmemo=\"{hasmemo}\" data-memo=\"{_esc(_memo_txt)}\" "
+            f"data-book=\"{is_book}\" "
             f"data-updated=\"{_esc(n.get('updated') or '')}\">"
             f"<button class='nstar{' on' if imp else ''}' type='button' "
             f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
@@ -848,6 +863,8 @@ def _render_index(token: str, notes: list[dict],
         "★ 중요만</button>"
         "<button id='memofilter' type='button' class='reset memofilter'>"
         "📝 메모만</button>"
+        "<button id='bookfilter' type='button' class='reset bookfilter'>"
+        "📚 Book만</button>"
         "<select id='sortSel' class='sortsel' title='정렬 기준'>"
         "<option value='date'>🕐 날짜순</option>"
         "<option value='cat'>🏷 종류별</option>"
@@ -983,6 +1000,7 @@ def render_notes(token: str) -> int:
             f"{n.get('id')}\x01{n.get('category') or ''}"
             f"\x01{n.get('important') or 0}"
             f"\x01{n.get('next_due') or ''}\x01{n.get('reps') or 0}"
+            f"\x01{n.get('mode') or ''}"
             for n in notes).encode("utf-8")).hexdigest()[:16]
         sig = "-".join([
             _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d"),

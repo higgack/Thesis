@@ -118,6 +118,10 @@ def init_db() -> None:
                       "INTEGER DEFAULT 0")
         if "important" not in cols:
             c.execute("ALTER TABLE notes ADD COLUMN important INTEGER DEFAULT 0")
+        if "mode" not in cols:
+            # 노트 합성 방식: 'normal' | 'book' (책 모드, 2026-08-27).
+            # 대시보드의 📚 Book 필터가 이 컬럼으로 거른다.
+            c.execute("ALTER TABLE notes ADD COLUMN mode TEXT DEFAULT 'normal'")
         if "content_hash" not in cols:
             # Content-level dedup (2026-08-09): source_ref-based dedup
             # (note_id_by_source) only catches an exact URL/filename
@@ -189,14 +193,15 @@ def save_note(note: dict) -> str:
     with _conn() as c:
         c.execute(
             "INSERT INTO notes(id,title,source_type,source_ref,md_path,"
-            "created,updated,cost_krw,gen_seconds,category,content_hash) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            "created,updated,cost_krw,gen_seconds,category,content_hash,mode) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (note_id, note.get("title") or note_id, note.get("source_type"),
              note.get("source_ref"), str(md_path), now, now,
              float(note.get("cost_krw") or 0.0),
              float(note.get("gen_seconds") or 0.0),
              note.get("category") or "그외",
-             note.get("content_hash") or None),
+             note.get("content_hash") or None,
+             note.get("mode") or "normal"),
         )
         c.execute(
             "INSERT INTO note_srs(note_id,ease,interval_days,reps,lapses,"
@@ -333,6 +338,7 @@ def list_notes() -> list[dict]:
         rows = c.execute(
             "SELECT n.id,n.title,n.source_type,n.source_ref,n.updated,"
             "n.category,COALESCE(n.important,0) AS important,"
+            "COALESCE(n.mode,'normal') AS mode,"
             "s.last_reviewed,s.next_due,s.reps "
             "FROM notes n LEFT JOIN note_srs s ON s.note_id=n.id "
             "ORDER BY n.updated DESC").fetchall()
