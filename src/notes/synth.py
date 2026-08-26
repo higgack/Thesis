@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 
 _KST = timezone(timedelta(hours=9))
 
-_SYSTEM = """너는 사용자의 개인 학습 노트를 만드는 조수다. 입력은 사용자가
+_PRINCIPLES = """너는 사용자의 개인 학습 노트를 만드는 조수다. 입력은 사용자가
 공부한 자료의 본문이다. 이걸 '검색용 요약'이 아니라 '나중에 다시 열어
 되새김질하는 노트'로 재구성한다.
 
@@ -63,7 +63,9 @@ _SYSTEM = """너는 사용자의 개인 학습 노트를 만드는 조수다. �
   자료로 단정 가능한 사실은 담백하게 단정하고, 문장 길이는 단조롭지 않게
   변주한다. (내용을 바꾸라는 게 아니라 표현만 자연스럽게.)
 
-⚠️ 출력은 정확히 아래 형식만(JSON 금지, 전체를 코드펜스로 감싸지 말 것, 마커
+"""
+
+_FORMAT_NORMAL = """⚠️ 출력은 정확히 아래 형식만(JSON 금지, 전체를 코드펜스로 감싸지 말 것, 마커
 줄은 그대로). 단 NOTE 본문 안의 Mermaid/코드 블록은 ```로 표기한다:
 
 ===TITLE===
@@ -120,6 +122,48 @@ CATEGORY는 노트 내용의 종류를 '종목'/'산업'/'전략'/'투자론'/'�
   과학·학문 학습.
 - 그외 = 일반 거시경제·통화·정책·통계 등 위 아홉 어디에도 안 맞는 것.
 단어 하나만, 설명 없이."""
+
+_SYSTEM = _PRINCIPLES + _FORMAT_NORMAL
+
+# 책 모드 (book-to-skill 아이디어 차용, 2026-08-27 사용자 요청):
+# 장문 자료(책·긴 리포트)를 평면 노트가 아니라 되새김질용 구조 —
+# 핵심 모델 → 장별 색인 → 용어집 → 치트시트 — 로 합성한다. 원칙부는
+# 일반 모드와 완전히 공유하고(신뢰 원칙이 갈라지면 안 됨), 형식부만
+# 다르다. 호출은 여전히 1회 — 비용은 출력 토큰만큼만 늘어난다.
+_FORMAT_BOOK = """⚠️ 출력은 정확히 아래 형식만(JSON 금지, 전체를 코드펜스로 감싸지 말 것, 마커
+줄은 그대로). 단 NOTE 본문 안의 Mermaid/코드 블록은 ```로 표기한다:
+
+===TITLE===
+노트 제목 한 줄 (책/자료 제목 중심)
+===NOTE===
+## 🎯 한 줄 요지
+이 자료 전체를 관통하는 주장 한 줄.
+## 🧠 핵심 모델
+자료 전체를 지배하는 사고 틀·프레임워크 2~5개. 각각 이름 + 2~4문장 설명.
+자료에 실제로 제시된 틀만. (관계가 자료에 명시돼 있으면 mermaid flowchart 허용)
+## 📑 장별 핵심
+자료의 장/섹션 순서 그대로. 각 장마다:
+### N장. 장 제목
+- 핵심 논지 (자료의 논리·정의·예시 보존, 요약으로 뭉개지 말 것)
+- 표·수식이 있으면 마크다운 표 / $...$ 로 재현
+## 📖 용어집
+- **용어**: 자료 안의 정의 그대로 (자료에 정의가 없으면 싣지 않는다)
+## ⚡ 치트시트
+자료의 판단 기준·절차·조건을 마크다운 표(상황 | 판단/행동 | 근거 장)로.
+자료에 그런 기준이 없으면 이 섹션은 "해당 없음" 한 줄만.
+===QUESTIONS===
+Q: 복습 질문
+A: 답
+TYPE: recall
+
+Q: ...
+A: ...
+TYPE: concept
+===CATEGORY===
+종목
+"""
+
+_SYSTEM_BOOK = _PRINCIPLES + _FORMAT_BOOK
 
 _MAX_INPUT_CHARS = 200000  # ~50K tokens; covers a full long report
                            # (flash has a 1M-token context). 60K truncated
@@ -217,10 +261,13 @@ def _parse_questions(block: str) -> list[dict]:
 
 
 async def synthesize(source_type: str, source_ref: str, raw_text: str,
-                     title: str | None = None) -> dict | None:
+                     title: str | None = None,
+                     mode: str = "normal") -> dict | None:
     """Return a note dict ready for store.save_note, or None on failure.
     keys: title, source_type, source_ref, md, questions
-    """
+    mode: "normal" (기본 노트) | "book" (핵심 모델·장별 색인·용어집·
+    치트시트 구조 — 장문 자료 되새김질용). 시스템 프롬프트만 다르고
+    호출·파싱·비용 기록 경로는 동일하다."""
     body = (raw_text or "").strip()
     if len(body) < 40:
         log.info("synth skipped: body too short (%d chars)", len(body))
@@ -236,7 +283,8 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
     t0 = time.monotonic()
     try:
         out = await gemini.complete(
-            config.ANSWER_MODEL, _SYSTEM, user,
+            config.ANSWER_MODEL,
+            _SYSTEM_BOOK if mode == "book" else _SYSTEM, user,
             max_tokens=32768, temperature=0.1, purpose="note_synth",
             timeout=300)
     except Exception as e:
@@ -270,7 +318,8 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
         if sections.get("TITLE") else ""
     note_title = (title or llm_title or source_ref or "노트").strip()
     header = (f"# {llm_title or note_title}\n"
-              f"> 출처: {source_ref} · 학습일: {today} · 유형: {source_type}\n\n")
+              f"> 출처: {source_ref} · 학습일: {today} · 유형: {source_type}"
+              + (" · 📚 책 모드" if mode == "book" else "") + "\n\n")
     return {
         "title": llm_title or note_title,
         "source_type": source_type,

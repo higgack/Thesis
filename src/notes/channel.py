@@ -94,9 +94,17 @@ async def _triaged_pdf_extract(p: Path) -> tuple[str, str | None]:
 
 
 async def ingest_text(source_type: str, source_ref: str, raw_text: str,
-                      title: str | None = None) -> str | None:
+                      title: str | None = None,
+                      mode: str = "normal") -> str | None:
     """Core path: synthesise a note from already-extracted text, persist
     it. Returns the note id or None."""
+    # Invisible-Unicode 정리 — content_hash dedup 이 zero-width 문자
+    # 하나 차이로 같은 글을 두 번 합성(과금)하지 않게. RAG 쪽은
+    # pipeline._ingest 에서 같은 정리를 한다 (textnorm docstring 참조).
+    from ..ingest.textnorm import strip_invisible
+    raw_text = strip_invisible(raw_text)
+    if title:
+        title = strip_invisible(title)
     # RAG-style dedup: if this source (URL/file) already has a note, skip
     # — no duplicate note, no wasted LLM synth. Plain-text shares the
     # constant ref "study-text", so it's excluded (would collide).
@@ -121,7 +129,8 @@ async def ingest_text(source_type: str, source_ref: str, raw_text: str,
             return dup
     log.info("notes ingest: %s '%s' (%d chars)",
              source_type, source_ref, len((raw_text or "")))
-    note = await synth.synthesize(source_type, source_ref, raw_text, title)
+    note = await synth.synthesize(source_type, source_ref, raw_text, title,
+                                  mode=mode)
     if not note:
         log.info("notes ingest: no note (synth skipped/failed) for %s",
                  source_ref)
@@ -158,10 +167,10 @@ async def resync_one(note: dict) -> str:
     return "ok" if ok else "synthfail"
 
 
-async def ingest_url(url: str) -> str | None:
+async def ingest_url(url: str, mode: str = "normal") -> str | None:
     vid = loaders.is_youtube(url)
     if vid:
-        return await ingest_youtube(url, vid)
+        return await ingest_youtube(url, vid, mode=mode)
     # 재시도 사이클 1회(RAG와 동일): 처음 + 1회 재시도 = 총 2번. load_url이
     # 내부 폴백 사다리를 가지므로 짧게만(이전 3회는 그 사다리를 통째로 3번
     # 돌려 학습 지연 주범이었음). 정상 페이지는 1차 성공이라 영향 없음.
@@ -177,10 +186,11 @@ async def ingest_url(url: str) -> str | None:
         log.info("study ingest_url: empty body for %s (2회 시도 후)", url)
         return None
     stype = "blog" if loaders.is_blog(url) else "web"
-    return await ingest_text(stype, url, body, title)
+    return await ingest_text(stype, url, body, title, mode=mode)
 
 
-async def ingest_youtube(url: str, video_id: str | None = None) -> str | None:
+async def ingest_youtube(url: str, video_id: str | None = None,
+                         mode: str = "normal") -> str | None:
     vid = video_id or loaders.is_youtube(url)
     if not vid:
         return None
@@ -188,10 +198,11 @@ async def ingest_youtube(url: str, video_id: str | None = None) -> str | None:
     if not (body or "").strip():
         log.info("study ingest_youtube: no transcript for %s", url)
         return None
-    return await ingest_text("youtube", url, body, title)
+    return await ingest_text("youtube", url, body, title, mode=mode)
 
 
-async def ingest_file(path: str | Path, source_type: str | None = None) -> str | None:
+async def ingest_file(path: str | Path, source_type: str | None = None,
+                      mode: str = "normal") -> str | None:
     """Dispatch a local file to the right loader by extension.
 
     Dedup is NOTES-INTERNAL ONLY (source_ref + content_hash inside
@@ -236,4 +247,4 @@ async def ingest_file(path: str | Path, source_type: str | None = None) -> str |
     if not (body or "").strip():
         log.info("study ingest_file: empty body for %s", p.name)
         return None
-    return await ingest_text(stype, p.name, body, title)
+    return await ingest_text(stype, p.name, body, title, mode=mode)

@@ -19,8 +19,9 @@ import logging
 import os
 import re
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
+                          ContextTypes)
 
 from .. import config
 from . import channel, store
@@ -28,6 +29,24 @@ from . import channel, store
 log = logging.getLogger(__name__)
 
 _URL_RE = re.compile(r"https?://[^\s<>\")]+")
+
+# 노트 방식(일반/책) 질문의 대기 항목: pid → (등록시각, 원본 msg).
+# 메모리 전용 — 봇이 재시작되면 버튼이 "만료" 응답을 주고 사용자가 자료를
+# 다시 올리면 된다 (학습노트는 수동 입력 채널이라 이 정도 손실은 허용).
+_PENDING_MODE: dict[str, tuple[float, object]] = {}
+_PENDING_TTL_SEC = 6 * 3600
+
+
+def _stash_pending(msg) -> str:
+    import time as _t
+    import uuid as _u
+    now = _t.time()
+    for k in [k for k, (ts, _) in _PENDING_MODE.items()
+              if now - ts > _PENDING_TTL_SEC]:
+        _PENDING_MODE.pop(k, None)
+    pid = _u.uuid4().hex[:12]
+    _PENDING_MODE[pid] = (now, msg)
+    return pid
 _DOC_EXTS = ("pdf", "pptx", "docx", "xlsx", "xls")
 # 파일 첨부로 온 오디오(msg.document)도 음성 경로로 재라우팅하기 위한 확장자.
 _AUDIO_EXTS = ("mp3", "m4a", "wav", "ogg", "oga", "flac", "aac", "opus",
@@ -46,7 +65,11 @@ _NOTES_GUIDE_TEXT = """📒 <b>학습 노트 사용법</b>
   읽어서 노트. 20MB 넘으면 짧게 잘라서 다시.
 • 🖼 <b>사진</b> — 캡션 ≥80자면 캡션으로(무료), 짧으면 Vision OCR.
   캡션에 [OCR] 넣으면 강제 OCR.
-• 올리면 DM으로 <i>📒 노트 만드는 중…</i> → 완료/실패 알림
+• 문서·URL·텍스트는 올리면 먼저 <b>[📝 일반 / 📚 책 모드]</b> 버튼으로
+  방식을 물어봄 — 책 모드는 장문 자료(책·긴 리포트)용으로
+  핵심 모델 → 장별 핵심 → 용어집 → 치트시트 구조로 정리
+  (음성·영상·사진은 묻지 않고 일반). 호출은 동일 1회, 비용 거의 같음.
+• 선택하면 DM으로 <i>📒 노트 만드는 중…</i> → 완료/실패 알림
 • 텍스트 살아있는 자료가 최적 (스캔 PDF는 OCR, 최대 7p)
 
 <b>2. 노트 = 요약이 아님</b>
@@ -135,6 +158,83 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         ("사진" if photo else None) or \
         (url_m.group(0) if url_m else "텍스트")
     log.info("study post received: %s", src_label)
+
+    # 일반/책 모드 질문 (사용자 요청 2026-08-27): 문서·URL·순수 텍스트만.
+    # 음성·영상·사진은 장 구조가 없어 책 모드가 무의미 → 묻지 않고 일반.
+    bookable = bool(doc or url_m
+                    or (text.strip() and not (voice or audio or video or photo)))
+    if bookable:
+        pid = _stash_pending(msg)
+        try:
+            await ctx.bot.send_message(
+                owner,
+                f"📒 <b>{src_label}</b>\n노트 방식을 골라줘:",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📝 일반",
+                                         callback_data=f"notemode:{pid}:normal"),
+                    InlineKeyboardButton("📚 책 모드",
+                                         callback_data=f"notemode:{pid}:book"),
+                ]]))
+            return
+        except Exception:
+            # 질문 전송 실패(네트워크 등) → 기존 동작(일반)으로 진행,
+            # 자료가 조용히 사라지는 일은 없게.
+            log.warning("note mode ask failed — falling back to normal")
+            _PENDING_MODE.pop(pid, None)
+
+    await _process_study_post(msg, ctx, mode="normal")
+
+
+async def on_notemode_callback(update: Update,
+                               ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    q = update.callback_query
+    if not q or not _is_owner(update):
+        return
+    try:
+        _, pid, mode = (q.data or "").split(":", 2)
+    except ValueError:
+        await q.answer()
+        return
+    entry = _PENDING_MODE.pop(pid, None)
+    await q.answer()
+    if entry is None:
+        try:
+            await q.edit_message_text(
+                "⏳ 만료된 요청이야 (봇 재시작 등) — 자료를 다시 올려줘.")
+        except Exception:
+            pass
+        return
+    _, msg = entry
+    label = "📚 책 모드" if mode == "book" else "📝 일반"
+    try:
+        await q.edit_message_text(f"{label} 선택됨 — 노트 만드는 중…")
+    except Exception:
+        pass
+    await _process_study_post(msg, ctx,
+                              mode="book" if mode == "book" else "normal")
+
+
+async def _process_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE,
+                              mode: str = "normal") -> None:
+    owner = config.TELEGRAM_OWNER_ID
+    text = msg.text or msg.caption or ""
+    doc = getattr(msg, "document", None)
+    voice = getattr(msg, "voice", None)
+    audio = getattr(msg, "audio", None)
+    video = getattr(msg, "video", None)
+    photo = getattr(msg, "photo", None)
+    if doc and not audio and \
+            (doc.file_name or "").lower().rsplit(".", 1)[-1] in _AUDIO_EXTS:
+        audio, doc = doc, None
+    url_m = _URL_RE.search(text)
+    src_label = (doc.file_name if doc else None) or \
+        ("음성 메모" if voice else None) or \
+        ((getattr(audio, "file_name", None) or getattr(audio, "title", None)
+          or "오디오") if audio else None) or \
+        ("영상" if video else None) or \
+        ("사진" if photo else None) or \
+        (url_m.group(0) if url_m else "텍스트")
 
     progress = None
     try:
@@ -235,13 +335,13 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             dest = config.DATA_DIR / "files" / (doc.file_name or f"{doc.file_id}.bin")
             tf = await ctx.bot.get_file(doc.file_id)
             await tf.download_to_drive(str(dest))
-            nid = await channel.ingest_file(dest)
+            nid = await channel.ingest_file(dest, mode=mode)
             if nid:
                 note_ids.append(nid)
         # 2) URLs in the body (blog/web/youtube/arxiv) → learn the LINKED
         #    content (the actual article), not the message text.
         for url in urls:
-            nid = await channel.ingest_url(url)
+            nid = await channel.ingest_url(url, mode=mode)
             if nid:
                 note_ids.append(nid)
         # 3) Plain text only — ONLY when there is no doc AND no URL. A URL
@@ -249,7 +349,8 @@ async def handle_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         #    that built a misleading note from the Telegram link preview
         #    snippet instead of the real article (blog/news divergence bug).
         if not note_ids and text.strip() and not doc and not urls:
-            nid = await channel.ingest_text("text", "study-text", text)
+            nid = await channel.ingest_text("text", "study-text", text,
+                                            mode=mode)
             if nid:
                 note_ids.append(nid)
     except Exception as e:
@@ -323,4 +424,6 @@ def register(app: Application) -> None:
     """Wire the study-notes commands into the bot."""
     app.add_handler(CommandHandler("notes", cmd_notes))
     app.add_handler(CommandHandler("notes_guide", cmd_notes_guide))
+    app.add_handler(CallbackQueryHandler(on_notemode_callback,
+                                         pattern=r"^notemode:"))
     log.info("study-notes telegram handlers registered")
