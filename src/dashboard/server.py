@@ -92,8 +92,11 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _NOTE_DELETE_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+?)/?$")
 # Study-note 종류별 manual override: POST /<token>/notes/<id>/category
 _NOTE_CAT_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+)/category/?$")
-_NOTE_CATS = ("종목", "산업", "전략", "스터디", "반도체", "AI", "공부",
-             "대학원", "부동산", "그외")
+# 투자론 is manual-only, like 스터디: it is deliberately absent from
+# synth.py's _CATS so the classifier never assigns it — the user curates
+# this bucket by hand from 전략 (2026-08-26 request).
+_NOTE_CATS = ("종목", "산업", "전략", "투자론", "스터디", "반도체", "AI",
+             "공부", "대학원", "부동산", "그외")
 # Study-note 중요 표시 토글: POST /<token>/notes/<id>/important {important:bool}
 _NOTE_IMPORTANT_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+)/important/?$")
 _ASK_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/?$")
