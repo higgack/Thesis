@@ -132,8 +132,22 @@ def _build_payload() -> dict | None:
         if canonical in topics:
             norm2key.setdefault(_norm(alias), canonical)
 
-    # ---- KG signal: topic↔topic relation counts + per-topic relations
-    kg_pairs: dict[tuple[str, str], int] = defaultdict(int)
+    # ---- KG signal, from two different queries on purpose
+    # LINKS come from an exact SQL aggregation over the WHOLE graph. The
+    # map exists to show relatedness, and sampling was terrible at that:
+    # only ~2% of edges have a wiki topic at both ends, so 30,000 sampled
+    # rows yielded ~640 pairs where the exact join finds ~15,000 — and the
+    # join does its per-edge work inside SQLite, which releases the GIL,
+    # instead of in a Python loop that holds it.
+    kg_pairs: dict[tuple[str, str], int] = {}
+    try:
+        for a, b, w in kg.topic_pair_counts(norm2key):
+            kg_pairs[(a, b)] = w
+    except Exception:
+        log.warning("universe: kg topic pairs unavailable", exc_info=True)
+    # PANEL RELATIONS still come from the recent-edge sample. A panel shows
+    # at most _REL_CAP*3 relations for one clicked topic, so a recent slice
+    # is the right shape for it, and it costs ~120ms.
     rels: dict[str, list] = defaultdict(list)
     try:
         edges = kg.all_edges(limit=_KG_EDGE_SAMPLE, order="recent")
@@ -147,8 +161,6 @@ def _build_payload() -> dict | None:
             rels[a].append(e)
         if b and b != a and len(rels[b]) < _REL_CAP * 3:
             rels[b].append(e)
-        if a and b and a != b:
-            kg_pairs[tuple(sorted((a, b)))] += 1
 
     # ---- shared-doc signal + doc collection for panels
     doc2topics: dict[str, list[str]] = defaultdict(list)
@@ -424,7 +436,7 @@ svg#svg{width:100%%;height:100%%;display:block;cursor:grab;touch-action:none}
     <div class="plist" id="plist"></div></div>
   <div id="foot"><b>%(n_topics)s</b>개 토픽 · <b>%(n_links)s</b>개 연결 · 문서 <b>%(n_docs)s</b>편<br>
     ● 크기=문서 수 · <span class="sw"></span>KG 관계 · <span class="sw dash"></span>공유 문서<br>
-    <span style="opacity:.72">연결선은 최신 KG 관계 %(kg_sample)s개 표본 기준 (전체 %(kg_total)s개) ·
+    <span style="opacity:.72">연결선은 KG 관계 %(kg_total)s개 전수 기준 ·
     미분류 ‘기타’ 버킷 제외</span></div>
   <div id="ctrls"><button id="dice" title="랜덤">🎲</button><button id="zin">+</button>
     <button id="zout">−</button><button id="zfit">⤢</button></div>
@@ -574,7 +586,6 @@ addEventListener('resize',()=>{W=stage.clientWidth;H=stage.clientHeight;
 </body></html>""" % {
         "C_NODE": _C_NODE, "C_ACCENT": _C_ACCENT, "tok": tok,
         "n_topics": n_topics, "n_links": n_links, "n_docs": n_docs,
-        "kg_sample": f'{payload.get("kg_sampled", 0):,}',
         "kg_total": f'{payload.get("kg_total", 0):,}',
         "data": data, "reload_js": _widgets.live_reload_js("universe"),
         "theme_js": _THEME_JS,

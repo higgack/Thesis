@@ -490,6 +490,70 @@ def top_entities(limit: int = 15) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def topic_pair_counts(norm2key: dict[str, str],
+                      limit: int = 200000) -> list[tuple[str, str, int]]:
+    """Exact topic<->topic relation counts for the Universe map.
+
+    Replaces "sample N edges, then check in Python whether both ends
+    happen to be wiki topics". That sample wastes almost everything it
+    reads: only ~2% of edges have a wiki topic at BOTH ends (2,124 topics
+    against 494,694 entities), so a 30,000-edge sample surfaced ~640
+    pairs. Pushing the condition into SQL finds every qualifying pair
+    instead — measured on a 706,226-row copy of the live graph, 370ms for
+    14,991 pairs versus 123ms for the sample's 640.
+
+    It also moves the per-edge work off Python: sqlite3 releases the GIL
+    while a statement runs, so this scans the graph without holding up the
+    event loop the way the row-by-row loop did.
+
+    `norm2key` maps a NORMALIZED entity name to its topic key (the caller
+    owns that normalization — it includes wiki aliases). Matching uses
+    lower(trim(...)), which agrees with the caller's normalizer for every
+    name that has no doubled inner whitespace.
+
+    READ-ONLY, like edges_for_entity: no init() call, so the dashboard
+    render never takes kg.db's write lock while the bot is ingesting. The
+    TEMP table lives in the connection's own temp space, not in kg.db.
+    """
+    if not norm2key:
+        return []
+    path = config.DATA_DIR / "kg.db"
+    if not path.exists():
+        return []
+    try:
+        c = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
+    except Exception:
+        log.warning("kg.topic_pair_counts: cannot open kg.db", exc_info=True)
+        return []
+    try:
+        c.execute("CREATE TEMP TABLE _t(n TEXT PRIMARY KEY, k TEXT)")
+        c.executemany("INSERT OR IGNORE INTO _t(n,k) VALUES(?,?)",
+                      list(norm2key.items()))
+        rows = c.execute(
+            "SELECT a.k, b.k, COUNT(*) FROM edges e"
+            " JOIN _t a ON a.n = lower(trim(e.src))"
+            " JOIN _t b ON b.n = lower(trim(e.dst))"
+            " WHERE a.k <> b.k GROUP BY a.k, b.k"
+            " ORDER BY COUNT(*) DESC LIMIT ?", (limit,)).fetchall()
+    except Exception:
+        log.warning("kg.topic_pair_counts failed", exc_info=True)
+        return []
+    finally:
+        c.close()
+    # (a,b) and (b,a) are the same undirected pair — fold them. The SQL
+    # LIMIT counts DIRECTED rows, so it is set far above the expected
+    # count (~15k undirected, i.e. ~30k directed on the live graph): if it
+    # ever truncated between a pair's two directions, that pair's weight
+    # would silently come out short. Truncation only ever drops the
+    # weakest rows, which _LINK_CAP discards anyway.
+    folded: dict[tuple[str, str], int] = {}
+    for a, b, w in rows:
+        key = (a, b) if a < b else (b, a)
+        folded[key] = folded.get(key, 0) + int(w or 0)
+    return [(a, b, w) for (a, b), w in
+            sorted(folded.items(), key=lambda kv: kv[1], reverse=True)]
+
+
 def edges_for_entity(name: str, limit: int = 1200) -> list[dict]:
     """All edges where src OR dst == name exactly (the chip's full degree
     set), confidence-desc. Powers the dashboard 'click a 주요 개체 chip →
