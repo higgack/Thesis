@@ -91,11 +91,12 @@ _KG_EDGE_SAMPLE = 12_000
 #     wiki_index.json directly and missed that rule, which made the bucket
 #     the largest node in the graph and the #1 keyword chip (2,768 docs,
 #     about half of all wiki sources).
-#   "분석" · "보고서" — generic document-genre words, not subjects. They
-#     accumulate hundreds of unrelated docs and link to everything, which
-#     is noise on a map whose whole job is showing what relates to what
-#     (사용자 요청 2026-08-26).
-_SKIP_TOPICS = {"기타", "분석", "보고서"}
+#   "분석" · "보고서" · "뉴스" · "실적" — generic document-genre words, not
+#     subjects. They accumulate hundreds of unrelated docs and link to
+#     everything, which is noise on a map whose whole job is showing what
+#     relates to what (분석/보고서 2026-08-26, 뉴스/실적 같은 날 추가 요청).
+# Tuple, not set: the footer prints these in this order.
+_SKIP_TOPICS = ("기타", "분석", "보고서", "뉴스", "실적")
 
 
 def _norm(s: str) -> str:
@@ -519,7 +520,7 @@ g.sel .lk.hot{opacity:.95}
   <div id="foot"><b>%(n_topics)s</b>개 토픽 · <b>%(n_links)s</b>개 연결 · 문서 <b>%(n_docs)s</b>편<br>
     ● 크기=문서 수 · <span class="sw"></span>KG 관계 · <span class="sw dash"></span>공유 문서<br>
     <span style="opacity:.72">연결선은 KG 관계 %(kg_total)s개 전수 기준 ·
-    ‘기타’·‘분석’·‘보고서’ 버킷 제외</span></div>
+    %(skip)s 버킷 제외</span></div>
   <div id="ctrls"><button id="dice" title="랜덤">🎲</button><button id="zin">+</button>
     <button id="zout">−</button><button id="zfit">⤢</button></div>
   <div id="tip"></div>
@@ -758,6 +759,7 @@ addEventListener('resize',()=>{W=stage.clientWidth;H=stage.clientHeight;
 </body></html>""" % {
         "C_NODE": _C_NODE, "C_ACCENT": _C_ACCENT, "tok": tok,
         "n_topics": n_topics, "n_links": n_links, "n_docs": n_docs,
+        "skip": "·".join(f"‘{t}’" for t in _SKIP_TOPICS),
         "kg_total": f'{payload.get("kg_total", 0):,}',
         "data": data, "reload_js": _widgets.live_reload_js("universe"),
         "theme_js": _THEME_JS,

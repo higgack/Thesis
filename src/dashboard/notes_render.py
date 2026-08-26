@@ -968,11 +968,26 @@ def render_notes(token: str) -> int:
                 _mparts.append(str(_p.stat().st_mtime_ns))
             except OSError:
                 _mparts.append("0")
+        # Per-note mutable fields, hashed. count + newest-updated covers
+        # ingest/delete, and marks.db covers memo/alarm — but the badge's
+        # category POST and the ★ important toggle UPDATE notes.db without
+        # touching any of those, so a category change rendered once in the
+        # browser and then reverted on refresh forever (2026-08-26). The
+        # rows are already in memory here; hashing them costs ~1ms. SRS
+        # fields ride along for the same reason (review flow updates them
+        # without touching `updated`).
+        import hashlib as _hl
+        _row_fp = _hl.sha1("\x00".join(
+            f"{n.get('id')}\x01{n.get('category') or ''}"
+            f"\x01{n.get('important') or 0}"
+            f"\x01{n.get('next_due') or ''}\x01{n.get('reps') or 0}"
+            for n in notes).encode("utf-8")).hexdigest()[:16]
         sig = "-".join([
             _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d"),
             str(len(notes)),
             str(max((str(n.get("updated") or "") for n in notes),
                     default="")),
+            _row_fp,
             *_mparts,
         ])
     except Exception:
