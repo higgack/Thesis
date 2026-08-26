@@ -14652,7 +14652,13 @@ def main():
                                 _stall_log.with_suffix(".log.1"))
                         with _stall_log.open("a", encoding="utf-8") as fh:
                             fh.write(
-                                f"\n===== {_dt.datetime.now().isoformat()} "
+                                # astimezone() stamps the UTC offset:
+                                # the container runs UTC while every
+                                # alert the user sees is KST, and a bare
+                                # naive timestamp here reads as KST at a
+                                # glance and is 9h wrong.
+                                f"\n===== "
+                                f"{_dt.datetime.now().astimezone().isoformat()} "
                                 f"silent {lag:.0f}s =====\n{stack}")
                     except Exception:
                         log.debug("stall dump file write failed",
