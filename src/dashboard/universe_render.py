@@ -227,6 +227,25 @@ def _build_payload() -> dict | None:
         if _ref and _ref != "study-text":
             notes_by_src[_ref].append(_n)
 
+    # Relation strings dominate the page: measured at 59% of the payload,
+    # because each node repeats full entity/relation names and 삼성전자 or
+    # 의존 recur across hundreds of nodes. Intern them into one vocabulary
+    # and store each relation as [src_i, rel_i, dst_i, conf] — about a
+    # third of the bytes of {"s":…,"r":…,"d":…,"c":…}. Insertion order is
+    # deterministic (topics are iterated sorted), so the payload signature
+    # stays stable across rebuilds with unchanged data.
+    vocab: list[str] = []
+    vocab_idx: dict[str, int] = {}
+
+    def _vi(text: str) -> int:
+        t = text or ""
+        i = vocab_idx.get(t)
+        if i is None:
+            i = len(vocab)
+            vocab_idx[t] = i
+            vocab.append(t)
+        return i
+
     nodes = []
     for key, rec in sorted(topics.items()):
         doc_ids = rec.get("doc_ids") or []
@@ -288,8 +307,8 @@ def _build_payload() -> dict | None:
             "url": f"../wiki/{_topic_filename(stem)}",
             "srcs": srcs[:_SRC_CAP],
             "notes": my_notes,
-            "rels": [{"s": e["src"], "r": e["rel"], "d": e["dst"],
-                      "c": round(e.get("confidence") or 0, 2)}
+            "rels": [[_vi(e["src"]), _vi(e["rel"]), _vi(e["dst"]),
+                      round(e.get("confidence") or 0, 2)]
                      for e in my_rels],
             "al": " ".join(a for a, c in aliases.items() if c == key)[:200],
         })
@@ -333,7 +352,7 @@ def _build_payload() -> dict | None:
     except Exception:
         kg_total = 0
     return {"nodes": nodes, "links": links, "total_docs": len(all_doc_ids),
-            "kg_sampled": len(edges), "kg_total": kg_total}
+            "vocab": vocab, "kg_sampled": len(edges), "kg_total": kg_total}
 
 
 def _render_html(payload: dict, token: str) -> str:
@@ -384,6 +403,12 @@ header h1{font-size:15px;margin:0;font-weight:800;white-space:nowrap}
 svg#svg{width:100%%;height:100%%;display:block;cursor:grab;touch-action:none}
 .lk{stroke:var(--lk);fill:none}.lk.doc{stroke:var(--lkdoc);stroke-dasharray:4 4}
 .lk.hot{stroke:var(--accent)}
+/* Selection styling lives in CSS so picking a star costs O(its degree)
+   DOM writes instead of one pass over every node and every link. With
+   2,124 nodes and 1,500 links that was ~8,750 writes per click. */
+g.sel .lk{opacity:.15}
+g.sel .lk.hot{opacity:.95}
+.node-c.sel circle{stroke:var(--accent)!important;stroke-width:3}
 .node-c{cursor:pointer}
 .lbl{paint-order:stroke;stroke:var(--bg);stroke-width:3px;fill:var(--ink);
   font-weight:600;pointer-events:none;user-select:none}
@@ -475,6 +500,7 @@ const stage=document.getElementById('stage'),svg=d3.select('#svg'),
 let W=stage.clientWidth,H=stage.clientHeight;
 const NODES=PAYLOAD.nodes.map(d=>Object.assign({},d));
 const byId={};NODES.forEach(n=>byId[n.id]=n);
+const VOCAB=PAYLOAD.vocab||[];
 const LINKS=PAYLOAD.links.filter(l=>byId[l.s]&&byId[l.t])
   .map(l=>({source:l.s,target:l.t,k:l.k,w:l.w}));
 // Adjacency for the panel's 연결된 토픽 list. Built from PAYLOAD.links
@@ -521,8 +547,20 @@ sim.on('tick',ticked);
 // into place" intro read as page slowness. ~200 synchronous ticks of a
 // few-hundred-node graph is <150ms, then the map appears fully formed.
 sim.stop();
+const _t0=performance.now();
 for(let i=0;i<200;i++)sim.tick();
 ticked();
+// id -> DOM element, so selecting a star touches only the elements that
+// actually change instead of re-walking every node and link.
+const NODEEL={},LINKEL={};
+nd.each(function(d){NODEEL[d.id]=this;});
+lk.each(function(l){
+  const a=l.source.id!==undefined?l.source.id:l.source;
+  const b=l.target.id!==undefined?l.target.id:l.target;
+  (LINKEL[a]=LINKEL[a]||[]).push(this);
+  (LINKEL[b]=LINKEL[b]||[]).push(this);});
+console.log(`universe: ${NODES.length} nodes, ${LINKS.length} links, `
+  +`layout ${Math.round(performance.now()-_t0)}ms`);
 nd.call(d3.drag()
   .on('start',(ev,d)=>{if(!ev.active)sim.alphaTarget(.25).restart();d.fx=d.x;d.fy=d.y;})
   .on('drag',(ev,d)=>{d.fx=ev.x;d.fy=ev.y;})
@@ -532,14 +570,11 @@ const panel=document.getElementById('panel');
 let selected=null;
 function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML;}
 function openPanel(d){
-  selected=d.id;
-  nd.select('circle').style('stroke',n=>n.id===d.id?'var(--accent)':'var(--nodeline)')
-    .attr('stroke-width',n=>n.id===d.id?3:1);
-  // spotlight the selected star's links; push the rest back
-  lk.classed('hot',l=>l.source.id===d.id||l.target.id===d.id)
-    .attr('opacity',l=>(l.source.id===d.id||l.target.id===d.id)?.95:.15)
-    .attr('stroke-width',l=>(l.source.id===d.id||l.target.id===d.id)
-      ?Math.min(5,1.8+l.w*.55):Math.min(4.5,1.3+l.w*.55));
+  // spotlight: only the previously- and newly-selected elements change.
+  // The dimming of everything else is one class on the container, and
+  // stroke-width no longer moves — the old hot/normal widths differed by
+  // half a pixel while the accent colour already carries the signal.
+  applySel(d.id);
   document.getElementById('ptitle').textContent=d.label;
   document.getElementById('pmeta').textContent=
     `문서 ${d.docs}편`+(d.up?` · 갱신 ${d.up}`:'');
@@ -560,7 +595,9 @@ function openPanel(d){
         +`${esc(byId[c.id].label)}<span class="cw">${c.w}</span></button>`;});
     h+=`</div>`;}
   if(d.rels&&d.rels.length){h+=`<div class="sec">🕸 지식그래프 관계</div>`;
-    d.rels.forEach(r=>{h+=`<div class="rel"><b>${esc(r.s)}</b> <span class="rr">—${esc(r.r)}→</span> <b>${esc(r.d)}</b></div>`;});}
+    // r is [src_i, rel_i, dst_i, conf] into PAYLOAD.vocab — see the
+    // interning note in _build_payload.
+    d.rels.forEach(r=>{h+=`<div class="rel"><b>${esc(VOCAB[r[0]])}</b> <span class="rr">—${esc(VOCAB[r[1]])}→</span> <b>${esc(VOCAB[r[2]])}</b></div>`;});}
   if(d.notes&&d.notes.length){h+=`<div class="sec">📒 관련 학습노트</div>`;
     d.notes.forEach(n=>{h+=`<a class="pitem" href="${n.u}">${esc(n.t)}${n.c?`<div class="pd">${esc(n.c)}</div>`:''}</a>`;});}
   if(d.srcs&&d.srcs.length){h+=`<div class="sec">📄 소스 문서 (${d.docs}편${d.srcs.length<d.docs?', 최근 '+d.srcs.length:''})</div>`;
@@ -571,10 +608,18 @@ function openPanel(d){
   document.getElementById('plist').scrollTop=0;
   panel.classList.add('open');
 }
-function clearSel(){panel.classList.remove('open');selected=null;
-  nd.select('circle').style('stroke','var(--nodeline)').attr('stroke-width',1);
-  lk.classed('hot',false)
-    .attr('stroke-width',l=>Math.min(4.5,1.3+l.w*.55));
+function applySel(id){
+  if(selected){
+    const prev=NODEEL[selected];
+    if(prev)prev.classList.remove('sel');
+    (LINKEL[selected]||[]).forEach(e=>e.classList.remove('hot'));}
+  selected=id;
+  if(id){
+    const cur=NODEEL[id];
+    if(cur)cur.classList.add('sel');
+    (LINKEL[id]||[]).forEach(e=>e.classList.add('hot'));}
+  g.node().classList.toggle('sel',!!id);}
+function clearSel(){panel.classList.remove('open');applySel(null);
   applyFilter();}
 document.getElementById('pclose').onclick=clearSel;
 nd.on('click',(ev,d)=>{ev.stopPropagation();openPanel(d);});
@@ -591,6 +636,9 @@ const q=document.getElementById('search');
 function applyFilter(){
   const v=(q.value||'').trim().toLowerCase();
   if(!v){nd.attr('opacity',1);lk.attr('opacity',.8);return;}
+  // NOTE: while a star is selected, `g.sel .lk` in CSS outranks the link
+  // opacity written below — same precedence the old inline spotlight had,
+  // and clearSel() re-runs this once the selection drops.
   const m=d=>(d.label+' '+d.id+' '+(d.al||'')).toLowerCase().includes(v);
   // 매치만 밝히면 연결선이 어두운 별로 사라져 "뭐랑 연결됐는지"가 안 보인다.
   // 매치 + 1-hop 이웃까지 함께 밝히고, 매치에 닿는 링크는 살린다.
@@ -601,7 +649,12 @@ function applyFilter(){
   nd.attr('opacity',d=>hit.has(d.id)?1:nbr.has(d.id)?.8:.12);
   lk.attr('opacity',l=>(hit.has(l.source.id)||hit.has(l.target.id))?.85:.05);
 }
-q.addEventListener('input',applyFilter);
+// Debounced: applyFilter walks every node and every link and then writes
+// an opacity to each — ~7,000 operations. Running that per keystroke made
+// typing in the search box lag once the link count grew.
+let _fT=null;
+q.addEventListener('input',()=>{
+  clearTimeout(_fT);_fT=setTimeout(applyFilter,120);});
 q.addEventListener('keydown',ev=>{if(ev.key!=='Enter')return;
   const v=(q.value||'').trim().toLowerCase();if(!v)return;
   const hit=NODES.find(d=>(d.label+' '+d.id+' '+(d.al||'')).toLowerCase().includes(v));
@@ -708,10 +761,10 @@ def render_universe(token: str) -> int:
     global _TIMING_LOGGED
     total = (time.monotonic() - _t0) * 1000.0
     msg = ("universe rebuilt in %.0fms (kg pair query %.0fms → %d pairs, "
-           "recent-edge sample %.0fms, %d nodes, %d links)")
+           "recent-edge sample %.0fms, %d nodes, %d links, page %.0fKB)")
     args = (total, _MS.get("pairs", 0.0), int(_MS.get("n_pairs", 0)),
             _MS.get("sample", 0.0), len(payload["nodes"]),
-            len(payload["links"]))
+            len(payload["links"]), len(html_text) / 1024.0)
     if total >= _SLOW_REBUILD_MS or not _TIMING_LOGGED:
         log.info(msg, *args)
         _TIMING_LOGGED = True
