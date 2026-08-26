@@ -82,6 +82,23 @@ _DOC_FANOUT_MAX = 6  # a doc in more topics than this is too generic to link
 # it was confidence-ordered while saying 최신.
 _KG_EDGE_SAMPLE = 30_000
 
+# Topics that are real wiki pages but meaningless as stars on a relatedness
+# map, so they are dropped from this view only (their wiki pages are
+# untouched).
+#   "기타" — the catch-all bucket for docs no topic could be derived for.
+#     Every other consumer already refuses to treat it as a topic:
+#     wiki.enqueue() skips it, wiki.run_batch() drops it ("unclassified
+#     docs have no coherent theme and produce an unreadable mega-page"),
+#     and wiki_render has it in its own _SKIP_TOPICS. This view read
+#     wiki_index.json directly and missed that rule, which made the bucket
+#     the largest node in the graph and the #1 keyword chip (2,768 docs,
+#     about half of all wiki sources).
+#   "분석" · "보고서" — generic document-genre words, not subjects. They
+#     accumulate hundreds of unrelated docs and link to everything, which
+#     is noise on a map whose whole job is showing what relates to what
+#     (사용자 요청 2026-08-26).
+_SKIP_TOPICS = {"기타", "분석", "보고서"}
+
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
@@ -123,16 +140,7 @@ def _build_payload() -> dict | None:
     for key, rec in idx.items():
         if not isinstance(rec, dict):
             continue
-        # "기타" is the catch-all bucket for docs no topic could be
-        # derived for — every other consumer already refuses to treat it
-        # as a real topic: wiki.enqueue() skips it, wiki.run_batch()
-        # drops it ("unclassified docs have no coherent theme and produce
-        # an unreadable mega-page"), and wiki_render has it in
-        # _SKIP_TOPICS. This view read wiki_index.json directly and so
-        # missed that rule, which made the bucket the single largest node
-        # in the graph and the #1 keyword chip (2,768 docs — about half
-        # of all wiki sources), pushing real topics out of the top-10.
-        if key == "기타":
+        if key in _SKIP_TOPICS:
             continue
         topics[key] = rec
         norm2key.setdefault(_norm(key), key)
@@ -351,8 +359,21 @@ def _build_payload() -> dict | None:
                 _c.close()
     except Exception:
         kg_total = 0
+    # Which vocabulary words resolve to a topic that is actually a star on
+    # this map. Lets the panel's 지식그래프 관계 list turn 심텍 into a jump
+    # to the 심텍 star instead of dead text — the point being to keep
+    # following the graph (사용자 요청 2026-08-26). Only mapped words are
+    # listed, and node_keys guards against pointing at a topic that was
+    # skipped or has no node.
+    node_keys = {n["id"] for n in nodes}
+    vtopic = {}
+    for i, word in enumerate(vocab):
+        k = norm2key.get(_norm(word))
+        if k and k in node_keys:
+            vtopic[str(i)] = k
     return {"nodes": nodes, "links": links, "total_docs": len(all_doc_ids),
-            "vocab": vocab, "kg_sampled": len(edges), "kg_total": kg_total}
+            "vocab": vocab, "vtopic": vtopic,
+            "kg_sampled": len(edges), "kg_total": kg_total}
 
 
 def _render_html(payload: dict, token: str) -> str:
@@ -446,6 +467,9 @@ g.sel .lk.hot{opacity:.95}
 .conn.doc{border-style:dashed}
 .rel{font-size:12px;color:var(--sub);padding:5px 9px;line-height:1.5}
 .rel b{color:var(--ink);font-weight:600}
+.rel .rl{font:inherit;font-weight:600;color:var(--ink);background:none;
+  border:0;border-bottom:1px dashed var(--nodeline);padding:0;cursor:pointer}
+.rel .rl:hover{color:var(--accent);border-bottom-color:var(--accent)}
 .rel .rr{color:var(--node);font-weight:700}
 .wikibtn{display:block;text-align:center;margin:10px 4px 0;padding:10px;
   border-radius:9px;background:var(--node);color:#0d1117;font-weight:800;
@@ -487,7 +511,7 @@ g.sel .lk.hot{opacity:.95}
   <div id="foot"><b>%(n_topics)s</b>개 토픽 · <b>%(n_links)s</b>개 연결 · 문서 <b>%(n_docs)s</b>편<br>
     ● 크기=문서 수 · <span class="sw"></span>KG 관계 · <span class="sw dash"></span>공유 문서<br>
     <span style="opacity:.72">연결선은 KG 관계 %(kg_total)s개 전수 기준 ·
-    미분류 ‘기타’ 버킷 제외</span></div>
+    ‘기타’·‘분석’·‘보고서’ 버킷 제외</span></div>
   <div id="ctrls"><button id="dice" title="랜덤">🎲</button><button id="zin">+</button>
     <button id="zout">−</button><button id="zfit">⤢</button></div>
   <div id="tip"></div>
@@ -501,6 +525,7 @@ let W=stage.clientWidth,H=stage.clientHeight;
 const NODES=PAYLOAD.nodes.map(d=>Object.assign({},d));
 const byId={};NODES.forEach(n=>byId[n.id]=n);
 const VOCAB=PAYLOAD.vocab||[];
+const VTOPIC=PAYLOAD.vtopic||{};
 const LINKS=PAYLOAD.links.filter(l=>byId[l.s]&&byId[l.t])
   .map(l=>({source:l.s,target:l.t,k:l.k,w:l.w}));
 // Adjacency for the panel's 연결된 토픽 list. Built from PAYLOAD.links
@@ -514,7 +539,7 @@ PAYLOAD.links.forEach(l=>{
   (ADJ[l.s]=ADJ[l.s]||[]).push({id:l.t,w:l.w,k:l.k});
   (ADJ[l.t]=ADJ[l.t]||[]).push({id:l.s,w:l.w,k:l.k});});
 Object.keys(ADJ).forEach(k=>ADJ[k].sort((a,b)=>b.w-a.w));
-let panelConns=[];   // backing array for the chips' numeric data-goto
+let panelJump=[];   // topic keys the open panel can jump to (numeric refs)
 const R=d=>Math.min(34,7+Math.sqrt(d.docs||1)*2.4);
 const FS=d=>Math.max(10,Math.min(15,9+Math.sqrt(d.docs||1)));
 const g=svg.append('g');
@@ -582,22 +607,35 @@ function openPanel(d){
   // Which topics this star is actually wired to. Until now the only way
   // to read that was to trace the lines by eye, which is the one thing
   // the map is for. Weight-desc, click to jump.
-  panelConns=(ADJ[d.id]||[]).filter(c=>byId[c.id]);
-  if(panelConns.length){
-    h+=`<div class="sec">🔗 연결된 토픽 (${panelConns.length})</div>`
+  // One jump table per panel render, shared by the chips below and by the
+  // clickable entity names in the relation list. Buttons carry its numeric
+  // index: esc() escapes < > & but NOT quotes, so a topic name is never
+  // safe to drop into an attribute.
+  panelJump=[];
+  const jump=k=>{const i=panelJump.indexOf(k);
+    if(i>=0)return i;panelJump.push(k);return panelJump.length-1;};
+  const conns=(ADJ[d.id]||[]).filter(c=>byId[c.id]);
+  if(conns.length){
+    h+=`<div class="sec">🔗 연결된 토픽 (${conns.length})</div>`
       +`<div class="conns">`;
-    panelConns.forEach((c,i)=>{
+    conns.forEach(c=>{
       const t=c.k==='doc'?'공유 문서':'KG 관계';
-      // index, not the topic id: esc() escapes < > & but NOT quotes, so a
-      // name is never safe to drop into an attribute.
       h+=`<button type="button" class="conn${c.k==='doc'?' doc':''}"`
-        +` data-goto="${i}" title="${t} · 가중치 ${c.w}">`
+        +` data-goto="${jump(c.id)}" title="${t} · 가중치 ${c.w}">`
         +`${esc(byId[c.id].label)}<span class="cw">${c.w}</span></button>`;});
     h+=`</div>`;}
   if(d.rels&&d.rels.length){h+=`<div class="sec">🕸 지식그래프 관계</div>`;
     // r is [src_i, rel_i, dst_i, conf] into PAYLOAD.vocab — see the
     // interning note in _build_payload.
-    d.rels.forEach(r=>{h+=`<div class="rel"><b>${esc(VOCAB[r[0]])}</b> <span class="rr">—${esc(VOCAB[r[1]])}→</span> <b>${esc(VOCAB[r[2]])}</b></div>`;});}
+    // An endpoint that is itself a star becomes a jump, so the graph can
+    // be walked from the relation list too: 반도체 → 심텍 → onward.
+    const ent=i=>{const k=VTOPIC[i];
+      return (k&&byId[k])
+        ? `<button type="button" class="rl" data-goto="${jump(k)}"`
+          +` title="${esc(byId[k].label)} 토픽으로 이동">`
+          +`${esc(VOCAB[i])}</button>`
+        : `<b>${esc(VOCAB[i])}</b>`;};
+    d.rels.forEach(r=>{h+=`<div class="rel">${ent(r[0])} <span class="rr">—${esc(VOCAB[r[1]])}→</span> ${ent(r[2])}</div>`;});}
   if(d.notes&&d.notes.length){h+=`<div class="sec">📒 관련 학습노트</div>`;
     d.notes.forEach(n=>{h+=`<a class="pitem" href="${n.u}">${esc(n.t)}${n.c?`<div class="pd">${esc(n.c)}</div>`:''}</a>`;});}
   if(d.srcs&&d.srcs.length){h+=`<div class="sec">📄 소스 문서 (${d.docs}편${d.srcs.length<d.docs?', 최근 '+d.srcs.length:''})</div>`;
@@ -664,8 +702,7 @@ q.addEventListener('keydown',ev=>{if(ev.key!=='Enter')return;
 document.getElementById('plist').addEventListener('click',ev=>{
   const b=ev.target.closest('button[data-goto]');
   if(!b)return;
-  const c=panelConns[+b.dataset.goto];
-  const n=c&&byId[c.id];
+  const n=byId[panelJump[+b.dataset.goto]];
   if(n){focusNode(n);openPanel(n);}});
 function focusNode(d){
   svg.transition().duration(600).call(zoom.transform,
