@@ -42,6 +42,13 @@ def _build_norm_idx(m: dict) -> dict[str, str]:
 # topic wins at the same position, matching the old loop's priority.
 _AUTOLINK_CACHE: dict = {"key": None, "rx": None}
 
+# Stale pages rendered per render_wiki() call. 2,000 pages in one call was
+# the problem; 200 keeps a tick to a few seconds, so a full rebuild spreads
+# over roughly a dozen 15s ticks while the other three dashboard renders —
+# which run after this one under the same lock — stay responsive.
+# Env-overridable so this can be tuned on the VM without a deploy.
+_MAX_PAGES_PER_CALL = max(1, int(os.getenv("WIKI_RENDER_PAGES_PER_TICK", "200")))
+
 
 def _topic_autolink_re(topics: set[str]):
     if not topics:
@@ -1553,6 +1560,18 @@ def render_wiki(token: str) -> int:
     new_entries: dict[str, dict] = {}
     topics_data: list[dict] = []
     pages_written = 0
+    # Cap the pages rendered per call. A full rebuild is ~2,000 pages and
+    # regenerate() holds one lock for its whole run, so an uncapped rebuild
+    # starved the notes, KG and universe renders that come after it — on
+    # 2026-08-26 all four dashboards sat frozen for the better part of an
+    # hour and nothing said so, because the skipped ticks log at DEBUG.
+    # Worse, the render cache is only written at the END of a run, so every
+    # deploy killed the rebuild mid-way and the next boot started over from
+    # zero; with deploys minutes apart it could never finish. Stopping at a
+    # budget writes the cache for what WAS rendered, so the next tick picks
+    # up where this one stopped instead of restarting.
+    budget_left = _MAX_PAGES_PER_CALL
+    deferred = 0
     total_docs = 0
     # DISTINCT source docs. This used to be a running sum of each topic's
     # doc_ids length, which counts one document once per topic it appears
@@ -1584,7 +1603,10 @@ def render_wiki(token: str) -> int:
         all_doc_ids.update(_doc_ids)
 
         search_text = ""
-        if topic in stale_names:
+        rendered = False
+        if topic in stale_names and budget_left <= 0:
+            deferred += 1
+        elif topic in stale_names:
             try:
                 page_md = md_file.read_text(encoding="utf-8")
             except Exception:
@@ -1620,13 +1642,19 @@ def render_wiki(token: str) -> int:
             tmp.write_text(page_html, encoding="utf-8")
             os.replace(tmp, fname)
             pages_written += 1
+            budget_left -= 1
+            rendered = True
         else:
             excerpt = (entries.get(topic) or {}).get("excerpt", "")
             search_text = (entries.get(topic) or {}).get("search_text", "")
 
-        new_entries[topic] = {"mtime": mtimes[topic], "excerpt": excerpt,
-                              "search_text": search_text,
-                              "mark_fp": mark_fps.get(topic, "")}
+        # A topic deferred by the budget must NOT get a cache entry: an
+        # entry records "rendered at this mtime", so writing one would mark
+        # an unrendered page fresh and it would never be built.
+        if rendered or topic not in stale_names:
+            new_entries[topic] = {"mtime": mtimes[topic], "excerpt": excerpt,
+                                  "search_text": search_text,
+                                  "mark_fp": mark_fps.get(topic, "")}
         topics_data.append({
             "topic": topic,
             "title": meta.get("title") or topic,
@@ -1698,4 +1726,8 @@ def render_wiki(token: str) -> int:
     except Exception:
         log.exception("wiki render cache save failed (render still ok)")
 
+    if deferred:
+        log.info("wiki render: %d page(s) written, %d deferred to the next "
+                 "tick (per-call cap %d) — rebuild in progress",
+                 pages_written, deferred, _MAX_PAGES_PER_CALL)
     return pages_written

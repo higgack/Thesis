@@ -27,6 +27,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 from .. import config
@@ -35,6 +36,11 @@ from ..store import qna, cost, meta as meta_store, vector as vector_store
 log = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
+# When the current regenerate() started, and when we last warned that it is
+# still going. Both plain floats guarded by the same single-writer path.
+_LOCK_SINCE: float = 0.0
+_LOCK_WARNED_AT: float = 0.0
+_LOCK_SLOW_SEC = 120.0
 
 
 def _pct(numer: int, denom: int) -> str:
@@ -2177,8 +2183,24 @@ def regenerate() -> None:
         log.warning("DASHBOARD_TOKEN unset; static dashboard skipped")
         return
     if not _LOCK.acquire(blocking=False):
-        log.debug("dashboard regenerate already running; skipping this tick")
+        # This used to be DEBUG only, which is how a wiki rebuild could hold
+        # the lock for the better part of an hour — starving the notes, KG
+        # and universe renders that run after it — while the logs said
+        # nothing at all (2026-08-26). A skipped tick is normal and stays
+        # quiet; a lock held far longer than a tick is not.
+        global _LOCK_WARNED_AT
+        held = time.monotonic() - (_LOCK_SINCE or time.monotonic())
+        now = time.monotonic()
+        if held >= _LOCK_SLOW_SEC and now - _LOCK_WARNED_AT >= 60:
+            _LOCK_WARNED_AT = now
+            log.warning("dashboard regenerate has been running %.0fs — every "
+                        "tick since is being skipped, so wiki/notes/KG/"
+                        "universe are not updating", held)
+        else:
+            log.debug("dashboard regenerate already running; skipping this tick")
         return
+    global _LOCK_SINCE
+    _LOCK_SINCE = time.monotonic()
     try:
         base = Path(config.DATA_DIR) / "dashboard"
         target = base / token
