@@ -146,6 +146,28 @@ def _conn():
         c.close()
 
 
+@contextmanager
+def _rconn():
+    """Read-only connection for the dashboard/render read paths.
+
+    These reads used _conn(), whose close can checkpoint the WAL and so
+    TOUCHES kg.db-wal's mtime — and kg_render's _pre_signature includes
+    that mtime. The result: rendering the KG page changed the very
+    fingerprint that decides whether the page needs rendering, so it
+    re-rendered every 15s tick forever (found 2026-08-26 while verifying
+    the dashboard-freeze fix; on the live 646k-edge graph that loop burns
+    ~1s of SQL per tick). mode=ro cannot write anything, so reads leave
+    every file's mtime alone — and as a bonus can never contend for the
+    write lock the bot's ingest needs.
+    """
+    c = sqlite3.connect(f"file:{_DB}?mode=ro", uri=True, timeout=30)
+    c.row_factory = sqlite3.Row
+    try:
+        yield c
+    finally:
+        c.close()
+
+
 _inited = False
 
 
@@ -482,7 +504,7 @@ def neighbors(entity: str, limit: int = 40) -> list[dict]:
 
 def top_entities(limit: int = 15) -> list[dict]:
     init()
-    with _conn() as c:
+    with _rconn() as c:
         rows = c.execute(
             "SELECT e AS name, count(*) AS deg FROM ("
             " SELECT src AS e FROM edges UNION ALL SELECT dst AS e FROM edges"
@@ -667,7 +689,7 @@ def all_edges(limit: int = 3000, order: str = "conf",
         where.append("confidence >= ?")
         params.append(min_conf)
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
-    with _conn() as c:
+    with _rconn() as c:
         rows = c.execute(
             f"SELECT id,src,rel,dst,confidence,doc_id,ts FROM edges"
             f"{where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
@@ -691,7 +713,7 @@ def count_edges(date_prefix: str | None = None,
         where.append("confidence >= ?")
         params.append(min_conf)
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
-    with _conn() as c:
+    with _rconn() as c:
         return int(c.execute(
             f"SELECT COUNT(*) FROM edges{where_sql}", params).fetchone()[0])
 
@@ -702,7 +724,7 @@ def date_histogram() -> list[tuple[str, int]]:
     date that actually has relations — deriving options from loaded DOM
     rows only offered dates present in the newest few thousand edges."""
     init()
-    with _conn() as c:
+    with _rconn() as c:
         rows = c.execute(
             "SELECT substr(ts,1,10) AS day, COUNT(*) FROM edges "
             "WHERE ts IS NOT NULL AND length(ts) >= 10 "
@@ -759,7 +781,7 @@ def context_for(query: str, limit: int = 12) -> list[dict]:
 
 def stats() -> dict:
     init()
-    with _conn() as c:
+    with _rconn() as c:
         edges = c.execute("SELECT count(*) FROM edges").fetchone()[0]
         docs = c.execute(
             "SELECT count(DISTINCT doc_id) FROM edges").fetchone()[0]
