@@ -394,6 +394,15 @@ svg#svg{width:100%%;height:100%%;display:block;cursor:grab;touch-action:none}
   border-radius:9px;border-left:2px solid transparent;font-size:13px;line-height:1.45}
 .pitem:hover{background:var(--hov);border-left-color:var(--node)}
 .pitem .pd{font-size:10.5px;color:var(--sub);margin-top:2px}
+.conns{display:flex;flex-wrap:wrap;gap:5px;padding:2px 4px 4px}
+.conn{display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+  font:inherit;font-size:12px;color:var(--ink);background:var(--hov);
+  border:1px solid var(--nodeline);border-radius:999px;padding:4px 9px}
+.conn:hover{border-color:var(--node);background:var(--chrome)}
+.conn .cw{font-size:10px;color:var(--sub);font-weight:700}
+/* dashed border mirrors the map's dashed shared-doc link, so the two
+   kinds are told apart by shape here as well as by colour */
+.conn.doc{border-style:dashed}
 .rel{font-size:12px;color:var(--sub);padding:5px 9px;line-height:1.5}
 .rel b{color:var(--ink);font-weight:600}
 .rel .rr{color:var(--node);font-weight:700}
@@ -452,6 +461,18 @@ const NODES=PAYLOAD.nodes.map(d=>Object.assign({},d));
 const byId={};NODES.forEach(n=>byId[n.id]=n);
 const LINKS=PAYLOAD.links.filter(l=>byId[l.s]&&byId[l.t])
   .map(l=>({source:l.s,target:l.t,k:l.k,w:l.w}));
+// Adjacency for the panel's 연결된 토픽 list. Built from PAYLOAD.links
+// while s/t are still plain ids — d3.forceLink rewrites LINKS' source/
+// target into node objects, so reading it after the simulation starts
+// would need a different shape. Same data the map draws, so the list and
+// the lines can never disagree.
+const ADJ={};
+PAYLOAD.links.forEach(l=>{
+  if(!byId[l.s]||!byId[l.t])return;
+  (ADJ[l.s]=ADJ[l.s]||[]).push({id:l.t,w:l.w,k:l.k});
+  (ADJ[l.t]=ADJ[l.t]||[]).push({id:l.s,w:l.w,k:l.k});});
+Object.keys(ADJ).forEach(k=>ADJ[k].sort((a,b)=>b.w-a.w));
+let panelConns=[];   // backing array for the chips' numeric data-goto
 const R=d=>Math.min(34,7+Math.sqrt(d.docs||1)*2.4);
 const FS=d=>Math.max(10,Math.min(15,9+Math.sqrt(d.docs||1)));
 const g=svg.append('g');
@@ -507,6 +528,21 @@ function openPanel(d){
   document.getElementById('pmeta').textContent=
     `문서 ${d.docs}편`+(d.up?` · 갱신 ${d.up}`:'');
   let h=`<a class="wikibtn" href="${d.url}">📚 위키 페이지 열기</a>`;
+  // Which topics this star is actually wired to. Until now the only way
+  // to read that was to trace the lines by eye, which is the one thing
+  // the map is for. Weight-desc, click to jump.
+  panelConns=(ADJ[d.id]||[]).filter(c=>byId[c.id]);
+  if(panelConns.length){
+    h+=`<div class="sec">🔗 연결된 토픽 (${panelConns.length})</div>`
+      +`<div class="conns">`;
+    panelConns.forEach((c,i)=>{
+      const t=c.k==='doc'?'공유 문서':'KG 관계';
+      // index, not the topic id: esc() escapes < > & but NOT quotes, so a
+      // name is never safe to drop into an attribute.
+      h+=`<button type="button" class="conn${c.k==='doc'?' doc':''}"`
+        +` data-goto="${i}" title="${t} · 가중치 ${c.w}">`
+        +`${esc(byId[c.id].label)}<span class="cw">${c.w}</span></button>`;});
+    h+=`</div>`;}
   if(d.rels&&d.rels.length){h+=`<div class="sec">🕸 지식그래프 관계</div>`;
     d.rels.forEach(r=>{h+=`<div class="rel"><b>${esc(r.s)}</b> <span class="rr">—${esc(r.r)}→</span> <b>${esc(r.d)}</b></div>`;});}
   if(d.notes&&d.notes.length){h+=`<div class="sec">📒 관련 학습노트</div>`;
@@ -554,6 +590,14 @@ q.addEventListener('keydown',ev=>{if(ev.key!=='Enter')return;
   const v=(q.value||'').trim().toLowerCase();if(!v)return;
   const hit=NODES.find(d=>(d.label+' '+d.id+' '+(d.al||'')).toLowerCase().includes(v));
   if(hit){focusNode(hit);openPanel(hit);}});
+// Delegated: #plist's innerHTML is rebuilt on every open, so per-chip
+// listeners would be lost. Registered once.
+document.getElementById('plist').addEventListener('click',ev=>{
+  const b=ev.target.closest('button[data-goto]');
+  if(!b)return;
+  const c=panelConns[+b.dataset.goto];
+  const n=c&&byId[c.id];
+  if(n){focusNode(n);openPanel(n);}});
 function focusNode(d){
   svg.transition().duration(600).call(zoom.transform,
     d3.zoomIdentity.translate(W/2-d.x*1.4,H/2-d.y*1.4).scale(1.4));}
