@@ -433,8 +433,12 @@ g.sel .lk.hot{opacity:.95}
 .node-c{cursor:pointer}
 .lbl{paint-order:stroke;stroke:var(--bg);stroke-width:3px;fill:var(--ink);
   font-weight:600;pointer-events:none;user-select:none}
+/* Wraps instead of scrolling: at 20 chips a single row runs off screen,
+   and the scrollbar is hidden, so half of them would be unreachable
+   without any hint that they exist. */
 #kwbar{position:absolute;top:10px;left:50%%;transform:translateX(-50%%);z-index:12;
-  display:flex;gap:6px;max-width:92%%;overflow-x:auto;padding:4px;scrollbar-width:none}
+  display:flex;flex-wrap:wrap;justify-content:center;gap:6px;max-width:92%%;
+  padding:4px}
 #kwbar::-webkit-scrollbar{display:none}
 .kw{white-space:nowrap;cursor:pointer;font-size:12px;font-weight:600;padding:6px 12px;
   border-radius:999px;background:var(--chrome);border:1px solid var(--line);color:var(--sub)}
@@ -707,9 +711,9 @@ document.getElementById('plist').addEventListener('click',ev=>{
 function focusNode(d){
   svg.transition().duration(600).call(zoom.transform,
     d3.zoomIdentity.translate(W/2-d.x*1.4,H/2-d.y*1.4).scale(1.4));}
-// ---- chips: top 10 topics by docs
+// ---- chips: top 20 topics by doc count (same measure as star size)
 const kwbar=document.getElementById('kwbar');
-NODES.slice().sort((a,b)=>b.docs-a.docs).slice(0,10).forEach(d=>{
+NODES.slice().sort((a,b)=>b.docs-a.docs).slice(0,20).forEach(d=>{
   const b=document.createElement('button');b.className='kw';
   b.textContent=`${d.label} ${d.docs}`;
   b.onclick=()=>{focusNode(d);openPanel(d);};kwbar.appendChild(b);});
