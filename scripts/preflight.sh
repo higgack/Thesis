@@ -252,6 +252,70 @@ print("  \033[32mno secrets detected\033[0m")
 PY
 [[ $? -ne 0 ]] && fail=1
 
+echo "── 6. blocking SQLite writers on the event loop ──"
+python3 - <<'PY'
+# Every meta.py function that opens _wconn() takes _W_LOCK, whose
+# contract (meta.py) is "callers already run in an asyncio.to_thread
+# worker, so blocking here never touches the event loop". Calling one
+# inline from an `async def` breaks that contract and freezes the whole
+# loop for as long as a worker holds the lock — 431s on 2026-08-26,
+# caught by data/loop_stalls.log in summarize.py, with a second instance
+# sitting in vector.py's ingest hot path. Nothing flagged it, so this
+# does: a direct Call node inside an async def is a violation, while a
+# reference passed to to_thread(...) is not a Call and is correctly
+# ignored. Calls inside a nested plain `def` are skipped too — that
+# closure is what gets offloaded.
+import ast, pathlib, sys
+
+meta = pathlib.Path("src/store/meta.py")
+WRITERS = set()
+if meta.exists():
+    for n in ast.walk(ast.parse(meta.read_text(encoding="utf-8"))):
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if "'_wconn'" in ast.dump(n):
+                WRITERS.add(n.name)
+WRITERS.discard("_wconn")
+
+def base_and_attr(call):
+    f = call.func
+    if isinstance(f, ast.Attribute):
+        b = f.value
+        return (getattr(b, "id", None) or getattr(b, "attr", None)), f.attr
+    return None, None
+
+bad = []
+for path in sorted(pathlib.Path("src").rglob("*.py")):
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        continue
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.AsyncFunctionDef):
+            continue
+        stack = [fn]
+        while stack:
+            node = stack.pop()
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue          # nested def: offloaded / counted alone
+                if isinstance(child, ast.Call):
+                    b, a = base_and_attr(child)
+                    if a in WRITERS and b and "meta" in b.lower():
+                        bad.append((str(path), child.lineno, f"{b}.{a}", fn.name))
+                stack.append(child)
+
+if not WRITERS:
+    print("  \033[33mskipped — could not parse src/store/meta.py\033[0m")
+elif bad:
+    print("  \033[31mFAIL — meta.db writer called directly on the event loop:\033[0m")
+    for f, l, c, inside in sorted(set(bad)):
+        print(f"      {f}:{l}  {c}()  inside async def {inside}()")
+    print("  \033[31m→ wrap it: await asyncio.to_thread(<fn>, ...)\033[0m")
+    sys.exit(1)
+print(f"  \033[32mno loop-blocking writers ({len(WRITERS)} guarded fns)\033[0m")
+PY
+[[ $? -ne 0 ]] && fail=1
+
 # ---- summary ----------------------------------------------------------
 echo
 if [[ $fail -ne 0 ]]; then

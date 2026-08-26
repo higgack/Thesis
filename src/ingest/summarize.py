@@ -93,14 +93,22 @@ async def summarize_and_extract(
     from ..store import meta as _meta
 
     key = _summary_cache_key(title, body, doc_type, hint, skip_meta)
-    hit = _meta.summary_cache_get(key)
+    # Both cache calls are sync SQLite and MUST stay off the loop.
+    # summary_cache_remember takes meta.py's _W_LOCK, whose contract is
+    # "callers already run in a to_thread worker" — calling it inline
+    # from this async def broke that and froze the loop for 431s on
+    # 2026-08-26 (data/loop_stalls.log caught the stack: the lock was
+    # held by worker-thread fts_upsert during a bulk ingest). The _get
+    # is lock-free (WAL readers) but still disk I/O on the loop.
+    hit = await asyncio.to_thread(_meta.summary_cache_get, key)
     if hit is not None:
         return hit["summary"], hit["metadata"]
 
     summary, metadata, llm_used = await _summarize_and_extract_impl(
         title, body, doc_type, hint, skip_meta)
     if llm_used:
-        _meta.summary_cache_remember(key, summary, metadata)
+        await asyncio.to_thread(
+            _meta.summary_cache_remember, key, summary, metadata)
     return summary, metadata
 
 

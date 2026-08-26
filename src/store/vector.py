@@ -72,7 +72,10 @@ async def add_chunks(doc_id: str, chunks: list[dict]) -> None:
     # Step 2: bulk lookup which hashes already have an embedding in
     # Chroma we can reuse.
     cache_keys = [h for h in hashes if h]
-    cached_map = _meta.chunk_embed_lookup(cache_keys) if cache_keys else {}
+    # Off the loop like every other SQLite call here — a bulk ingest
+    # passes hundreds of hashes to this IN-query.
+    cached_map = (await asyncio.to_thread(_meta.chunk_embed_lookup, cache_keys)
+                  if cache_keys else {})
 
     # Step 3: fetch the actual embedding vectors for cache hits from
     # Chroma in one batched .get call. If a cached chroma_id was
@@ -154,7 +157,12 @@ async def add_chunks(doc_id: str, chunks: list[dict]) -> None:
         if hashes[i] is not None
     ]
     if new_pairs:
-        _meta.chunk_embed_remember(new_pairs)
+        # MUST be off the loop: chunk_embed_remember takes meta.py's
+        # _W_LOCK, the same lock the fts_upsert above holds from its
+        # worker thread. Called inline (as it was until 2026-08-26) it
+        # blocks the event loop on every single ingest batch — the same
+        # freeze data/loop_stalls.log caught in summarize.py.
+        await asyncio.to_thread(_meta.chunk_embed_remember, new_pairs)
 
 
 async def query(text: str, k: int = 5, kind: str | None = None,

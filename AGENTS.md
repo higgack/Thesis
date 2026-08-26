@@ -241,6 +241,25 @@ fetch branch → `LOCAL==REMOTE` silent exit → else send "🚀 배포 시작" 
   loop up to 30s per call ~72k times/day even while idle — offloaded
   2026-08-09. Their `complete()`/`release()` calls are the same class
   but fire only on real work, so they were left inline.
+- **`meta.py`'s `_W_LOCK` must never be taken on the loop** — and
+  **`preflight.sh` section 6 now enforces it** (BLOCKING, exit 1). Every
+  function that opens `_wconn()` (12 of them: `upsert_doc`, `fts_upsert`,
+  `chunk_embed_remember`, `summary_cache_remember`, …) grabs that lock,
+  and the lock's own comment states the contract: *"callers already run
+  in asyncio.to_thread workers, so blocking here never touches the event
+  loop."* Two call sites violated it and nothing caught them until
+  `data/loop_stalls.log` printed the stack on 2026-08-26 — the loop sat
+  431s inside `with _W_LOCK` while worker-thread `fts_upsert` held it
+  during a bulk ingest. `summarize.py`'s `summary_cache_remember` was the
+  one in the dump; the worse one was `vector.py`'s `chunk_embed_remember`,
+  sitting in the ingest hot path directly below two carefully-offloaded
+  `to_thread` calls (the Chroma write and the FTS upsert) — the third
+  SQLite call in the same function was simply missed. Both offloaded, and
+  their lock-free-but-still-disk-I/O read partners (`summary_cache_get`,
+  `chunk_embed_lookup`) with them. The check reads the writer list out of
+  `meta.py` at runtime, so a new `_wconn()` function is covered
+  automatically; a reference passed to `to_thread(...)` is not a Call node
+  and is correctly ignored.
 - **Vision-OCR concurrency is capped process-wide** (`ocr_client.py`'s
   `_GLOBAL_OCR_SEM`, default 6, 2026-08-09) — the per-PDF
   `ThreadPoolExecutor(max_workers=7)` in `loaders.py` only bounds ONE
