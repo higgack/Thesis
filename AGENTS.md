@@ -682,6 +682,18 @@ never closes (`notes/store.py` leaked one per call this way until fixed
 - **`data/wiki_history/`** (pre-rewrite consolidation snapshots): capped
   at `WIKI_HISTORY_KEEP_PER_TOPIC` (default 20) per topic — see Wiki
   system section above.
+- **`data/loop_stalls.log`** (event-loop stall stack dumps): appended by
+  `_loop_stall_dumper`, rotated to `.log.1` past 2 MB (one generation
+  kept). Written IN ADDITION to the stdout log on purpose — the watchdogs
+  restart with `up --force-recreate`, which replaces the container and
+  takes its `docker logs` with it, so before 2026-08-26 every auto-restart
+  reported the symptom and deleted the stack dump that explained it.
+  `data/` is a bind mount, so this copy survives the restart.
+- **`/tmp/thesis_hang_diag/`** (host side, `auto_pull.sh`): newest 10
+  files. `capture_hang_diag` snapshots `docker inspect`/`stats`/`top` +
+  800 log lines BEFORE either watchdog's force-recreate, for the same
+  reason. Every step is `timeout`-bounded and the whole function is
+  best-effort — it must never block or fail the restart it precedes.
 
 ## Backlog (not active until the user asks)
 

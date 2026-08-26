@@ -55,6 +55,40 @@ notify() {
         --data-urlencode "text=$1" >/dev/null || true
 }
 
+# Snapshot the evidence BEFORE a watchdog restart destroys it.
+# `docker compose up --force-recreate` replaces the container, so its
+# logs go with it — including the loop-stall stack dump bot.py writes
+# after 120s of silence, which exists precisely to explain these hangs.
+# Every auto-restart so far has therefore reported the symptom and
+# deleted the cause. Bounded with `timeout` so a wedged docker daemon
+# can't stall the cron minute, and pruned to the newest 10 files.
+HANG_DIAG_DIR="/tmp/thesis_hang_diag"
+capture_hang_diag() {
+    local reason="$1" out
+    mkdir -p "$HANG_DIAG_DIR" 2>/dev/null || return 0
+    out="$HANG_DIAG_DIR/$(date +%Y%m%d-%H%M%S)-${reason}.log"
+    {
+        echo "=== $(date -Is) reason=${reason} ==="
+        echo
+        echo "--- docker inspect ---"
+        timeout 15 docker inspect -f 'status={{.State.Status}} started={{.State.StartedAt}} oom={{.State.OOMKilled}} exit={{.State.ExitCode}}' thesis-bot-1
+        echo
+        echo "--- docker stats ---"
+        timeout 20 docker stats --no-stream thesis-bot-1
+        echo
+        echo "--- threads (docker top) ---"
+        timeout 15 docker top thesis-bot-1
+        echo
+        echo "--- bot log tail (stall stack dump lands here) ---"
+        timeout 30 docker logs thesis-bot-1 --tail 800
+    } >"$out" 2>&1
+    # Retention: newest 10 only, so this can't grow unbounded in /tmp.
+    ls -1t "$HANG_DIAG_DIR"/*.log 2>/dev/null | tail -n +11 | while read -r f; do
+        rm -f "$f"
+    done
+    echo "hang diag saved: $out" >>"$LOG"
+}
+
 # Auto-restart hang watchdog (phase 2, 2026-08). Phase 1 (alert-only,
 # 2026-06) proved false-positive-free: deploy-window mute, container-uptime
 # guard, and 30-min cooldown all worked correctly. Phase 2 re-adds the
@@ -119,6 +153,7 @@ check_heartbeat() {
     local mins=$(( age / 60 ))
     echo "===== $(date) -- heartbeat stale ${age}s, AUTO-RESTART (phase 2) =====" >>"$LOG"
     notify "WARNING: bot heartbeat ${mins}min stale -- event loop hung, auto-restarting"
+    capture_hang_diag "heartbeat-${mins}min"
     docker compose --profile local-api up -d --force-recreate bot >>"$LOG" 2>&1
     date +%s > "$DEPLOY_STAMP_FILE"
     sleep 5
@@ -196,6 +231,7 @@ check_cpu_overload() {
     if [ "$count" -ge "$CPU_CONSECUTIVE_NEEDED" ]; then
         echo "===== $(date) — CPU ${cpu}% sustained ${count}회 연속 → 강제 재시작 =====" >>"$LOG"
         notify "🚨 thesis-bot CPU ${cpu}% ${CPU_CONSECUTIVE_NEEDED}분+ 지속 — 텔레그램 응답 불가 상태로 판단, 자동 재시작 진행"
+        capture_hang_diag "cpu-${cpu_int}pct"
         docker compose --profile local-api up -d --force-recreate bot >>"$LOG" 2>&1
         echo 0 > "$CPU_STATE_FILE"
         date +%s > "$DEPLOY_STAMP_FILE"   # mute other checks while it settles

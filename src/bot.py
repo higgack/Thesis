@@ -14613,6 +14613,7 @@ def main():
     # run_polling() runs the event loop on THIS (main) thread, so the
     # main thread's live stack is the loop's stack.
     def _loop_stall_dumper():
+        import datetime as _dt
         import sys as _sys
         import traceback as _tb
         main_ident = _fts_th.main_thread().ident
@@ -14636,6 +14637,26 @@ def main():
                         "(a sync call on the loop shows the blocker; pure "
                         "asyncio frames = GIL starvation by workers):\n%s",
                         lag, stack)
+                    # Also append to data/ (a bind mount): the watchdog
+                    # restarts with `up --force-recreate`, which replaces
+                    # the container and takes its docker logs — i.e. the
+                    # stdout copy of this very dump — with it. Every
+                    # auto-restart so far reported the symptom and deleted
+                    # the cause. Best-effort: a failure here must never
+                    # kill the dumper thread.
+                    try:
+                        _stall_log = config.DATA_DIR / "loop_stalls.log"
+                        if (_stall_log.exists()
+                                and _stall_log.stat().st_size > 2_000_000):
+                            _stall_log.rename(
+                                _stall_log.with_suffix(".log.1"))
+                        with _stall_log.open("a", encoding="utf-8") as fh:
+                            fh.write(
+                                f"\n===== {_dt.datetime.now().isoformat()} "
+                                f"silent {lag:.0f}s =====\n{stack}")
+                    except Exception:
+                        log.debug("stall dump file write failed",
+                                  exc_info=True)
             elif peak_lag:
                 log.warning("event loop resumed (stall peaked at ~%.0fs)",
                             peak_lag)
