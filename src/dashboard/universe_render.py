@@ -51,13 +51,25 @@ _SRC_CAP = 30      # source docs listed per topic panel
 _NOTE_CAP = 8      # related notes per topic panel
 _REL_CAP = 12      # KG relations per topic panel
 _DEG_CAP = 8       # keep at most this many links per node (hairball guard)
-_LINK_CAP = 600    # global link cap
+# Global link cap. Raised 600 → 1500 with the sample below: at 2,124 nodes
+# that is still an average degree near 1.4, and _DEG_CAP keeps any single
+# hub from eating the budget, so this buys density without a hairball.
+_LINK_CAP = 1500
 _DOC_FANOUT_MAX = 6  # a doc in more topics than this is too generic to link
 # Topic<->topic links are derived from a SAMPLE of the KG, not all of it:
-# at 648k edges a full pass would be far too slow for a 15s render tick.
+# at 705k edges a full pass would be far too slow for a 15s render tick.
 # The footer states the sample size so the map is not mistaken for the
 # complete graph.
-_KG_EDGE_SAMPLE = 3000
+#
+# Raised 3,000 → 30,000 on 2026-08-26 and it still got FASTER, because the
+# fetch switched from confidence-desc to order='recent' (id DESC) at the
+# same time. Measured on a 705,877-row copy of the live graph: the old
+# 3,000-by-confidence cost 136ms (SCAN + temp B-tree sort), the new
+# 30,000-by-id costs 58ms (no sort — the PK is already in insertion
+# order). The per-edge Python resolution loop adds ~93ms at this size.
+# Ordering by recency also makes the footer's "최신 KG 관계" claim true;
+# it was confidence-ordered while saying 최신.
+_KG_EDGE_SAMPLE = 30_000
 
 
 def _norm(s: str) -> str:
@@ -124,7 +136,7 @@ def _build_payload() -> dict | None:
     kg_pairs: dict[tuple[str, str], int] = defaultdict(int)
     rels: dict[str, list] = defaultdict(list)
     try:
-        edges = kg.all_edges(limit=_KG_EDGE_SAMPLE)
+        edges = kg.all_edges(limit=_KG_EDGE_SAMPLE, order="recent")
     except Exception:
         log.warning("universe: kg edges unavailable", exc_info=True)
         edges = []
@@ -162,12 +174,30 @@ def _build_payload() -> dict | None:
     except Exception:
         log.warning("universe: doc batch fetch failed", exc_info=True)
 
-    # ---- notes matched by title/category (cheap substring pass)
+    # ---- notes attached to topics, provenance first
+    # Pass 1 (exact): a note whose source_ref equals one of the topic's
+    # own source documents. notes.source_ref and documents.source are the
+    # same kind of label (a URL, or an uploaded file's name), so this is a
+    # real join rather than a guess — when a PDF was both archived and
+    # noted, the note belongs to exactly the topics that PDF built.
+    # Pass 2 (fallback): the old title-substring scan, used only to top up
+    # a topic the exact pass left short.
+    # The previous third condition, `note.category == topic_key`, is gone:
+    # 'AI' and '반도체' are category names AND wiki topics, so every note in
+    # those categories attached to that one star regardless of subject —
+    # coincidence of naming, not relevance (2026-08-26).
     try:
         notes = notes_store.list_notes()
     except Exception:
         notes = []
     nnotes = [(n, _norm(n.get("title") or "")) for n in notes]
+    notes_by_src: dict[str, list] = defaultdict(list)
+    for _n in notes:
+        _ref = (_n.get("source_ref") or "").strip()
+        # "study-text" is the shared constant ref for pasted plain text —
+        # it identifies no source and would glue unrelated notes together.
+        if _ref and _ref != "study-text":
+            notes_by_src[_ref].append(_n)
 
     nodes = []
     for key, rec in sorted(topics.items()):
@@ -189,16 +219,34 @@ def _build_payload() -> dict | None:
         nkey = _norm(key)
         ntitle = _norm(rec.get("title") or "")
         my_notes = []
-        for n, nt in nnotes:
-            if len(my_notes) >= _NOTE_CAP:
-                break
-            if (n.get("category") or "") == key or \
-                    (nkey and nkey in nt) or (ntitle and ntitle in nt):
-                my_notes.append({
-                    "t": (n.get("title") or "")[:80],
-                    "u": f"../notes/note-{n['id']}.html",
-                    "c": n.get("category") or "",
-                })
+        seen_notes: set = set()
+
+        def _add_note(n) -> None:
+            if n["id"] in seen_notes or len(my_notes) >= _NOTE_CAP:
+                return
+            seen_notes.add(n["id"])
+            my_notes.append({
+                "t": (n.get("title") or "")[:80],
+                "u": f"../notes/note-{n['id']}.html",
+                "c": n.get("category") or "",
+            })
+
+        # pass 1 — same source document as this topic
+        if notes_by_src:
+            for did in doc_ids:
+                if len(my_notes) >= _NOTE_CAP:
+                    break
+                d = docs.get(did)
+                src_label = (d or {}).get("source") or ""
+                for n in notes_by_src.get(src_label.strip(), ()):
+                    _add_note(n)
+        # pass 2 — title substring, only to fill remaining slots
+        if len(my_notes) < _NOTE_CAP:
+            for n, nt in nnotes:
+                if len(my_notes) >= _NOTE_CAP:
+                    break
+                if (nkey and nkey in nt) or (ntitle and ntitle in nt):
+                    _add_note(n)
 
         my_rels = sorted(rels.get(key, []),
                          key=lambda e: e.get("confidence") or 0,

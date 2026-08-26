@@ -564,11 +564,21 @@ def delete_edge(edge_id) -> dict | None:
 def all_edges(limit: int = 3000, order: str = "conf",
              offset: int = 0, date_prefix: str | None = None,
              min_conf: float | None = None) -> list[dict]:
-    """Every edge for the dashboard KG view. order='conf' (default,
-    confidence-desc — Universe page) or 'date' (ts-desc — KG page 최신순
-    default, so the 1200-row cap keeps truly-recent low-confidence edges
-    instead of only the highest-confidence subset). offset supports the
-    KG page's '더 보기' pagination past the initial page.
+    """Every edge for the dashboard KG view. order='conf' (confidence-desc)
+    or 'date' (ts-desc — KG page 최신순 default, so the 1200-row cap keeps
+    truly-recent low-confidence edges instead of only the highest-
+    confidence subset). offset supports the KG page's '더 보기' pagination
+    past the initial page.
+
+    order='recent' is the same intent as 'date' but free: edges are only
+    ever appended, so the INTEGER PRIMARY KEY already runs in insertion
+    order and SQLite can walk it backwards. 'conf' and 'date' sort on
+    unindexed columns, so both pay SCAN + "USE TEMP B-TREE FOR ORDER BY"
+    over the whole table — measured on a 705,877-row copy of the live
+    graph, 30,000 rows cost 473ms by confidence versus 58ms by id, and the
+    gap widens with the limit. Use 'recent' for anything that just wants a
+    large recent slice (the Universe map); keep 'conf'/'date' where the
+    exact ordering is what the user asked for.
 
     date_prefix/min_conf (2026-08-20): server-side filters for the KG
     page's 날짜/신뢰도 selects. Client-side filtering only saw the rows
@@ -579,8 +589,12 @@ def all_edges(limit: int = 3000, order: str = "conf",
     ("...T10:00:00+09:00" and legacy bare dates) match. Caller
     validates the prefix shape; values are bound parameters."""
     init()
-    order_sql = ("ts DESC, confidence DESC" if order == "date"
-                 else "confidence DESC, ts DESC")
+    if order == "recent":
+        order_sql = "id DESC"
+    elif order == "date":
+        order_sql = "ts DESC, confidence DESC"
+    else:
+        order_sql = "confidence DESC, ts DESC"
     where, params = [], []
     if date_prefix:
         where.append("ts LIKE ?")

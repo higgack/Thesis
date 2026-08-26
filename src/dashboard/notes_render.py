@@ -59,17 +59,67 @@ def _plain(md: str) -> str:
 # 유형별 buckets: documents (pdf/ppt/word/excel/pasted text) all collapse to
 # 문서; youtube and web stand alone — mirrors the three buttons the user asked
 # for (PDF · 유튜브 · 웹).
-def _type_bucket(source_type: str) -> str:
-    st = (source_type or "").lower()
-    if st == "youtube":
+# Every source_type a note can carry, mapped to its 유형별 bucket.
+# Producers are notes/telegram.py (audio · video · image · text) and
+# notes/channel.py (youtube · web · blog, plus the bare file extension for
+# an uploaded document). image/video/audio used to have no bucket and fell
+# through the catch-all into 문서, so a photo note was filed as a document
+# and no chip could ever surface it (2026-08-26).
+_TYPE_BUCKETS = {
+    "youtube": "유튜브",
+    "web": "웹",
+    "text": "텍스트",
+    "blog": "블로그",
+    "image": "이미지",
+    "video": "영상",
+    "audio": "음성",
+}
+# Uploaded files carry their bare extension as source_type; every one of
+# these genuinely belongs in 문서, so they are catch-all hits BY DESIGN and
+# must not be reported as unknown.
+_DOC_EXT_TYPES = frozenset({"pdf", "pptx", "docx", "xlsx", "xls"})
+
+
+# A YouTube source always belongs to 유튜브, whatever source_type says.
+# Today nothing can violate that — a YouTube link goes ingest_url →
+# is_youtube → ingest_youtube → source_type "youtube", while video/audio
+# come only from a Telegram attachment whose ref is "tg-video:"/"tg-audio:"
+# — so the two can't collide. This is the rule stated up front rather than
+# left as an accident of routing: 영상/음성 is for what is NOT on YouTube
+# (사용자 규칙, 2026-08-26). Matched on the ref, not by importing
+# loaders.is_youtube — the dashboard renderer must not pull in the ingest
+# stack for one predicate.
+_YT_REF_RE = re.compile(
+    r"^https?://(?:[\w-]+\.)*(?:youtube\.com|youtu\.be)/", re.I)
+
+
+def _type_bucket(source_type: str, source_ref: str = "") -> str:
+    """Bucket for the 유형별 filter. A YouTube ref wins outright; otherwise
+    map by source_type. Unknown types fall into 문서 — see
+    _is_unknown_type() for how a genuinely new one gets surfaced instead of
+    silently disappearing into that bucket."""
+    if source_ref and _YT_REF_RE.match(source_ref.strip()):
         return "유튜브"
-    if st == "web":
-        return "웹"
-    if st == "text":
-        return "텍스트"
-    if st == "blog":
-        return "블로그"
-    return "문서"
+    return _TYPE_BUCKETS.get((source_type or "").lower(), "문서")
+
+
+_MEDIA_CHIPS = (("이미지", "🖼"), ("영상", "🎬"), ("음성", "🎙"))
+
+
+def _media_chips(bucket_counts: dict) -> str:
+    """Chips for the media buckets that actually hold notes."""
+    return "".join(
+        f"<button class='fbtn ftype' data-type='{name}'>{icon} {name}"
+        f"</button>"
+        for name, icon in _MEDIA_CHIPS if bucket_counts.get(name))
+
+
+def _is_unknown_type(source_type: str) -> bool:
+    """True for a source_type no producer in this repo is known to emit.
+    Such a note still renders (under 문서) but is logged, so a new type
+    added upstream cannot hide the way image/video/audio did."""
+    st = (source_type or "").lower()
+    return bool(st) and st not in _TYPE_BUCKETS and st not in _DOC_EXT_TYPES
 
 
 _THEME_JS = """
@@ -699,13 +749,20 @@ def _render_index(token: str, notes: list[dict],
     sec_title_html = ("<div class='sec-title'>전체 노트 "
                       f"(<span id='note-count'>{len(notes)}</span>)</div>")
     rows = []
+    bucket_counts: dict[str, int] = {}
+    unknown_types: dict[str, int] = {}
     if not notes:
         rows.append("<div class='empty'>아직 노트가 없어요. 학습 채널에 "
                     "자료를 올리면 여기에 노트로 쌓입니다.</div>")
     for n in notes:
         learned = (n.get("updated") or "")[:10]
         hay = _plain((bodies.get(n["id"]) or {}).get("md") or "")
-        tbucket = _type_bucket(n.get("source_type") or "")
+        _stype = n.get("source_type") or ""
+        tbucket = _type_bucket(_stype, n.get("source_ref") or "")
+        bucket_counts[tbucket] = bucket_counts.get(tbucket, 0) + 1
+        if _is_unknown_type(_stype):
+            unknown_types[_stype.lower()] = unknown_types.get(
+                _stype.lower(), 0) + 1
         cat = (n.get("category") or "").strip() or "그외"
         imp = 1 if n.get("important") else 0
         _memo_txt = (_nmemos.get(str(n["id"])) or "").strip()
@@ -728,6 +785,13 @@ def _render_index(token: str, notes: list[dict],
             f"<button class='ndel' type='button' title='노트 삭제'>🗑</button>"
             f"</div>"
         )
+    if unknown_types:
+        # A source_type no producer in this repo emits. The note still
+        # renders (it lands in 문서), but silence is what let image/video/
+        # audio sit mis-bucketed — so say it out loud instead.
+        log.warning("notes 유형별: unknown source_type(s) bucketed into 문서 "
+                    "— %s", ", ".join(f"{k}×{v}" for k, v in
+                                      sorted(unknown_types.items())))
     return "\n".join([
         _head("학습 노트"), "</head><body><div class='layout'>",
         "<header><h1>학습 노트</h1>",
@@ -753,6 +817,12 @@ def _render_index(token: str, notes: list[dict],
         "<div class='fbar'><span class='flabel'>유형별</span>"
         "<button class='fbtn ftype active' data-type='all'>전체</button>"
         "<button class='fbtn ftype' data-type='문서'>📄 문서</button>"
+        # 이미지·영상·음성 are rendered only when at least one note is in
+        # the bucket: they are rare (Telegram photo/video/voice straight to
+        # the study channel) and an always-on empty chip is dead UI. The
+        # five original buckets stay unconditional so nothing a user
+        # already relies on can vanish on a quiet day.
+        + _media_chips(bucket_counts) +
         "<button class='fbtn ftype' data-type='텍스트'>📝 텍스트</button>"
         "<button class='fbtn ftype' data-type='블로그'>✍ 블로그</button>"
         "<button class='fbtn ftype' data-type='웹'>🌐 웹</button>"
