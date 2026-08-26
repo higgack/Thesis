@@ -526,6 +526,7 @@ g.sel .lk.hot{opacity:.95}
   <a class="nav" href="/%(tok)s/kg/">🕸 KG</a>
   <a class="nav" href="/%(tok)s/notes/">📒 노트</a>
   <a class="nav" href="/%(tok)s/commands/">📋 Commands</a>
+  <a class="nav" href="https://echodiary-eng.vercel.app/" target="_blank" rel="noopener">📅 Daily</a>
 </header>
 <div id="stage">
   <svg id="svg"></svg>

@@ -1495,7 +1495,9 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a> "
         f"<a href='/{token}/notes/' class='nav-shortcut'>학습 노트</a> "
         f"<a href='/{token}/universe/' class='nav-shortcut'>🌌 Universe</a> "
-        f"<a href='/{token}/commands/' class='nav-shortcut'>📋 Commands</a>"
+        f"<a href='/{token}/commands/' class='nav-shortcut'>📋 Commands</a> "
+        "<a href='https://echodiary-eng.vercel.app/' class='nav-shortcut' "
+        "target='_blank' rel='noopener'>📅 Daily</a>"
         "</div>",
         "</header>",
 
@@ -2061,7 +2063,9 @@ def _render_commands_page(token: str, lookup_guide: str,
         f"<a href='/{token}/kg/' class='nav-shortcut'>🕸 KG</a> "
         f"<a href='/{token}/wiki/' class='nav-shortcut'>📚 Wiki</a> "
         f"<a href='/{token}/notes/' class='nav-shortcut'>학습 노트</a> "
-        f"<a href='/{token}/universe/' class='nav-shortcut'>🌌 Universe</a>"
+        f"<a href='/{token}/universe/' class='nav-shortcut'>🌌 Universe</a> "
+        "<a href='https://echodiary-eng.vercel.app/' class='nav-shortcut' "
+        "target='_blank' rel='noopener'>📅 Daily</a>"
         "</div>",
         "</header>",
         "<div class='toc'>",

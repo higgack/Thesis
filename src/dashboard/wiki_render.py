@@ -1044,6 +1044,7 @@ def _topbar(token: str, current: str = "") -> str:
         f'<a href="/{token}/notes/" class="nav-link">학습 노트</a>'
         f'<a href="/{token}/universe/" class="nav-link">🌌 Universe</a>'
         f'<a href="/{token}/commands/" class="nav-link">Commands</a>'
+        '<a href="https://echodiary-eng.vercel.app/" class="nav-link" target="_blank" rel="noopener">Daily</a>'
         "</div>"
     )
 
