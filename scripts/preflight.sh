@@ -48,9 +48,13 @@ if [[ ${#PYFILES[@]} -eq 0 ]]; then
 fi
 
 # ---- 1. syntax (AST) — BLOCKING --------------------------------------
-echo "── 1. Python syntax (ast.parse) ──"
+echo "── 1. Python syntax (compile) ──"
+# compile(), NOT ast.parse: ast.parse misses symtable-stage SyntaxErrors —
+# "name X is used prior to global declaration" parses fine but fails at
+# IMPORT, which is how a broken regenerate.py shipped on 2026-08-26 and
+# killed every dashboard tick while this section reported OK.
 for f in "${PYFILES[@]}"; do
-    if python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$f" 2>/tmp/pf_ast_err; then
+    if python3 -c "import sys; compile(open(sys.argv[1]).read(), sys.argv[1], 'exec')" "$f" 2>/tmp/pf_ast_err; then
         echo "  ${GRN}OK${RST} $f"
     else
         echo "  ${RED}SYNTAX ERROR${RST} $f"

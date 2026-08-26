@@ -2177,7 +2177,14 @@ def regenerate() -> None:
         write detail files that don't exist yet. The old code rewrote
         ALL ~2000 detail files every 60s tick, which is what pegged the
         loop."""
-    global _FIRST_RUN
+    # All three lock-state globals are declared here, up front. The first
+    # version declared them inside the branches that assigned them, but
+    # _LOCK_SINCE is READ in the skip branch above its (later) global
+    # statement — "used prior to global declaration" is a SyntaxError at
+    # IMPORT time, so every dashboard tick failed before running a line.
+    # ast.parse does not catch this class (it is a symtable-stage error);
+    # preflight now compile()s changed files for exactly this reason.
+    global _FIRST_RUN, _LOCK_SINCE, _LOCK_WARNED_AT
     token = (os.getenv("DASHBOARD_TOKEN", "") or "").strip()
     if not token:
         log.warning("DASHBOARD_TOKEN unset; static dashboard skipped")
@@ -2188,7 +2195,6 @@ def regenerate() -> None:
         # and universe renders that run after it — while the logs said
         # nothing at all (2026-08-26). A skipped tick is normal and stays
         # quiet; a lock held far longer than a tick is not.
-        global _LOCK_WARNED_AT
         held = time.monotonic() - (_LOCK_SINCE or time.monotonic())
         now = time.monotonic()
         if held >= _LOCK_SLOW_SEC and now - _LOCK_WARNED_AT >= 60:
@@ -2199,7 +2205,6 @@ def regenerate() -> None:
         else:
             log.debug("dashboard regenerate already running; skipping this tick")
         return
-    global _LOCK_SINCE
     _LOCK_SINCE = time.monotonic()
     try:
         base = Path(config.DATA_DIR) / "dashboard"
