@@ -36,6 +36,14 @@ _ENT_STOP = {
     # 주요 개체 chips (2026-08-20). Exact-match, so a real ticker or
     # company that merely contains these letters is unaffected.
     "buy", "sell", "hold",
+    # 2026-08-27 (사용자 "모두 커밋" 승인): BUY/SELL/HOLD 정리 때 영어만
+    # 지우고 같은 부류의 한글 판정어가 그대로 남아 있었다 — 상위 400 검토
+    # 에서 합계 약 12,000 엣지. 정확 일치라 "매수세"·"상향돌파" 등 복합어는
+    # 살아남는다. 외국인·개인·기관(수급 주체)은 별도 확인 전까지 보류.
+    "매수", "증가", "하락", "상승", "높음", "있음", "확대", "감소",
+    "true", "전문가", "개선", "해당 없음", "해당", "없음", "상향",
+    "강세", "지속", "급증", "낮음", "유지", "긍정적", "흑자 전환",
+    "견조", "호조", "급락", "급등", "필자", "약세", "컨센서스 상회",
     # forward_listener URL-only curation channel names — never real
     # entities. Leaked in via _notify_unsupported_urls notices before
     # the ingest-side drop pattern existed (818-edge "getfeed"
@@ -79,6 +87,38 @@ _ENTITY_ALIASES = {
     "오픈ai": "OpenAI",
     "스페이스x": "SpaceX",
     "앤트로픽": "Anthropic",
+    # 2026-08-27 일괄 승인분 (상위 400 개체 전수 검토, 양쪽 표기 실존 확인).
+    # 외국 기업 → 영문 대표 (기존 정책), 한국 기업/지수 → 한글 대표.
+    # 키는 _norm_token 결과 형태(소문자·공백 제거)여야 한다.
+    "애플": "Apple",
+    "구글": "Google",
+    "알파벳": "Alphabet",
+    "마이크론": "Micron",
+    "microntechnology": "Micron",
+    "마이크로소프트": "Microsoft",
+    "ms": "Microsoft",              # 사용자 확정: 이 코퍼스에서 MS=Microsoft
+    "테슬라": "Tesla",
+    "아마존": "Amazon",
+    "인텔": "Intel",
+    "샌디스크": "Sandisk",
+    "딥시크": "DeepSeek",
+    "모건스탠리": "Morgan Stanley",
+    "오라클": "Oracle",
+    "리비안": "Rivian",
+    "브로드컴": "Broadcom",
+    "코어위브": "CoreWeave",
+    "앤스로픽": "Anthropic",        # 앤트로픽의 변형 음차 (425 엣지 실존)
+    "naver": "네이버",
+    "kospi": "코스피",
+    "skhynix": "SK하이닉스",
+    "하이닉스": "SK하이닉스",
+    "skt": "SK텔레콤",
+    "lselectric": "LS일렉트릭",
+    "현대자동차": "현대차",
+    "트럼프대통령": "트럼프",
+    "도널드트럼프": "트럼프",
+    "릴리": "일라이 릴리",
+    "국제유가": "유가",
     # "메타" is the one entry that isn't purely a transliterated company
     # name — bare 메타 is also the ordinary Korean prefix for "meta-", so
     # folding it merges ~1,895 edges that may not all be about the
