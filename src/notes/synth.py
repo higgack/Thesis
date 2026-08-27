@@ -54,7 +54,10 @@ _PRINCIPLES = """너는 사용자의 개인 학습 노트를 만드는 조수다
   ⚠️ Mermaid는 **flowchart만** 사용한다. xychart-beta·pie·graph 등 차트 문법은
   오류가 잦으니 절대 쓰지 말 것 — 수치·추세·비교 데이터는 반드시 **마크다운 표**로
   제시한다. flowchart 한글 라벨은 "큰따옴표"로 감싸고, 화살표는 --> 만 쓰며,
-  노드 id는 영문/숫자로 한다(예: A["주도주"] --> B["소외주"]). 개념 지도도
+  노드 id는 영문/숫자로 한다(예: A["주도주"] --> B["소외주"]).
+  ⛔ style·linkStyle·classDef·class 줄은 절대 쓰지 마라 — 존재하지 않는
+  링크 번호 하나로 다이어그램 전체가 렌더 실패한다(실제 사고 2026-08-27).
+  subgraph 를 쓸 땐 제목을 "큰따옴표"로 감싼다. 개념 지도도
   자료에 실제로 나온 개념·관계만으로 그린다.
 - 한국어로 쓴다(원문 용어/고유명사는 원어 병기 가능).
 - 문체: 자연스러운 한국어로 쓴다(번역기·AI 말투 금지). 상투구 "결론적으로·
@@ -170,6 +173,36 @@ _SYSTEM_BOOK = _PRINCIPLES + _FORMAT_BOOK
 _MAX_INPUT_CHARS = 200000  # ~50K tokens; covers a full long report
                            # (flash has a 1M-token context). 60K truncated
                            # 69-page PDFs to their first ~25 pages → thin notes.
+# Mermaid 살균 (2026-08-27): 모델이 style/linkStyle/classDef 를 붙이면
+# 링크 번호 하나만 어긋나도 Mermaid 가 파스 단계에서 통째로 실패해 노트에
+# 원문 코드가 그대로 노출된다(KB 원전 르네상스 북모드 사고). 스타일 줄은
+# 순수 장식이라 지워도 정보 손실이 없고, 따옴표 없는 subgraph 제목은
+# 감싸서 살린다. 프롬프트 금지 조항의 2차 방어선.
+_MM_STYLE_RE = re.compile(r"^\s*(?:style|linkStyle|classDef|class)\b")
+_MM_SUBGRAPH_RE = re.compile(r"^(\s*subgraph\s+)(.+)$")
+
+
+def _sanitize_mermaid(md: str) -> str:
+    out, in_mm = [], False
+    for line in (md or "").split("\n"):
+        st = line.strip()
+        if st.startswith("```"):
+            in_mm = st.lower().startswith("```mermaid") if not in_mm else False
+            out.append(line)
+            continue
+        if in_mm:
+            if _MM_STYLE_RE.match(line):
+                continue
+            m = _MM_SUBGRAPH_RE.match(line)
+            if m:
+                title = m.group(2).strip()
+                # id["제목"] 형태나 이미 따옴표면 그대로 둔다
+                if title and '"' not in title and "[" not in title:
+                    line = f'{m.group(1)}"{title}"'
+        out.append(line)
+    return "\n".join(out)
+
+
 _MARKER_RE = re.compile(r"(?m)^===(TITLE|NOTE|QUESTIONS|CATEGORY)===\s*$")
 
 # Order matters: _norm_cat() substring-matches in sequence, so 전략 must
@@ -316,6 +349,7 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
                         len(out or ""))
             return None
         log.warning("note synth: NOTE marker missing, using raw output")
+    note_md = _sanitize_mermaid(note_md)
 
     today = datetime.now(_KST).date().isoformat()
     llm_title = (sections.get("TITLE") or "").splitlines()[0].strip() \
