@@ -44,6 +44,11 @@ _ENT_STOP = {
     "true", "전문가", "개선", "해당 없음", "해당", "없음", "상향",
     "강세", "지속", "급증", "낮음", "유지", "긍정적", "흑자 전환",
     "견조", "호조", "급락", "급등", "필자", "약세", "컨센서스 상회",
+    # 2026-08-27 추가 확정 (사용자: "이것도 모두 지워져") — 보류했던 수급
+    # 주체 셋(외국인 719 · 개인 328 · 기관 302)과, 정확-일치라 살아남는다고
+    # 보고했던 복합 판정어들까지.
+    "외국인", "개인", "기관",
+    "매수세", "상향돌파", "급등주", "전문가그룹",
     # forward_listener URL-only curation channel names — never real
     # entities. Leaked in via _notify_unsupported_urls notices before
     # the ingest-side drop pattern existed (818-edge "getfeed"
