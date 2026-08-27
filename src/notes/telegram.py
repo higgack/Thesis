@@ -211,12 +211,17 @@ async def on_notemode_callback(update: Update,
         await q.edit_message_text(f"{label} 선택됨 — 노트 만드는 중…")
     except Exception:
         pass
+    # 질문 메시지를 진행 메시지로 재사용 — 안 넘기면 처리부가 새 진행
+    # 메시지를 만들어 그쪽만 완료로 바뀌고, 이 메시지는 "만드는 중…"에
+    # 영영 멈춰 있었다 (2026-08-27 사용자 리포트).
     await _process_study_post(msg, ctx,
-                              mode="book" if mode == "book" else "normal")
+                              mode="book" if mode == "book" else "normal",
+                              progress_msg=getattr(q, "message", None))
 
 
 async def _process_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE,
-                              mode: str = "normal") -> None:
+                              mode: str = "normal",
+                              progress_msg=None) -> None:
     owner = config.TELEGRAM_OWNER_ID
     text = msg.text or msg.caption or ""
     doc = getattr(msg, "document", None)
@@ -236,12 +241,13 @@ async def _process_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE,
         ("사진" if photo else None) or \
         (url_m.group(0) if url_m else "텍스트")
 
-    progress = None
-    try:
-        progress = await ctx.bot.send_message(
-            owner, f"📒 노트 만드는 중… ({src_label})")
-    except Exception:
-        progress = None
+    progress = progress_msg
+    if progress is None:
+        try:
+            progress = await ctx.bot.send_message(
+                owner, f"📒 노트 만드는 중… ({src_label})")
+        except Exception:
+            progress = None
 
     urls = _URL_RE.findall(text)
     note_ids: list[str] = []
