@@ -103,7 +103,7 @@ _SKIP_TOPICS = (
     "리포트", "외교", "코스피", "공시", "투자", "경제", "증시", "주식",
     "거시경제", "정치", "인터뷰", "매크로", "기술", "금리", "PNG", "특허",
     # 2차 선별 (2026-08-26, 전체 목록을 훑은 사용자 선정 42종)
-    "수출", "미국증시", "목표주가",
+    "수출", "미국증시", "목표주가", "주가",
     "프로그래밍", "트레이딩", "투자 전략", "음악", "경제 분석",
     "혁신", "펀드", "코스닥", "주식시장", "주", "자기계발", "연구",
     "역사", "시황", "시장 동향", "교육",
@@ -442,7 +442,7 @@ header h1{font-size:15px;margin:0;font-weight:800;white-space:nowrap}
 .nav:hover{border-color:var(--node);color:var(--ink)}
 #stage{flex:1;position:relative;overflow:hidden}
 svg#svg{width:100%%;height:100%%;display:block;cursor:grab;touch-action:none}
-.lk{stroke:var(--lk);fill:none}.lk.doc{stroke:var(--lkdoc);stroke-dasharray:4 4}
+.lk{stroke:var(--lk);fill:none;shape-rendering:optimizeSpeed}.lk.doc{stroke:var(--lkdoc);stroke-dasharray:4 4}
 .lk.hot{stroke:var(--accent)}
 /* Selection styling lives in CSS so picking a star costs O(its degree)
    DOM writes instead of one pass over every node and every link. With
@@ -451,7 +451,7 @@ g.sel .lk{opacity:.15}
 g.sel .lk.hot{opacity:.95}
 .node-c.sel circle{stroke:var(--accent)!important;stroke-width:3}
 .node-c{cursor:pointer}
-.lbl{paint-order:stroke;stroke:var(--bg);stroke-width:3px;fill:var(--ink);
+.lbl{text-rendering:optimizeSpeed;paint-order:stroke;stroke:var(--bg);stroke-width:3px;fill:var(--ink);
   font-weight:600;pointer-events:none;user-select:none}
 /* One row, clipped: fillKwbar() appends chips until the next one would
    overflow and stops there, so the bar always shows the most chips that
@@ -696,9 +696,16 @@ nd.on('mousemove',(ev,d)=>{tip.style.opacity=1;
   .on('mouseleave',()=>tip.style.opacity=0);
 // ---- search (dim non-matching; Enter focuses first match)
 const q=document.getElementById('search');
+let filterDirty=false;
 function applyFilter(){
   const v=(q.value||'').trim().toLowerCase();
-  if(!v){nd.attr('opacity',1);lk.attr('opacity',.8);return;}
+  if(!v){
+    // 흐림이 적용된 적 없으면 되돌릴 것도 없다 — 배경 클릭(clearSel)마다
+    // 전 노드·전 링크에 opacity 를 다시 쓰던 3,600회 DOM 작업을 생략
+    // (저사양에서 클릭이 굼뜨던 원인 중 하나, 2026-08-27).
+    if(filterDirty){nd.attr('opacity',1);lk.attr('opacity',.8);filterDirty=false;}
+    return;}
+  filterDirty=true;
   // NOTE: while a star is selected, `g.sel .lk` in CSS outranks the link
   // opacity written below — same precedence the old inline spotlight had,
   // and clearSel() re-runs this once the selection drops.
@@ -730,7 +737,9 @@ document.getElementById('plist').addEventListener('click',ev=>{
   const n=byId[panelJump[+b.dataset.goto]];
   if(n){focusNode(n);openPanel(n);}});
 function focusNode(d){
-  svg.transition().duration(600).call(zoom.transform,
+  // 250ms: 전환 프레임마다 5,700개 SVG 요소를 다시 그리므로 지속시간이
+  // 곧 저사양 기기의 멈춤 시간이다. 짧게, 그러나 순간이동은 아니게.
+  svg.transition().duration(250).call(zoom.transform,
     d3.zoomIdentity.translate(W/2-d.x*1.4,H/2-d.y*1.4).scale(1.4));}
 // ---- chips: top topics by doc count (same measure as star size).
 // Up to 20 candidates, but only as many as fit one row on this screen:
