@@ -420,14 +420,29 @@ def _unregister_ingest(job_id: str) -> None:
     _ACTIVE_INGESTS.pop(job_id, None)
 
 
-# Stuck-slot tripwire threshold. The per-message wait_for is 15 min
-# (_INGEST_TIMEOUT_SEC); a slot older than DOUBLE that means the guard
-# didn't fire — exactly the 2026-07-08 silent-stall signature.
-_STUCK_INGEST_ALERT_SEC = 1800
+_INGEST_TIMEOUT_SEC = 1500  # 25 minutes per message. Raised from 15
+# (2026-08-27): two large broker PDFs were killed at the 15-min line in
+# one day (키움 건설, NH 금리의 시대) while comparable SUCCESSES that
+# same day measured 13m05s / 12m57s — the observed completion time of a
+# big multi-PDF burst sits right against the old limit, so the guard was
+# killing slow-but-progressing items, exactly what it exists NOT to do.
+# The user's standing preference is slow-but-complete over fast-but-
+# dropped ("천천히 소화해도 되니까", 순차 처리 요청과 같은 날).
+# Downside: a truly stuck item pins its semaphore slot for 25 min
+# instead of 15 — acceptable because the stuck-slot tripwire below now
+# DERIVES from this constant (alert at 2x, force-recover at 4x), so the
+# silent-stall safety net scales with it instead of silently shrinking.
+# _IN_FLIGHT_TIMEOUT and the retry-path wait_for also derive from this.
+
+# Stuck-slot tripwire threshold. A slot older than DOUBLE the
+# per-message wait_for means the guard didn't fire — exactly the
+# 2026-07-08 silent-stall signature. Derived (was a literal 1800) so a
+# timeout change can't silently break the "double" invariant.
+_STUCK_INGEST_ALERT_SEC = _INGEST_TIMEOUT_SEC * 2
 # Escalation point: still wedged this long → auto-recover (see
 # _check_stuck_ingests). Reached sooner when every slot is stuck, since
 # ingest is then completely dead and waiting buys nothing.
-_STUCK_INGEST_RECOVER_SEC = 3600
+_STUCK_INGEST_RECOVER_SEC = _INGEST_TIMEOUT_SEC * 4
 
 
 async def _check_stuck_ingests(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
@@ -10370,16 +10385,8 @@ def _explain_error(e: BaseException, max_len: int = 280) -> str:
     return f"{type(cause).__name__}: {msg}"[:max_len]
 
 
-_INGEST_TIMEOUT_SEC = 900  # 15 minutes per message. Real processing
-# (Vision OCR ≤7 pages × ~3s, Flash-Lite summary ~5s, Gemini embed ~3s)
-# finishes well under 5 min; the extra margin (was 10 min) is a safety
-# buffer for large-batch bursts where event-loop contention can stretch
-# an item's wall-clock. The real burst fix is keeping the loop free
-# (Chroma/tiktoken offloaded to threads) — this just avoids killing a
-# slow-but-progressing item. Downside: a truly stuck item pins its
-# semaphore slot for 15 min instead of 10. _IN_FLIGHT_TIMEOUT and the
-# retry-path wait_for both derive from this constant, so they scale
-# together automatically.
+# _INGEST_TIMEOUT_SEC is defined near the top of the file (the stuck-slot
+# tripwires derive from it and are declared there).
 
 
 _LIVE_EDIT_INTERVAL = 30  # seconds between status edits. 30 s × 4 concurrent

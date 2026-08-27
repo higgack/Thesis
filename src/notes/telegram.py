@@ -30,23 +30,83 @@ log = logging.getLogger(__name__)
 
 _URL_RE = re.compile(r"https?://[^\s<>\")]+")
 
-# 노트 방식(일반/책) 질문의 대기 항목: pid → (등록시각, 원본 msg).
-# 메모리 전용 — 봇이 재시작되면 버튼이 "만료" 응답을 주고 사용자가 자료를
-# 다시 올리면 된다 (학습노트는 수동 입력 채널이라 이 정도 손실은 허용).
-_PENDING_MODE: dict[str, tuple[float, object]] = {}
-_PENDING_TTL_SEC = 6 * 3600
+# 노트 방식(일반/책) 질문의 대기 항목: pid → payload dict.
+# 처음엔 메모리 전용이었는데, 대형 파일 여러 개를 올린 사이 배포/워치독
+# 재시작이 끼면 버튼 전부가 "만료"로 죽어 사용자가 파일을 전부 다시
+# 찾아 올려야 했다 (2026-08-27 실제 발생, 8건 유실). 이제 디스크에
+# 저장해 재시작을 넘긴다 — 봇 file_id 는 같은 토큰이면 재시작 후에도
+# 유효하므로 파일 본문이 아니라 file_id 만 저장하면 된다.
+_PENDING_MODE: dict[str, dict] = {}
+_PENDING_TTL_SEC = 48 * 3600     # 이틀 — 이제 재시작에도 살아남으니 넉넉히
+_PENDING_PATH = config.DATA_DIR / "notes_pending_mode.json"
+_PENDING_LOADED = False
+
+
+def _persist_pending() -> None:
+    import json as _j
+    import os as _os
+    try:
+        tmp = _PENDING_PATH.with_suffix(".tmp")
+        tmp.write_text(_j.dumps(_PENDING_MODE, ensure_ascii=False),
+                       encoding="utf-8")
+        _os.replace(tmp, _PENDING_PATH)
+    except Exception:
+        log.warning("notes pending persist failed", exc_info=True)
+
+
+def _load_pending() -> None:
+    global _PENDING_LOADED
+    if _PENDING_LOADED:
+        return
+    _PENDING_LOADED = True
+    import json as _j
+    try:
+        if _PENDING_PATH.exists():
+            d = _j.loads(_PENDING_PATH.read_text(encoding="utf-8"))
+            if isinstance(d, dict):
+                for k, v in d.items():
+                    _PENDING_MODE.setdefault(k, v)
+    except Exception:
+        log.warning("notes pending load failed", exc_info=True)
+
+
+def _prune_pending(now: float) -> None:
+    for k in [k for k, v in _PENDING_MODE.items()
+              if now - float(v.get("ts", 0)) > _PENDING_TTL_SEC]:
+        _PENDING_MODE.pop(k, None)
 
 
 def _stash_pending(msg) -> str:
     import time as _t
     import uuid as _u
+    _load_pending()
     now = _t.time()
-    for k in [k for k, (ts, _) in _PENDING_MODE.items()
-              if now - ts > _PENDING_TTL_SEC]:
-        _PENDING_MODE.pop(k, None)
+    _prune_pending(now)
+    doc = getattr(msg, "document", None)
+    payload = {
+        "ts": now,
+        "text": (msg.text or msg.caption or ""),
+        "doc_file_id": getattr(doc, "file_id", None) if doc else None,
+        "doc_file_name": getattr(doc, "file_name", None) if doc else None,
+    }
     pid = _u.uuid4().hex[:12]
-    _PENDING_MODE[pid] = (now, msg)
+    _PENDING_MODE[pid] = payload
+    _persist_pending()
     return pid
+
+
+def _msg_from_payload(payload: dict):
+    """디스크에서 복원한 payload 를 _process_study_post 가 읽는 msg 형태로.
+    질문은 문서/URL/텍스트에만 던지므로 그 세 필드만 있으면 된다."""
+    import types as _types
+    doc = None
+    if payload.get("doc_file_id"):
+        doc = _types.SimpleNamespace(file_id=payload["doc_file_id"],
+                                     file_name=payload.get("doc_file_name"))
+    return _types.SimpleNamespace(
+        text=payload.get("text") or None, caption=None, document=doc,
+        voice=None, audio=None, video=None, photo=None,
+        chat_id=config.TELEGRAM_OWNER_ID)
 _DOC_EXTS = ("pdf", "pptx", "docx", "xlsx", "xls")
 # 파일 첨부로 온 오디오(msg.document)도 음성 경로로 재라우팅하기 위한 확장자.
 _AUDIO_EXTS = ("mp3", "m4a", "wav", "ogg", "oga", "flac", "aac", "opus",
@@ -196,16 +256,18 @@ async def on_notemode_callback(update: Update,
     except ValueError:
         await q.answer()
         return
+    _load_pending()
     entry = _PENDING_MODE.pop(pid, None)
+    _persist_pending()
     await q.answer()
     if entry is None:
         try:
             await q.edit_message_text(
-                "⏳ 만료된 요청이야 (봇 재시작 등) — 자료를 다시 올려줘.")
+                "⏳ 만료된 요청이야 (48시간 경과) — 자료를 다시 올려줘.")
         except Exception:
             pass
         return
-    _, msg = entry
+    msg = _msg_from_payload(entry)
     label = "📚 책 모드" if mode == "book" else "📝 일반"
     try:
         await q.edit_message_text(f"{label} 선택됨 — 노트 만드는 중…")
@@ -219,9 +281,40 @@ async def on_notemode_callback(update: Update,
                               progress_msg=getattr(q, "message", None))
 
 
+# 대형 자료 여러 개가 동시에 돌면 2 vCPU 에서 서로 밟고 재시작을
+# 부른다 — 사용자 요청(2026-08-27 "천천히 하나씩")대로 노트 처리는
+# 한 번에 하나만. 나머지는 이 락에서 순서를 기다리고, 기다리는 동안
+# 진행 메시지에 대기 중임을 표시한다.
+_PROCESS_LOCK = None
+
+
+def _get_process_lock():
+    global _PROCESS_LOCK
+    import asyncio as _aio
+    if _PROCESS_LOCK is None:
+        _PROCESS_LOCK = _aio.Lock()
+    return _PROCESS_LOCK
+
+
 async def _process_study_post(msg, ctx: ContextTypes.DEFAULT_TYPE,
                               mode: str = "normal",
                               progress_msg=None) -> None:
+    lock = _get_process_lock()
+    if lock.locked() and progress_msg is not None:
+        try:
+            await ctx.bot.edit_message_text(
+                "⏳ 앞 노트 작업이 끝나면 시작할게 (순서 대기 중)",
+                chat_id=progress_msg.chat_id,
+                message_id=progress_msg.message_id)
+        except Exception:
+            pass
+    async with lock:
+        await _process_study_post_inner(msg, ctx, mode, progress_msg)
+
+
+async def _process_study_post_inner(msg, ctx: ContextTypes.DEFAULT_TYPE,
+                                    mode: str = "normal",
+                                    progress_msg=None) -> None:
     owner = config.TELEGRAM_OWNER_ID
     text = msg.text or msg.caption or ""
     doc = getattr(msg, "document", None)
