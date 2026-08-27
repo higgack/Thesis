@@ -1041,7 +1041,7 @@ def _topbar(token: str, current: str = "") -> str:
         'placeholder="Search topics...">'
         f'<a href="/{token}/" class="nav-link">Q&A Archive</a>'
         f'<a href="/{token}/kg/" class="nav-link">🕸 KG</a>'
-        f'<a href="/{token}/notes/" class="nav-link">학습 노트</a>'
+        f'<a href="/{token}/notes/" class="nav-link">Note</a>'
         f'<a href="/{token}/universe/" class="nav-link">🌌 Universe</a>'
         f'<a href="/{token}/commands/" class="nav-link">Commands</a>'
         '<a href="https://echodiary-eng.vercel.app/" class="nav-link" target="_blank" rel="noopener">Daily</a>'

@@ -751,7 +751,7 @@ def render_kg(token: str) -> int:
         "<header><h1>🕸 지식그래프</h1>",
         f"<div class='sub'><a class='nav' href='/{_esc(token)}/'>🧠 Archive</a> "
         f"<a class='nav' href='/{_esc(token)}/wiki/'>📚 Wiki</a> "
-        f"<a class='nav' href='/{_esc(token)}/notes/'>학습 노트</a> "
+        f"<a class='nav' href='/{_esc(token)}/notes/'>📒 Note</a> "
         f"<a class='nav' href='/{_esc(token)}/universe/'>🌌 Universe</a> "
         f"<a class='nav' href='/{_esc(token)}/commands/'>📋 Commands</a> "
         "<a class='nav' href='https://echodiary-eng.vercel.app/' "

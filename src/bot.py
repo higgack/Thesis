@@ -2224,7 +2224,7 @@ RAG는 질문마다 처음부터 검색·재조립 → 축적이 없음. LLM Wik
 • <b>/wiki_cost</b> 위키 전용 비용/사용량(오늘·7일·월·전체·일별추이·예상)
 • <b>/wiki_drain [한도=20000]</b> 임시 예산 올려서 큐 최대 소진(끝나면 즉시 ₩1000 복귀)
 • <b>/wiki_split &lt;토픽&gt;</b> 합쳐진 페이지 해체 → 개별 회사 페이지로 재분배(₩0, 다음 배치에 머지)
-• <b>/wiki_dedup [merge A :: B | merge_all]</b> 유사 중복 토픽 감지(접미사 정규화·부분문자열) — 목록 확인 후 개별/전체 병합
+• <b>/wiki_dedup [merge A :: B | merge_all]</b> 유사 중복 감지 — 개별/전체 병합, merge 여러 줄 붙여넣기=배치
 • <b>/wiki_prune → /wiki_prune_confirm</b> 정체 단일소스(1소스·30일+) 대량 정리 — 이름만 LLM 분류(~₩20)해 일반개념·노이즈(철학/차트/웹3류)만 삭제 후보로 제시, 기업·고유명사는 보존. 목록 확인 후 confirm으로 일괄 영구 삭제(재생성 차단, 10분 유효)
 • <b>/wiki_prune keep_all</b> 삭제 없이 현재 정체 전부 '보존 확정'(₩0) — lint 정체 목록에서 영구 제외, 새로 정체되는 토픽만 계속 표시. 해제는 data/wiki_lint_ack.json 수동 편집
 • <b>/wiki_fix → /wiki_fix_confirm</b> 모순(⚠️ 검토 필요) 페이지 일괄 재통합 — LLM이 페이지를 다시 써서 시점 차이는 시간순으로 본문 흡수, 진짜 모순만 잔존. 페이지당 ~₩55 (자동 배치 예산과 별도, purpose=wiki_fix). 원본 절반 이하 출력은 손실 가드로 스킵
@@ -13491,6 +13491,36 @@ async def cmd_wiki_dedup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return
     args_raw = " ".join(ctx.args or []).strip()
+
+    # 배치 모드 (2026-08-27): 병합 목록을 여러 줄로 한 번에 붙여넣으면
+    # ctx.args 가 전부 한 명령의 인자로 합쳐져 '::'가 여러 개가 되고
+    # 사용법 오류만 났다. 원문 텍스트를 줄 단위로 파싱해 "merge A :: B"
+    # 를 전부 모아 순차 병합한다. 한 줄이면 아래 기존 경로(상세 응답).
+    _batch = []
+    for _ln in (update.message.text or "").splitlines():
+        _ln = re.sub(r"^/wiki_dedup(@\w+)?\s*", "", _ln.strip())
+        if _ln.lower().startswith("merge ") and "::" in _ln:
+            _parts = _ln[6:].split("::")
+            if len(_parts) == 2 and _parts[0].strip() and _parts[1].strip():
+                _batch.append((_parts[0].strip(), _parts[1].strip()))
+    if len(_batch) > 1:
+        await update.message.reply_text(
+            f"🔄 병합 배치 시작 — {len(_batch)}건 (순차 처리)")
+        ok_n, errs = 0, []
+        for keep, absorb in _batch:
+            res = await asyncio.to_thread(wiki.merge_topics, keep, absorb)
+            if res.get("error"):
+                errs.append(f"• {absorb} → {keep}: {res['error']}")
+            else:
+                ok_n += 1
+        out = [f"✅ 배치 병합 완료: {ok_n}/{len(_batch)}건"]
+        if errs:
+            out.append("")
+            out.append("⚠️ 실패 목록:")
+            out.extend(errs)
+        for chunk in _split_for_telegram("\n".join(out)):
+            await update.message.reply_text(chunk)
+        return
 
     if args_raw.lower() == "merge_all":
         await update.message.reply_text("🔄 전체 병합 시작...")

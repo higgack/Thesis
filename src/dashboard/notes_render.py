@@ -261,6 +261,8 @@ border:1px solid rgba(8,145,178,.4)}
 border:1px solid rgba(79,70,229,.4)}
 .cat-투자론{background:rgba(101,163,13,.15);color:#65a30d;
 border:1px solid rgba(101,163,13,.4)}
+.cat-코인{background:rgba(13,148,136,.15);color:#0d9488;
+border:1px solid rgba(13,148,136,.4)}
 .cat-반도체{background:rgba(249,115,22,.15);color:#ea580c;
 border:1px solid rgba(249,115,22,.4)}
 .cat-AI{background:rgba(168,85,247,.15);color:#9333ea;
@@ -279,6 +281,7 @@ border:1px solid var(--border)}
 [data-theme=dark] .cat-산업{color:#22d3ee}
 [data-theme=dark] .cat-전략{color:#818cf8}
 [data-theme=dark] .cat-투자론{color:#a3e635}
+[data-theme=dark] .cat-코인{color:#2dd4bf}
 [data-theme=dark] .cat-반도체{color:#fb923c}
 [data-theme=dark] .cat-AI{color:#c084fc}
 [data-theme=dark] .cat-스터디{color:#f472b6}
@@ -673,7 +676,7 @@ _INDEX_JS = r"""
   // 종류별 manual override: click the badge to cycle through all cats.
   // Optimistic update; POST locks it server-side so auto-reclassify
   // won't overwrite. Revert on failure.
-  var CATS = ['종목','산업','전략','투자론','스터디','반도체','AI','공부','대학원','부동산','그외'];
+  var CATS = ['종목','산업','전략','투자론','스터디','반도체','AI','코인','공부','대학원','부동산','그외'];
   function setCat(row, badge, cat){
     row.dataset.cat = cat;
     badge.textContent = cat;
@@ -793,7 +796,7 @@ def _render_index(token: str, notes: list[dict],
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
             f"<span class='cat cat-{_esc(cat)}' "
             f"title='클릭: 종류 변경 "
-            f"(종목↔산업↔전략↔투자론↔스터디↔반도체↔AI↔공부↔대학원↔부동산↔그외)'>"
+            f"(종목↔산업↔전략↔투자론↔스터디↔반도체↔AI↔코인↔공부↔대학원↔부동산↔그외)'>"
             f"{_esc(cat)}</span>"
             f"<span class='stype'>{_esc(n.get('source_type') or '')}</span>"
             f"<span class='meta'>학습 {_esc(learned)}</span>"
@@ -808,8 +811,8 @@ def _render_index(token: str, notes: list[dict],
                     "— %s", ", ".join(f"{k}×{v}" for k, v in
                                       sorted(unknown_types.items())))
     return "\n".join([
-        _head("학습 노트"), "</head><body><div class='layout'>",
-        "<header><h1>학습 노트</h1>",
+        _head("Note"), "</head><body><div class='layout'>",
+        "<header><h1>📒 Note</h1>",
         f"<div class='sub'><a class='nav' href='/{_esc(token)}/'>🧠 Archive</a> "
         f"<a class='nav' href='/{_esc(token)}/kg/'>🕸 KG</a> "
         f"<a class='nav' href='/{_esc(token)}/wiki/'>📚 Wiki</a> "
@@ -853,6 +856,7 @@ def _render_index(token: str, notes: list[dict],
         "<button class='fbtn fcat' data-cat='스터디'>👥 스터디</button>"
         "<button class='fbtn fcat' data-cat='반도체'>🔬 반도체</button>"
         "<button class='fbtn fcat' data-cat='AI'>🤖 AI</button>"
+        "<button class='fbtn fcat' data-cat='코인'>🪙 코인</button>"
         "<button class='fbtn fcat' data-cat='공부'>📚 공부</button>"
         "<button class='fbtn fcat' data-cat='대학원'>🎓 대학원</button>"
         "<button class='fbtn fcat' data-cat='부동산'>🏠 부동산</button>"
