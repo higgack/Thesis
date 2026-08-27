@@ -1050,7 +1050,16 @@ def render_notes(token: str) -> int:
             # burned constant CPU+IO for identical bytes. First tick per
             # process still writes everything (cache empty) so template
             # changes roll out on deploy.
-            stamp = str(n.get("updated") or "")
+            # The md file's mtime rides along (2026-08-27): an in-place
+            # .md repair — the mermaid sanitizer backfill — changed no
+            # row, so `updated` alone skipped every page and the KB note
+            # kept serving its broken diagram until the next restart.
+            # One stat() per note, and only on sig-changed ticks.
+            try:
+                _md_mt = Path(full.get("md_path") or "").stat().st_mtime_ns
+            except OSError:
+                _md_mt = 0
+            stamp = f"{n.get('updated') or ''}:{_md_mt}"
             fname = base / f"note-{n['id']}.html"
             if _PAGE_STAMPS.get(n["id"]) == stamp and fname.exists():
                 continue
