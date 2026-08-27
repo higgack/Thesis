@@ -178,13 +178,42 @@ class Handler(SimpleHTTPRequestHandler):
         return False
 
     def end_headers(self):
-        # Static dashboard pages are regenerated in place every ~15s. Without
-        # forcing revalidation, the browser serves a cached copy so a
-        # just-deleted note/card looks like it "came back" until a hard
-        # refresh (Ctrl+Shift+R). no-cache still allows a cheap 304 when the
-        # file is unchanged — it only forces the browser to check first.
-        self.send_header("Cache-Control", "no-cache, must-revalidate")
+        # Static dashboard pages are regenerated in place every ~15s, so the
+        # browser must never show a stale copy: a just-deleted note or a
+        # just-changed 종류 badge looked like it "came back" on refresh.
+        #
+        # no-cache was supposed to handle that (revalidate, then 304 when
+        # unchanged) but did not in practice — a category edit that was
+        # confirmed correct in BOTH notes.db and the served index.html still
+        # rendered with the old badge for the user (2026-08-28). Whatever the
+        # browser was doing with the conditional request, the cheap 304 is
+        # not worth another hour of "the server is right but the screen is
+        # wrong", which has now cost us twice in one day (mermaid repair,
+        # then this). no-store settles it: HTML is always refetched.
+        #
+        # Cost is small and bounded: these are same-LAN-ish fetches of files
+        # that genuinely change every few seconds, and only documents get
+        # this — there are no static assets served from here (CSS/JS are
+        # inlined, libraries come from a CDN with its own caching).
+        self.send_header("Cache-Control", "no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         super().end_headers()
+
+    def send_head(self):
+        # SimpleHTTPRequestHandler answers If-Modified-Since with a 304 of
+        # its own, before any of our headers matter — so a browser holding
+        # a cached page still got "unchanged" whenever the file's mtime
+        # happened to match, which is exactly the stale-badge symptom.
+        # Drop the conditional header so every document request is a full
+        # 200. Verified: with it left in place a repeat request returned
+        # 304 even under no-store.
+        for _h in ("If-Modified-Since", "If-None-Match"):
+            try:
+                del self.headers[_h]
+            except Exception:
+                pass
+        return super().send_head()
 
     def _send_json(self, obj, code: int = 200, cors: bool = False):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
