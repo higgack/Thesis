@@ -95,6 +95,97 @@ def _stash_pending(msg) -> str:
     return pid
 
 
+# 클릭된 작업의 영속 큐. 클릭 즉시 여기 기록되고, 워커가 한 건씩
+# 처리 완료 후에만 지운다 — 대기 중 재시작이 와도 부팅 때 이어서 처리
+# ("앞에 꺼 끝나면 내가 명령한 거 순차적으로, 신경 안 쓰게" — 사용자
+# 요청 2026-08-27; 직전 버전은 큐가 메모리라 재시작에 또 잃었다).
+_MODE_QUEUE: list[dict] = []
+_QUEUE_PATH = config.DATA_DIR / "notes_mode_queue.json"
+_QUEUE_LOADED = False
+_DRAINING = False
+
+
+def _persist_queue() -> None:
+    import json as _j
+    import os as _os
+    try:
+        tmp = _QUEUE_PATH.with_suffix(".tmp")
+        tmp.write_text(_j.dumps(_MODE_QUEUE, ensure_ascii=False),
+                       encoding="utf-8")
+        _os.replace(tmp, _QUEUE_PATH)
+    except Exception:
+        log.warning("notes mode queue persist failed", exc_info=True)
+
+
+def _load_queue() -> None:
+    global _QUEUE_LOADED
+    if _QUEUE_LOADED:
+        return
+    _QUEUE_LOADED = True
+    import json as _j
+    try:
+        if _QUEUE_PATH.exists():
+            d = _j.loads(_QUEUE_PATH.read_text(encoding="utf-8"))
+            if isinstance(d, list):
+                _MODE_QUEUE.extend(x for x in d if isinstance(x, dict))
+    except Exception:
+        log.warning("notes mode queue load failed", exc_info=True)
+
+
+async def _drain_mode_queue(bot) -> None:
+    """큐를 앞에서부터 한 건씩. 완료 후에만 큐에서 제거하므로 처리 중
+    재시작이 와도 그 건부터 다시 시작한다. 한 건의 실패는 표시만 하고
+    다음 건으로 넘어간다 — 큐 전체가 한 건에 볼모잡히지 않게."""
+    global _DRAINING
+    if _DRAINING:
+        return
+    _DRAINING = True
+    import types as _types
+    try:
+        while _MODE_QUEUE:
+            job = _MODE_QUEUE[0]
+            prog = None
+            if job.get("q_message_id"):
+                prog = _types.SimpleNamespace(
+                    chat_id=job.get("q_chat_id") or config.TELEGRAM_OWNER_ID,
+                    message_id=job["q_message_id"])
+                try:
+                    await bot.edit_message_text(
+                        f"📒 노트 만드는 중… "
+                        f"({'📚 책 모드' if job.get('mode') == 'book' else '📝 일반'})",
+                        chat_id=prog.chat_id, message_id=prog.message_id)
+                except Exception:
+                    pass
+            try:
+                await _process_study_post(
+                    _msg_from_payload(job),
+                    _types.SimpleNamespace(bot=bot),
+                    mode="book" if job.get("mode") == "book" else "normal",
+                    progress_msg=prog)
+            except Exception:
+                log.exception("notes mode queue item failed")
+                if prog is not None:
+                    try:
+                        await bot.edit_message_text(
+                            "⚠️ 처리 실패 — 이 자료만 다시 올려줘. (뒤 항목은 계속 진행)",
+                            chat_id=prog.chat_id, message_id=prog.message_id)
+                    except Exception:
+                        pass
+            _MODE_QUEUE.pop(0)
+            _persist_queue()
+    finally:
+        _DRAINING = False
+
+
+async def _resume_queue_job(context) -> None:
+    """부팅 후 남은 큐 재개 (register 에서 예약)."""
+    _load_queue()
+    if _MODE_QUEUE:
+        log.info("notes mode queue: resuming %d item(s) after restart",
+                 len(_MODE_QUEUE))
+        await _drain_mode_queue(context.bot)
+
+
 def _msg_from_payload(payload: dict):
     """디스크에서 복원한 payload 를 _process_study_post 가 읽는 msg 형태로.
     질문은 문서/URL/텍스트에만 던지므로 그 세 필드만 있으면 된다."""
@@ -267,18 +358,23 @@ async def on_notemode_callback(update: Update,
         except Exception:
             pass
         return
-    msg = _msg_from_payload(entry)
     label = "📚 책 모드" if mode == "book" else "📝 일반"
+    # 직접 처리하지 않고 영속 큐에 적재 — 순서 보장 + 재시작 생존.
+    _load_queue()
+    qmsg = getattr(q, "message", None)
+    entry["mode"] = "book" if mode == "book" else "normal"
+    entry["q_chat_id"] = getattr(qmsg, "chat_id", None)
+    entry["q_message_id"] = getattr(qmsg, "message_id", None)
+    _MODE_QUEUE.append(entry)
+    _persist_queue()
+    pos = len(_MODE_QUEUE)
     try:
-        await q.edit_message_text(f"{label} 선택됨 — 노트 만드는 중…")
+        await q.edit_message_text(
+            f"{label} 선택됨 — 대기열 {pos}번째 (순서대로 자동 처리)")
     except Exception:
         pass
-    # 질문 메시지를 진행 메시지로 재사용 — 안 넘기면 처리부가 새 진행
-    # 메시지를 만들어 그쪽만 완료로 바뀌고, 이 메시지는 "만드는 중…"에
-    # 영영 멈춰 있었다 (2026-08-27 사용자 리포트).
-    await _process_study_post(msg, ctx,
-                              mode="book" if mode == "book" else "normal",
-                              progress_msg=getattr(q, "message", None))
+    import asyncio as _aio
+    _aio.get_running_loop().create_task(_drain_mode_queue(ctx.bot))
 
 
 # 대형 자료 여러 개가 동시에 돌면 2 vCPU 에서 서로 밟고 재시작을
@@ -525,4 +621,7 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("notes_guide", cmd_notes_guide))
     app.add_handler(CallbackQueryHandler(on_notemode_callback,
                                          pattern=r"^notemode:"))
+    # 재시작 시 남은 방식 큐 이어서 처리 (부팅 안정화 뒤 15초).
+    app.job_queue.run_once(_resume_queue_job, when=15,
+                           name="notes_mode_queue_resume")
     log.info("study-notes telegram handlers registered")
