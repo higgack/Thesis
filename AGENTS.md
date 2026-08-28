@@ -1,19 +1,17 @@
 # Agent instructions for this repo (higgack/thesis)
 
-Single source of truth for any AI coding agent working on this repo —
-Claude Code, GitHub Copilot, or anything else. Consolidated 2026-08-09
-(CodeWhale-inspired single-source pattern) from what used to be two
-separately-maintained files (`CLAUDE.md` + `.github/copilot-instructions.md`)
-that were drifting apart. Both of those files now just point here —
-this is the one to read and the one to edit.
+Single source of truth for any AI coding agent here — Claude Code,
+GitHub Copilot, anything else. `CLAUDE.md` and
+`.github/copilot-instructions.md` are thin pointers to this file;
+`AGENT_GUIDE.md` (Korean communication-style rules) is a different
+subject and deliberately stays out. Why it was consolidated: see
+`## Branch / push policy`.
 
 Standing rules + project facts that must survive context compaction.
 Compact by design — every line is a rule or a fact, not prose.
-
-A separate file, `AGENT_GUIDE.md`, defines a different thing (Korean,
-non-developer-audience *communication style* rules — how to phrase
-answers) and is intentionally NOT folded in here; it doesn't overlap
-with the operational rules below.
+Layout is deliberate: rules you apply every turn are at the TOP,
+lookup tables at the BOTTOM, long incident narratives in between —
+the middle of a long file is what gets skimmed.
 
 ## ⛔ Commit/push gate (TOP RULE — violated repeatedly)
 
@@ -48,15 +46,18 @@ with the operational rules below.
 
 ## ✅ Pre-push verification (block on every push)
 
-Run `bash scripts/preflight.sh` FIRST — automates AST syntax (changed
-.py), ruff F821, `_HELP_TEXT` ≤4000, **Telegram-send safety for every
+Run `bash scripts/preflight.sh` FIRST — automates syntax via `compile()`
+(changed .py — NOT `ast.parse`, which passes symtable-stage SyntaxErrors
+like "used prior to global declaration"; 2026-08-27), ruff F821,
+`_HELP_TEXT` ≤4000, **Telegram-send safety for every
 guide constant** (splits each with `_split_for_telegram`'s exact logic
 and fails if any chunk exceeds 4000 or leaves an HTML tag open across
 the split — a tag left open makes Telegram reject that message; this
 used to only check the constant was non-empty, 2026-08-20), handler↔help
 cross-check (scans **all of `src/`**, not just `bot.py` — `notes/
 telegram.py` registers `/notes` + `/notes_guide`, and they were being
-skipped while the check reported "all 112 traceable"). Exit 1 =
+skipped while the check then reported "all 112 traceable"; 114 today).
+Exit 1 =
 BLOCKING (syntax/help cap/guide-send), don't push. F821 + handler
 warnings = human glance (lazy-import / forward-ref `"ET.Element"`
 strings are expected false positives). `--all` scans every tracked .py.
@@ -67,7 +68,8 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
   sends NOTHING when nothing changed). `\n` in double quotes is LITERAL —
   use `$'\n'`, printf, or a real newline. State files must be writable by
   cron user, not cleaned by git/docker, atomic write+read. `bash -n`.
-- **Python**: `ast.parse` each modified .py; trace one happy + one error
+- **Python**: preflight already `compile()`s every changed .py — never
+  downgrade that to `ast.parse`. By hand: trace one happy + one error
   path; wrap optional-dep imports in try/except.
 - **Cron**: imagine every-minute-for-24h — no spam (fix dedup first).
   List every cron entry touching the same resource; the loser sends nothing.
@@ -81,6 +83,96 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
   double-quoted string · tell the user "run this yourself".
 - When in doubt → STOP, ASK before pushing.
 
+## 🔍 완료 보고 전 검증 (verify-before-report)
+
+"완료/배포됨/통과/확인됨" 같은 상태를 보고하기 전, 이번 세션의 실제 tool
+결과와 대조한다. 근거 없이 좋게 말하지 않는다:
+- 확인 못 한 항목은 "미검증"이라고 명시. 테스트/스크립트가 실패했으면
+  실제 출력(에러 메시지)을 인용. 스킵한 단계는 스킵했다고 말할 것.
+- 백그라운드 작업(예: `/wiki_fix_confirm`) 진행상황 보고도 동일 —
+  progress_cb가 실제로 찍은 값만 보고, 추정치를 완료로 포장하지 않는다.
+- 배포 완료 보고는 VM의 실제 "✅ 배포 완료 <sha>" 알림 기준 (VM ops
+  섹션의 auto_pull.sh 동작과 일치해야 함), 푸시만 하고 완료라 부르지 않기.
+
+## 🪶 Token-lean output (Ponytail lazy-first, 2026-07-10)
+
+같은 아웃풋을 최소 토큰으로. 코드/응답 생성 전 사다리 순서로 자문 —
+위 단계에서 해결되면 아래로 내려가지 않는다:
+1. 안 만들어도 되나? (기존 동작·명령으로 이미 충분한지)
+2. 코드베이스에 이미 있나? — grep 먼저, 재구현 금지
+3. stdlib·기존 의존성으로 되나? (새 패키지 추가는 최후)
+4. 한 줄/최소 diff로 되나?
+5. 그제서야 최소 구현
+- 부분 수정(Edit) > 통짜 파일 재생성. bot.py(~14.7k줄) 통독 금지 —
+  Grep/Explore(quick)로 필요한 함수만.
+- 설명은 결론 먼저, 필요한 만큼만; 안 갈 선택지 나열 금지.
+- 절약 대상 아님(non-negotiable): 검증·에러처리·보안·preflight·
+  단계별 VM 안내(위 VM ops 규칙) — 여기서 줄이면 버그로 더 비쌈.
+
+## Standing rules
+
+- Review first; commit only when asked (the gate above wins over any
+  workflow assumption).
+- **환경·비용·"X는 안 됨" 단정엔 날짜 태그** `(YYYY-MM-DD)` 필수; 관련
+  작업을 다시 만질 때마다(최소 분기 1회) 의심·재검증. 쌓이기만 하는
+  negative claim은 stale해진다 — 실제로 "₩10만/mo" 비용 가정이 4배 틀린
+  채 남아 있었음. wiki는 `wiki.lint()`가 stale single-source >30d를 이미
+  자동 플래그(중복 구현 금지).
+- **라이브러리·환경 능력 단정 전 실제 확인.** "이 라이브러리엔 그 기능이
+  없다" / "로그에 그런 건 없다"고 말하기 전에 설치된 버전의 문서·타입·
+  소스를 직접 읽는다. **grep이 빈 결과를 내면 먼저 패턴을 의심할 것** —
+  코드가 실제로 찍는 문자열을 읽고 다시 검색한다 (2026-08-21에
+  `unsupported url` / `미지원`으로 세 번 헛짚었는데, 실제 로그는
+  `unsupported 0`이었고 한글 문구는 로그가 아니라 텔레그램 메시지였다).
+  직접 구현하거나 패키지를 추가하기 전에 이미 설치된 의존성부터 확인.
+- **사용자가 보는 층에서 확인하고 보고한다.** 서버·DB·파일이 맞는 것과
+  화면이 맞는 것은 다르다. 2026-08-27 하루에 두 번 같은 실패를 했다 —
+  mermaid 복구 후 md 는 깨끗한데 페이지는 옛것(증분 캐시가 md 변경을
+  안 봄), 종류 배지 변경 후 DB·서빙 HTML 둘 다 맞는데 브라우저가
+  304 캐시본. 둘 다 "고쳤다"고 보고했다가 사용자가 반증했다. 수정 전에
+  증상을 먼저 재현하고, 수정 후 **같은 방법으로** 다시 확인할 것.
+- **LLM 프롬프트는 규칙을 더할수록 나빠질 수 있다.** 노트 치트시트에
+  정렬·표 형식·셀 길이 규칙을 붙였더니, 모델이 조건을 만족시키는 대신
+  섹션을 통째로 "해당 없음"으로 비웠다(2026-08-27, 사용자 요청으로 즉시
+  원복). 프롬프트 품질은 규칙을 조이는 것보다 좋은 예시 하나가 안전하고,
+  규칙을 넣었으면 다음 산출물을 반드시 눈으로 확인한다.
+- **커밋 제목은 50자 이하**(하드 한계 72), 명령형("Fix X", "Fixed/Adds"
+  아님), 끝에 마침표 없음. 검사: "If applied, this commit will <제목>"이
+  자연스러우면 통과. 본문은 지금처럼 무엇을·왜(어떻게는 코드가 설명).
+  2026-08-27 측정: 최근 40개 중 50자 이하가 1개뿐이라 `git log --oneline`
+  이 읽히지 않는다.
+- **폴백·호환 경로는 지우지 않는다.** 평소 안 타는 코드 대부분이 실패
+  경로다: `.bak` 로드 폴백, `_triaged_pdf_extract`→전체 로더 폴백("never
+  makes ingest worse"), LLM 재작성 50% 손실 가드, 리랭커 폴백,
+  `content_hash=NULL` 레거시 처리, `WIKI_BATCH_HOUR` back-compat, KG 부팅
+  스윕(early exit 금지). "쓰이지 않는 코드"로 보여도 삭제 전에 어떤 사고가
+  이걸 만들었는지 먼저 찾을 것. 신규 프로젝트용 "하위 호환 버리고 단순화"
+  조언은 사고 이력이 쌓인 이 운영 시스템엔 그대로 적용되지 않는다.
+- Every ingest-pipeline change applies to new ingest AND the retry queue
+  — never partial.
+- Update `_HELP_TEXT` (`src/bot.py`) on add/rename/remove command, policy
+  change, or model-id change. Keep ≤4000 chars (single Telegram message).
+- **Never drop a command from the `_HELP_TEXT` listing.** Tight on space →
+  condense the prose sections first (핵심·트리거·모델·Retry·문제해결·백엔드;
+  info-only prose was already purged 2026-07-02 — help is commands+URLs+운영
+  info now); touch command listings only as a last resort + with explicit
+  approval.
+- `_HELP_TEXT` model ids must match `src/config.py`/`.env`; update them in
+  the same commit as any model upgrade.
+- **Help + ALL guide constants move together** on any command/feature/
+  policy change: `_HELP_TEXT` (≤4000) · `_LOOKUP_GUIDE_TEXT`
+  (`/guide_lookup`, all commands) · `_PATENTS_GUIDE_TEXT` · `_PAPERS_GUIDE_TEXT`
+  · `_WIKI_GUIDE_TEXT`. Patent change→patents guide, paper→papers,
+  wiki→wiki (all if it spans multiple).
+- `.env` (VM) holds secrets (bot token, Google key, GitHub PAT, dashboard
+  creds). Never echo it; if the user pastes it, warn + recommend rotation.
+- **Dashboard ⇄ Telegram parity (user request, 2026-06-24):** a new
+  *user-facing knowledge/lookup feature* (search, notes, wiki, KG — things
+  you *view/query*) must be surfaced on BOTH Telegram and the dashboard,
+  not Telegram-only. Wire a dashboard render + nav link in the same change.
+  Pure ops/admin commands (`/failed`, `/queue`, ack flows, etc.) are
+  Telegram-only — no dashboard view needed.
+
 ## VM ops — always step-by-step
 
 Any command the user must run manually MUST include: (1) exact
@@ -91,40 +183,6 @@ every keystroke — cursor move, delete, save, quit, intermediate prompts;
 output. Never "open editor and remove the line" / "save and exit" /
 "should work now".
 
-## Stuck ingest slots → auto-recover (don't revert to alert-only)
-
-`_check_stuck_ingests` (`bot.py`, 10-min tick) escalates now, it does
-not just alert. Slot older than `_STUCK_INGEST_ALERT_SEC` (30 min,
-double the 15-min per-message `wait_for`) → Telegram alert; still stuck
-at `_STUCK_INGEST_RECOVER_SEC` (60 min) **or every slot occupied by
-stuck jobs** → auto-recovery: stuck items + the retry queue go to
-`/failed` with their retry payloads (🔁 replay intact), orphan-scan
-suppress marker set, `os._exit(0)` → Docker restarts.
-
-- **Why the 15-min `wait_for` can't be relied on**: it is a LOOP timer.
-  A blocked/GIL-starved event loop (the recurring heavy-ingest pattern)
-  never fires it, so the slot is held forever and at 4/4 ingest dies
-  silently. Cancellation can't fix it either — a thread wedged in
-  native code inside `to_thread`/`_CHROMA_LOCK` ignores cancel, which
-  is exactly why `/queue_panic` exists and why recovery = restart.
-- It was deliberately alert-only until 2026-08-20 ("first occurrence
-  should be diagnosed, not masked"). That occurrence happened — 34 min
-  at stage `(미기록)`, 4/4 held, ingest fully stopped — so the
-  diagnose-first phase is over. Don't downgrade it back.
-- `_register_ingest` stores `retry_payload` for this; a slot
-  force-released without one is a silent data drop.
-
-## Actionable alerts → ack-button pattern
-
-Deliberate-action alerts (paddle release, ban lifted, cost over budget…)
-route through `_send_actionable_alert` (`src/bot.py`): records in
-`src/store/notify_acks.py` (atomic JSON), sends `[✅ 확인 / 알람 정지]`
-button, hourly `_resend_unacked_alerts` re-fires every 24h until tapped,
-`on_ack_callback` (`^ack:`) flips + edits to "→ ✅ 확인됨, 알람 중단".
-Stable `notify_id` (e.g. `paddle_v3.4.0`, NO timestamps); dup ids refused
-so recurring checks don't spam. Never raw `ctx.bot.send_message`; never
-skip the hourly job.
-
 ## Automation-first
 
 "from now on / 매번 / 항상 / 자동으로 / 알아서" → cron · docker compose
@@ -132,50 +190,30 @@ service · APScheduler hook · git hook/Action. Never "run it yourself".
 Check existing `crontab -l` + `docker-compose.yml` first. If the user
 must do anything to keep it running, that's a bug.
 
-## Docker — service vs container names
+## Branch / push policy
 
-`docker compose <verb> <SERVICE>` uses bare service; `docker
-logs/rm/exec/inspect <CONTAINER>` uses full name:
+Deploy branch: `claude/personal-rag-knowledge-base-sLSvV`. Work commits
+go here; never push to a different branch without explicit permission.
 
-| service | container |
-|---|---|
-| `bot` | `thesis-bot-1` |
-| `forward-listener` | `thesis-forward-listener-1` |
-| `dashboard` | `thesis-dashboard-1` |
-| `mcp-server` | `thesis-mcp-server-1` |
-| `telegram-bot-api` (profile local-api) | `thesis-telegram-bot-api-1` |
-
-## MCP server (external AI clients — Claude Desktop/Copilot, 2026-07-29)
-
-`src/mcp_server/server.py`, port 8083, Streamable HTTP. Exposes 7
-read-only tools (`search_knowledge_base`, `list_wiki_topics`,
-`get_wiki_page`, `search_notes`, `get_note`, `kg_query`,
-`kg_top_entities`) over the RAG archive/wiki/notes/KG. Details + client
-config example in `README.md`.
-
-- **Deliberately no Chroma/semantic search** — `search_knowledge_base`/
-  `search_notes` are FTS5/substring keyword-only. A second
-  `chromadb.PersistentClient` in this process would ~double vector-index
-  RAM (the bot already carries 4GB+ from it) on the shared VM — user
-  chose keyword-only over that risk (2026-07-29). Don't silently add
-  Chroma here without re-raising the RAM tradeoff first.
-- **Auth**: single shared `MCP_TOKEN` (`.env`), checked as `Authorization:
-  Bearer` by hand-rolled middleware — NOT FastMCP's built-in `auth=`/
-  `token_verifier=` (that requires real OAuth resource-server metadata,
-  `issuer_url`+`resource_server_url` mandatory; wrong tool for one shared
-  secret). Empty `MCP_TOKEN` → server 503s every request, fail-closed.
-- `mcp` pinned `>=1.29.0,<2.0.0` in `pyproject.toml` — 2.0.0 restructured
-  the package (no `mcp.server.fastmcp.FastMCP` in the same shape) and is
-  too new to trust yet. Don't bump past 2.0 without re-verifying the API.
-- Every tool is `async def` wrapping its actual sqlite/file work in
-  `asyncio.to_thread(...)` — FastMCP runs plain `def` tools directly on
-  the event loop, so a slow sqlite call would otherwise stall the whole
-  server for every concurrent client, not just the slow request.
-- Read-only by design — never add a write/mutate tool here without
-  explicit request (external agents calling this shouldn't be able to
-  change the knowledge base, only query it). One caveat: `get_wiki_page`
-  → `wiki.resolve_topic()` can save a topic alias as a side effect on a
-  seed/CJK-translation match — the knowledge content itself never changes.
+**Repo is SHARED with another AI agent (GitHub Copilot, user's work
+account `Noah_Lee@amat.com`) on this SAME deploy branch** — confirmed
+by user 2026-07-29 ("지켜봐, 나중엔 그쪽으로 넘어갈 것" — expect
+ongoing/increasing Copilot commits here; don't intervene unless asked).
+- Before pushing to the deploy branch: `git fetch` then try `git merge
+  --ff-only`. If that fails the branch diverged (Copilot pushed) —
+  never force-push or discard those commits. Inspect with `git log` /
+  `git diff`, dry-run with `git merge-tree <base> <ours> <theirs>` to
+  check for real conflicts, then `git merge --no-ff` (ask the user
+  first if anything looks contentious). Already happened repeatedly
+  cleanly (first: 2026-07-29, commit 9821a7b) — same drill each time.
+- `CLAUDE.md` and `.github/copilot-instructions.md` used to be two
+  separately-maintained files covering the same rules and had drifted
+  apart; user declined to reconcile them on 2026-07-29. Revisited and
+  **consolidated 2026-08-09** (user request, after reviewing CodeWhale's
+  single-`AGENTS.md` pattern): this file (`AGENTS.md`) is now the one
+  canonical source, and both of those files are thin pointers to it.
+  `AGENT_GUIDE.md` (Korean communication-style rules, different subject
+  matter, no factual overlap) was deliberately left out of the merge.
 
 ## Auto-deploy is ACTIVE — never suggest manual git pull
 
@@ -277,148 +315,88 @@ fetch branch → `LOCAL==REMOTE` silent exit → else send "🚀 배포 시작" 
   --force-recreate <svc>` (restart doesn't re-read env_file). `docker
   logs` for diagnostics is read-only, fine to suggest.
 
-## Branch / push policy
+## Stuck ingest slots → auto-recover (don't revert to alert-only)
 
-Deploy branch: `claude/personal-rag-knowledge-base-sLSvV`. Work commits
-go here; never push to a different branch without explicit permission.
+`_check_stuck_ingests` (`bot.py`, 10-min tick) escalates now, it does
+not just alert. Both thresholds are DERIVED from
+`_INGEST_TIMEOUT_SEC` — don't hardcode minutes here again. Slot older
+than `_STUCK_INGEST_ALERT_SEC` (= 2 ×, so 50 min at today's 1500s) →
+Telegram alert; still stuck at `_STUCK_INGEST_RECOVER_SEC` (= 4 ×, 100
+min) **or every slot occupied by stuck jobs** → auto-recovery: stuck
+items + the retry queue go to
+`/failed` with their retry payloads (🔁 replay intact), orphan-scan
+suppress marker set, `os._exit(0)` → Docker restarts.
 
-**Repo is SHARED with another AI agent (GitHub Copilot, user's work
-account `Noah_Lee@amat.com`) on this SAME deploy branch** — confirmed
-by user 2026-07-29 ("지켜봐, 나중엔 그쪽으로 넘어갈 것" — expect
-ongoing/increasing Copilot commits here; don't intervene unless asked).
-- Before pushing to the deploy branch: `git fetch` then try `git merge
-  --ff-only`. If that fails the branch diverged (Copilot pushed) —
-  never force-push or discard those commits. Inspect with `git log` /
-  `git diff`, dry-run with `git merge-tree <base> <ours> <theirs>` to
-  check for real conflicts, then `git merge --no-ff` (ask the user
-  first if anything looks contentious). Already happened repeatedly
-  cleanly (first: 2026-07-29, commit 9821a7b) — same drill each time.
-- `CLAUDE.md` and `.github/copilot-instructions.md` used to be two
-  separately-maintained files covering the same rules and had drifted
-  apart; user declined to reconcile them on 2026-07-29. Revisited and
-  **consolidated 2026-08-09** (user request, after reviewing CodeWhale's
-  single-`AGENTS.md` pattern): this file (`AGENTS.md`) is now the one
-  canonical source, and both of those files are thin pointers to it.
-  `AGENT_GUIDE.md` (Korean communication-style rules, different subject
-  matter, no factual overlap) was deliberately left out of the merge.
+- **Why the per-message `wait_for` can't be relied on**: it is a LOOP
+  timer. A blocked/GIL-starved event loop (the recurring heavy-ingest
+  pattern) never fires it, so the slot is held forever and at full
+  capacity (3/3 today) ingest dies silently. Cancellation can't fix it
+  either — a thread wedged in
+  native code inside `to_thread`/`_CHROMA_LOCK` ignores cancel, which
+  is exactly why `/queue_panic` exists and why recovery = restart.
+- It was deliberately alert-only until 2026-08-20 ("first occurrence
+  should be diagnosed, not masked"). That occurrence happened — 34 min
+  at stage `(미기록)`, 4/4 held, ingest fully stopped — so the
+  diagnose-first phase is over. Don't downgrade it back.
+- `_register_ingest` stores `retry_payload` for this; a slot
+  force-released without one is a silent data drop.
 
-## Related repo you'll see referenced but should never need to touch
+## Actionable alerts → ack-button pattern
 
-`higgack/second-brain-vault` (private) is the Obsidian vault this bot
-syncs to. It is **not a code dependency of this repo** — no submodule, no
-clone, no build/test relationship. It's pure output: auto-generated
-markdown notes, nothing else.
+Deliberate-action alerts (paddle release, ban lifted, cost over budget…)
+route through `_send_actionable_alert` (`src/bot.py`): records in
+`src/store/notify_acks.py` (atomic JSON), sends `[✅ 확인 / 알람 정지]`
+button, hourly `_resend_unacked_alerts` re-fires every 24h until tapped,
+`on_ack_callback` (`^ack:`) flips + edits to "→ ✅ 확인됨, 알람 중단".
+Stable `notify_id` (e.g. `paddle_v3.4.0`, NO timestamps); dup ids refused
+so recurring checks don't spam. Never raw `ctx.bot.send_message`; never
+skip the hourly job.
 
-- **Connection is two env vars only**, set in `.env` on the production VM
-  (not present anywhere in this repo): `OBSIDIAN_VAULT_PATH` (a local
-  directory path inside the bot container, e.g. `/data/vault`) and
-  `OBSIDIAN_GIT_REMOTE` (a `https://x-access-token:<PAT>@github.com/
-  higgack/second-brain-vault.git` URL).
-- **Who writes to it**: `src/store/obsidian.py`. Every ingested doc gets
-  rendered as one markdown file (YAML frontmatter + `## Summary` /
-  `## Source` / `## Original`) under `SecondBrain/{Papers,Web,YouTube,
-  Notes,Misc}/`, then the bot itself runs `git add` + `git commit` + `git
-  push` directly against that repo in a background task (fire-and-forget —
-  a slow/hung remote must never block ingest; there's a push-failure
-  circuit breaker). The wiki batch job does the same via `commit_subtree`
-  in `src/store/wiki.py` for its own pages.
-- **What this means for you**: you will never need to clone, open, edit,
-  lint, or review `second-brain-vault` to work on this repo. If you see
-  unfamiliar auto-generated commits there (e.g. `"add: <title>"`), that's
-  the bot's own automated sync, not a human or agent edit. If a task
-  genuinely requires changing what gets written (frontmatter schema,
-  folder layout), the code to change is `src/store/obsidian.py` /
-  `src/store/wiki.py` in *this* repo — not the vault repo itself.
+## Resume-safety invariants
 
-## 🪶 Token-lean output (Ponytail lazy-first, 2026-07-10)
+All state files use `_atomic_write_json` (tmp→fsync→rename) + `.bak` load
+fallback. Live ingest entry points call `_enqueue_with_inflight` before
+the pipeline and `_finish_inflight(done/retry)` after (mid-kill
+recoverable). `docker-compose.yml` `stop_grace_period: 120s`. Any sqlite
+`_conn()` helper must be a real `@contextmanager` that both commits AND
+closes — a plain `sqlite3.Connection`'s own context manager only commits,
+never closes (`notes/store.py` leaked one per call this way until fixed
+2026-08-09; `kg.py`'s `_conn()` is the reference pattern to copy).
+- `documents.title_norm` (`meta.py`, added 2026-08-09) is a precomputed/
+  indexed copy of `_normalize_title(title)` that `find_by_normalized_title()`
+  dedup-lookup relies on instead of pulling up to 5000 rows and
+  normalising each in Python. Any code path that writes `documents.title`
+  outside `upsert_doc()`/`update_title()` (both already keep it in sync)
+  must set `title_norm` in the same statement or dedup silently goes
+  stale for that row — `init()` only backfills NULL rows (i.e. ones that
+  predate the column), not ones a raw UPDATE just made incorrect.
 
-같은 아웃풋을 최소 토큰으로. 코드/응답 생성 전 사다리 순서로 자문 —
-위 단계에서 해결되면 아래로 내려가지 않는다:
-1. 안 만들어도 되나? (기존 동작·명령으로 이미 충분한지)
-2. 코드베이스에 이미 있나? — grep 먼저, 재구현 금지
-3. stdlib·기존 의존성으로 되나? (새 패키지 추가는 최후)
-4. 한 줄/최소 diff로 되나?
-5. 그제서야 최소 구현
-- 부분 수정(Edit) > 통짜 파일 재생성. bot.py(~14k줄) 통독 금지 —
-  Grep/Explore(quick)로 필요한 함수만.
-- 설명은 결론 먼저, 필요한 만큼만; 안 갈 선택지 나열 금지.
-- 절약 대상 아님(non-negotiable): 검증·에러처리·보안·preflight·
-  단계별 VM 안내(위 VM ops 규칙) — 여기서 줄이면 버그로 더 비쌈.
+## Disk retention policies
 
-## 🔍 완료 보고 전 검증 (verify-before-report)
-
-"완료/배포됨/통과/확인됨" 같은 상태를 보고하기 전, 이번 세션의 실제 tool
-결과와 대조한다. 근거 없이 좋게 말하지 않는다:
-- 확인 못 한 항목은 "미검증"이라고 명시. 테스트/스크립트가 실패했으면
-  실제 출력(에러 메시지)을 인용. 스킵한 단계는 스킵했다고 말할 것.
-- 백그라운드 작업(예: `/wiki_fix_confirm`) 진행상황 보고도 동일 —
-  progress_cb가 실제로 찍은 값만 보고, 추정치를 완료로 포장하지 않는다.
-- 배포 완료 보고는 VM의 실제 "✅ 배포 완료 <sha>" 알림 기준 (VM ops
-  섹션의 auto_pull.sh 동작과 일치해야 함), 푸시만 하고 완료라 부르지 않기.
-
-## Standing rules
-
-- Review first; commit only when asked (the gate above wins over any
-  workflow assumption).
-- **환경·비용·"X는 안 됨" 단정엔 날짜 태그** `(YYYY-MM-DD)` 필수; 관련
-  작업을 다시 만질 때마다(최소 분기 1회) 의심·재검증. 쌓이기만 하는
-  negative claim은 stale해진다 — 실제로 "₩10만/mo" 비용 가정이 4배 틀린
-  채 남아 있었음. wiki는 `wiki.lint()`가 stale single-source >30d를 이미
-  자동 플래그(중복 구현 금지).
-- **라이브러리·환경 능력 단정 전 실제 확인.** "이 라이브러리엔 그 기능이
-  없다" / "로그에 그런 건 없다"고 말하기 전에 설치된 버전의 문서·타입·
-  소스를 직접 읽는다. **grep이 빈 결과를 내면 먼저 패턴을 의심할 것** —
-  코드가 실제로 찍는 문자열을 읽고 다시 검색한다 (2026-08-21에
-  `unsupported url` / `미지원`으로 세 번 헛짚었는데, 실제 로그는
-  `unsupported 0`이었고 한글 문구는 로그가 아니라 텔레그램 메시지였다).
-  직접 구현하거나 패키지를 추가하기 전에 이미 설치된 의존성부터 확인.
-- **사용자가 보는 층에서 확인하고 보고한다.** 서버·DB·파일이 맞는 것과
-  화면이 맞는 것은 다르다. 2026-08-27 하루에 두 번 같은 실패를 했다 —
-  mermaid 복구 후 md 는 깨끗한데 페이지는 옛것(증분 캐시가 md 변경을
-  안 봄), 종류 배지 변경 후 DB·서빙 HTML 둘 다 맞는데 브라우저가
-  304 캐시본. 둘 다 "고쳤다"고 보고했다가 사용자가 반증했다. 수정 전에
-  증상을 먼저 재현하고, 수정 후 **같은 방법으로** 다시 확인할 것.
-- **LLM 프롬프트는 규칙을 더할수록 나빠질 수 있다.** 노트 치트시트에
-  정렬·표 형식·셀 길이 규칙을 붙였더니, 모델이 조건을 만족시키는 대신
-  섹션을 통째로 "해당 없음"으로 비웠다(2026-08-27, 사용자 요청으로 즉시
-  원복). 프롬프트 품질은 규칙을 조이는 것보다 좋은 예시 하나가 안전하고,
-  규칙을 넣었으면 다음 산출물을 반드시 눈으로 확인한다.
-- **커밋 제목은 50자 이하**(하드 한계 72), 명령형("Fix X", "Fixed/Adds"
-  아님), 끝에 마침표 없음. 검사: "If applied, this commit will <제목>"이
-  자연스러우면 통과. 본문은 지금처럼 무엇을·왜(어떻게는 코드가 설명).
-  2026-08-27 측정: 최근 40개 중 50자 이하가 1개뿐이라 `git log --oneline`
-  이 읽히지 않는다.
-- **폴백·호환 경로는 지우지 않는다.** 평소 안 타는 코드 대부분이 실패
-  경로다: `.bak` 로드 폴백, `_triaged_pdf_extract`→전체 로더 폴백("never
-  makes ingest worse"), LLM 재작성 50% 손실 가드, 리랭커 폴백,
-  `content_hash=NULL` 레거시 처리, `WIKI_BATCH_HOUR` back-compat, KG 부팅
-  스윕(early exit 금지). "쓰이지 않는 코드"로 보여도 삭제 전에 어떤 사고가
-  이걸 만들었는지 먼저 찾을 것. 신규 프로젝트용 "하위 호환 버리고 단순화"
-  조언은 사고 이력이 쌓인 이 운영 시스템엔 그대로 적용되지 않는다.
-- Every ingest-pipeline change applies to new ingest AND the retry queue
-  — never partial.
-- Update `_HELP_TEXT` (`src/bot.py`) on add/rename/remove command, policy
-  change, or model-id change. Keep ≤4000 chars (single Telegram message).
-- **Never drop a command from the `_HELP_TEXT` listing.** Tight on space →
-  condense the prose sections first (핵심·트리거·모델·Retry·문제해결·백엔드;
-  info-only prose was already purged 2026-07-02 — help is commands+URLs+운영
-  info now); touch command listings only as a last resort + with explicit
-  approval.
-- `_HELP_TEXT` model ids must match `src/config.py`/`.env`; update them in
-  the same commit as any model upgrade.
-- **Help + ALL guide constants move together** on any command/feature/
-  policy change: `_HELP_TEXT` (≤4000) · `_LOOKUP_GUIDE_TEXT`
-  (`/guide_lookup`, all commands) · `_PATENTS_GUIDE_TEXT` · `_PAPERS_GUIDE_TEXT`
-  · `_WIKI_GUIDE_TEXT`. Patent change→patents guide, paper→papers,
-  wiki→wiki (all if it spans multiple).
-- `.env` (VM) holds secrets (bot token, Google key, GitHub PAT, dashboard
-  creds). Never echo it; if the user pastes it, warn + recommend rotation.
-- **Dashboard ⇄ Telegram parity (user request, 2026-06-24):** a new
-  *user-facing knowledge/lookup feature* (search, notes, wiki, KG — things
-  you *view/query*) must be surfaced on BOTH Telegram and the dashboard,
-  not Telegram-only. Wire a dashboard render + nav link in the same change.
-  Pure ops/admin commands (`/failed`, `/queue`, ack flows, etc.) are
-  Telegram-only — no dashboard view needed.
+- **`data/files/`** (raw copies of ingested PDFs/docs): `_prune_old_ingested_files()`
+  (`bot.py`), daily job `periodic_file_retention`, deletes a file ONLY when
+  BOTH its filename matches a `meta.documents` source (i.e. already fully
+  ingested — chunks + embeddings already in Chroma/meta.db, so the raw
+  file is pure backup) AND its mtime is older than `FILES_RETENTION_DAYS`
+  (default 90). Never touches an unconfirmed/orphan/in-flight file. Added
+  2026-08-09 — this directory previously had NO retention at all, growing
+  unbounded on every single ingest (unlike `data/wiki_history/`, which
+  already had the 20-snapshot-per-topic cap below).
+- **`data/wiki_history/`** (pre-rewrite consolidation snapshots): capped
+  at `WIKI_HISTORY_KEEP_PER_TOPIC` (default 20) per topic — see Wiki
+  system section above.
+- **`data/loop_stalls.log`** (event-loop stall stack dumps): appended by
+  `_loop_stall_dumper`, rotated to `.log.1` past 2 MB (one generation
+  kept). Written IN ADDITION to the stdout log on purpose — the watchdogs
+  restart with `up --force-recreate`, which replaces the container and
+  takes its `docker logs` with it, so before 2026-08-26 every auto-restart
+  reported the symptom and deleted the stack dump that explained it.
+  `data/` is a bind mount, so this copy survives the restart.
+- **`/tmp/thesis_hang_diag/`** (host side, `auto_pull.sh`): newest 10
+  files. `capture_hang_diag` snapshots `docker inspect`/`stats`/`top` +
+  800 log lines BEFORE either watchdog's force-recreate, for the same
+  reason. Every step is `timeout`-bounded and the whole function is
+  best-effort — it must never block or fail the restart it precedes.
 
 ## /failed_clear & [🗑] = permanent delete (never re-queue)
 
@@ -436,82 +414,6 @@ dedup. Never describe it as "moved to pending".
   was still there on 2026-08-20; don't send the user editing JSON by
   hand. `_LOOKUP_GUIDE_TEXT` likewise called `/failed_clear` "복구 불가",
   fixed in the same pass.
-
-## Cost defaults (don't change without asking)
-
-`SUMMARY_MODEL=gemini-2.5-flash-lite` · `ANSWER_MODEL=gemini-2.5-flash` ·
-`DEEP_MODEL=gemini-2.5-pro` · `EMBED_MODEL=gemini-embedding-001` ·
-`EMBED_BACKEND=gemini` (BGE-M3 path disabled — CPU bottleneck caused
-flood-bans) · `CHUNK_TOKENS=1000` `CHUNK_OVERLAP=150` · `TOP_K=10` ·
-OCR `DPI=100` `AUTO_CAP=7` `SPARSE_THRESHOLD=800` `PROBE_PAGES=3`
-`PROBE_MIN_TEXT=300`.
-
-## Gemini backend = Vertex AI (since 2026-06-19, NOT AI Studio)
-
-AI Studio's api_key path was excluded from the Free Trial credit (429'd
-at ₩0); Vertex is Free-Trial-eligible (verified).
-
-- All `genai.Client(...)` go through `config.make_genai_client()`.
-  `GEMINI_BACKEND=vertex` → `Client(vertexai=True, project, location)`;
-  `aistudio` = old key path. Don't regress the 7 call sites to inline
-  `api_key=`. `config.py` still *defaults* `GEMINI_BACKEND` to
-  `"aistudio"` when unset — always set it explicitly to `vertex` in any
-  new `.env`/`.env.example`.
-- VM `.env`: `GEMINI_BACKEND=vertex`,
-  `VERTEX_PROJECT=gen-lang-client-0325676393`,
-  `VERTEX_LOCATION=us-central1`. `GOOGLE_API_KEY` now optional.
-- Auth = ADC, no key file: SA
-  `722358979517-compute@developer.gserviceaccount.com` has
-  `roles/aiplatform.user`, OAuth scope `cloud-platform`. Containers need
-  `extra_hosts: metadata.google.internal:169.254.169.254` (custom
-  `dns: 8.8.8.8` can't resolve it) on bot + forward-listener + dashboard.
-- Models unchanged (flash-lite/flash/pro + gemini-embedding-001 3072-dim).
-  Vertex price == AI Studio (cost.db stays accurate). web_search
-  grounding (`types.GoogleSearch()`) works (~30s latency is normal).
-
-## Billing = new-account Free Trial (~mid-Sept 2026)
-
-Account `01A847-50A403-149C08` ("결제계정-2"), $300 / 90 days. Projects
-`gen-lang-client-0325676393` (VM/bot/stock) + `gen-lang-client-0957886559`
-(Gemini API) link to it → VM + network + Vertex all draw from it.
-
-- Hard limit: $300 OR 90 days, whichever first; at ~₩10만/mo the 90-day
-  clock (~mid-Sept 2026) wins. Then pay-as-you-go or services stop.
-- Balance/₩0-net proof is Console-only (billing → 보고서/크레딧). Budget
-  alert recommended, not yet set.
-- Don't chase another new account for fresh credits (dup card/phone
-  detection, ToS risk; already did old→new once).
-
-## VM right-sizing (2026-06-19)
-
-**리전 이동(2026-06-30): 서울 → us-central1.** 새 VM `telegram-bot-usc`,
-zone **`us-central1-b`** (a존 e2-standard-2 재고부족으로 b존), 새 고정 IP
-**`136.115.27.77`**. Vertex와 같은 리전이라 egress↓ + 컴퓨트 ~25%↓.
-gcloud 명령의 zone은 이제 `us-central1-b`.
-**서울 잔재 정리 완료(2026-07-04):** 옛 VM `telegram-bot`·IP
-`34.50.23.221`·서울발 스냅샷 7개·`weekly-regional`·`default-schedule-1`
-정책 전부 삭제. 서울 리전 과금 0. 새 VM 백업 = `weekly-usc` 정책(주간)
-+ 수동 베이스라인 `telegram-bot-usc-manual-20260704` (weekly-usc 첫
-회차 확인 후 삭제 가능) + 매일 GCS 백업(backup.py).
-
-`telegram-bot-usc` = **e2-highmem-2** (2 vCPU / 16 GB; 2026-07-05에
-e2-standard-2/8GB에서 승급 — chroma HNSW가 임베딩을 전부 RAM에 들고
-있어(354k청크≈4.4GB, 학습마다 증가) 8GB 박스가 93~95%에서 20~40분씩
-스톨). Static IP `136.115.27.77` (구 `34.50.23.221`) survives stop/start.
-bot `mem_limit: 11g` + `INGEST_SEM_CAPACITY=3` — **RAM은 늘었어도 2 vCPU
-가 병렬 상한: 6으로 올렸다가 백로그 드레인 때 GIL 기아로 루프가 10분+
-무음(2026-07-05, 재현 2026-08-04). 코어 추가 전엔 3 고정** (2026-08-21에
-사용자 요청으로 4→3; 5~20MB 브로커 PDF 4개가 동시에 슬롯을 다 채우면서
-RSS 9.2/11GB, CPU/heartbeat 워치독 재시작이 반복됐음. 대용량 PDF는
-슬롯마다 자기 OCR 스레드 풀을 여는 탓에 4번째 슬롯의 실제 비용이
-처리량의 1/4보다 훨씬 크다). **코드 기본값과 VM `.env`는 따로다** —
-`.env`에 이 변수가 명시돼 있으면 그쪽이 이기므로 코드만 고치면 라이브
-값은 안 바뀐다. `.env` 수정 후엔 `restart`가 아니라
-`docker compose up -d --force-recreate bot` (env_file 재읽기). Dashboard index rebuild = 15s. Host SHARED with `~/stock` +
-`~/stock-trade` (separate host-venv bots, also Vertex via
-`GOOGLE_GENAI_USE_VERTEXAI=true`) — don't eat all RAM. Those aren't
-`higgack/thesis` (their `gemini_cache_manager.py:137` still passes
-`api_key=` → 401, their own problem).
 
 ## Wiki system (don't regress)
 
@@ -684,51 +586,154 @@ charts); `hybrid` = PaddleOCR then Gemini Vision fallback if confidence
   `OCR_GLOBAL_CONCURRENCY` (default 6, see Auto-deploy section above) —
   don't remove that cap.
 
-## Resume-safety invariants
+## MCP server (external AI clients — Claude Desktop/Copilot, 2026-07-29)
 
-All state files use `_atomic_write_json` (tmp→fsync→rename) + `.bak` load
-fallback. Live ingest entry points call `_enqueue_with_inflight` before
-the pipeline and `_finish_inflight(done/retry)` after (mid-kill
-recoverable). `docker-compose.yml` `stop_grace_period: 120s`. Any sqlite
-`_conn()` helper must be a real `@contextmanager` that both commits AND
-closes — a plain `sqlite3.Connection`'s own context manager only commits,
-never closes (`notes/store.py` leaked one per call this way until fixed
-2026-08-09; `kg.py`'s `_conn()` is the reference pattern to copy).
-- `documents.title_norm` (`meta.py`, added 2026-08-09) is a precomputed/
-  indexed copy of `_normalize_title(title)` that `find_by_normalized_title()`
-  dedup-lookup relies on instead of pulling up to 5000 rows and
-  normalising each in Python. Any code path that writes `documents.title`
-  outside `upsert_doc()`/`update_title()` (both already keep it in sync)
-  must set `title_norm` in the same statement or dedup silently goes
-  stale for that row — `init()` only backfills NULL rows (i.e. ones that
-  predate the column), not ones a raw UPDATE just made incorrect.
+`src/mcp_server/server.py`, port 8083, Streamable HTTP. Exposes 7
+read-only tools (`search_knowledge_base`, `list_wiki_topics`,
+`get_wiki_page`, `search_notes`, `get_note`, `kg_query`,
+`kg_top_entities`) over the RAG archive/wiki/notes/KG. Details + client
+config example in `README.md`.
 
-## Disk retention policies
+- **Deliberately no Chroma/semantic search** — `search_knowledge_base`/
+  `search_notes` are FTS5/substring keyword-only. A second
+  `chromadb.PersistentClient` in this process would ~double vector-index
+  RAM (the bot already carries 4GB+ from it) on the shared VM — user
+  chose keyword-only over that risk (2026-07-29). Don't silently add
+  Chroma here without re-raising the RAM tradeoff first.
+- **Auth**: single shared `MCP_TOKEN` (`.env`), checked as `Authorization:
+  Bearer` by hand-rolled middleware — NOT FastMCP's built-in `auth=`/
+  `token_verifier=` (that requires real OAuth resource-server metadata,
+  `issuer_url`+`resource_server_url` mandatory; wrong tool for one shared
+  secret). Empty `MCP_TOKEN` → server 503s every request, fail-closed.
+- `mcp` pinned `>=1.29.0,<2.0.0` in `pyproject.toml` — 2.0.0 restructured
+  the package (no `mcp.server.fastmcp.FastMCP` in the same shape) and is
+  too new to trust yet. Don't bump past 2.0 without re-verifying the API.
+- Every tool is `async def` wrapping its actual sqlite/file work in
+  `asyncio.to_thread(...)` — FastMCP runs plain `def` tools directly on
+  the event loop, so a slow sqlite call would otherwise stall the whole
+  server for every concurrent client, not just the slow request.
+- Read-only by design — never add a write/mutate tool here without
+  explicit request (external agents calling this shouldn't be able to
+  change the knowledge base, only query it). One caveat: `get_wiki_page`
+  → `wiki.resolve_topic()` can save a topic alias as a side effect on a
+  seed/CJK-translation match — the knowledge content itself never changes.
 
-- **`data/files/`** (raw copies of ingested PDFs/docs): `_prune_old_ingested_files()`
-  (`bot.py`), daily job `periodic_file_retention`, deletes a file ONLY when
-  BOTH its filename matches a `meta.documents` source (i.e. already fully
-  ingested — chunks + embeddings already in Chroma/meta.db, so the raw
-  file is pure backup) AND its mtime is older than `FILES_RETENTION_DAYS`
-  (default 90). Never touches an unconfirmed/orphan/in-flight file. Added
-  2026-08-09 — this directory previously had NO retention at all, growing
-  unbounded on every single ingest (unlike `data/wiki_history/`, which
-  already had the 20-snapshot-per-topic cap below).
-- **`data/wiki_history/`** (pre-rewrite consolidation snapshots): capped
-  at `WIKI_HISTORY_KEEP_PER_TOPIC` (default 20) per topic — see Wiki
-  system section above.
-- **`data/loop_stalls.log`** (event-loop stall stack dumps): appended by
-  `_loop_stall_dumper`, rotated to `.log.1` past 2 MB (one generation
-  kept). Written IN ADDITION to the stdout log on purpose — the watchdogs
-  restart with `up --force-recreate`, which replaces the container and
-  takes its `docker logs` with it, so before 2026-08-26 every auto-restart
-  reported the symptom and deleted the stack dump that explained it.
-  `data/` is a bind mount, so this copy survives the restart.
-- **`/tmp/thesis_hang_diag/`** (host side, `auto_pull.sh`): newest 10
-  files. `capture_hang_diag` snapshots `docker inspect`/`stats`/`top` +
-  800 log lines BEFORE either watchdog's force-recreate, for the same
-  reason. Every step is `timeout`-bounded and the whole function is
-  best-effort — it must never block or fail the restart it precedes.
+## Related repo you'll see referenced but should never need to touch
+
+`higgack/second-brain-vault` (private) is the Obsidian vault this bot
+syncs to. It is **not a code dependency of this repo** — no submodule, no
+clone, no build/test relationship. It's pure output: auto-generated
+markdown notes, nothing else.
+
+- **Connection is two env vars only**, set in `.env` on the production VM
+  (not present anywhere in this repo): `OBSIDIAN_VAULT_PATH` (a local
+  directory path inside the bot container, e.g. `/data/vault`) and
+  `OBSIDIAN_GIT_REMOTE` (a `https://x-access-token:<PAT>@github.com/
+  higgack/second-brain-vault.git` URL).
+- **Who writes to it**: `src/store/obsidian.py`. Every ingested doc gets
+  rendered as one markdown file (YAML frontmatter + `## Summary` /
+  `## Source` / `## Original`) under `SecondBrain/{Papers,Web,YouTube,
+  Notes,Misc}/`, then the bot itself runs `git add` + `git commit` + `git
+  push` directly against that repo in a background task (fire-and-forget —
+  a slow/hung remote must never block ingest; there's a push-failure
+  circuit breaker). The wiki batch job does the same via `commit_subtree`
+  in `src/store/wiki.py` for its own pages.
+- **What this means for you**: you will never need to clone, open, edit,
+  lint, or review `second-brain-vault` to work on this repo. If you see
+  unfamiliar auto-generated commits there (e.g. `"add: <title>"`), that's
+  the bot's own automated sync, not a human or agent edit. If a task
+  genuinely requires changing what gets written (frontmatter schema,
+  folder layout), the code to change is `src/store/obsidian.py` /
+  `src/store/wiki.py` in *this* repo — not the vault repo itself.
+
+## Gemini backend = Vertex AI (since 2026-06-19, NOT AI Studio)
+
+AI Studio's api_key path was excluded from the Free Trial credit (429'd
+at ₩0); Vertex is Free-Trial-eligible (verified).
+
+- All `genai.Client(...)` go through `config.make_genai_client()`.
+  `GEMINI_BACKEND=vertex` → `Client(vertexai=True, project, location)`;
+  `aistudio` = old key path. Don't regress the 7 call sites to inline
+  `api_key=`. `config.py` still *defaults* `GEMINI_BACKEND` to
+  `"aistudio"` when unset — always set it explicitly to `vertex` in any
+  new `.env`/`.env.example`.
+- VM `.env`: `GEMINI_BACKEND=vertex`,
+  `VERTEX_PROJECT=gen-lang-client-0325676393`,
+  `VERTEX_LOCATION=us-central1`. `GOOGLE_API_KEY` now optional.
+- Auth = ADC, no key file: SA
+  `722358979517-compute@developer.gserviceaccount.com` has
+  `roles/aiplatform.user`, OAuth scope `cloud-platform`. Containers need
+  `extra_hosts: metadata.google.internal:169.254.169.254` (custom
+  `dns: 8.8.8.8` can't resolve it) on bot + forward-listener + dashboard.
+- Models unchanged (flash-lite/flash/pro + gemini-embedding-001 3072-dim).
+  Vertex price == AI Studio (cost.db stays accurate). web_search
+  grounding (`types.GoogleSearch()`) works (~30s latency is normal).
+
+## Billing = new-account Free Trial (~mid-Sept 2026)
+
+Account `01A847-50A403-149C08` ("결제계정-2"), $300 / 90 days. Projects
+`gen-lang-client-0325676393` (VM/bot/stock) + `gen-lang-client-0957886559`
+(Gemini API) link to it → VM + network + Vertex all draw from it.
+
+- Hard limit: $300 OR 90 days, whichever first; at ~₩10만/mo the 90-day
+  clock (~mid-Sept 2026) wins. Then pay-as-you-go or services stop.
+- Balance/₩0-net proof is Console-only (billing → 보고서/크레딧). Budget
+  alert recommended, not yet set.
+- Don't chase another new account for fresh credits (dup card/phone
+  detection, ToS risk; already did old→new once).
+
+## VM right-sizing (2026-06-19)
+
+**리전 이동(2026-06-30): 서울 → us-central1.** 새 VM `telegram-bot-usc`,
+zone **`us-central1-b`** (a존 e2-standard-2 재고부족으로 b존), 새 고정 IP
+**`136.115.27.77`**. Vertex와 같은 리전이라 egress↓ + 컴퓨트 ~25%↓.
+gcloud 명령의 zone은 이제 `us-central1-b`.
+**서울 잔재 정리 완료(2026-07-04):** 옛 VM `telegram-bot`·IP
+`34.50.23.221`·서울발 스냅샷 7개·`weekly-regional`·`default-schedule-1`
+정책 전부 삭제. 서울 리전 과금 0. 새 VM 백업 = `weekly-usc` 정책(주간)
++ 수동 베이스라인 `telegram-bot-usc-manual-20260704` (weekly-usc 첫
+회차 확인 후 삭제 가능) + 매일 GCS 백업(backup.py).
+
+`telegram-bot-usc` = **e2-highmem-2** (2 vCPU / 16 GB; 2026-07-05에
+e2-standard-2/8GB에서 승급 — chroma HNSW가 임베딩을 전부 RAM에 들고
+있어(354k청크≈4.4GB, 학습마다 증가) 8GB 박스가 93~95%에서 20~40분씩
+스톨). Static IP `136.115.27.77` (구 `34.50.23.221`) survives stop/start.
+bot `mem_limit: 11g` + `INGEST_SEM_CAPACITY=3` — **RAM은 늘었어도 2 vCPU
+가 병렬 상한: 6으로 올렸다가 백로그 드레인 때 GIL 기아로 루프가 10분+
+무음(2026-07-05, 재현 2026-08-04). 코어 추가 전엔 3 고정** (2026-08-21에
+사용자 요청으로 4→3; 5~20MB 브로커 PDF 4개가 동시에 슬롯을 다 채우면서
+RSS 9.2/11GB, CPU/heartbeat 워치독 재시작이 반복됐음. 대용량 PDF는
+슬롯마다 자기 OCR 스레드 풀을 여는 탓에 4번째 슬롯의 실제 비용이
+처리량의 1/4보다 훨씬 크다). **코드 기본값과 VM `.env`는 따로다** —
+`.env`에 이 변수가 명시돼 있으면 그쪽이 이기므로 코드만 고치면 라이브
+값은 안 바뀐다. `.env` 수정 후엔 `restart`가 아니라
+`docker compose up -d --force-recreate bot` (env_file 재읽기). Dashboard index rebuild = 15s. Host SHARED with `~/stock` +
+`~/stock-trade` (separate host-venv bots, also Vertex via
+`GOOGLE_GENAI_USE_VERTEXAI=true`) — don't eat all RAM. Those aren't
+`higgack/thesis` (their `gemini_cache_manager.py:137` still passes
+`api_key=` → 401, their own problem).
+
+## Docker — service vs container names
+
+`docker compose <verb> <SERVICE>` uses bare service; `docker
+logs/rm/exec/inspect <CONTAINER>` uses full name:
+
+| service | container |
+|---|---|
+| `bot` | `thesis-bot-1` |
+| `forward-listener` | `thesis-forward-listener-1` |
+| `dashboard` | `thesis-dashboard-1` |
+| `mcp-server` | `thesis-mcp-server-1` |
+| `telegram-bot-api` (profile local-api) | `thesis-telegram-bot-api-1` |
+
+## Cost defaults (don't change without asking)
+
+`SUMMARY_MODEL=gemini-2.5-flash-lite` · `ANSWER_MODEL=gemini-2.5-flash` ·
+`DEEP_MODEL=gemini-2.5-pro` · `EMBED_MODEL=gemini-embedding-001` ·
+`EMBED_BACKEND=gemini` (BGE-M3 path disabled — CPU bottleneck caused
+flood-bans) · `CHUNK_TOKENS=1000` `CHUNK_OVERLAP=150` · `TOP_K=10` ·
+OCR `DPI=100` `AUTO_CAP=7` `SPARSE_THRESHOLD=800` `PROBE_PAGES=3`
+`PROBE_MIN_TEXT=300`.
 
 ## Backlog (not active until the user asks)
 
@@ -737,7 +742,8 @@ never closes (`notes/store.py` leaked one per call this way until fixed
   page becomes a rendered view → no info loss + DB-query contradiction
   detection. ~₩2/doc (Flash-Lite). Start only if append proves
   insufficient for information preservation.
-- **CodeGraph trial**: when `src/bot.py` hits ~15k lines (now ~14k),
+- **CodeGraph trial**: when `src/bot.py` hits ~15k lines (~14.7k on
+  2026-08-28),
   trial `npx @colbymchenry/codegraph` to cut exploration token cost. Low
   impact (cost is dominated by bot.py size + conversation length, not
   multi-file exploration). Compare token use before/after to decide.
