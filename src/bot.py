@@ -446,16 +446,17 @@ _STUCK_INGEST_RECOVER_SEC = _INGEST_TIMEOUT_SEC * 4
 
 
 async def _check_stuck_ingests(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
-    """10-min tick. A slot older than _STUCK_INGEST_ALERT_SEC (30 min,
-    double the 15-min wait_for) means the per-message timeout never
-    fired — that guard is a loop timer, so a blocked/GIL-starved event
-    loop skips it and the slot is held forever.
+    """10-min tick. A slot older than _STUCK_INGEST_ALERT_SEC (2x
+    _INGEST_TIMEOUT_SEC, so 50 min at the current 1500s) means the
+    per-message timeout never fired — that guard is a loop timer, so a
+    blocked/GIL-starved event loop skips it and the slot is held forever.
 
     Two stages:
       1. First detection → Telegram alert with label/stage/age.
-      2. Still stuck at _STUCK_INGEST_RECOVER_SEC (60 min), or every
-         slot occupied and stuck → auto-recover, because at 4/4 no
-         ingest can start at all and the queue silently dies.
+      2. Still stuck at _STUCK_INGEST_RECOVER_SEC (4x
+         _INGEST_TIMEOUT_SEC, 100 min), or every slot occupied and
+         stuck → auto-recover, because at full capacity no ingest can
+         start at all and the queue silently dies.
 
     Recovery mirrors /queue_panic, which exists precisely because Python
     can't cancel a thread wedged inside to_thread/_CHROMA_LOCK: push the
@@ -10504,9 +10505,9 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
     """Cap concurrent ingests via semaphore + per-message timeout
     + per-message live status bubble.
 
-    Up to 2 messages run in parallel via the semaphore; the rest
-    wait. The 15-min timeout prevents one stuck PDF from hanging
-    the whole bot. While work runs we keep editing a single status
+    _INGEST_SEM_CAPACITY messages run in parallel via the semaphore;
+    the rest wait. The _INGEST_TIMEOUT_SEC timeout prevents one stuck
+    PDF from hanging the whole bot. While work runs we keep editing a single status
     message instead of going silent, so the user sees the ingest
     is alive."""
     # Yield to any in-flight command / Q&A first (bounded) so a user's
