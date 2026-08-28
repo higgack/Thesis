@@ -14000,6 +14000,39 @@ except Exception:  # pragma: no cover — never let this block bot startup
     _DASH_COMMAND_HANDLERS = {}
 
 
+async def _widen_thread_pool(app) -> None:
+    """Replace asyncio's default executor before polling starts.
+
+    asyncio sizes it at min(32, cpu_count + 4) — SIX threads on this
+    2-vCPU VM — and every one of the ~260 `asyncio.to_thread(...)`
+    call sites in this process shares them: Chroma writes, FTS
+    upserts, summary/embed cache lookups, the dash workers'
+    claim_pending poll, every state-file read a command handler does.
+    Three concurrent ingests saturate six workers on their own, and
+    then /failed and /pending sit in the executor queue behind them.
+
+    That failure mode is invisible to both watchdogs: the event loop
+    keeps ticking (so _write_heartbeat stays fresh and
+    check_heartbeat sees nothing) and the work is I/O-bound (so CPU%
+    stays under check_cpu_overload's 90% line). Observed live
+    2026-08-28 — heartbeat 20s old, CPU 51%, commands unanswered for
+    20+ minutes, no watchdog fired.
+
+    Widening is cheap because this work is I/O-bound and releases the
+    GIL; it does NOT increase contention on _CHROMA_LOCK / _W_LOCK,
+    which serialize their writers regardless. The point is that an
+    unrelated read no longer waits behind them.
+    """
+    import concurrent.futures as _cf
+    workers = max(8, int(os.getenv("THREAD_POOL_WORKERS", "24")))
+    asyncio.get_running_loop().set_default_executor(
+        _cf.ThreadPoolExecutor(max_workers=workers,
+                               thread_name_prefix="tt"))
+    log.info("default thread pool set to %d workers (asyncio would "
+             "have used %d for %s cpus)",
+             workers, min(32, (os.cpu_count() or 1) + 4), os.cpu_count())
+
+
 def main():
     if len(_HELP_TEXT) > _TG_MSG_LIMIT:
         log.warning(
@@ -14031,6 +14064,7 @@ def main():
         .request(request)
         .get_updates_request(request)
         .concurrent_updates(True)
+        .post_init(_widen_thread_pool)
     )
     if config.TELEGRAM_BASE_URL:
         base = config.TELEGRAM_BASE_URL.rstrip("/")
