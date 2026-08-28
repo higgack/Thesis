@@ -91,6 +91,35 @@ async def complete(
     thinking_budget: int | None = 0,
     timeout: float = 60,
 ) -> str:
+    """Text only. Use complete_ex when a truncated answer would be
+    worse than no answer (e.g. a full-page rewrite that overwrites
+    the original)."""
+    text, _ = await complete_ex(
+        model=model, system=system, user=user, max_tokens=max_tokens,
+        temperature=temperature, purpose=purpose,
+        thinking_budget=thinking_budget, timeout=timeout,
+    )
+    return text
+
+
+async def complete_ex(
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int = 1024,
+    temperature: float = 0.2,
+    purpose: str = "unknown",
+    thinking_budget: int | None = 0,
+    timeout: float = 60,
+) -> tuple[str, bool]:
+    """Returns (text, hit_output_cap).
+
+    hit_output_cap is True when the model stopped because it ran out
+    of output budget, i.e. the text is a fragment. Callers that
+    OVERWRITE something with the result must check it — a rewrite cut
+    off at the token cap looks like a shorter valid rewrite and
+    silently destroys whatever it replaced.
+    """
     chain = _chain_for(model)
     last_err: BaseException | None = None
 
@@ -117,8 +146,9 @@ async def complete(
                 if m != model:
                     log.info("served by fallback model: %s", m)
                 text = resp.text or ""
-                _warn_if_capped(resp, m, purpose, max_tokens, len(text))
-                return text
+                capped = _warn_if_capped(resp, m, purpose, max_tokens,
+                                         len(text))
+                return text, capped
             except Exception as e:
                 last_err = e
                 if _is_overloaded(e):
@@ -135,7 +165,7 @@ async def complete(
 
 
 def _warn_if_capped(resp, model: str, purpose: str, max_tokens: int,
-                    out_chars: int) -> None:
+                    out_chars: int) -> bool:
     """Log when the model stopped because it ran out of output budget.
 
     Nothing checked finish_reason before, so a summary that hit
@@ -150,10 +180,12 @@ def _warn_if_capped(resp, model: str, purpose: str, max_tokens: int,
     try:
         reason = str(getattr(resp.candidates[0], "finish_reason", "") or "")
     except Exception:
-        return
+        return False
     if "MAX_TOKENS" in reason.upper():
         log.warning(
             "output truncated at max_output_tokens=%d (model=%s, "
             "purpose=%s, %d chars kept) — raise the cap for this caller "
             "if the text needs to be complete",
             max_tokens, model, purpose, out_chars)
+        return True
+    return False

@@ -1797,12 +1797,12 @@ def _append_docs(topic: str, existing: str, docs: list[dict]) -> dict:
 async def _consolidate_topic(topic: str, existing: str, docs: list[dict]) -> dict:
     """LLM consolidation — rewrites the page thematically. Runs only
     when the page exceeds CONSOLIDATION_CHARS or on first creation."""
-    from ..llm.gemini import complete
+    from ..llm.gemini import complete_ex
     user = _build_merge_user(topic, existing, docs)
     model = _flag("WIKI_MERGE_MODEL", None) or config.ANSWER_MODEL
     max_tokens = int(_flag("WIKI_MERGE_MAX_TOKENS", 12000))
     try:
-        raw = await complete(
+        raw, hit_cap = await complete_ex(
             model=model,
             system=_MERGE_SYSTEM,
             user=user,
@@ -1836,14 +1836,22 @@ async def _consolidate_topic(topic: str, existing: str, docs: list[dict]) -> dic
     # 자료는 ₩0 append 경로로 그대로 흡수해 큐를 멈추지 않는다 — 이번
     # 배치에서 안전하게 처리되는 것이지, 실패로 남아 매번 재시도되는 게
     # 아니다.
-    if existing.strip() and len(page) < len(existing) * 0.5:
-        log.warning("wiki consolidate output too short for %s (%d→%d) — "
-                    "falling back to safe append", topic, len(existing), len(page))
+    # A rewrite cut off at max_output_tokens is NOT a valid rewrite,
+    # however long it came out. The 50% ratio below cannot see this:
+    # 엔비디아 came back at 68% of the original (30543→20789 chars) and
+    # sailed through the guard, overwriting the page with a fragment
+    # that ends mid-thought (2026-08-28, caught only because
+    # gemini.complete had just started logging the cap). Length is a
+    # proxy for truncation; finish_reason is the fact.
+    if existing.strip() and (hit_cap or len(page) < len(existing) * 0.5):
+        why = ("출력 상한에서 잘림" if hit_cap
+               else f"{len(existing)}→{len(page)}자")
+        log.warning("wiki consolidate unusable for %s (%s) — "
+                    "falling back to safe append", topic, why)
         fallback = _append_docs(topic, existing, docs)
         fallback["mode"] = "consolidate_guarded_append"
         fallback["error"] = (
-            f"컨솔리데이션 스킵(손실 가드, {len(existing)}→{len(page)}자) — "
-            "원문 그대로 append로 대체"
+            f"컨솔리데이션 스킵(손실 가드, {why}) — 원문 그대로 append로 대체"
         )
         return fallback
     p = _page_path(topic)
@@ -2312,7 +2320,7 @@ async def reintegrate_contradictions(progress_cb=None) -> dict:
     progress_cb: async (done, total) — 5페이지마다 호출 (텔레그램 진행
     표시용). 실패해도 본 작업은 계속."""
     import asyncio as _aio
-    from ..llm.gemini import complete
+    from ..llm.gemini import complete_ex
 
     res = await _aio.to_thread(lint, 30, False)
     topics = list(res.get("contradictions") or [])
@@ -2336,7 +2344,7 @@ async def reintegrate_contradictions(progress_cb=None) -> dict:
             out["already_clean"] += 1
             continue
         try:
-            raw = await complete(
+            raw, hit_cap = await complete_ex(
                 model=model,
                 system=_REINTEGRATE_SYSTEM,
                 user=f"# 토픽: {topic}\n\n{page}",
@@ -2357,7 +2365,10 @@ async def reintegrate_contradictions(progress_cb=None) -> dict:
         text = _META_RE.sub("", text).strip() + "\n"
         # 손실 가드: 모순 섹션은 본문 대비 작으므로 정상 재작성은 원본과
         # 비슷한 길이다. 절반 아래로 줄면 출력 잘림/요약 사고 — 안 쓴다.
-        if len(text) < 200 or len(text) < len(page) * 0.5:
+        # hit_cap 은 길이와 무관하게 거절한다: 상한에서 잘린 재작성은
+        # 길이가 충분해 보여도 뒷부분이 통째로 없는 조각이다 (같은 날
+        # 자동 컨솔리데이션에서 실제로 페이지를 덮어썼다).
+        if hit_cap or len(text) < 200 or len(text) < len(page) * 0.5:
             log.warning("wiki fix output too short for %s (%d→%d) — skipped",
                         topic, len(page), len(text))
             out["failed"] += 1
