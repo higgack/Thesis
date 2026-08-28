@@ -116,7 +116,9 @@ async def complete(
                 cost.record_resp(m, resp, purpose=purpose)
                 if m != model:
                     log.info("served by fallback model: %s", m)
-                return resp.text or ""
+                text = resp.text or ""
+                _warn_if_capped(resp, m, purpose, max_tokens, len(text))
+                return text
             except Exception as e:
                 last_err = e
                 if _is_overloaded(e):
@@ -130,3 +132,28 @@ async def complete(
 
     assert last_err is not None
     raise last_err
+
+
+def _warn_if_capped(resp, model: str, purpose: str, max_tokens: int,
+                    out_chars: int) -> None:
+    """Log when the model stopped because it ran out of output budget.
+
+    Nothing checked finish_reason before, so a summary that hit
+    max_output_tokens came back as a partial string and was stored,
+    embedded and appended to wiki pages exactly like a finished one —
+    the only visible trace was a page whose section stopped mid-word.
+    We do NOT raise: a partial summary is still worth more than a
+    failed ingest. This just makes the cap audible in the log so the
+    limit can be raised deliberately rather than discovered from a
+    screenshot.
+    """
+    try:
+        reason = str(getattr(resp.candidates[0], "finish_reason", "") or "")
+    except Exception:
+        return
+    if "MAX_TOKENS" in reason.upper():
+        log.warning(
+            "output truncated at max_output_tokens=%d (model=%s, "
+            "purpose=%s, %d chars kept) — raise the cap for this caller "
+            "if the text needs to be complete",
+            max_tokens, model, purpose, out_chars)

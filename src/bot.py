@@ -6688,40 +6688,12 @@ async def cmd_search_papers(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 def _truncate_at_sentence(text: str, cap: int) -> str:
-    """Trim `text` to roughly `cap` chars, breaking at the nearest
-    sentence boundary inside the cap window. Adds " …" suffix when
-    truncated. Korean sentences usually end with 다./요./니다./까? +
-    space; English ends with ". ". Uses whichever endpoint is
-    closest to the cap. Falls back to a hard char cut + "…" when no
-    sentence boundary is found inside the search window."""
-    if not text or len(text) <= cap:
-        return text
-    cutoff = text[:cap]
-    # Search the last ~250 chars of the cap for any sentence end.
-    search_from = max(0, cap - 250)
-    candidates = [
-        cutoff.rfind("다. ", search_from),
-        cutoff.rfind("다.\n", search_from),
-        cutoff.rfind("요. ", search_from),
-        cutoff.rfind("요.\n", search_from),
-        cutoff.rfind("니다. ", search_from),
-        cutoff.rfind("니다.\n", search_from),
-        cutoff.rfind(". ", search_from),
-        cutoff.rfind(".\n", search_from),
-        cutoff.rfind("? ", search_from),
-        cutoff.rfind("! ", search_from),
-    ]
-    end = max(candidates)
-    if end < 0:
-        return cutoff.rstrip() + "…"
-    # Include the punctuation that defined the sentence end.
-    sep_len = 2  # most candidates are 2 chars ("다.", ". ", etc.)
-    # but "니다." is 3 chars + trailing space — handle generically by
-    # walking forward to next whitespace.
-    end_with_punct = end
-    while end_with_punct < len(cutoff) and cutoff[end_with_punct] not in (" ", "\n"):
-        end_with_punct += 1
-    return cutoff[:end_with_punct] + " …"
+    """Thin alias — the implementation moved to ingest.textnorm so
+    store/wiki.py can use the same one (its dated-section append was
+    doing a raw text[:1200] slice and cutting summaries mid-sentence).
+    Kept under this name so the existing call sites here don't move."""
+    from .ingest.textnorm import truncate_at_sentence
+    return truncate_at_sentence(text, cap)
 
 
 async def _translate_results_korean(results: list[dict]) -> list[dict]:

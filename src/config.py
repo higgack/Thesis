@@ -108,7 +108,12 @@ CHUNK_TOKENS = int(os.getenv("CHUNK_TOKENS", "1000"))
 # more embedding), not to bump this value.
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "150"))
 TOP_K = 10
-SUMMARY_MAX_TOKENS = 1000
+# 1000 was below what the summary prompt itself asks for ("300-500
+# Korean chars per 1000 source tokens" against a body of up to 12000
+# tokens), so any large PDF hit max_output_tokens and was stored as a
+# sentence-fragment — silently, because nothing checked finish_reason
+# (2026-08-28; gemini.complete now logs the cap when it bites).
+SUMMARY_MAX_TOKENS = 2500
 HINT_SUMMARY_MIN_CHARS = 200
 HINT_SUMMARY_MAX_CHARS = 2000
 
@@ -135,7 +140,11 @@ WIKI_MIN_SUMMARY_CHARS = int(os.getenv("WIKI_MIN_SUMMARY_CHARS", "600"))
 WIKI_MAX_TOPICS_PER_RUN = int(os.getenv("WIKI_MAX_TOPICS_PER_RUN", "25"))
 WIKI_MAX_DOCS_PER_TOPIC = int(os.getenv("WIKI_MAX_DOCS_PER_TOPIC", "6"))
 WIKI_MAX_PAGE_CHARS = int(os.getenv("WIKI_MAX_PAGE_CHARS", "30000"))
-WIKI_DOC_SUMMARY_CHARS = int(os.getenv("WIKI_DOC_SUMMARY_CHARS", "1200"))
+# Raised with SUMMARY_MAX_TOKENS above — clipping the wiki section at
+# 1200 would re-truncate a summary that was just allowed to finish.
+# Pages now reach WIKI_CONSOLIDATION_CHARS sooner, i.e. consolidation
+# (~55 KRW) fires a little more often per topic; that is the trade.
+WIKI_DOC_SUMMARY_CHARS = int(os.getenv("WIKI_DOC_SUMMARY_CHARS", "2500"))
 WIKI_MERGE_MAX_TOKENS = int(os.getenv("WIKI_MERGE_MAX_TOKENS", "12000"))
 WIKI_CONSOLIDATION_CHARS = int(os.getenv("WIKI_CONSOLIDATION_CHARS", "30000"))
 WIKI_BATCH_THROTTLE_SEC = float(os.getenv("WIKI_BATCH_THROTTLE_SEC", "0.5"))

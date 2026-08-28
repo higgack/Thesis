@@ -59,6 +59,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .. import config
+from ..ingest.textnorm import truncate_at_sentence
 
 _KST = timezone(timedelta(hours=9))
 
@@ -646,7 +647,8 @@ def wiki_failed_retry(topic: str) -> dict:
         items.append({
             "doc_id": doc_id,
             "title": d.get("title") or "",
-            "summary": (d.get("summary") or "").strip()[:keep],
+            "summary": truncate_at_sentence(
+                (d.get("summary") or "").strip(), keep),
             "doc_type": d.get("type") or "",
             "source": d.get("source") or "",
             "topic": topic,
@@ -1119,7 +1121,8 @@ def merge_topics(keep: str, absorb: str) -> dict:
         new_items.append({
             "doc_id": doc_id,
             "title": d.get("title") or "",
-            "summary": (d.get("summary") or "").strip()[:keep_chars],
+            "summary": truncate_at_sentence(
+                (d.get("summary") or "").strip(), keep_chars),
             "doc_type": d.get("type") or "",
             "source": d.get("source") or "",
             "topic": keep,
@@ -1668,7 +1671,8 @@ def _build_merge_user(topic: str, existing: str, docs: list[dict]) -> str:
     ]
     per_doc_chars = int(_flag("WIKI_DOC_SUMMARY_CHARS", 1200))
     for i, d in enumerate(docs, 1):
-        s = (d.get("summary") or "").strip()[:per_doc_chars]
+        s = truncate_at_sentence((d.get("summary") or "").strip(),
+                                 per_doc_chars)
         parts.append(f"\n### [자료 {i}] {d.get('title','(제목없음)')}\n{s}\n")
     parts.append(
         "\n\n## 지시\n"
@@ -1752,7 +1756,11 @@ def _append_docs(topic: str, existing: str, docs: list[dict]) -> dict:
     parts: list[str] = []
     for d in docs:
         title = (d.get("title") or "(제목없음)").strip()
-        summary = (d.get("summary") or "").strip()[:per_doc_chars]
+        # Sentence-safe: a raw [:1200] slice ended the section
+        # mid-word, so the page looked like the source itself stopped
+        # there. truncate_at_sentence marks the cut with " …".
+        summary = truncate_at_sentence((d.get("summary") or "").strip(),
+                                       per_doc_chars)
         if not summary:
             continue
         parts.append(f"### {title}\n{summary}\n\n— 출처: [[{title}]]")
