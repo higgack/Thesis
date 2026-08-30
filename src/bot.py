@@ -64,6 +64,19 @@ _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
 _LIGHT_INGEST_SEM_CAPACITY = int(os.getenv("LIGHT_INGEST_SEM_CAPACITY", "4"))
 _LIGHT_INGEST_SEM = asyncio.Semaphore(_LIGHT_INGEST_SEM_CAPACITY)
 _LIGHT_RETRY_KINDS = frozenset({"text", "url"})
+# PROCESS-WIDE cap on per-URL document work. _INGEST_SEM bounds
+# MESSAGES, not the work inside one: _ingest_message_locked and the
+# link-button handler each built their OWN 4-slot semaphore per call,
+# so three concurrent messages meant twelve full document pipelines
+# (fetch → summarize → chunk → embed → Chroma) running at once on two
+# cores, plus whatever the retry lanes were doing. That is why a short
+# forwarded channel post — a few hundred characters whose only real
+# work is one linked article — was hitting the 1500s ingest timeout
+# (2026-08-30). Sharing one semaphore keeps a single message's
+# fan-out as wide as before while stopping it from multiplying by the
+# number of messages in flight.
+_URL_WORK_SEM = asyncio.Semaphore(
+    int(os.getenv("URL_WORK_CONCURRENCY", "4")))
 
 
 def _retry_lane(item: dict) -> str:
@@ -10052,13 +10065,11 @@ async def on_link_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Ingest the chosen targets in parallel. Don't replace the keyboard
     # with a "학습 중…" message — keeping it alive lets concurrent taps
     # target other links, and avoids leaving a stale "학습 중" once we
-    # finish. 4-wide fan-out matches the URL loop in
-    # _ingest_message_locked; the global _INGEST_SEM still bounds total
-    # concurrent ingests across all messages.
-    _LINK_FANOUT = 4
-    _link_sem = asyncio.Semaphore(_LINK_FANOUT)
+    # finish. Shares _URL_WORK_SEM with the URL loop in
+    # _ingest_message_locked — a per-call semaphore here bounded only
+    # THIS message's fan-out, not the process's.
     async def _do_one_link(idx: int):
-        async with _link_sem:
+        async with _URL_WORK_SEM:
             return await _ingest_one_url(
                 links[idx]["url"], chat_id, scan_links=False)
     results = await asyncio.gather(*[_do_one_link(i) for i in targets])
@@ -11108,15 +11119,14 @@ async def _ingest_message_locked(msg, ctx: ContextTypes.DEFAULT_TYPE,
         # URL loop is fanned out — a 9-URL Korean digest previously
         # waited ~6 min sequentially (each URL serialised behind the
         # previous one's full unshorten + fetch + summarise + embed).
-        # 4-wide gather inside a single message gives ~4× speedup; the
-        # outer _INGEST_SEM still bounds cross-message
-        # concurrency, so total Gemini/network pressure hasn't changed.
+        # The fan-out uses the PROCESS-WIDE _URL_WORK_SEM: the comment
+        # here used to claim "_INGEST_SEM still bounds cross-message
+        # concurrency", but _INGEST_SEM counts messages, so a private
+        # 4-slot semaphore per message multiplied rather than bounded.
         # gather preserves input order so the user sees URL results in
         # the order they appeared in the message.
-        _URL_FANOUT = 4
-        url_sem = asyncio.Semaphore(_URL_FANOUT)
         async def _do_url(u: str) -> dict:
-            async with url_sem:
+            async with _URL_WORK_SEM:
                 # _ingest_one_url owns ignore / failed-log skips, the
                 # in-flight enqueue (resume-safety), and status mapping.
                 # on_stage is a shared job_id slot across the fan-out —
