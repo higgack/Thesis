@@ -50,6 +50,27 @@ log = logging.getLogger("bot")
 # alone does NOT move the live value; edit .env too and force-recreate.
 _INGEST_SEM_CAPACITY = int(os.getenv("INGEST_SEM_CAPACITY", "3"))
 _INGEST_SEM = asyncio.Semaphore(_INGEST_SEM_CAPACITY)
+# Second lane for work that is NOT CPU-bound. One semaphore for
+# everything meant a `text` retry — seconds of work, almost all of it
+# waiting on Gemini — sat behind a 20-minute OCR PDF, so a queue of
+# cheap items looked frozen (2026-08-31). The heavy lane stays at 3
+# because 2 vCPU is what pinned it (6 caused GIL starvation 2026-07-05
+# / 2026-08-04; 4 caused watchdog restart loops 2026-08-21) — that
+# reasoning applies to OCR/embedding CPU work, not to a URL fetch.
+# Kept modest at 4: a `url` item can turn out to be a PDF download
+# (a hanaw.com "url" was a 30k-char report), so this lane is not
+# guaranteed light. Vision OCR stays globally capped by
+# ocr_client._GLOBAL_OCR_SEM either way.
+_LIGHT_INGEST_SEM_CAPACITY = int(os.getenv("LIGHT_INGEST_SEM_CAPACITY", "4"))
+_LIGHT_INGEST_SEM = asyncio.Semaphore(_LIGHT_INGEST_SEM_CAPACITY)
+_LIGHT_RETRY_KINDS = frozenset({"text", "url"})
+
+
+def _retry_lane(item: dict) -> str:
+    """'light' for network/API-bound kinds, 'heavy' for anything that
+    loads a file (pdf/photo/audio → OCR, chunking, embedding)."""
+    return ("light" if (item.get("kind") or "").lower() in _LIGHT_RETRY_KINDS
+            else "heavy")
 # Interactive-priority gate. A user's command (_SustainedTyping bumps
 # _INTERACTIVE_INFLIGHT) or Q&A (_run_agent bumps _ACTIVE_AGENT_RUNS)
 # should win event-loop + Gemini concurrency over background learning.
@@ -1866,7 +1887,7 @@ retry 큐 모두 실패 큐로 강제 이동. 진행중인 in-flight 작업은 �
 
 <b>/queue_panic</b>
 패닉 정리: 큐 → /failed (retry payload 유지) + Pro/Agent/Pending OCR·Pro 모두 비움 + orphan 복구 suppress 마커 + 봇 프로세스 종료(Docker 자동 재시작). in-flight 태스크가 세마포어·_CHROMA_LOCK 잡고 안 풀려서 새 학습까지 느릴 때 사용. 복구는 /failed 의 🔁 #N로 하나씩.
-참고: 인입 슬롯이 정체되면 이제 <b>자동</b>으로 같은 복구가 돈다 — 30분 경과 시 알림, 60분 경과 또는 전 슬롯 점유(=인입 완전 정지) 시 자동으로 /failed 이동 + 재시작. 수동 실행이 필요한 경우는 정체가 아니라 '느림'일 때뿐.
+참고: 인입 슬롯이 정체되면 이제 <b>자동</b>으로 같은 복구가 돈다 — 50분 경과 시 알림, 100분 경과 또는 전 슬롯 점유(=인입 완전 정지) 시 자동으로 /failed 이동 + 재시작. 수동 실행이 필요한 경우는 정체가 아니라 '느림'일 때뿐.
 
 <b>/queue_cancel_all</b>
 retry 큐 전체 취소 — 재시도 안 함, /failed 로도 안 감.
@@ -2847,7 +2868,9 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         out = (
             "🤖 봇 상태\n"
             f"\n💬 활성 agent: {_ACTIVE_AGENT_RUNS}건"
-            f"\n📥 동시 학습: {ingest_busy}건 (슬롯 {ingest_busy}/{ingest_capacity}){ingest_detail}"
+            f"\n📥 동시 학습: {ingest_busy}건 (🧱 {ingest_busy}/{ingest_capacity}"
+            f" · 🪶 {_LIGHT_INGEST_SEM_CAPACITY - _LIGHT_INGEST_SEM._value}"
+            f"/{_LIGHT_INGEST_SEM_CAPACITY}){ingest_detail}"
             f"\n🔁 인입 재시도 큐: {len(_INGEST_RETRY_QUEUE)}건"
             f"\n💤 agent 재시도 큐: {len(_RETRY_QUEUE)}건"
             f"\n❌ 영구 실패: {len(_INGEST_FAILED)}건"
@@ -4579,18 +4602,27 @@ async def cmd_queue(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         in_flight_n = sum(1 for it in _INGEST_RETRY_QUEUE
                           if it.get("in_flight_ts"))
         waiting_n = len(_INGEST_RETRY_QUEUE) - in_flight_n
+        # Per-lane, because the old header advertised "최대 8건/회",
+        # which never binds — the real ceiling is each lane's slot
+        # count, and that is what makes the queue feel slow.
+        busy_h = _INGEST_SEM_CAPACITY - _INGEST_SEM._value
+        busy_l = _LIGHT_INGEST_SEM_CAPACITY - _LIGHT_INGEST_SEM._value
         out = (
             f"🔁 재시도 큐 {len(_INGEST_RETRY_QUEUE)}건 "
-            f"(🔄 처리중 {in_flight_n} · ⏳ 대기 {waiting_n} · "
-            f"{_RETRY_INGEST_INTERVAL_SEC}초 간격, 최대 "
-            f"{_RETRY_INGEST_BATCH}건/회)"
+            f"(🔄 처리중 {in_flight_n} · ⏳ 대기 {waiting_n})\n"
+            f"   동시 실행 — 무거움(파일/OCR) {busy_h}/"
+            f"{_INGEST_SEM_CAPACITY} · 가벼움(텍스트/URL) {busy_l}/"
+            f"{_LIGHT_INGEST_SEM_CAPACITY}, "
+            f"{_RETRY_INGEST_INTERVAL_SEC}초마다 빈 슬롯 충전"
         )
         for item in _INGEST_RETRY_QUEUE[:25]:
             kind = item.get("kind", "?")
             title = item.get("file_name") or item.get("url") or "(unknown)"
             attempts = item.get("attempts", 0)
             tag = "🔄 처리중" if item.get("in_flight_ts") else "⏳ 대기"
-            out += f"\n• {tag} [{kind}] {title[:80]} (시도 {attempts}회)"
+            lane = "🪶" if _retry_lane(item) == "light" else "🧱"
+            out += (f"\n• {tag} {lane} [{kind}] {title[:80]} "
+                    f"(시도 {attempts}회)")
         if len(_INGEST_RETRY_QUEUE) > 25:
             out += f"\n... 외 {len(_INGEST_RETRY_QUEUE) - 25}건"
         out += (
@@ -11937,10 +11969,19 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
     # ingested twice. Take the min of both views: never exceed what
     # the semaphore reports free (that covers live ingests too), and
     # never hold more retry tasks in flight than capacity.
-    _rq_in_flight = sum(1 for it in _INGEST_RETRY_QUEUE
-                        if it.get("in_flight_ts"))
-    _free_slots = min(_INGEST_SEM._value,
-                      max(0, _INGEST_SEM_CAPACITY - _rq_in_flight))
+    def _free(sem, cap, lane):
+        in_flight = sum(1 for it in _INGEST_RETRY_QUEUE
+                        if it.get("in_flight_ts")
+                        and _retry_lane(it) == lane)
+        return min(sem._value, max(0, cap - in_flight))
+    _free_heavy = _free(_INGEST_SEM, _INGEST_SEM_CAPACITY, "heavy")
+    _free_light = _free(_LIGHT_INGEST_SEM, _LIGHT_INGEST_SEM_CAPACITY,
+                        "light")
+    # Count what is actually startable rather than len(queue): spawning
+    # a task that immediately finds nothing eligible wasted a slot's
+    # worth of accounting on every tick.
+    _n_heavy = _count_eligible_retry("heavy")
+    _n_light = _count_eligible_retry("light")
     if _interactive_busy():
         _RETRY_BUSY_SKIP_COUNT += 1
         if _RETRY_BUSY_SKIP_COUNT < _RETRY_BUSY_SKIP_GRACE:
@@ -11951,18 +11992,21 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
             _RETRY_BUSY_SKIP_COUNT,
         )
         _RETRY_BUSY_SKIP_COUNT = 0
-        n = min(1, _free_slots, len(_INGEST_RETRY_QUEUE))
+        cap = 1
     else:
         _RETRY_BUSY_SKIP_COUNT = 0
-        n = min(_RETRY_INGEST_BATCH, _free_slots,
-                len(_INGEST_RETRY_QUEUE))
-    if n <= 0:
+        cap = _RETRY_INGEST_BATCH
+    heavy = min(cap, _free_heavy, _n_heavy)
+    light = min(cap, _free_light, _n_light)
+    if heavy <= 0 and light <= 0:
         return
-    for _ in range(n):
-        # Detach: each task acquires the semaphore inside
-        # _retry_pending_ingest. Returning immediately lets APScheduler
-        # consider the tick 'done' so the next one runs on schedule.
-        asyncio.create_task(_retry_pending_ingest(ctx))
+    # Detach: each task acquires its lane's semaphore inside
+    # _retry_pending_ingest. Returning immediately lets APScheduler
+    # consider the tick 'done' so the next one runs on schedule.
+    for _ in range(heavy):
+        asyncio.create_task(_retry_pending_ingest(ctx, "heavy"))
+    for _ in range(light):
+        asyncio.create_task(_retry_pending_ingest(ctx, "light"))
 
 
 # Mid-processing items stay in the queue with an in_flight_ts mark
@@ -11974,19 +12018,35 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
 _IN_FLIGHT_TIMEOUT = _INGEST_TIMEOUT_SEC + 120  # 17 min (timeout + grace)
 
 
-def _pop_eligible_retry_item() -> dict | None:
-    """Walk the retry queue from the front and mark the first item whose
-    not_before_ts has elapsed AND is not currently in flight. The item
-    stays in the queue with an in_flight_ts stamp so a mid-processing
-    restart doesn't lose it. Use _retry_item_done / _retry_item_soft_fail
+def _retry_item_eligible(item: dict, now: float) -> bool:
+    """Can this item be started right now? Shared by the pop below and
+    by the drain tick's per-lane counting, so the two can never
+    disagree about how much work is actually available."""
+    in_flight = item.get("in_flight_ts")
+    if in_flight and now - in_flight < _IN_FLIGHT_TIMEOUT:
+        return False
+    nb = item.get("not_before_ts")
+    return nb is None or nb <= now
+
+
+def _count_eligible_retry(lane: str | None = None) -> int:
+    now = time.time()
+    return sum(1 for it in _INGEST_RETRY_QUEUE
+               if (lane is None or _retry_lane(it) == lane)
+               and _retry_item_eligible(it, now))
+
+
+def _pop_eligible_retry_item(lane: str | None = None) -> dict | None:
+    """Walk the retry queue from the front and mark the first eligible
+    item (optionally restricted to one lane). The item stays in the
+    queue with an in_flight_ts stamp so a mid-processing restart
+    doesn't lose it. Use _retry_item_done / _retry_item_soft_fail
     to release the slot."""
     now = time.time()
     for candidate in _INGEST_RETRY_QUEUE:
-        in_flight = candidate.get("in_flight_ts")
-        if in_flight and now - in_flight < _IN_FLIGHT_TIMEOUT:
+        if lane is not None and _retry_lane(candidate) != lane:
             continue
-        nb = candidate.get("not_before_ts")
-        if nb is None or nb <= now:
+        if _retry_item_eligible(candidate, now):
             candidate["in_flight_ts"] = now
             _persist_retry_queue()
             return candidate
@@ -12045,12 +12105,14 @@ def _finish_inflight(item: dict, outcome: str) -> None:
         _retry_item_done(item)
 
 
-async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
-    """Drain one queued ingest, sharing the same semaphore as live
-    ingests so total concurrent ingests stays bounded."""
+async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE,
+                                lane: str | None = None):
+    """Drain one queued ingest. Heavy items share _INGEST_SEM with live
+    ingests so total CPU-bound concurrency stays bounded; light ones
+    take _LIGHT_INGEST_SEM instead so they don't queue behind a PDF."""
     if not _INGEST_RETRY_QUEUE:
         return
-    item = _pop_eligible_retry_item()
+    item = _pop_eligible_retry_item(lane)
     if item is None:
         return  # everything currently in backoff or in flight
     chat_id = item["chat_id"]
@@ -12084,7 +12146,8 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE):
                 log.info("retry skip — permanently ignored: %s", fname)
                 _retry_item_done(item)
                 return
-    async with _INGEST_SEM:
+    async with (_LIGHT_INGEST_SEM if _retry_lane(item) == "light"
+                else _INGEST_SEM):
         retry_job_id = _register_ingest(
             f"[재시도] {title}", item.get("kind", "retry"), chat_id,
             retry_payload=dict(item),
