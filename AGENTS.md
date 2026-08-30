@@ -559,6 +559,18 @@ other project modules into it beyond `config` and lazy `kg_ignore`.
 
 ## Retrieval (`src/agent/retrieve.py`)
 
+- **로컬 리랭커는 꺼져 있다** (`LOCAL_RERANKER_ENABLED=0`, VM `.env`,
+  2026-08-31). 코드 기본값은 여전히 `1`이라 `.env`가 이긴다. 켠 근거가
+  **메모리뿐이었고 CPU를 아무도 안 쟀다** — 2 vCPU에서 CrossEncoder
+  배치 하나가 **98.5초**(`Batches: 1/1 [01:38<00:00, 98.52s/it]`),
+  검색 276초 경고의 정체이자, 두 코어를 다 먹어서 동시 ingest가 굶고
+  포워딩 글이 1500초 타임아웃에 걸린 원인. `EMBED_BACKEND`가 BGE-M3를
+  CPU 병목으로 이미 껐는데 **같은 계열 로컬 모델인 리랭커만 남아
+  있었다.** 로컬 모델은 RAM이 아니라 **코어 수로 판단할 것.** 다시 켜려면
+  그 머신에서 `model.predict` 벽시계 시간을 먼저 재라. 대체 경로는
+  Gemini Flash-Lite 리랭크(검색당 ~₩1).
+
+
 Hybrid dense (Chroma) + keyword (FTS5) search, fused via **Reciprocal
 Rank Fusion** (`_RRF_K = 60`, added 2026-08-09 replacing an ad-hoc
 "0.4 × normalized-score" blend — RRF combines differently-scaled ranking

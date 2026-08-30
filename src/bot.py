@@ -10603,7 +10603,7 @@ async def _ingest_message(msg, ctx: ContextTypes.DEFAULT_TYPE, notify_chat_id: i
         # cleanup needed.
         if timed_out:
             final_text = (
-                f"⚠️ ingest timeout (15분 초과): {label[:60]}\n"
+                f"⚠️ ingest timeout ({_INGEST_TIMEOUT_SEC // 60}분 초과): {label[:60]}\n"
                 "자료가 너무 크거나 OCR 처리 지연. 같은 자료 다시 보내면 재시도됩니다."
             )
         elif results:

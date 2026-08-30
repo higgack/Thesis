@@ -54,13 +54,26 @@ async def _local_rerank(query: str, candidates: list[dict], k: int) -> list[dict
     """Cross-encoder ranking. Returns None if the local model isn't
     available so the caller can fall back to Gemini.
 
-    Enabled by default (LOCAL_RERANKER_ENABLED defaults to '1'). The
-    BGE-reranker-base model is ~400MB resident and already counted in
-    the bot's ~4GB idle RSS; it fits under the 5500m mem_limit on the
-    live n2-standard-2 / 8GB VM. Was gated OFF on an old 2GB e2-small
-    VM (1500m cap), re-enabled once there was headroom. Set the env to '0' to
-    force the Gemini Flash-Lite rerank fallback (e.g. for A/B testing
-    or if a future VM downsize reintroduces a memory squeeze)."""
+    DISABLED on the live VM — LOCAL_RERANKER_ENABLED=0 in .env
+    (2026-08-31). The gate below still defaults to '1' so a machine
+    with real cores keeps the local path.
+
+    This was enabled on a MEMORY argument: ~400MB resident, fits the
+    mem_limit, gated off only on an old 2GB e2-small. Nobody measured
+    CPU. On the 2-vCPU e2-highmem-2 the box actually runs on, one
+    CrossEncoder batch took 98.5s ("Batches: 1/1 [01:38<00:00,
+    98.52s/it]"), which is where the 276s search warning came from —
+    and it burns both cores, so concurrent ingest starves behind it and
+    forwarded channel posts were hitting the 1500s ingest timeout.
+
+    This is the same trap EMBED_BACKEND already documents: the BGE-M3
+    embedding path was disabled for CPU bottlenecking, and the
+    reranker — a different local BGE model — was left on. Judge a local
+    model by the cores available, not the RAM.
+
+    Set the env to '1' only after measuring `model.predict` wall time
+    on that machine. Returns None when off, and the caller falls back
+    to the Gemini Flash-Lite rerank (~1 KRW/search)."""
     if os.getenv("LOCAL_RERANKER_ENABLED", "1") != "1":
         return None
     if len(candidates) <= k:
