@@ -11924,6 +11924,23 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
     # consecutive busy skips (~60 s) force a single-slot drain so a
     # steadily-chatting user can't keep the queue parked forever.
     global _RETRY_BUSY_SKIP_COUNT
+    # Free slots must also account for tasks an earlier tick already
+    # spawned that have not reached `await _INGEST_SEM.acquire()` yet.
+    # _INGEST_SEM._value alone cannot see them: the tick detaches its
+    # tasks and returns, so 10s later the semaphore can still read
+    # "free" while several tasks are queued on it. Live /queue showed
+    # "처리중 7" against a capacity of 3 (2026-08-29). Actual
+    # concurrency stayed bounded — the semaphore does its job — but
+    # each of those waiting items carries an in_flight_ts, and
+    # _IN_FLIGHT_TIMEOUT (27 min) makes an item eligible again while
+    # its own task is still pending, i.e. the same document is
+    # ingested twice. Take the min of both views: never exceed what
+    # the semaphore reports free (that covers live ingests too), and
+    # never hold more retry tasks in flight than capacity.
+    _rq_in_flight = sum(1 for it in _INGEST_RETRY_QUEUE
+                        if it.get("in_flight_ts"))
+    _free_slots = min(_INGEST_SEM._value,
+                      max(0, _INGEST_SEM_CAPACITY - _rq_in_flight))
     if _interactive_busy():
         _RETRY_BUSY_SKIP_COUNT += 1
         if _RETRY_BUSY_SKIP_COUNT < _RETRY_BUSY_SKIP_GRACE:
@@ -11934,12 +11951,11 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
             _RETRY_BUSY_SKIP_COUNT,
         )
         _RETRY_BUSY_SKIP_COUNT = 0
-        free_slots = _INGEST_SEM._value
-        n = min(1, free_slots, len(_INGEST_RETRY_QUEUE))
+        n = min(1, _free_slots, len(_INGEST_RETRY_QUEUE))
     else:
         _RETRY_BUSY_SKIP_COUNT = 0
-        free_slots = _INGEST_SEM._value
-        n = min(_RETRY_INGEST_BATCH, free_slots, len(_INGEST_RETRY_QUEUE))
+        n = min(_RETRY_INGEST_BATCH, _free_slots,
+                len(_INGEST_RETRY_QUEUE))
     if n <= 0:
         return
     for _ in range(n):
