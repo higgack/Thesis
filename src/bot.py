@@ -112,6 +112,10 @@ _RETRY_INGEST_BATCH = 8
 # that the user's in-flight command barely notices the API contention.
 _RETRY_BUSY_SKIP_GRACE = 6
 _RETRY_BUSY_SKIP_COUNT = 0
+# Dashboard rebuild ticks skipped while ingest holds a slot. 16 x 15s
+# = the view is at most ~4 min stale during a long backlog drain.
+_DASH_BUSY_SKIP_GRACE = int(os.getenv("DASH_BUSY_SKIP_GRACE", "16"))
+_DASH_BUSY_SKIP_COUNT = 0
 # After a failed retry, hold the item for this many seconds before
 # making it eligible again. Prevents one stuck item from monopolising
 # the queue's drain rate (without this, a perpetually-overloaded
@@ -11413,7 +11417,28 @@ async def _refresh_dashboard(ctx: ContextTypes.DEFAULT_TYPE):
     showed all scheduler jobs piling up with 'maximum number of
     running instances reached' + 'missed by 0:00:58'). to_thread keeps
     the loop free; regenerate()'s own non-blocking lock prevents
-    overlapping runs."""
+    overlapping runs.
+
+    Yields to ingest. The 15s interval assumed a rebuild is cheap, and
+    it is not: the universe view alone measured 9.3s, and apscheduler
+    logs a "maximum number of running instances reached" skip on
+    essentially every tick — i.e. this job runs continuously rather
+    than 4x/minute. On 2 vCPU that is a permanent background load
+    competing with OCR, chunking and embedding for the same two cores,
+    while a large PDF was hitting the 1500s ingest timeout
+    (2026-08-30). While any ingest slot is occupied we skip, up to
+    _DASH_BUSY_SKIP_GRACE consecutive ticks (~4 min) so a long backlog
+    cannot freeze the view outright. An idle bot still refreshes every
+    15s, which is what makes a dashboard delete disappear promptly."""
+    global _DASH_BUSY_SKIP_COUNT
+    if _ACTIVE_INGESTS:
+        _DASH_BUSY_SKIP_COUNT += 1
+        if _DASH_BUSY_SKIP_COUNT < _DASH_BUSY_SKIP_GRACE:
+            return
+        log.info("dashboard refresh: %d ingest-busy skips — rebuilding "
+                 "anyway so the view cannot go stale indefinitely",
+                 _DASH_BUSY_SKIP_COUNT)
+    _DASH_BUSY_SKIP_COUNT = 0
     try:
         from .dashboard import regenerate as dashboard_regen
         await asyncio.to_thread(dashboard_regen.regenerate)
