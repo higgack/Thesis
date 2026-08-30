@@ -159,12 +159,16 @@ async def _summarize_and_extract_impl(
     return final_summary, await _extract_metadata_only(title, body, doc_type), True
 
 
-async def _summarize_one(title: str, text: str) -> str:
+async def _summarize_one(title: str, text: str,
+                         max_tokens: int | None = None) -> str:
+    """max_tokens defaults to the FINAL summary cap. Partial passes
+    pass the smaller SUMMARY_PARTIAL_MAX_TOKENS — see the note on that
+    setting in config.py for why the two must not share one value."""
     return await complete(
         model=config.SUMMARY_MODEL,
         system=_SYSTEM,
         user=f"제목: {title}\n\n본문:\n{text}",
-        max_tokens=config.SUMMARY_MAX_TOKENS,
+        max_tokens=max_tokens or config.SUMMARY_MAX_TOKENS,
         temperature=0.1,
         purpose="ingest",
     )
@@ -184,7 +188,8 @@ async def _summarize_partials(title: str, parts: list[str]) -> list[str]:
     caps concurrent Gemini calls so it stays safe under load."""
     async def _one(p: str) -> str:
         async with _PARTIAL_SUMMARY_SEM:
-            return await _summarize_one(title, p)
+            return await _summarize_one(
+                title, p, max_tokens=config.SUMMARY_PARTIAL_MAX_TOKENS)
     return list(await asyncio.gather(*[_one(p) for p in parts]))
 
 

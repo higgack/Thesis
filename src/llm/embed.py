@@ -38,6 +38,10 @@ def _is_overloaded(exc: BaseException) -> bool:
 
 
 _BATCH_LIMIT = 100  # Gemini embed_content hard cap per request
+# Concurrent embed requests for one document's batches. 4 keeps a
+# 350-chunk PDF's four round-trips overlapping without turning a
+# backlog drain into a rate-limit flood.
+_EMBED_FANOUT = asyncio.Semaphore(int(os.getenv("EMBED_FANOUT", "4")))
 
 
 async def _embed_gemini_batch(texts: list[str], task_type: str) -> list[list[float]]:
@@ -158,8 +162,21 @@ async def embed(texts: list[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list
     # Default: Gemini
     if len(texts) <= _BATCH_LIMIT:
         return await _embed_gemini_batch(texts, task_type)
-    out = []
-    for i in range(0, len(texts), _BATCH_LIMIT):
-        batch = texts[i:i + _BATCH_LIMIT]
-        out.extend(await _embed_gemini_batch(batch, task_type))
+    # Batches ran sequentially: a 350-chunk PDF paid four full network
+    # round-trips back to back for work that has no ordering
+    # dependency. gather() overlaps them, bounded by _EMBED_FANOUT so a
+    # very large document cannot fan out into a rate-limit flood (the
+    # same reasoning as _PARTIAL_SUMMARY_SEM in summarize.py).
+    # asyncio.gather preserves input order, so the returned vectors
+    # still line up with `texts`.
+    slices = [texts[i:i + _BATCH_LIMIT]
+              for i in range(0, len(texts), _BATCH_LIMIT)]
+
+    async def _one(batch: list[str]) -> list[list[float]]:
+        async with _EMBED_FANOUT:
+            return await _embed_gemini_batch(batch, task_type)
+
+    out: list[list[float]] = []
+    for part in await asyncio.gather(*[_one(b) for b in slices]):
+        out.extend(part)
     return out

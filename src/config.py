@@ -114,6 +114,19 @@ TOP_K = 10
 # sentence-fragment — silently, because nothing checked finish_reason
 # (2026-08-28; gemini.complete now logs the cap when it bites).
 SUMMARY_MAX_TOKENS = 2500
+# Partial summaries are an INTERMEDIATE product — every one of them is
+# fed back into a second pass, so they do not need the final summary's
+# headroom. Raising SUMMARY_MAX_TOKENS to 2500 raised these too, which
+# pushed mid-to-large documents off summarize.py's efficient path:
+# once the joined partials exceed 12000 tokens the pipeline falls back
+# to a separate final summary PLUS _extract_metadata_only, and that
+# second call re-sends the entire original body. 8 partials went from
+# 8000 tokens (one combined call) to 20000 (two calls, one of them the
+# whole document again). Keeping partials at the old size restores the
+# one-call path and cuts roughly 40% off the summarize chain, while
+# the final summary keeps the headroom that fixed the truncation.
+SUMMARY_PARTIAL_MAX_TOKENS = int(
+    os.getenv("SUMMARY_PARTIAL_MAX_TOKENS", "1000"))
 HINT_SUMMARY_MIN_CHARS = 200
 HINT_SUMMARY_MAX_CHARS = 2000
 
