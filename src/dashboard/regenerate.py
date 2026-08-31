@@ -64,6 +64,8 @@ def _ops_kpi_snapshot() -> dict:
     "ingest_processed": 0,
     "ingest_pending": 0,
     "wiki_today_krw": 0.0,
+    "note_today_krw": 0.0,
+    "kg_today_krw": 0.0,
   }
   try:
     kst = _tz(_td(hours=9))
@@ -113,12 +115,25 @@ def _ops_kpi_snapshot() -> dict:
     log.exception("ops KPI snapshot failed")
 
   try:
-    out["wiki_today_krw"] = float(
-      cost.today_krw().get("by_purpose", {}).get("wiki", {})
-      .get("cost", 0.0)
-    )
+    # One read, three cards. Notes bill under three different purpose
+    # tags (note_synth writes the note, note_classify picks its
+    # category, notes covers the rest) so a single-tag read would
+    # under-report; KG is one tag.
+    by_purpose = cost.today_krw().get("by_purpose", {})
+
+    def _spent(*tags: str) -> float:
+      return float(sum(by_purpose.get(t, {}).get("cost", 0.0) for t in tags))
+
+    # wiki_fix is /wiki_fix's reintegration pass — same subsystem,
+    # same budget, and it was invisible on this card until now.
+    out["wiki_today_krw"] = _spent("wiki", "wiki_fix")
+    out["note_today_krw"] = _spent("note_synth", "note_classify", "notes")
+    out["kg_today_krw"] = _spent("kg_extract")
   except Exception:
+    log.exception("per-purpose cost snapshot failed")
     out["wiki_today_krw"] = 0.0
+    out["note_today_krw"] = 0.0
+    out["kg_today_krw"] = 0.0
   return out
 
 _BASE_CSS = """
@@ -1551,7 +1566,17 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "<div class='stat-card'>",
         "<div class='label'>📚 KPI: 위키 비용 (오늘)</div>",
         f"<div class='value'>₩{stats.get('wiki_today_krw', 0.0):,.0f}</div>",
-        "<div class='sub'>목적 태그 purpose=wiki 기준</div>",
+        "<div class='sub'>wiki + wiki_fix 합계</div>",
+        "</div>",
+        "<div class='stat-card'>",
+        "<div class='label'>📒 KPI: 노트 비용 (오늘)</div>",
+        f"<div class='value'>₩{stats.get('note_today_krw', 0.0):,.0f}</div>",
+        "<div class='sub'>note_synth + note_classify + notes 합계</div>",
+        "</div>",
+        "<div class='stat-card'>",
+        "<div class='label'>🕸 KPI: 지식그래프 비용 (오늘)</div>",
+        f"<div class='value'>₩{stats.get('kg_today_krw', 0.0):,.0f}</div>",
+        "<div class='sub'>목적 태그 purpose=kg_extract 기준</div>",
         "</div>",
         "</div>",
 
@@ -2270,6 +2295,8 @@ def regenerate() -> None:
             "ingest_processed": ops["ingest_processed"],
             "ingest_pending": ops["ingest_pending"],
             "wiki_today_krw": ops["wiki_today_krw"],
+            "note_today_krw": ops["note_today_krw"],
+            "kg_today_krw": ops["kg_today_krw"],
         }
         # Atomic index write so the http.server never serves a
         # half-written page. pid-suffixed tmp: the bot and the dashboard
