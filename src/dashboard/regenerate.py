@@ -25,7 +25,6 @@ from __future__ import annotations
 import html
 import logging
 import os
-import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -43,76 +42,23 @@ _LOCK_WARNED_AT: float = 0.0
 _LOCK_SLOW_SEC = 120.0
 
 
-def _pct(numer: int, denom: int) -> str:
-  if denom <= 0:
-    return "N/A"
-  return f"{(numer * 100.0 / denom):.1f}%"
-
-
 def _ops_kpi_snapshot() -> dict:
-  """Best-effort operational KPI snapshot for the dashboard cards.
+  """Per-feature spend for the dashboard cost cards.
 
-  Pulls from local SQLite stores; on any failure returns N/A-friendly
-  defaults so dashboard rendering never breaks.
+  Reads the shared cost ledger; on any failure returns zeros so
+  dashboard rendering never breaks.
+
+  Used to also snapshot dash_queries.db / dash_ingest.db for three
+  KPI cards (웹 질의 성공률 · 확장앱 인입 성공률 · 문서당 청크). The
+  cards were removed on request (2026-08-31) and nothing else read
+  those numbers, so the queries went with them rather than running on
+  every 15s rebuild for a value no page renders.
   """
-  from datetime import datetime as _dt, timedelta as _td, timezone as _tz
-
   out = {
-    "qna_success_rate": "N/A",
-    "qna_avg_latency_sec": None,
-    "ingest_success_rate": "N/A",
-    "ingest_processed": 0,
-    "ingest_pending": 0,
     "wiki_today_krw": 0.0,
     "note_today_krw": 0.0,
     "kg_today_krw": 0.0,
   }
-  try:
-    kst = _tz(_td(hours=9))
-    day_start = _dt.now(kst).strftime("%Y-%m-%d 00:00:00")
-
-    dq = config.DATA_DIR / "dash_queries.db"
-    if dq.exists():
-      with sqlite3.connect(str(dq), timeout=5) as c:
-        row = c.execute(
-          "SELECT "
-          "SUM(CASE WHEN status='done' THEN 1 ELSE 0 END), "
-          "SUM(CASE WHEN status='error' THEN 1 ELSE 0 END), "
-          "COUNT(*) "
-          "FROM queries WHERE ts >= ?",
-          (day_start,),
-        ).fetchone()
-        done = int(row[0] or 0)
-        err = int(row[1] or 0)
-        total = int(row[2] or 0)
-        out["qna_success_rate"] = _pct(done, total)
-        lat = c.execute(
-          "SELECT AVG((julianday(done_ts)-julianday(ts))*86400.0) "
-          "FROM queries WHERE status='done' AND done_ts IS NOT NULL "
-          "AND ts >= ?",
-          (day_start,),
-        ).fetchone()
-        if lat and lat[0] is not None:
-          out["qna_avg_latency_sec"] = float(lat[0])
-
-    di = config.DATA_DIR / "dash_ingest.db"
-    if di.exists():
-      with sqlite3.connect(str(di), timeout=5) as c:
-        row = c.execute(
-          "SELECT "
-          "SUM(CASE WHEN status IN ('done','duplicate') THEN 1 ELSE 0 END), "
-          "SUM(CASE WHEN status NOT IN ('pending','running') THEN 1 ELSE 0 END), "
-          "SUM(CASE WHEN status IN ('pending','running') THEN 1 ELSE 0 END) "
-          "FROM ingests"
-        ).fetchone()
-        succ = int(row[0] or 0)
-        processed = int(row[1] or 0)
-        pending = int(row[2] or 0)
-        out["ingest_success_rate"] = _pct(succ, processed)
-        out["ingest_processed"] = processed
-        out["ingest_pending"] = pending
-  except Exception:
-    log.exception("ops KPI snapshot failed")
 
   try:
     # One read, three cards. Notes bill under three different purpose
@@ -1473,28 +1419,6 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
     today_calls = stats.get("today_calls", 0)
     mtd_day = stats.get("mtd_day", 1) or 1
     avg_daily = (stats["mtd_krw"] / mtd_day) if stats.get("mtd_krw") else 0
-    qna_lat = stats.get("qna_avg_latency_sec")
-    qna_lat_txt = (f"{qna_lat:.1f}s" if isinstance(qna_lat, (int, float))
-             else "N/A")
-
-    # These two KPIs only measure the DASHBOARD's own queues — the web
-    # ask-box (dash_queries.db) and the browser-extension ingest queue
-    # (dash_ingest.db). Neither covers Telegram Q&A or the main ingest
-    # pipeline, and the ingest one is all-time while its neighbour is
-    # today-only. Unlabelled, a bare "N/A · 처리 0건" sitting next to
-    # "학습 자료 99,933개" reads as "ingestion is broken" when it really
-    # means "nobody used the browser extension". Name the scope in the
-    # label and say so explicitly when there is simply no data.
-    qna_rate = stats.get("qna_success_rate", "N/A")
-    qna_sub = (f"평균 응답지연 {qna_lat_txt}" if qna_rate != "N/A"
-               else "오늘 웹 질의 없음 · 텔레그램 Q&amp;A는 위 ‘총 Q&amp;A’")
-    ing_processed = stats.get("ingest_processed", 0)
-    ing_pending = stats.get("ingest_pending", 0)
-    ing_rate = stats.get("ingest_success_rate", "N/A")
-    ing_sub = (f"처리 {ing_processed:,}건 · 대기 {ing_pending:,}건"
-               if (ing_processed or ing_pending)
-               else "확장앱 인입 기록 없음 · 텔레그램 인입은 위 ‘학습 자료’")
-
     parts = [
         "<!DOCTYPE html><html lang='ko'><head>",
         "<meta charset='utf-8'>",
@@ -1548,21 +1472,6 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "</div>",
 
         "<div class='stats'>",
-        "<div class='stat-card'>",
-        "<div class='label'>🎯 KPI: 웹 질의 성공률 (오늘)</div>",
-        f"<div class='value'>{qna_rate}</div>",
-        f"<div class='sub'>{qna_sub}</div>",
-        "</div>",
-        "<div class='stat-card'>",
-        "<div class='label'>📥 KPI: 확장앱 인입 성공률 (전체 기간)</div>",
-        f"<div class='value'>{ing_rate}</div>",
-        f"<div class='sub'>{ing_sub}</div>",
-        "</div>",
-        "<div class='stat-card'>",
-        "<div class='label'>🧩 KPI: 문서당 청크</div>",
-        f"<div class='value'>{stats.get('chunks_per_doc', 0):.1f}</div>",
-        f"<div class='sub'>문서 {stats['docs']:,}개 기준</div>",
-        "</div>",
         "<div class='stat-card'>",
         "<div class='label'>📚 KPI: 위키 비용 (오늘)</div>",
         f"<div class='value'>₩{stats.get('wiki_today_krw', 0.0):,.0f}</div>",
@@ -2276,10 +2185,6 @@ def regenerate() -> None:
             "qna_days": qna_days,
             "docs": doc_count,
             "chunks": chunk_count,
-          "chunks_per_doc": (
-            float(chunk_count) / float(doc_count)
-            if doc_count > 0 else 0.0
-          ),
             "today_krw": today["total_krw"],
             "today_calls": today["calls"],
             "mtd_krw": mtd["total_krw"],
@@ -2289,11 +2194,6 @@ def regenerate() -> None:
             "total_cost_krw": alltime["total_krw"],
             "total_first_day": alltime["first_day"],
             "generated_at": generated_at,
-            "qna_success_rate": ops["qna_success_rate"],
-            "qna_avg_latency_sec": ops["qna_avg_latency_sec"],
-            "ingest_success_rate": ops["ingest_success_rate"],
-            "ingest_processed": ops["ingest_processed"],
-            "ingest_pending": ops["ingest_pending"],
             "wiki_today_krw": ops["wiki_today_krw"],
             "note_today_krw": ops["note_today_krw"],
             "kg_today_krw": ops["kg_today_krw"],
