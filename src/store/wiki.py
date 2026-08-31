@@ -2308,6 +2308,16 @@ def fix_cost_today_krw() -> float:
         return 0.0
 
 
+def fix_total_cost_krw() -> float:
+    """누적 /wiki_fix 지출. today 쪽과 같은 이유로 'wiki'와 분리된
+    태그를 읽는다 — 예산 차단기는 이 값을 보지 않는다."""
+    try:
+        return float(cost.all_time_krw().get("by_purpose", {})
+                     .get("wiki_fix", {}).get("cost", 0.0))
+    except Exception:
+        return 0.0
+
+
 async def reintegrate_contradictions(progress_cb=None) -> dict:
     """`## ⚠️ 검토 필요` 마커가 남은 페이지 전부를 LLM으로 다시 써서
     모순 섹션 해소를 시도한다 (페이지당 ~₩55). 순차 실행 + 배치 스로틀.

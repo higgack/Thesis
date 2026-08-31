@@ -1213,6 +1213,8 @@ def _render_index_page(topics_data: list[dict], token: str,
     budget = wiki_stats.get("budget", config.WIKI_DAILY_BUDGET_KRW)
     month_cost = wiki_stats.get("month_cost", 0)
     total_cost = wiki_stats.get("total_cost", 0)
+    fix_today = wiki_stats.get("fix_today", 0)
+    fix_total = wiki_stats.get("fix_total", 0)
 
     stats_html = (
         '<div class="wiki-stats">'
@@ -1234,6 +1236,10 @@ def _render_index_page(topics_data: list[dict], token: str,
         '<div class="wiki-stat-item">'
         f'<div class="stat-value">₩{total_cost:,.0f}</div>'
         '<div class="stat-label">Total</div></div>'
+        '<div class="wiki-stat-item">'
+        f'<div class="stat-value">₩{fix_today:,.0f}</div>'
+        f'<div class="stat-label">/wiki_fix 오늘 · 누적 ₩{fix_total:,.0f}</div>'
+        '</div>'
         "</div>"
     )
 
@@ -1691,12 +1697,20 @@ def render_wiki(token: str) -> int:
     budget = float(config.WIKI_DAILY_BUDGET_KRW)
     month_cost = 0.0
     total_cost = 0.0
+    fix_today = 0.0
+    fix_total = 0.0
     try:
         from ..store import wiki as wiki_store
         today_cost = wiki_store.today_cost_krw()
         budget = wiki_store.budget_krw()
         month_cost = wiki_store.month_cost_krw()
         total_cost = wiki_store.total_cost_krw()
+        # Deliberately NOT folded into today_cost: that number is the
+        # budget breaker's input, and /wiki_fix is tagged separately so
+        # a manual reintegration cannot eat the automatic batch's daily
+        # cap and leave it budget_blocked all day.
+        fix_today = wiki_store.fix_cost_today_krw()
+        fix_total = wiki_store.fix_total_cost_krw()
     except Exception:
         pass
 
@@ -1708,6 +1722,8 @@ def render_wiki(token: str) -> int:
         "budget": budget,
         "month_cost": month_cost,
         "total_cost": total_cost,
+        "fix_today": fix_today,
+        "fix_total": fix_total,
     }
 
     index_html = _render_index_page(topics_data, token, wiki_stats)
