@@ -191,6 +191,13 @@ _MM_STYLE_RE = re.compile(r"^\s*(?:style|linkStyle|classDef|class)\b")
 # collapsing runs is lossless. Prose never repeats one character 40
 # times; mermaid arrows (-->) and Korean text are unaffected.
 _RUNAWAY_RUN_RE = re.compile(r"([-=_*~#|.·—–:])\1{39,}")
+# Whitespace gets its own rule, and it is not optional: the first
+# version of this clamp missed a 313KB note whose table rows were
+# padded with 187,821 and 120,888 SPACES (99.7% ASCII, hence the
+# byte count barely above the char count). Runs of 40+ spaces or tabs
+# collapse to one — no markdown construct needs them, indented code
+# blocks use four, and mermaid indents by two.
+_RUNAWAY_WS_RE = re.compile(r"[ \t]{40,}")
 
 # Backstop for a runaway the clamp above does not cover (a loop over a
 # whole phrase rather than one character). 60,000 chars is already far
@@ -215,9 +222,10 @@ def _sanitize_mermaid(md: str) -> str:
     out, in_mm, in_fence = [], False, False
     for line in (md or "").split("\n"):
         clamped = _RUNAWAY_RUN_RE.sub(lambda m: m.group(1) * 20, line)
+        clamped = _RUNAWAY_WS_RE.sub(" ", clamped)
         if clamped != line:
-            log.warning("note markdown: collapsed a %d-char repeated run",
-                        len(line))
+            log.warning("note markdown: %d-char line collapsed to %d",
+                        len(line), len(clamped))
             line = clamped
         st = line.strip()
         if st.startswith("```"):
