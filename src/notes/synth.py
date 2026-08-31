@@ -183,10 +183,22 @@ _MM_SUBGRAPH_RE = re.compile(r"^(\s*subgraph\s+)(.+)$")
 
 
 def _sanitize_mermaid(md: str) -> str:
-    out, in_mm = [], False
+    """Clean the model's mermaid blocks, and close any fence it left open.
+
+    An unclosed ``` swallows the entire rest of the note: the dashboard
+    escapes fenced regions before handing the markdown to marked, so an
+    opening fence with no partner turns every following section into one
+    code block — the reader sees raw `##` and `**` instead of the note
+    (observed 2026-09-01 on a DCF note, where everything from
+    `## 📖 정리` down rendered as source). Appending the missing fence is
+    deterministic and costs nothing; the alternative is re-running the
+    synthesis and paying for it again.
+    """
+    out, in_mm, in_fence = [], False, False
     for line in (md or "").split("\n"):
         st = line.strip()
         if st.startswith("```"):
+            in_fence = not in_fence
             in_mm = st.lower().startswith("```mermaid") if not in_mm else False
             out.append(line)
             continue
@@ -200,6 +212,9 @@ def _sanitize_mermaid(md: str) -> str:
                 if title and '"' not in title and "[" not in title:
                     line = f'{m.group(1)}"{title}"'
         out.append(line)
+    if in_fence:
+        log.warning("note markdown had an unclosed code fence; closing it")
+        out.append("```")
     return "\n".join(out)
 
 
