@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 
 from ..llm.gemini import complete
@@ -177,7 +178,16 @@ async def _summarize_one(title: str, text: str,
 # Bound partial-summary parallelism GLOBALLY so a long doc (12+ 8k
 # partials) — or several at once — can't fan out into a Gemini
 # rate-limit flood. Shared across all concurrent ingests.
-_PARTIAL_SUMMARY_SEM = asyncio.Semaphore(6)
+#
+# 6 → 10 (2026-08-31). This waits on Gemini, it does not use the CPU,
+# and 6 was chosen while the local reranker was pinning both cores; the
+# box now idles at 16%. A 102-chunk PDF splits into 13 partials, so 6
+# meant three waves and 10 means two. The cap still exists for the
+# rate limit, which is the only reason it was ever 6 — env-tunable
+# because a 429 storm is the failure mode to back out of quickly, and
+# complete()'s fallback chain absorbs it slowly rather than loudly.
+_PARTIAL_SUMMARY_SEM = asyncio.Semaphore(
+    max(1, int(os.getenv("PARTIAL_SUMMARY_CONCURRENCY", "10"))))
 
 
 async def _summarize_partials(title: str, parts: list[str]) -> list[str]:
