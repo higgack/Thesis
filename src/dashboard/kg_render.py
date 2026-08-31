@@ -755,7 +755,9 @@ def render_kg(token: str) -> int:
         f"<a class='nav' href='/{_esc(token)}/universe/'>🌌 Universe</a> "
         f"<a class='nav' href='/{_esc(token)}/commands/'>📋 Commands</a> "
         "<a class='nav' href='https://echodiary-eng.vercel.app/' "
-        "target='_blank' rel='noopener'>📅 Daily</a></div>"
+        "target='_blank' rel='noopener'>📅 Daily</a>"
+        "<a class='nav' href='https://www.teumjournal.com/' "
+        "target='_blank' rel='noopener'>📰 Teum</a></div>"
         "</header>",
         "<div class='stats'>",
         f"<div class='card'><div class='label'>🕸 관계(엣지)</div>"

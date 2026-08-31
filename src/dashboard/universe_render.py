@@ -527,6 +527,7 @@ g.sel .lk.hot{opacity:.95}
   <a class="nav" href="/%(tok)s/notes/">📒 Note</a>
   <a class="nav" href="/%(tok)s/commands/">📋 Commands</a>
   <a class="nav" href="https://echodiary-eng.vercel.app/" target="_blank" rel="noopener">📅 Daily</a>
+  <a class="nav" href="https://www.teumjournal.com/" target="_blank" rel="noopener">📰 Teum</a>
 </header>
 <div id="stage">
   <svg id="svg"></svg>

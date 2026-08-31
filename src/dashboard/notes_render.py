@@ -819,7 +819,9 @@ def _render_index(token: str, notes: list[dict],
         f"<a class='nav' href='/{_esc(token)}/universe/'>🌌 Universe</a> "
         f"<a class='nav' href='/{_esc(token)}/commands/'>📋 Commands</a> "
         "<a class='nav' href='https://echodiary-eng.vercel.app/' "
-        "target='_blank' rel='noopener'>📅 Daily</a></div></header>",
+        "target='_blank' rel='noopener'>📅 Daily</a>"
+        "<a class='nav' href='https://www.teumjournal.com/' "
+        "target='_blank' rel='noopener'>📰 Teum</a></div></header>",
         "<div class='stats'>",
         f"<div class='card'><div class='label'>총 노트</div>"
         f"<div class='value'>{st.get('notes',0):,}개</div></div>",
