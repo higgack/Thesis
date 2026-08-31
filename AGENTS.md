@@ -569,6 +569,14 @@ other project modules into it beyond `config` and lazy `kg_ignore`.
   있었다.** 로컬 모델은 RAM이 아니라 **코어 수로 판단할 것.** 다시 켜려면
   그 머신에서 `model.predict` 벽시계 시간을 먼저 재라. 대체 경로는
   Gemini Flash-Lite 리랭크(검색당 ~₩1).
+- **URL 작업 동시성은 프로세스 전역** (`_URL_WORK_SEM`, `bot.py`).
+  `_INGEST_SEM`은 **메시지**를 세지 그 안의 작업을 안 센다 — 예전엔
+  메시지마다 4슬롯 세마포어를 새로 만들어서 메시지 3개면 문서
+  파이프라인 12개가 동시에 돌았다(재시도 레인 포함 최대 19개). 짧은
+  포워딩 글이 1500초 타임아웃에 걸린 이유. **코드 기본값 4 ≠ VM `.env` 8**
+  (2026-08-31, 리랭커를 끄고 CPU가 15%로 떨어진 뒤 상향) — 코드만
+  고치면 라이브 값은 안 바뀐다. 메모리가 8.95/11GB(81%)라 이 값을 더
+  올리는 건 RSS를 먼저 보고 판단할 것.
 
 
 Hybrid dense (Chroma) + keyword (FTS5) search, fused via **Reciprocal
