@@ -42,11 +42,45 @@ _LOCK_WARNED_AT: float = 0.0
 _LOCK_SLOW_SEC = 120.0
 
 
-def _ops_kpi_snapshot() -> dict:
-  """Per-feature spend for the dashboard cost cards.
+# Purpose tags per cost card. Notes bill under three of them —
+# note_synth writes the note, note_classify picks its category, notes
+# covers the rest — so a single-tag read under-reports. wiki_fix is
+# /wiki_fix's reintegration pass: same subsystem, same budget, and it
+# was invisible on the wiki card until 2026-08-31.
+_COST_CARD_TAGS = {
+  "wiki": ("wiki", "wiki_fix"),
+  "note": ("note_synth", "note_classify", "notes"),
+  "kg": ("kg_extract",),
+}
 
-  Reads the shared cost ledger; on any failure returns zeros so
-  dashboard rendering never breaks.
+
+def _cost_card(icon: str, name: str, key: str, stats: dict,
+               tags: str) -> list[str]:
+  """One per-feature cost card: today big, month and all-time under it.
+
+  Three cards now share the KPI row, so each has the width to carry
+  all three periods instead of today alone — today by itself said
+  nothing about whether a feature is expensive.
+  """
+  return [
+    "<div class='stat-card'>",
+    f"<div class='label'>{icon} KPI: {name} 비용</div>",
+    f"<div class='value'>₩{stats.get(f'{key}_today_krw', 0.0):,.0f}</div>",
+    "<div class='sub'>오늘 · "
+    f"이번 달 ₩{stats.get(f'{key}_month_krw', 0.0):,.0f} · "
+    f"누적 ₩{stats.get(f'{key}_total_krw', 0.0):,.0f}</div>",
+    f"<div class='sub'>{tags}</div>",
+    "</div>",
+  ]
+
+
+def _ops_kpi_snapshot(today: dict, mtd: dict, alltime: dict) -> dict:
+  """Per-feature spend for the dashboard cost cards, three periods each.
+
+  Takes the already-fetched ledger reads rather than issuing its own —
+  regenerate() runs every 15s and this used to re-scan today's window a
+  second time on every tick. On any failure returns zeros so dashboard
+  rendering never breaks.
 
   Used to also snapshot dash_queries.db / dash_ingest.db for three
   KPI cards (웹 질의 성공률 · 확장앱 인입 성공률 · 문서당 청크). The
@@ -54,32 +88,19 @@ def _ops_kpi_snapshot() -> dict:
   those numbers, so the queries went with them rather than running on
   every 15s rebuild for a value no page renders.
   """
-  out = {
-    "wiki_today_krw": 0.0,
-    "note_today_krw": 0.0,
-    "kg_today_krw": 0.0,
-  }
+  out = {f"{k}_{period}_krw": 0.0
+         for k in _COST_CARD_TAGS
+         for period in ("today", "month", "total")}
 
-  try:
-    # One read, three cards. Notes bill under three different purpose
-    # tags (note_synth writes the note, note_classify picks its
-    # category, notes covers the rest) so a single-tag read would
-    # under-report; KG is one tag.
-    by_purpose = cost.today_krw().get("by_purpose", {})
-
-    def _spent(*tags: str) -> float:
-      return float(sum(by_purpose.get(t, {}).get("cost", 0.0) for t in tags))
-
-    # wiki_fix is /wiki_fix's reintegration pass — same subsystem,
-    # same budget, and it was invisible on this card until now.
-    out["wiki_today_krw"] = _spent("wiki", "wiki_fix")
-    out["note_today_krw"] = _spent("note_synth", "note_classify", "notes")
-    out["kg_today_krw"] = _spent("kg_extract")
-  except Exception:
-    log.exception("per-purpose cost snapshot failed")
-    out["wiki_today_krw"] = 0.0
-    out["note_today_krw"] = 0.0
-    out["kg_today_krw"] = 0.0
+  for period, source in (("today", today), ("month", mtd),
+                         ("total", alltime)):
+    try:
+      by_purpose = (source or {}).get("by_purpose", {})
+      for card, tags in _COST_CARD_TAGS.items():
+        out[f"{card}_{period}_krw"] = float(sum(
+          by_purpose.get(t, {}).get("cost", 0.0) for t in tags))
+    except Exception:
+      log.exception("per-purpose cost snapshot failed (%s)", period)
   return out
 
 _BASE_CSS = """
@@ -1472,21 +1493,12 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "</div>",
 
         "<div class='stats'>",
-        "<div class='stat-card'>",
-        "<div class='label'>📚 KPI: 위키 비용 (오늘)</div>",
-        f"<div class='value'>₩{stats.get('wiki_today_krw', 0.0):,.0f}</div>",
-        "<div class='sub'>wiki + wiki_fix 합계</div>",
-        "</div>",
-        "<div class='stat-card'>",
-        "<div class='label'>📒 KPI: 노트 비용 (오늘)</div>",
-        f"<div class='value'>₩{stats.get('note_today_krw', 0.0):,.0f}</div>",
-        "<div class='sub'>note_synth + note_classify + notes 합계</div>",
-        "</div>",
-        "<div class='stat-card'>",
-        "<div class='label'>🕸 KPI: 지식그래프 비용 (오늘)</div>",
-        f"<div class='value'>₩{stats.get('kg_today_krw', 0.0):,.0f}</div>",
-        "<div class='sub'>목적 태그 purpose=kg_extract 기준</div>",
-        "</div>",
+        *_cost_card("📚", "위키", "wiki", stats,
+                    "wiki + wiki_fix"),
+        *_cost_card("📒", "노트", "note", stats,
+                    "note_synth + note_classify + notes"),
+        *_cost_card("🕸", "지식그래프", "kg", stats,
+                    "purpose=kg_extract"),
         "</div>",
 
         "<div class='controls'>",
@@ -2163,11 +2175,19 @@ def regenerate() -> None:
         rows = qna.recent(limit=2000)
         today = cost.today_krw()
         mtd = cost.month_to_date_krw()
-        ops = _ops_kpi_snapshot()
         try:
             alltime = cost.total_krw()
         except Exception:
             alltime = {"total_krw": 0.0, "first_day": ""}
+        try:
+            # Separate from total_krw() above: that one returns the
+            # grand total plus first_day, this one the per-purpose
+            # breakdown the cost cards need.
+            alltime_by_purpose = cost.all_time_krw()
+        except Exception:
+            log.exception("all-time per-purpose breakdown failed")
+            alltime_by_purpose = {}
+        ops = _ops_kpi_snapshot(today, mtd, alltime_by_purpose)
         from datetime import datetime as _dt, timezone as _tz, timedelta as _td
         generated_at = _dt.now(_tz(_td(hours=9))).strftime("%Y-%m-%d %H:%M")
         total_qna = qna.count()
@@ -2194,9 +2214,7 @@ def regenerate() -> None:
             "total_cost_krw": alltime["total_krw"],
             "total_first_day": alltime["first_day"],
             "generated_at": generated_at,
-            "wiki_today_krw": ops["wiki_today_krw"],
-            "note_today_krw": ops["note_today_krw"],
-            "kg_today_krw": ops["kg_today_krw"],
+            **ops,
         }
         # Atomic index write so the http.server never serves a
         # half-written page. pid-suffixed tmp: the bot and the dashboard
