@@ -179,6 +179,24 @@ _MAX_INPUT_CHARS = 200000  # ~50K tokens; covers a full long report
 # 순수 장식이라 지워도 정보 손실이 없고, 따옴표 없는 subgraph 제목은
 # 감싸서 살린다. 프롬프트 금지 조항의 2차 방어선.
 _MM_STYLE_RE = re.compile(r"^\s*(?:style|linkStyle|classDef|class)\b")
+
+# Degenerate-repetition clamp (2026-09-01). A DCF note came out at
+# 269,882 chars across 69 lines because the model emitted two markdown
+# table separators of 115,438 and 151,683 hyphens. It never hit
+# max_tokens — a run of one character compresses to ~8 chars/token, so
+# 32,768 tokens was plenty of room. The damage: the table rendered
+# header-only with no data row, a stray fence swallowed the sections
+# below it, and the dashboard rewrote a 270KB page on every rebuild.
+# A separator of 20 dashes means exactly what one of 151,683 means, so
+# collapsing runs is lossless. Prose never repeats one character 40
+# times; mermaid arrows (-->) and Korean text are unaffected.
+_RUNAWAY_RUN_RE = re.compile(r"([-=_*~#|.·—–:])\1{39,}")
+
+# Backstop for a runaway the clamp above does not cover (a loop over a
+# whole phrase rather than one character). 60,000 chars is already far
+# past what 32,768 tokens can honestly produce in Korean, so passing it
+# means something went wrong rather than the note being rich.
+_MAX_NOTE_CHARS = 60000
 _MM_SUBGRAPH_RE = re.compile(r"^(\s*subgraph\s+)(.+)$")
 
 
@@ -196,6 +214,11 @@ def _sanitize_mermaid(md: str) -> str:
     """
     out, in_mm, in_fence = [], False, False
     for line in (md or "").split("\n"):
+        clamped = _RUNAWAY_RUN_RE.sub(lambda m: m.group(1) * 20, line)
+        if clamped != line:
+            log.warning("note markdown: collapsed a %d-char repeated run",
+                        len(line))
+            line = clamped
         st = line.strip()
         if st.startswith("```"):
             in_fence = not in_fence
@@ -215,7 +238,15 @@ def _sanitize_mermaid(md: str) -> str:
     if in_fence:
         log.warning("note markdown had an unclosed code fence; closing it")
         out.append("```")
-    return "\n".join(out)
+    res = "\n".join(out)
+    if len(res) > _MAX_NOTE_CHARS:
+        log.warning("note markdown %d chars — over %d, truncating; the "
+                    "model most likely looped", len(res), _MAX_NOTE_CHARS)
+        cut = res.rfind("\n", 0, _MAX_NOTE_CHARS)
+        res = (res[:cut if cut > 0 else _MAX_NOTE_CHARS].rstrip()
+               + "\n\n> ⚠️ 생성 결과가 비정상적으로 길어 여기서 잘렸습니다"
+                 " (모델 반복 출력). 같은 자료를 다시 넣으면 재생성됩니다.\n")
+    return res
 
 
 _MARKER_RE = re.compile(r"(?m)^===(TITLE|NOTE|QUESTIONS|CATEGORY)===\s*$")
