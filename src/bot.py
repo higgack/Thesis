@@ -1075,17 +1075,20 @@ def _enqueue_orphan_recovery(orphans: list[Path], chat_id: int) -> int:
     the number enqueued."""
     if not orphans:
         return 0
+    queued = 0
     for p in orphans:
-        _retry_enqueue({
+        if _retry_enqueue({
             "kind": "local_file",
             "path": str(p),
             "file_name": p.name,
             "chat_id": chat_id,
             "attempts": 0,
-        })
+        }):
+            queued += 1
     _persist_retry_queue()
-    log.info("orphan recovery: enqueued %d files", len(orphans))
-    return len(orphans)
+    log.info("orphan recovery: enqueued %d of %d files (%d already queued)",
+             queued, len(orphans), len(orphans) - queued)
+    return queued
 
 
 def _cleanup_stale_bubbles_at_startup(app) -> None:
@@ -4071,10 +4074,12 @@ def _failed_retry_one(chat_id: int, idx: int) -> str:
     payload = dict(payload)
     payload["attempts"] = 0
     payload["chat_id"] = chat_id
-    _retry_enqueue(payload)
+    queued = _retry_enqueue(payload)
     _persist_retry_queue()
     _persist_failed_log()
     title = (entry.get("title") or "(unknown)")[:60]
+    if not queued:
+        return f"♻️ #{idx + 1} 이미 큐에 있음 — /failed 에서만 정리: {title}"
     return f"🔁 #{idx + 1} retry queue로 재등록: {title}"
 
 
@@ -4158,6 +4163,7 @@ def _failed_retry_all(chat_id: int) -> str:
     """Move every failed entry that has a saved retry_payload back into
     the auto-retry queue. Returns the user-facing summary message."""
     retried = 0
+    already = 0
     kept: list[dict] = []
     batch_id = f"b{time.time():.0f}"
     for entry in _INGEST_FAILED:
@@ -4167,8 +4173,14 @@ def _failed_retry_all(chat_id: int) -> str:
             payload["attempts"] = 0
             payload["chat_id"] = chat_id
             payload["_batch"] = batch_id
-            _retry_enqueue(payload)
-            retried += 1
+            # A refused enqueue means the item is ALREADY queued, so the
+            # failed row is still correct to drop — but it must not be
+            # counted, or the progress tracker's total exceeds what can
+            # ever drain and the bar never reaches 100%.
+            if _retry_enqueue(payload):
+                retried += 1
+            else:
+                already += 1
         else:
             kept.append(entry)
     _INGEST_FAILED.clear()
@@ -4183,7 +4195,9 @@ def _failed_retry_all(chat_id: int) -> str:
             total=retried, last_done=-1,
         )
     msg = (
-        f"🔁 retry queue로 {retried}건 재등록\n"
+        f"🔁 retry queue로 {retried}건 재등록"
+        + (f" (이미 큐에 있던 {already}건 제외)" if already else "")
+        + "\n"
         f"{_RETRY_INGEST_INTERVAL_SEC}초 간격, 최대 "
         f"{_RETRY_INGEST_BATCH}건/회 자동 처리."
     )
