@@ -89,6 +89,36 @@ _URL_WORK_SEM = asyncio.Semaphore(
 _RETRY_LIVE = {"heavy": 0, "light": 0}
 
 
+def _retry_key(item: dict) -> str | None:
+    """Identity of a queued work item. Same shape the boot-time loader
+    uses to collapse duplicates, so the two cannot disagree."""
+    return (
+        item.get("file_name")
+        or item.get("path")
+        or item.get("url")
+        or (item.get("text", "")[:60] if item.get("text") else None)
+        or item.get("file_unique_id")
+    )
+
+
+def _retry_enqueue(item: dict) -> bool:
+    """Append unless an equivalent item is already queued.
+
+    Deduplication only ran at boot, so every path that appends could
+    stack copies of one document. /failed retry re-queued each failure
+    row separately, and a Hong Kong exchange filing ended up in the
+    queue four times at once — four downloads, four OCR passes, four
+    embeddings of the same PDF, occupying most of a lane while other
+    work waited. Returns False when the item was already there.
+    """
+    key = _retry_key(item)
+    if key and any(_retry_key(it) == key for it in _INGEST_RETRY_QUEUE):
+        log.info("retry enqueue skipped — already queued: %s", str(key)[:100])
+        return False
+    _INGEST_RETRY_QUEUE.append(item)
+    return True
+
+
 def _spawn_retry(ctx, lane: str | None = None) -> None:
     """Start one retry worker and keep _RETRY_LIVE honest."""
     key = lane if lane in _RETRY_LIVE else "heavy"
@@ -1046,7 +1076,7 @@ def _enqueue_orphan_recovery(orphans: list[Path], chat_id: int) -> int:
     if not orphans:
         return 0
     for p in orphans:
-        _INGEST_RETRY_QUEUE.append({
+        _retry_enqueue({
             "kind": "local_file",
             "path": str(p),
             "file_name": p.name,
@@ -4041,7 +4071,7 @@ def _failed_retry_one(chat_id: int, idx: int) -> str:
     payload = dict(payload)
     payload["attempts"] = 0
     payload["chat_id"] = chat_id
-    _INGEST_RETRY_QUEUE.append(payload)
+    _retry_enqueue(payload)
     _persist_retry_queue()
     _persist_failed_log()
     title = (entry.get("title") or "(unknown)")[:60]
@@ -4137,7 +4167,7 @@ def _failed_retry_all(chat_id: int) -> str:
             payload["attempts"] = 0
             payload["chat_id"] = chat_id
             payload["_batch"] = batch_id
-            _INGEST_RETRY_QUEUE.append(payload)
+            _retry_enqueue(payload)
             retried += 1
         else:
             kept.append(entry)
@@ -5035,7 +5065,7 @@ def _orphan_enqueue_one(orphan_path: Path, chat_id: int) -> bool:
                 item.get("path") or ""
         ).name == name:
             return False
-    _INGEST_RETRY_QUEUE.append({
+    _retry_enqueue({
         "kind": "local_file",
         "path": str(orphan_path),
         "file_name": name,
@@ -5539,7 +5569,7 @@ async def cmd_pending_approve_all_confirm(update: Update, ctx: ContextTypes.DEFA
         for it in ocr_items:
             if not it.get("pdf_path"):
                 continue
-            _INGEST_RETRY_QUEUE.append({
+            _retry_enqueue({
                 "kind": "ocr_extend",
                 "doc_id": it["doc_id"],
                 "title": it["title"],
@@ -6132,7 +6162,7 @@ async def _youtube_restub_rescan_impl(update: Update, ctx: ContextTypes.DEFAULT_
         if url in queued_urls:
             skipped_dup += 1
             continue
-        _INGEST_RETRY_QUEUE.append({
+        _retry_enqueue({
             "kind": "url",
             "url": url,
             "chat_id": chat_id,
