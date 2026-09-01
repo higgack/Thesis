@@ -79,6 +79,30 @@ _URL_WORK_SEM = asyncio.Semaphore(
     int(os.getenv("URL_WORK_CONCURRENCY", "4")))
 
 
+# Retry workers actually RUNNING right now, per lane. Counts live
+# TASKS, not in_flight_ts marks in the queue. Sizing the drain off the
+# queue marks (as of 2026-08-31) deadlocked it: a mark left behind by a
+# task that died before releasing it counts against capacity for a full
+# _IN_FLIGHT_TIMEOUT, and /queue showed "처리중 9" while the lanes read
+# 1/3 and 0/4 — one worker alive, nothing else able to start for 27
+# minutes. A counter decremented in a finally cannot drift that way.
+_RETRY_LIVE = {"heavy": 0, "light": 0}
+
+
+def _spawn_retry(ctx, lane: str | None = None) -> None:
+    """Start one retry worker and keep _RETRY_LIVE honest."""
+    key = lane if lane in _RETRY_LIVE else "heavy"
+
+    async def _run() -> None:
+        _RETRY_LIVE[key] += 1
+        try:
+            await _retry_pending_ingest(ctx, lane)
+        finally:
+            _RETRY_LIVE[key] = max(0, _RETRY_LIVE[key] - 1)
+
+    asyncio.create_task(_run())
+
+
 def _retry_lane(item: dict) -> str:
     """'light' for network/API-bound kinds, 'heavy' for anything that
     loads a file (pdf/photo/audio → OCR, chunking, embedding)."""
@@ -4327,7 +4351,7 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # tick (which can be deferred up to ~60 s by busy-skip grace).
         # Kick a drain task right now; the in-task semaphore acquire
         # still bounds parallelism + Gemini concurrency.
-        asyncio.create_task(_retry_pending_ingest(ctx))
+        _spawn_retry(ctx)
     elif q.data == "failed_clear":
         await q.edit_message_text(_failed_clear_all())
     elif q.data.startswith("failed_retry_one:"):
@@ -4340,7 +4364,7 @@ async def on_callback_query(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             disable_web_page_preview=True,
         )
         # Explicit user request → immediate drain (bypass tick wait).
-        asyncio.create_task(_retry_pending_ingest(ctx))
+        _spawn_retry(ctx)
     elif q.data.startswith("failed_drop_one:"):
         try:
             idx = int(q.data.split(":", 1)[1])
@@ -12005,10 +12029,7 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
     # the semaphore reports free (that covers live ingests too), and
     # never hold more retry tasks in flight than capacity.
     def _free(sem, cap, lane):
-        in_flight = sum(1 for it in _INGEST_RETRY_QUEUE
-                        if it.get("in_flight_ts")
-                        and _retry_lane(it) == lane)
-        return min(sem._value, max(0, cap - in_flight))
+        return min(sem._value, max(0, cap - _RETRY_LIVE[lane]))
     _free_heavy = _free(_INGEST_SEM, _INGEST_SEM_CAPACITY, "heavy")
     _free_light = _free(_LIGHT_INGEST_SEM, _LIGHT_INGEST_SEM_CAPACITY,
                         "light")
@@ -12039,9 +12060,9 @@ async def _retry_pending_ingest_batch(ctx: ContextTypes.DEFAULT_TYPE):
     # _retry_pending_ingest. Returning immediately lets APScheduler
     # consider the tick 'done' so the next one runs on schedule.
     for _ in range(heavy):
-        asyncio.create_task(_retry_pending_ingest(ctx, "heavy"))
+        _spawn_retry(ctx, "heavy")
     for _ in range(light):
-        asyncio.create_task(_retry_pending_ingest(ctx, "light"))
+        _spawn_retry(ctx, "light")
 
 
 # Mid-processing items stay in the queue with an in_flight_ts mark
