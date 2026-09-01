@@ -218,3 +218,37 @@ padding:5px 10px;font-weight:600}
 .alarm-clear{background:rgba(148,163,184,.25);color:var(--muted)}
 .alarm-status{font-size:11px;color:#818cf8}
 """
+
+
+# ── Shared design tokens (Linear palette) ─────────────────────────────
+# One definition for the three dashboards that use this look: the Q&A
+# index/detail (regenerate.py), KG and Note. They carried three
+# byte-identical copies of these 24 light + 24 dark tokens, which is
+# the state a palette drifts out of — a colour tweaked in one file and
+# not the others reads as a rendering bug rather than an edit.
+#
+# Deliberately NOT shared with two dashboards that look different on
+# purpose: wiki_render uses a Wikipedia palette (--link,
+# --link-visited, --toc-bg, serif-ish chrome) and universe_render uses
+# a graph-canvas vocabulary (--ink, --sub, --lk, --node) with values
+# interpolated per render. Folding either in would change a design,
+# not fix a duplication.
+DESIGN_TOKENS_CSS = """
+:root{--bg:#f7f8f9;--panel:#ffffff;--panel-alt:#f0f1f3;--border:#e8e8ea;
+--border-input:#e0e1e4;--border-soft:#eef0f2;--text:#282a30;--heading:#16171a;
+--muted:#8a8f98;--accent:#5e6ad2;--accent-hover:#515dc4;--primary:#5e6ad2;
+--due:#f5a623;--important:#f5a623;--memo:#2faf6a;--danger:#e5484d;
+--warning-text:#92400e;
+--tool-brain:#ec4899;--tool-paper:#a855f7;--tool-patent:#5e6ad2;
+--tool-report:#14b8a6;--tool-web:#2faf6a;--tool-ingest:#f5a623;
+--shadow:0 1px 2px rgba(0,0,0,0.03)}
+[data-theme="dark"]{--bg:#0b0c0e;--panel:#141518;--panel-alt:#1c1d21;
+--border:#26272b;--border-input:#2a2c31;--border-soft:#1f2024;--text:#e2e3e6;
+--heading:#f7f8f8;--muted:#8a8f98;--accent:#7c84e8;--accent-hover:#9aa2f0;
+--primary:#5e6ad2;
+--due:#f5a623;--important:#f5a623;--memo:#3fbf7a;--danger:#f2555a;
+--warning-text:#fcd34d;
+--tool-brain:#f472b6;--tool-paper:#c084fc;--tool-patent:#7c84e8;
+--tool-report:#2dd4bf;--tool-web:#3fbf7a;--tool-ingest:#f5a623;
+--shadow:none}
+"""

@@ -320,6 +320,61 @@ print(f"  \033[32mno loop-blocking writers ({len(WRITERS)} guarded fns)\033[0m")
 PY
 [[ $? -ne 0 ]] && fail=1
 
+echo "── 7. dashboard design-token drift ──"
+python3 - <<'PY'
+# The Q&A, KG and Note dashboards share one Linear palette. They used to
+# carry three byte-identical copies of it, which is the state a palette
+# drifts out of: a colour tweaked in one file and not the others reads
+# as a rendering bug rather than an edit. They now pull
+# widgets.DESIGN_TOKENS_CSS, and this check keeps it that way.
+#
+# wiki_render and universe_render are allowlisted because their palettes
+# differ ON PURPOSE — a Wikipedia look (--link, --link-visited, --toc-bg)
+# and a graph-canvas vocabulary (--ink, --lk, --node) whose values are
+# interpolated per render. Folding either in would change a design
+# rather than remove a duplication.
+import re, sys
+from pathlib import Path
+
+SHARED = {"kg_render.py", "notes_render.py", "regenerate.py"}
+ALLOWED_OWN = {"wiki_render.py": "Wikipedia palette",
+               "universe_render.py": "graph-canvas tokens"}
+BLK = re.compile(r"(:root|\[data-theme=[\"']?dark[\"']?\])\s*\{")
+
+d = Path("src/dashboard")
+if not d.is_dir():
+    print("  \033[33mskipped — src/dashboard not found\033[0m"); sys.exit(0)
+
+bad, unknown = [], []
+for f in sorted(d.glob("*.py")):
+    hits = BLK.findall(f.read_text(encoding="utf-8"))
+    if not hits:
+        continue
+    if f.name in SHARED:
+        bad.append((f.name, len(hits)))
+    elif f.name not in ALLOWED_OWN and f.name != "widgets.py":
+        unknown.append((f.name, len(hits)))
+
+if bad:
+    print("  \033[31mFAIL — these must use widgets.DESIGN_TOKENS_CSS:\033[0m")
+    for n, c in bad:
+        print(f"      {n}: defines its own :root/dark ({c} block(s))")
+    print("  \033[31m→ replace the block with the shared constant, or add the"
+          " file to ALLOWED_OWN here with a reason\033[0m")
+    sys.exit(1)
+if unknown:
+    print("  \033[33mnew dashboard defines its own palette — intended?\033[0m")
+    for n, c in unknown:
+        print(f"      {n}: {c} block(s)")
+    sys.exit(2)
+print("  \033[32mtokens shared by %d dashboards, %d allowlisted (%s)\033[0m"
+      % (len(SHARED), len(ALLOWED_OWN),
+         ", ".join(f"{k.split('_')[0]}={v}" for k, v in ALLOWED_OWN.items())))
+PY
+rc=$?
+[[ $rc -eq 1 ]] && fail=1
+[[ $rc -eq 2 ]] && warn=1
+
 # ---- summary ----------------------------------------------------------
 echo
 if [[ $fail -ne 0 ]]; then

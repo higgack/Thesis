@@ -26,6 +26,8 @@ import html
 import logging
 import os
 import threading
+
+from . import widgets as _widgets
 import time
 from pathlib import Path
 
@@ -108,32 +110,7 @@ _BASE_CSS = """
    indigo accent #5e6ad2, tight headings. (DESIGN.md)
    Font: NO web-font @import (그게 매 페이지 렌더를 막아 느렸음) — Inter가
    로컬에 있으면 쓰고, 없으면 system-ui로 폴백(다운로드 0, 즉시 렌더). */
-:root {
-  --bg: #f7f8f9; --panel: #ffffff; --panel-alt: #f0f1f3;
-  --border: #e8e8ea; --border-input: #e0e1e4; --border-soft: #eef0f2;
-  --text: #282a30; --heading: #16171a; --muted: #8a8f98;
-  --accent: #5e6ad2; --accent-hover: #515dc4;
-  --primary: #5e6ad2;
-  --important: #f5a623; --memo: #2faf6a; --danger: #e5484d;
-  --warning-text: #92400e;
-  --tool-brain: #ec4899; --tool-paper: #a855f7;
-  --tool-patent: #5e6ad2; --tool-report: #14b8a6;
-  --tool-web: #2faf6a; --tool-ingest: #f5a623;
-  --shadow: 0 1px 2px rgba(0,0,0,0.03);
-}
-[data-theme="dark"] {
-  --bg: #0b0c0e; --panel: #141518; --panel-alt: #1c1d21;
-  --border: #26272b; --border-input: #2a2c31; --border-soft: #1f2024;
-  --text: #e2e3e6; --heading: #f7f8f8; --muted: #8a8f98;
-  --accent: #7c84e8; --accent-hover: #9aa2f0;
-  --primary: #5e6ad2;
-  --important: #f5a623; --memo: #3fbf7a; --danger: #f2555a;
-  --warning-text: #fcd34d;
-  --tool-brain: #f472b6; --tool-paper: #c084fc;
-  --tool-patent: #7c84e8; --tool-report: #2dd4bf;
-  --tool-web: #3fbf7a; --tool-ingest: #f5a623;
-  --shadow: none;
-}
+""" + _widgets.DESIGN_TOKENS_CSS + """
 * { box-sizing: border-box; }
 body {
   margin: 0;
