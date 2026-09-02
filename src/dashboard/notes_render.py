@@ -208,6 +208,10 @@ border-color:rgba(100,116,139,.55);color:#cbd5e1}
 font-size:17px;line-height:1;padding:2px 4px;border-radius:6px;transition:.12s}
 .nstar:hover{color:var(--important);transform:scale(1.15)}
 .nstar.on{color:var(--important)}
+.nread{cursor:pointer;background:transparent;border:0;color:var(--muted);
+font-size:16px;line-height:1;padding:2px 4px;border-radius:6px;transition:.12s}
+.nread:hover{color:var(--memo);transform:scale(1.15)}
+.nread.on{color:var(--memo)}
 .note-memo{margin:16px 0;padding:12px 14px;background:var(--panel);
 border:1px solid var(--border);border-radius:10px}
 .note-memo .memo-h{font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px}
@@ -232,6 +236,16 @@ padding:5px 10px;font-weight:600}
 .note-row[data-important="1"]{border-color:rgba(245,158,11,.55);
 background:rgba(245,158,11,.06)}
 [data-theme=dark] .note-row[data-important="1"]{background:rgba(245,158,11,.10)}
+.note-row[data-read="1"]{border-color:rgba(47,175,106,.55);
+background:rgba(47,175,106,.06)}
+[data-theme=dark] .note-row[data-read="1"]{background:rgba(47,175,106,.10)}
+/* ★ + ✓ together → blue. Placed last on purpose: the single-flag dark
+   rules above have the same (0,3,1) specificity, so only source order
+   keeps orange from winning the background back in dark mode. */
+.note-row[data-important="1"][data-read="1"]{border-color:rgba(59,130,246,.60);
+background:rgba(59,130,246,.07)}
+[data-theme=dark] .note-row[data-important="1"][data-read="1"]{
+background:rgba(59,130,246,.13)}
 .controls .impfilter{background:var(--panel);border:1px solid var(--border);
 color:var(--muted)}
 .controls .impfilter.active{background:var(--important);border-color:var(--important);color:#fff}
@@ -650,6 +664,28 @@ _INDEX_JS = r"""
         });
     });
   });
+  // ✓ 읽음 표시 토글 — same optimistic/revert shape as the ★ above.
+  document.querySelectorAll('.nread').forEach(function(btn){
+    btn.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      var row = btn.closest('.note-row'); var id = row && row.dataset.id;
+      if(!id) return;
+      var now = row.dataset.read !== '1';
+      row.dataset.read = now ? '1' : '0';
+      btn.textContent = now ? '✔' : '✓';
+      btn.classList.toggle('on', now);
+      fetch('/'+token+'/notes/'+encodeURIComponent(id)+'/read',
+        {method:'POST', headers:{'content-type':'application/json'},
+         body: JSON.stringify({read: now})})
+        .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .catch(function(err){
+          row.dataset.read = now ? '0' : '1';
+          btn.textContent = now ? '✓' : '✔';
+          btn.classList.toggle('on', !now);
+          alert('읽음 표시 변경 실패: '+err.message);
+        });
+    });
+  });
   document.querySelectorAll('.ndel').forEach(function(btn){
     btn.addEventListener('click', function(e){
       e.preventDefault(); e.stopPropagation();
@@ -774,6 +810,7 @@ def _render_index(token: str, notes: list[dict],
                 _stype.lower(), 0) + 1
         cat = (n.get("category") or "").strip() or "그외"
         imp = 1 if n.get("important") else 0
+        rd = 1 if n.get("is_read") else 0
         _memo_txt = (_nmemos.get(str(n["id"])) or "").strip()
         hasmemo = 1 if _memo_txt else 0
         is_book = 1 if (n.get("mode") or "normal") == "book" else 0
@@ -781,11 +818,14 @@ def _render_index(token: str, notes: list[dict],
             f"<div class='note-row' data-id=\"{_esc(n['id'])}\" "
             f"data-text=\"{_esc(hay)}\" data-tbucket=\"{_esc(tbucket)}\" "
             f"data-cat=\"{_esc(cat)}\" data-important=\"{imp}\" "
+            f"data-read=\"{rd}\" "
             f"data-hasmemo=\"{hasmemo}\" data-memo=\"{_esc(_memo_txt)}\" "
             f"data-book=\"{is_book}\" "
             f"data-updated=\"{_esc(n.get('updated') or '')}\">"
             f"<button class='nstar{' on' if imp else ''}' type='button' "
             f"title='중요 표시 토글'>{'★' if imp else '☆'}</button>"
+            f"<button class='nread{' on' if rd else ''}' type='button' "
+            f"title='읽음 표시 토글'>{'✔' if rd else '✓'}</button>"
             f"<a class='t' href='note-{_esc(n['id'])}.html'>{_esc(n['title'])}</a>"
             f"<span class='cat cat-{_esc(cat)}' "
             f"title='클릭: 종류 변경 "
@@ -997,7 +1037,7 @@ def render_notes(token: str) -> int:
         import hashlib as _hl
         _row_fp = _hl.sha1("\x00".join(
             f"{n.get('id')}\x01{n.get('category') or ''}"
-            f"\x01{n.get('important') or 0}"
+            f"\x01{n.get('important') or 0}\x01{n.get('is_read') or 0}"
             f"\x01{n.get('next_due') or ''}\x01{n.get('reps') or 0}"
             f"\x01{n.get('mode') or ''}"
             for n in notes).encode("utf-8")).hexdigest()[:16]

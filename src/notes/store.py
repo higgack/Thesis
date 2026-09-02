@@ -74,7 +74,8 @@ def init_db() -> None:
               gen_seconds REAL DEFAULT 0,
               category TEXT DEFAULT '',
               category_locked INTEGER DEFAULT 0,
-              important INTEGER DEFAULT 0
+              important INTEGER DEFAULT 0,
+              is_read INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS note_srs (
               note_id TEXT PRIMARY KEY,
@@ -118,6 +119,12 @@ def init_db() -> None:
                       "INTEGER DEFAULT 0")
         if "important" not in cols:
             c.execute("ALTER TABLE notes ADD COLUMN important INTEGER DEFAULT 0")
+        if "is_read" not in cols:
+            # 읽음(체크) 표시 — 중요(★)와 독립. 대시보드 카드가
+            # ★만=주황, ✓만=초록, 둘 다=파랑으로 색을 바꾼다 (2026-09-02).
+            # 컬럼명이 `read`가 아닌 이유: 다른 SQL 엔진에서 예약어라
+            # 이 파일을 옮겨 쓸 때 조용히 깨질 자리를 만들지 않으려고.
+            c.execute("ALTER TABLE notes ADD COLUMN is_read INTEGER DEFAULT 0")
         if "mode" not in cols:
             # 노트 합성 방식: 'normal' | 'book' (책 모드, 2026-08-27).
             # 대시보드의 📚 Book 필터가 이 컬럼으로 거른다.
@@ -338,6 +345,7 @@ def list_notes() -> list[dict]:
         rows = c.execute(
             "SELECT n.id,n.title,n.source_type,n.source_ref,n.updated,"
             "n.category,COALESCE(n.important,0) AS important,"
+            "COALESCE(n.is_read,0) AS is_read,"
             "COALESCE(n.mode,'normal') AS mode,"
             "s.last_reviewed,s.next_due,s.reps "
             "FROM notes n LEFT JOIN note_srs s ON s.note_id=n.id "
@@ -366,6 +374,16 @@ def set_important(note_id: str, important: bool) -> None:
     with _conn() as c:
         c.execute("UPDATE notes SET important=? WHERE id=?",
                   (1 if important else 0, note_id))
+
+
+def set_read(note_id: str, is_read: bool) -> None:
+    """Toggle a note's 읽음(read) flag. Same shape as set_important —
+    user curation from the dashboard, persisted so a static re-render
+    doesn't lose it."""
+    init_db()
+    with _conn() as c:
+        c.execute("UPDATE notes SET is_read=? WHERE id=?",
+                  (1 if is_read else 0, note_id))
 
 
 def notes_missing_category() -> list[dict]:

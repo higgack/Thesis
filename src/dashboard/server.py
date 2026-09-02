@@ -99,6 +99,8 @@ _NOTE_CATS = ("종목", "산업", "전략", "투자론", "스터디", "반도체
              "코인", "공부", "대학원", "부동산", "그외")
 # Study-note 중요 표시 토글: POST /<token>/notes/<id>/important {important:bool}
 _NOTE_IMPORTANT_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+)/important/?$")
+# Study-note 읽음 표시 토글: POST /<token>/notes/<id>/read {read:bool}
+_NOTE_READ_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/notes/(.+)/read/?$")
 _ASK_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/?$")
 _ASK_GET_RE = re.compile(r"^/([A-Za-z0-9_\-]+)/ask/(\d+)/?$")
 # GET /<token>/kg/entity?e=<name> → all edges for an entity (full degree set,
@@ -593,6 +595,10 @@ class Handler(SimpleHTTPRequestHandler):
         if mi:
             self._set_note_important(mi.group(1), unquote(mi.group(2)))
             return
+        mr = _NOTE_READ_RE.match(self.path)
+        if mr:
+            self._set_note_read(mr.group(1), unquote(mr.group(2)))
+            return
         mq = _QNA_IMPORTANT_RE.match(self.path)
         if mq:
             self._set_qna_important(mq.group(1), int(mq.group(2)))
@@ -701,6 +707,41 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_error(500, f"set failed: {e}")
             return
         self._send_json({"ok": True, "important": bool(important)})
+
+    def _set_note_read(self, token: str, nid: str):
+        """Toggle a note's 읽음(read) flag. Same shape as
+        _set_note_important — sqlite-only, persisted so it survives the
+        static re-render."""
+        if not _TOKEN or not _eq(token, _TOKEN):
+            self.send_error(403, "forbidden")
+            return
+        try:
+            length = int(self.headers.get("content-length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 1000:
+            self._send_json({"error": "빈 요청"}, 400)
+            return
+        try:
+            data = json.loads(self.rfile.read(length).decode("utf-8"))
+            is_read = 1 if data.get("read") else 0
+        except Exception:
+            self._send_json({"error": "잘못된 요청"}, 400)
+            return
+        try:
+            with _notes_conn() as c:
+                _ensure_column(c, "notes", "is_read", "INTEGER DEFAULT 0")
+                n = c.execute("UPDATE notes SET is_read=? WHERE id=?",
+                              (is_read, nid)).rowcount
+            if not n:
+                self.send_error(404)
+                return
+            log.info("note %s read → %d", nid, is_read)
+        except Exception as e:
+            log.exception("note read set failed")
+            self.send_error(500, f"set failed: {e}")
+            return
+        self._send_json({"ok": True, "read": bool(is_read)})
 
     def _set_mark(self, token: str):
         """Generic 중요 표시 토글 for wiki pages / KG edges via the shared
