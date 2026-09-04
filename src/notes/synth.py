@@ -206,6 +206,52 @@ _RUNAWAY_WS_RE = re.compile(r"[ \t]{40,}")
 _MAX_NOTE_CHARS = 60000
 _MM_SUBGRAPH_RE = re.compile(r"^(\s*subgraph\s+)(.+)$")
 
+# A bare quoted string where mermaid wants a NODE (2026-09-04). The model
+# is told to write id["label"], and mostly does, but it also emits
+#   C --> "서비스업 (약 36%)"
+#   B -- "가장 큰 이유" --> "제조업 (약 54%)"
+# where the target has no id at all. That is a parse error, and a parse
+# error kills the WHOLE diagram — the reader gets the raw source instead
+# of a chart. Prompt wording already forbids it; tightening prompts is
+# the move this project has been burned by, so repair it here instead:
+# give each distinct bare label a generated id and reuse it, which is
+# exactly what the model should have written.
+_MM_EDGE_LABELLED = re.compile(
+    r"^(?P<src>.*?)\s*--\s*(?P<lbl>\"[^\"]*\")\s*(?P<ar>-->|---)\s*(?P<dst>.+?)\s*$")
+_MM_EDGE_PLAIN = re.compile(
+    r"^(?P<src>.*?)\s*(?P<ar>-->|---)\s*(?P<pipe>\|[^|]*\|\s*)?(?P<dst>.+?)\s*$")
+_MM_BARE_NODE = re.compile(r"^\"[^\"]*\"$")
+
+
+def _mm_fix_bare_nodes(line: str, ids: dict) -> str:
+    """Turn `"label"` used as a node into `Nk["label"]`, stably."""
+    def name(tok: str) -> str:
+        tok = tok.strip()
+        if not _MM_BARE_NODE.match(tok):
+            return tok
+        label = tok[1:-1]
+        if label not in ids:
+            ids[label] = "N%d" % (len(ids) + 1)
+        return '%s[%s]' % (ids[label], tok)
+
+    m = _MM_EDGE_LABELLED.match(line)
+    if m:
+        src, dst = name(m.group("src")), name(m.group("dst"))
+        if src == m.group("src").strip() and dst == m.group("dst").strip():
+            return line
+        indent = line[:len(line) - len(line.lstrip())]
+        return "%s%s -- %s %s %s" % (indent, src, m.group("lbl"),
+                                     m.group("ar"), dst)
+    m = _MM_EDGE_PLAIN.match(line)
+    if m:
+        src, dst = name(m.group("src")), name(m.group("dst"))
+        if src == m.group("src").strip() and dst == m.group("dst").strip():
+            return line
+        indent = line[:len(line) - len(line.lstrip())]
+        return "%s%s %s %s%s" % (indent, src, m.group("ar"),
+                                 m.group("pipe") or "", dst)
+    return line
+
 
 def _sanitize_mermaid(md: str) -> str:
     """Clean the model's mermaid blocks, and close any fence it left open.
@@ -220,6 +266,7 @@ def _sanitize_mermaid(md: str) -> str:
     synthesis and paying for it again.
     """
     out, in_mm, in_fence = [], False, False
+    mm_ids: dict[str, str] = {}
     for line in (md or "").split("\n"):
         clamped = _RUNAWAY_RUN_RE.sub(lambda m: m.group(1) * 20, line)
         clamped = _RUNAWAY_WS_RE.sub(" ", clamped)
@@ -236,6 +283,11 @@ def _sanitize_mermaid(md: str) -> str:
         if in_mm:
             if _MM_STYLE_RE.match(line):
                 continue
+            fixed = _mm_fix_bare_nodes(line, mm_ids)
+            if fixed != line:
+                log.warning("mermaid: gave a bare quoted node an id — %s",
+                            line.strip()[:80])
+                line = fixed
             m = _MM_SUBGRAPH_RE.match(line)
             if m:
                 title = m.group(2).strip()
