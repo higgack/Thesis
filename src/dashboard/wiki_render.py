@@ -934,7 +934,18 @@ _WIKI_STAR_JS = """
         +'\\n\\n재학습돼도 다시 생기지 않습니다.')) return;
       fetch('/'+token+'/wiki/'+encodeURIComponent(topic)+'/delete',
         {method:'POST'})
-        .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .then(function(r){
+          // 404 = the topic is not in the index or on disk. The page
+          // list is a static rebuild, so a card can outlive the page it
+          // shows (a merge removed it, or the rebuild has not caught up
+          // — it yields to ingest for up to ~4 min). Nothing to delete
+          // is the goal already met, not a failure: drop the stale card
+          // instead of showing "삭제 실패: HTTP 404" for a page that is
+          // already gone (2026-09-04).
+          if(r.status === 404) return {stale: true};
+          if(!r.ok) throw new Error('HTTP '+r.status);
+          return r.json();
+        })
         .then(function(){
           card.classList.add('removing');
           setTimeout(function(){ card.remove(); }, 220);
