@@ -1234,6 +1234,20 @@ def delete_topic(topic: str) -> dict:
         idx = {}
 
     rec = idx.pop(topic, None)
+    if rec is None:
+        # The dashboard card carries the .md FILENAME STEM, not the index
+        # key, and _slug() strips punctuation out of filenames — an index
+        # key of "A: B" lives in "A B.md". Every topic whose name contains
+        # anything outside [\w가-힣- ] therefore sent a name the index has
+        # never held, and the 🗑 button answered 404 (2026-09-04). Resolve
+        # by slug before giving up; everything below — page path, queue
+        # match, deleted-marker — then works off the real key.
+        want = _slug(topic)
+        for k in list(idx):
+            if _slug(k) == want:
+                topic = k
+                rec = idx.pop(k)
+                break
     deleted_file = False
     if rec:
         p = _page_path(topic)
