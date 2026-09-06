@@ -1032,6 +1032,18 @@ async def _loop(state: dict) -> dict:
                      compare_papers_count, state_id)
             return {
                 "status": "pending_pro_confirmation",
+                # Carry a real "text" as well. Every caller is supposed
+                # to branch on `status` first (bot.py's Telegram buttons,
+                # eval.py), but the dashboard worker did not, and a dict
+                # with no "text" key reached the panel as an answer of ""
+                # beside 30-50 harvested 출처 and no error — a blank
+                # screen with no way to tell what happened (2026-09-06).
+                # A caller that forgets the status now shows this instead.
+                "text": (
+                    f"자료가 {compare_papers_count}건이라 Pro 합성(~₩150)을 "
+                    "쓸지 확인이 필요합니다. 텔레그램에서 같은 질문을 하면 "
+                    "선택 버튼이 나오고, /deep 으로 바로 Pro를 지정할 수도 "
+                    "있어요."),
                 "state_id": state_id,
                 "count": compare_papers_count,
                 "sources": sources,

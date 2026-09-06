@@ -14112,6 +14112,37 @@ async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
                           "다시 시도해주세요.")
                 continue
             result = result or {}
+            if result.get("status") == "pending_pro_confirmation":
+                # The agent suspends when compare_papers returns a lot of
+                # docs so the user can approve a ~₩150 Pro synthesis.
+                # Telegram answers that with buttons (see the
+                # `pending_pro_confirmation` branch in the Q&A handler);
+                # the dashboard has no button flow, and this worker did
+                # not know the status existed — so the suspend dict, which
+                # carried no "text", landed as an empty answer next to
+                # 30-50 출처 with no error at all (2026-09-06, asked twice).
+                # Continue on Flash: it is the cheap path the dashboard
+                # already asked for with deep=False, and auto-spending Pro
+                # is exactly what the confirmation exists to prevent.
+                n_docs = result.get("count")
+                log.info("dash worker: Pro gate on #%s (%s docs) — "
+                         "continuing on Flash", qid, n_docs)
+                try:
+                    result = await asyncio.wait_for(
+                        agent.resume(result.get("state_id") or "", "flash"),
+                        timeout=_AGENT_TIMEOUT_SEC) or {}
+                except asyncio.TimeoutError:
+                    dash_queries.complete(
+                        qid, "", kind="qa",
+                        error=f"응답이 {_AGENT_TIMEOUT_SEC // 60}분을 넘겨 "
+                              "중단했어요. 다시 시도해주세요.")
+                    continue
+                if result.get("text"):
+                    result["text"] += (
+                        f"\n\n---\nℹ️ 자료가 {n_docs}건이라 Pro 합성(~₩150) "
+                        "대상이었지만, 대시보드에는 확인 버튼이 없어 Flash로 "
+                        "답했어요. 더 깊은 분석이 필요하면 텔레그램에서 "
+                        "/deep 으로 물어보세요.")
             text = result.get("text") or ""
             sources = result.get("sources") or []
             if not text.strip():
