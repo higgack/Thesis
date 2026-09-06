@@ -14114,9 +14114,20 @@ async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
             result = result or {}
             text = result.get("text") or ""
             sources = result.get("sources") or []
-            if result.get("error") and not text:
-                dash_queries.complete(qid, "", kind="qa",
-                                      error=str(result.get("error"))[:300])
+            if not text.strip():
+                # Belt-and-braces. agent.run no longer returns an empty
+                # answer, but if any path ever does, an error beats what
+                # this used to produce: the panel rendered `<div
+                # class='ask-body'></div>` and the user saw 출처 with
+                # nothing above it, no error, while qna.record archived
+                # the blank as a dashboard card (2026-09-06). The old
+                # guard here was `result.get("error") and not text`, so
+                # an empty answer WITHOUT an error sailed through.
+                dash_queries.complete(
+                    qid, "", kind="qa",
+                    error=str(result.get("error")
+                              or "답변이 비어서 돌아왔어요. 잠시 후 다시 "
+                                 "시도해주세요.")[:300])
                 continue
             dash_queries.complete(qid, text, sources=sources, kind="qa")
             # Archive so the asked question also lands as a dashboard card

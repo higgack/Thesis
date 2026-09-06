@@ -946,6 +946,29 @@ async def _loop(state: dict) -> dict:
             answer = _extract_text(cand.content).strip()
             if not tool_calls:
                 answer = _strip_fake_citations(answer)
+            empty_reason = ""
+            if not answer:
+                # No tool calls AND no text — the model handed back a
+                # candidate with nothing in it. Most likely MAX_TOKENS
+                # spent entirely on thinking: gemini-2.5-flash thinks by
+                # default and those tokens come out of the same
+                # max_output_tokens=8192 set above, while every other
+                # call site in this repo goes through llm/gemini.py,
+                # which passes thinking_budget=0. Returning "" from here
+                # reached the dashboard as a panel showing 출처 with no
+                # answer and no error anywhere, and qna.record archived
+                # the blank as a card (2026-09-06). The MAX_STEPS branch
+                # below has had this guard all along; this path, the one
+                # that actually runs, never did.
+                empty_reason = str(getattr(cand, "finish_reason", "") or "?")
+                log.warning(
+                    "agent: empty answer at step %d — finish_reason=%s "
+                    "sources=%d tools=%s",
+                    step + 1, empty_reason, len(sources), tool_calls or "-")
+                answer = (
+                    "답변 생성이 본문 없이 끝났어요 "
+                    f"(finish_reason={empty_reason}). 아래 출처는 실제로 찾은 "
+                    "자료입니다 — 질문 범위를 조금 좁혀서 다시 물어봐 주세요.")
             out = {
                 "text": answer,
                 "sources": sources,
@@ -959,8 +982,12 @@ async def _loop(state: dict) -> dict:
             # / company-confusion / F-2 checks were effectively dead.
             # Gated on tool_calls: tool-less small talk has no sources to
             # audit and would just collect "출처 없음" noise.
-            if tool_calls:
+            if tool_calls and not empty_reason:
                 out["warning"] = await _verify(message, answer, sources)
+            elif empty_reason:
+                # Nothing to ground-check — say what happened instead.
+                out["warning"] = (
+                    f"모델이 본문 없이 끝났습니다 (finish_reason={empty_reason}).")
             return out
 
         response_parts: list[types.Part] = []
