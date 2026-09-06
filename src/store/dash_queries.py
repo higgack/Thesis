@@ -58,6 +58,24 @@ def _init_once(c: sqlite3.Connection) -> None:
         """
     )
     c.execute("CREATE INDEX IF NOT EXISTS idx_dq_status ON queries(status)")
+    # Migrate DBs that predate the column (both containers open this file).
+    cols = {row[1] for row in c.execute("PRAGMA table_info(queries)")}
+    if "pro_count" not in cols:
+        # >0 means the run tripped the Pro-confirmation gate (that many
+        # documents) and was answered on Flash anyway. The browser turns
+        # it into a "Pro로 다시 답변" button, so the user can take the
+        # ~₩150 upgrade or just keep the Flash answer already on screen —
+        # the choice Telegram gets from inline buttons (2026-09-06).
+        try:
+            c.execute("ALTER TABLE queries ADD COLUMN pro_count INTEGER "
+                      "NOT NULL DEFAULT 0")
+        except sqlite3.OperationalError as e:
+            # Two processes open this file (dashboard + bot), so both can
+            # read PRAGMA table_info before either ALTERs and the loser
+            # gets "duplicate column name". Harmless — the column exists,
+            # which is all we wanted. Anything else is a real failure.
+            if "duplicate column" not in str(e).lower():
+                raise
     _inited = True
 
 
@@ -122,18 +140,21 @@ def release(qid: int) -> None:
 
 
 def complete(qid: int, answer: str = "", sources: list[str] | None = None,
-             kind: str = "qa", error: str | None = None) -> None:
-    """Mark a row done (or 'error' when `error` is set) with its result."""
+             kind: str = "qa", error: str | None = None,
+             pro_count: int = 0) -> None:
+    """Mark a row done (or 'error' when `error` is set) with its result.
+    `pro_count` >0 records that the Pro gate fired — see _init_once."""
     with _conn() as c:
         c.execute(
             "UPDATE queries SET status=?, kind=?, answer=?, sources=?, "
-            "error=?, done_ts=? WHERE id=?",
+            "error=?, pro_count=?, done_ts=? WHERE id=?",
             (
                 "error" if error else "done",
                 kind,
                 answer or "",
                 json.dumps(sources or [], ensure_ascii=False),
                 error,
+                int(pro_count or 0),
                 _now(),
                 int(qid),
             ),
@@ -143,7 +164,8 @@ def complete(qid: int, answer: str = "", sources: list[str] | None = None,
 def get(qid: int) -> dict | None:
     with _conn() as c:
         row = c.execute(
-            "SELECT id, status, query, kind, answer, sources, error "
+            "SELECT id, status, query, kind, answer, sources, error, "
+            "       COALESCE(pro_count, 0) "
             "FROM queries WHERE id=?",
             (int(qid),),
         ).fetchone()
@@ -157,6 +179,7 @@ def get(qid: int) -> dict | None:
         "answer": row[4] or "",
         "sources": json.loads(row[5] or "[]"),
         "error": row[6] or "",
+        "pro_count": int(row[7] or 0),
     }
 
 

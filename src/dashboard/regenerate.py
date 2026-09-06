@@ -278,6 +278,20 @@ header .sub { color: var(--muted); font-size: 13px; }
 .ask-panel .ask-sources b { color: var(--text); }
 .ask-panel .ask-spinner { color: var(--muted); font-size: 13px; }
 .ask-panel .ask-err { color: #ef4444; font-size: 13px; white-space: pre-wrap; }
+.ask-panel .ask-pro {
+  margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--card);
+  font-size: 12px; color: var(--muted); line-height: 1.6;
+}
+.ask-panel .ask-pro b { color: var(--text); }
+.ask-panel .ask-pro-btn {
+  display: inline-block; margin-top: 8px; padding: 6px 12px;
+  border-radius: 7px; border: 1px solid var(--accent);
+  background: transparent; color: var(--accent);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.ask-panel .ask-pro-btn:hover { background: var(--accent); color: #fff; }
+.ask-panel .ask-pro-btn:disabled { opacity: .5; cursor: default; }
 
 .summary-line {
   font-size: 12px; color: var(--muted); margin: 16px 4px 8px;
@@ -1111,9 +1125,17 @@ _INDEX_JS = r"""
       (kindChip || '') +
       "<span class='ask-close' title='닫기'>✕</span></div>";
   }
-  function askWire(){
+  function askWire(qText){
     var x = askPanel.querySelector('.ask-close');
     if (x) x.addEventListener('click', askClose);
+    var pro = askPanel.querySelector('.ask-pro-btn');
+    if (pro && qText) pro.addEventListener('click', function(){
+      pro.disabled = true;
+      // /deep is already routable from the dashboard (every registered
+      // command is), and deep=True skips the confirmation gate outright
+      // — so this is the same question, answered on Pro.
+      askSubmit('/deep ' + qText);
+    });
   }
   function askSpinner(qText, isCmd){
     askPanel.innerHTML = askHeader(qText) + "<div class='ask-spinner'>" +
@@ -1138,6 +1160,18 @@ _INDEX_JS = r"""
         ? data.answer
         : askRenderBody(data.answer);
       body = "<div class='ask-body'>" + inner + "</div>";
+      // The agent suspends when a search returns a lot of documents so
+      // the user can opt into a ~₩150 Pro synthesis. The bot answers on
+      // Flash right away (so doing nothing still gets you an answer) and
+      // reports the doc count here; this is the "or take Pro" half.
+      if (data.pro_count > 0){
+        body += "<div class='ask-pro'>ℹ️ 자료가 <b>" + data.pro_count +
+          "건</b>이라 <b>Pro 합성(~&#8361;150)</b> 대상이에요. 위 답변은 " +
+          "Flash로 만든 거라 그대로 두셔도 되고, 더 깊은 분석이 필요하면 " +
+          "아래로 다시 물어보세요." +
+          "<br><button type='button' class='ask-pro-btn'>" +
+          "⚡ Pro로 다시 답변 (~&#8361;150)</button></div>";
+      }
       if (data.sources && data.sources.length){
         var lis = data.sources.map(function(s){
           return '<li>' + askEsc(s) + '</li>'; }).join('');
@@ -1146,7 +1180,7 @@ _INDEX_JS = r"""
     }
     askPanel.innerHTML = askHeader(qText, kindChip) + body;
     askPanel.classList.remove('hidden');
-    askWire();
+    askWire(qText);
   }
   function askSubmit(q){
     if (askPoll){ clearInterval(askPoll); askPoll = null; }

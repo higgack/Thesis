@@ -14112,6 +14112,7 @@ async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
                           "다시 시도해주세요.")
                 continue
             result = result or {}
+            pro_gate = 0
             if result.get("status") == "pending_pro_confirmation":
                 # The agent suspends when compare_papers returns a lot of
                 # docs so the user can approve a ~₩150 Pro synthesis.
@@ -14137,12 +14138,11 @@ async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
                         error=f"응답이 {_AGENT_TIMEOUT_SEC // 60}분을 넘겨 "
                               "중단했어요. 다시 시도해주세요.")
                     continue
-                if result.get("text"):
-                    result["text"] += (
-                        f"\n\n---\nℹ️ 자료가 {n_docs}건이라 Pro 합성(~₩150) "
-                        "대상이었지만, 대시보드에는 확인 버튼이 없어 Flash로 "
-                        "답했어요. 더 깊은 분석이 필요하면 텔레그램에서 "
-                        "/deep 으로 물어보세요.")
+                # The note + upgrade button are rendered by the browser
+                # from pro_count below, not pasted into the answer text —
+                # otherwise it would also land in the qna archive and in
+                # the Obsidian vault copy of the answer.
+                pro_gate = int(n_docs or 0)
             text = result.get("text") or ""
             sources = result.get("sources") or []
             if not text.strip():
@@ -14160,7 +14160,8 @@ async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
                               or "답변이 비어서 돌아왔어요. 잠시 후 다시 "
                                  "시도해주세요.")[:300])
                 continue
-            dash_queries.complete(qid, text, sources=sources, kind="qa")
+            dash_queries.complete(qid, text, sources=sources, kind="qa",
+                                  pro_count=pro_gate)
             # Archive so the asked question also lands as a dashboard card
             # on the next regenerate, identical to a Telegram-asked one.
             try:

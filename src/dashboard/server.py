@@ -948,6 +948,10 @@ class Handler(SimpleHTTPRequestHandler):
             "answer": row["answer"],
             "sources": row["sources"],
             "error": row["error"],
+            # >0 → the Pro gate fired and this answer came from Flash.
+            # The panel renders the upgrade button from it.
+            "pro_count": row.get("pro_count", 0),
+            "query": row["query"],
         })
 
     def _send_ok(self, n: int):
