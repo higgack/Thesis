@@ -204,6 +204,13 @@ _RUNAWAY_WS_RE = re.compile(r"[ \t]{40,}")
 # past what 32,768 tokens can honestly produce in Korean, so passing it
 # means something went wrong rather than the note being rich.
 _MAX_NOTE_CHARS = 60000
+
+# Note synthesis runs near-greedy for stable structure; the runaway retry
+# deliberately runs hotter, because repeating a degenerate loop at the
+# same temperature just reproduces it (observed 2026-09-06: the same
+# article looped three separate times at 0.1).
+_SYNTH_TEMPERATURE = 0.1
+_RUNAWAY_RETRY_TEMPERATURE = 0.5
 _MM_SUBGRAPH_RE = re.compile(r"^(\s*subgraph\s+)(.+)$")
 
 # A bare quoted string where mermaid wants a NODE (2026-09-04). The model
@@ -440,38 +447,71 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
         + "[본문]\n" + body
     )
     t0 = time.monotonic()
-    try:
-        out = await gemini.complete(
-            config.ANSWER_MODEL,
-            _SYSTEM_BOOK if mode == "book" else _SYSTEM, user,
-            max_tokens=32768, temperature=0.1, purpose="note_synth",
-            timeout=300)
-    except Exception as e:
-        log.warning("note synth call failed: %s", str(e)[:160])
-        return None
-    gen_seconds = round(time.monotonic() - t0, 1)
-    # Exact KRW from the call we just recorded; fall back to a token
-    # estimate if usage_metadata was absent.
-    cc = _cost.last_call("note_synth")
-    if cc:
-        cost_krw = cc["cost_krw"]
-    else:
-        cost_krw = _cost._price_krw(
-            config.ANSWER_MODEL, len(user) // 4, len(out or "") // 4)
-    cost_krw = round(cost_krw, 2)
+    system = _SYSTEM_BOOK if mode == "book" else _SYSTEM
 
-    sections = _split_sections(out or "")
-    note_md = sections.get("NOTE", "").strip()
-    if not note_md:
-        # Model ignored the format — salvage the raw body as the note so
-        # a missing marker doesn't lose the whole note.
-        note_md = (out or "").strip()
-        if len(note_md) < 40:
-            log.warning("note synth: empty/unparseable output (%d chars)",
-                        len(out or ""))
+    async def _attempt(temp: float):
+        """One full pass — call, split, sanitize. Returns
+        (note_md, sections, cost_krw, runaway), or None when the call
+        failed or the output was too short to salvage."""
+        try:
+            out = await gemini.complete(
+                config.ANSWER_MODEL, system, user,
+                max_tokens=32768, temperature=temp, purpose="note_synth",
+                timeout=300)
+        except Exception as e:
+            log.warning("note synth call failed: %s", str(e)[:160])
             return None
-        log.warning("note synth: NOTE marker missing, using raw output")
-    note_md, runaway = _sanitize_mermaid_ex(note_md)
+        # Exact KRW from the call we just recorded; fall back to a token
+        # estimate if usage_metadata was absent.
+        cc = _cost.last_call("note_synth")
+        krw = cc["cost_krw"] if cc else _cost._price_krw(
+            config.ANSWER_MODEL, len(user) // 4, len(out or "") // 4)
+        secs = _split_sections(out or "")
+        md = secs.get("NOTE", "").strip()
+        if not md:
+            # Model ignored the format — salvage the raw body as the note
+            # so a missing marker doesn't lose the whole note.
+            md = (out or "").strip()
+            if len(md) < 40:
+                log.warning("note synth: empty/unparseable output (%d chars)",
+                            len(out or ""))
+                return None
+            log.warning("note synth: NOTE marker missing, using raw output")
+        md, ran = _sanitize_mermaid_ex(md)
+        return md, secs, krw, ran
+
+    first = await _attempt(_SYNTH_TEMPERATURE)
+    if first is None:
+        return None
+    cost_krw = first[2]
+    best = first
+    if first[3]:
+        # The model looped. The sanitizer keeps the note usable, but the
+        # scar is permanent — the DCF note born this way on 2026-09-01
+        # carried a half-eaten table row, two orphan fences and a section
+        # the model restarted from scratch, and no amount of re-running
+        # fixed it because a retry at this near-greedy temperature
+        # reproduces the same loop. So retry ONCE, hotter, and take the
+        # better of the two. Never return None here: a clamped note still
+        # beats no note.
+        log.warning("note synth: runaway output for %s — retrying once at "
+                    "temperature %.1f", source_ref, _RUNAWAY_RETRY_TEMPERATURE)
+        second = await _attempt(_RUNAWAY_RETRY_TEMPERATURE)
+        if second is not None:
+            cost_krw += second[2]
+            # A clean retry always wins. If it looped too, prefer whichever
+            # parsed more questions — a runaway usually truncates before
+            # ===QUESTIONS===, so more questions means less was eaten.
+            if not second[3] or (len(_parse_questions(second[1].get(
+                    "QUESTIONS", "")))
+                    > len(_parse_questions(first[1].get("QUESTIONS", "")))):
+                best = second
+                log.warning("note synth: retry %s — using it",
+                            "was clean" if not second[3] else "also looped "
+                            "but kept more")
+    note_md, sections, _c, runaway = best
+    cost_krw = round(cost_krw, 2)
+    gen_seconds = round(time.monotonic() - t0, 1)
 
     today = datetime.now(_KST).date().isoformat()
     llm_title = (sections.get("TITLE") or "").splitlines()[0].strip() \
