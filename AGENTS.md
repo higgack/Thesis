@@ -5,8 +5,9 @@ GitHub Copilot, anything else. `CLAUDE.md` and
 `.github/copilot-instructions.md` are thin pointers to this file;
 `AGENT_GUIDE.md` holds the Korean communication-style rules and stays a
 separate file — but it is NOT out of scope: its 승인·출력 clauses overlap
-this file, and THIS file wins wherever they disagree. Audit it whenever
-you audit this one. Why it was consolidated: see `## Branch / push policy`.
+this file, and THIS file wins wherever they disagree, with exactly one
+exception (its §4 answer-order default). Audit it whenever you audit this
+one. Both points: see `## Branch / push policy`.
 
 Standing rules + project facts that must survive context compaction.
 Compact by design — every line is a rule or a fact, not prose.
@@ -114,8 +115,21 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
 
 ## Standing rules
 
-- Review first; commit only when asked (the gate above wins over any
-  workflow assumption).
+- **Read the code you're about to change, before changing it** — no
+  blind edits, no patching from memory of what a function probably does.
+  This is about reading, NOT about showing the user a plan first: editing
+  needs no pre-approval (it only accumulates on disk). Committing does,
+  and the gate above is the sole source for that, over any workflow
+  assumption. (Was "Review first" until 2026-09-06, which had no object
+  and read to a fresh agent as "present a plan and wait".)
+- **되돌릴 수 없는 작업은 하기 전에 확인한다.** 편집 자체는 승인이 필요
+  없지만(디스크에만 쌓임) 되돌릴 수 없는 것은 다르다 — 데이터 삭제,
+  `_ENT_STOP`·`_ENTITY_ALIASES` 추가(엣지 대량 삭제·병합), `.env` 변경,
+  위키 토픽 삭제, 배포된 이력의 force-push. 개별 항목은 각 섹션에 자세히
+  있고, 이 줄은 그 목록에 없는 새로운 경우까지 덮는 일반 원칙이다.
+  (2026-09-06 추가: 이 원칙이 `AGENT_GUIDE.md`에만 있었는데 `CLAUDE.md`·
+  `copilot-instructions.md` 둘 다 이 파일만 가리켜서, 이 파일만 읽는
+  에이전트에겐 안전망이 통째로 안 보였다.)
 - **환경·비용·"X는 안 됨" 단정엔 날짜 태그** `(YYYY-MM-DD)` 필수; 관련
   작업을 다시 만질 때마다(최소 분기 1회) 의심·재검증. 쌓이기만 하는
   negative claim은 stale해진다 — 실제로 "₩10만/mo" 비용 가정이 4배 틀린
@@ -153,20 +167,30 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
   조언은 사고 이력이 쌓인 이 운영 시스템엔 그대로 적용되지 않는다.
 - Every ingest-pipeline change applies to new ingest AND the retry queue
   — never partial.
-- Update `_HELP_TEXT` (`src/bot.py`) on add/rename/remove command, policy
-  change, or model-id change. Keep ≤4000 chars (single Telegram message).
-- **Never drop a command from the `_HELP_TEXT` listing.** Tight on space →
+- Update `_HELP_TEXT` (`src/bot.py`) whenever the user's EXPERIENCE
+  changes: command added/renamed/removed, policy, model id, cost
+  structure, or visible behaviour. Pure internal refactoring is exempt.
+  Keep ≤4000 chars (single Telegram message). This is the same trigger
+  as the guide-constants rule below — they were worded differently
+  ("policy change" vs "command/feature/policy change") until 2026-09-06,
+  which left internal-behaviour changes undecided.
+- **Never drop a LIVE command from the `_HELP_TEXT` listing.** (Removing
+  the entry for a command you just deleted is the sync the rule above
+  requires, not a violation of this one.) Tight on space →
   condense the prose sections first (핵심·트리거·모델·Retry·문제해결·백엔드;
   info-only prose was already purged 2026-07-02 — help is commands+URLs+운영
   info now); touch command listings only as a last resort + with explicit
   approval.
 - `_HELP_TEXT` model ids must match `src/config.py`/`.env`; update them in
   the same commit as any model upgrade.
-- **Help + ALL guide constants move together** on any command/feature/
-  policy change: `_HELP_TEXT` (≤4000) · `_LOOKUP_GUIDE_TEXT`
-  (`/guide_lookup`, all commands) · `_PATENTS_GUIDE_TEXT` · `_PAPERS_GUIDE_TEXT`
-  · `_WIKI_GUIDE_TEXT`. Patent change→patents guide, paper→papers,
-  wiki→wiki (all if it spans multiple).
+- **Help + ALL guide constants move together** on the same trigger as
+  `_HELP_TEXT` above (user-visible change; internal refactoring exempt):
+  `_HELP_TEXT` (≤4000) · `_LOOKUP_GUIDE_TEXT` (`/guide_lookup`, all
+  commands) · `_PATENTS_GUIDE_TEXT` · `_PAPERS_GUIDE_TEXT` ·
+  `_WIKI_GUIDE_TEXT` · `_NOTES_GUIDE_TEXT` (`src/notes/telegram.py`,
+  `/notes_guide` — the only one `preflight.sh` section 3 does NOT check;
+  verify it by hand until it does). Patent change→patents guide,
+  paper→papers, wiki→wiki, note→notes (all if it spans multiple).
 - `.env` (VM) holds secrets (bot token, Google key, GitHub PAT, dashboard
   creds). Never echo it; if the user pastes it, warn + recommend rotation.
 - **Dashboard ⇄ Telegram parity (user request, 2026-06-24):** a new
@@ -188,10 +212,15 @@ output. Never "open editor and remove the line" / "save and exit" /
 
 ## Automation-first
 
-"from now on / 매번 / 항상 / 자동으로 / 알아서" → cron · docker compose
-service · APScheduler hook · git hook/Action. Never leave RECURRING work
-as "run it yourself". Check existing `crontab -l` + `docker-compose.yml`
-first. If the user must do anything to keep it running, that's a bug.
+"from now on / 매번 / 항상 / 자동으로 / 알아서" → APScheduler hook (this
+bot's own scheduler — the default choice) · docker compose service · git
+hook/Action · an EXISTING cron entry, extended. **Not a new cron entry**
+— the NEVER list above forbids that and the existing crontab already
+covers every case; this line used to read "→ cron · …" first, which
+prescribed the one remedy the same file bans twice (fixed 2026-09-06).
+Never leave RECURRING work as "run it yourself". Check existing
+`crontab -l` + `docker-compose.yml` first. If the user must do anything
+to keep it running, that's a bug.
 
 **A ONE-OFF is the opposite case** — a diagnostic, a data repair, a
 migration that runs once: hand the user the command, in the「VM ops」
@@ -201,7 +230,12 @@ the VM ops section directly above specifies how to write one, so an
 agent following the letter would add a cron entry or a whole new
 command rather than hand over a `docker exec` one-liner (corrected
 2026-09-06 — the DCF-note diagnosis, repair and question-restore all
-ran on such one-liners).
+ran on such one-liners). This does NOT reopen the deploy trio: `git
+pull` / `compose up` / `restart` stay banned even as a one-off (see
+Auto-deploy below), the only exception being the documented
+`--force-recreate` after a `.env` edit. A stalled deploy is not a
+"one-off repair" — `auto_pull.sh` already retries and the watchdogs
+already restart.
 
 ## Branch / push policy
 
@@ -232,9 +266,22 @@ ongoing/increasing Copilot commits here; don't intervene unless asked).
   making the user approve twice for one change; §3–4 mandate a
   five-section answer template, contradicting Token-lean output. §5 was
   corrected 2026-09-06; §3–4 were left alone as the user's stylistic
-  call. The file still owns communication style, but on any 승인·출력·
-  완료 rule THIS file wins. Audit the two together — that sentence about
-  "no overlap" is exactly what kept anyone from looking.
+  call. The file still owns communication style, and on 승인·완료 rules
+  THIS file wins — with the 출력 split spelled out, because "출력" covers
+  two different things and collapsing them nullifies the preference the
+  user chose to keep:
+  - **§4 (답변 순서) is the exception — AGENT_GUIDE wins.** It says
+    "기본으로 사용합니다", a default rather than "항상", so Token-lean's
+    결론 먼저 still governs length and the ordering inside each section.
+    Both survive; neither deletes the other.
+  - **§3's "사용자가 코드를 요청한 경우에만 코드를 제시합니다" gets NO
+    such exception — this file wins.** VM ops commands, a failing
+    script's actual output, and the diff you are asking approval for get
+    shown whether or not code was asked for; verify-before-report and
+    「VM ops」 require it.
+
+  Audit the two together — that sentence about "no overlap" is exactly
+  what kept anyone from looking.
 
 ## Auto-deploy is ACTIVE — never suggest manual git pull
 
@@ -556,8 +603,16 @@ other project modules into it beyond `config` and lazy `kg_ignore`.
   English key; `_ALIAS_CANONICAL` pins the display form so
   `merge_duplicate_entities()`'s most-used-variant rule can't hand the
   win back to the more frequent Korean spelling. Extending it = adding
-  one line. Do NOT generalize it into automatic synonym merging — the
-  paragraph above still holds for everything else.
+  one line — **but confirm the affected edge counts with the user first,
+  exactly like `_ENT_STOP` below.** The two are the same class of action:
+  one line of source, irreversible, thousands of edge rows rewritten at
+  the next boot sweep (엔비디아 3,315 folded into NVIDIA). `_ENT_STOP`
+  carried that confirmation requirement and this did not — an asymmetry
+  nobody noticed until an instruction audit on 2026-09-06. Merging the
+  wrong pair is worse than a bad stopword: a stopword deletes edges the
+  graph can re-extract, a wrong alias silently attributes one entity's
+  edges to another. Do NOT generalize it into automatic synonym merging
+  — the paragraph above still holds for everything else.
 - **Adding a term to `_ENT_STOP` DELETES data.** `purge_junk()` runs at
   every boot (`bot.py`) and removes every edge touching a stopword
   entity, so a one-word edit is an irreversible mass delete: "투자자"
