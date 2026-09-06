@@ -3,9 +3,10 @@
 Single source of truth for any AI coding agent here — Claude Code,
 GitHub Copilot, anything else. `CLAUDE.md` and
 `.github/copilot-instructions.md` are thin pointers to this file;
-`AGENT_GUIDE.md` (Korean communication-style rules) is a different
-subject and deliberately stays out. Why it was consolidated: see
-`## Branch / push policy`.
+`AGENT_GUIDE.md` holds the Korean communication-style rules and stays a
+separate file — but it is NOT out of scope: its 승인·출력 clauses overlap
+this file, and THIS file wins wherever they disagree. Audit it whenever
+you audit this one. Why it was consolidated: see `## Branch / push policy`.
 
 Standing rules + project facts that must survive context compaction.
 Compact by design — every line is a rule or a fact, not prose.
@@ -80,7 +81,9 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
 - **NEVER**: add a recurring cron entry (existing ones cover all cases;
   one-off pinned-date reminder OK on explicit request) · ship a script
   whose only off-switch is a `data/` state file · use `"\n"` in a bash
-  double-quoted string · tell the user "run this yourself".
+  double-quoted string · leave RECURRING work as "run this yourself"
+  (a one-off diagnostic/repair is the opposite case — see
+  Automation-first).
 - When in doubt → STOP, ASK before pushing.
 
 ## 🔍 완료 보고 전 검증 (verify-before-report)
@@ -186,9 +189,19 @@ output. Never "open editor and remove the line" / "save and exit" /
 ## Automation-first
 
 "from now on / 매번 / 항상 / 자동으로 / 알아서" → cron · docker compose
-service · APScheduler hook · git hook/Action. Never "run it yourself".
-Check existing `crontab -l` + `docker-compose.yml` first. If the user
-must do anything to keep it running, that's a bug.
+service · APScheduler hook · git hook/Action. Never leave RECURRING work
+as "run it yourself". Check existing `crontab -l` + `docker-compose.yml`
+first. If the user must do anything to keep it running, that's a bug.
+
+**A ONE-OFF is the opposite case** — a diagnostic, a data repair, a
+migration that runs once: hand the user the command, in the「VM ops」
+format above. Automating a one-off is the bug there. Read literally,
+this line and the NEVER list above banned every manual command while
+the VM ops section directly above specifies how to write one, so an
+agent following the letter would add a cron entry or a whole new
+command rather than hand over a `docker exec` one-liner (corrected
+2026-09-06 — the DCF-note diagnosis, repair and question-restore all
+ran on such one-liners).
 
 ## Branch / push policy
 
@@ -212,8 +225,16 @@ ongoing/increasing Copilot commits here; don't intervene unless asked).
   **consolidated 2026-08-09** (user request, after reviewing CodeWhale's
   single-`AGENTS.md` pattern): this file (`AGENTS.md`) is now the one
   canonical source, and both of those files are thin pointers to it.
-  `AGENT_GUIDE.md` (Korean communication-style rules, different subject
-  matter, no factual overlap) was deliberately left out of the merge.
+  `AGENT_GUIDE.md` was left out of that merge as "different subject
+  matter, no factual overlap" — which was WRONG, and went unexamined for
+  six weeks (1 commit, against this file's 21). Its §5 demanded approval
+  before every file edit, contradicting the batch posture above and
+  making the user approve twice for one change; §3–4 mandate a
+  five-section answer template, contradicting Token-lean output. §5 was
+  corrected 2026-09-06; §3–4 were left alone as the user's stylistic
+  call. The file still owns communication style, but on any 승인·출력·
+  완료 rule THIS file wins. Audit the two together — that sentence about
+  "no overlap" is exactly what kept anyone from looking.
 
 ## Auto-deploy is ACTIVE — never suggest manual git pull
 
