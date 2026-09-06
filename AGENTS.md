@@ -4,10 +4,12 @@ Single source of truth for any AI coding agent here — Claude Code,
 GitHub Copilot, anything else. `CLAUDE.md` and
 `.github/copilot-instructions.md` are thin pointers to this file;
 `AGENT_GUIDE.md` holds the Korean communication-style rules and stays a
-separate file — but it is NOT out of scope: its 승인·출력 clauses overlap
-this file, and THIS file wins wherever they disagree, with exactly one
-exception (its §4 answer-order default). Audit it whenever you audit this
-one. Both points: see `## Branch / push policy`.
+separate file — **READ IT TOO, every session, not only when auditing.**
+`CLAUDE.md` imports it and `.github/copilot-instructions.md` points at
+it, and this file hands its §4 (답변 순서 — 비즈니스 목적 · 현재 상태 ·
+문제점 · 개선방안 · 예상 효과) binding authority, so a session that skips
+it is missing a rule it is expected to follow. Everywhere else THIS file
+wins. Both points: see `## Branch / push policy`.
 
 Standing rules + project facts that must survive context compaction.
 Compact by design — every line is a rule or a fact, not prose.
@@ -91,7 +93,12 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
   double-quoted string · leave RECURRING work as "run this yourself"
   (a one-off diagnostic/repair is the opposite case — see
   Automation-first).
-- When in doubt → STOP, ASK before pushing.
+- When a hand-traced shell/cron/Telegram/persistence change still leaves
+  you unsure it is safe → STOP and raise **the doubt itself**; don't
+  push. That is not a request for push permission — the commit gate is
+  detected, never solicited (`📦 Batch/accumulate` bans asking
+  "푸시할까?"). Said "When in doubt → STOP, ASK before pushing" until
+  2026-09-06, objectless, the same failure mode as the old "Review first".
 
 ## 🔍 완료 보고 전 검증 (verify-before-report)
 
@@ -133,25 +140,34 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
     edit**: `## Cost defaults (don't change without asking)` · adding a
     write/mutate tool to the MCP server · adding Chroma to the MCP server
     (re-raise the RAM tradeoff) · dropping a LIVE command from
-    `_HELP_TEXT` · anything in the irreversible bullet below. Each is
+    `_HELP_TEXT` · starting anything under `## Backlog (not active until
+    the user asks)` · anything in the irreversible bullet below. Each is
     stated in its own section; this list exists because the blanket
     sentence above sits near the top and those sections do not
     (2026-09-06 — the blanket was added that morning and silently
-    outranked all five by evening).
+    outranked all of them by evening). **The list is not closed**: any
+    other section that says "without asking / explicit request /
+    explicit approval / re-raise" counts the same. Grep for those when
+    unsure rather than reading this list as exhaustive.
 - **되돌릴 수 없는 작업은 하기 전에 확인한다.** 보통의 편집은 승인이 필요
   없지만(디스크에만 쌓임) 되돌릴 수 없는 것은 다르다 — 데이터 삭제,
-  `_ENT_STOP`·`_ENTITY_ALIASES` 추가(엣지 대량 삭제·병합), `.env` 변경
-  제안, 위키 토픽 삭제. 개별 항목은 각 섹션에 자세히 있고, 이 줄은 그
-  목록에 없는 새로운 경우까지 덮는 일반 원칙이다.
-  - **확인 시점은 "편집 전"이 아니라 "그 편집을 커밋에 넣기 전"이다.**
-    `_ENT_STOP`·`_ENTITY_ALIASES`의 파괴는 편집이 아니라 **배포 후 부팅
-    스윕**에서 일어난다 — 확인 없이 스택에 쌓아두면 트리거 하나에
-    「멈추지 말 것」 규칙을 타고 그대로 실행된다.
-  - **force-push는 이 목록에 없다 — "확인받으면 되는 것"이 아니라 금지다.**
-    「Branch / push policy」의 *"never force-push or discard those
-    commits"* 가 절대 규칙이고 이 줄은 그걸 약화시키지 않는다. 배포
-    브랜치는 Copilot과 공유하므로 남의 커밋을 지우는 데 "응 해" 한 마디는
-    근거가 못 된다. (2026-09-06 이 목록에 잘못 넣었다가 같은 날 제거.)
+  `_ENT_STOP`·`_ENTITY_ALIASES` 추가(엣지 대량 삭제·병합), 위키 토픽 삭제,
+  `.env` 값 변경(실행은 사용자가 하지만 코드 기본값을 이기므로, 현재 값을
+  먼저 확인하고 영향에 합의한 뒤 제안한다 — 제안 자체를 허락받으라는 뜻이
+  아니다). 개별 항목은 각 섹션에 자세히 있고, 이 줄은 그 목록에 없는
+  새로운 경우까지 덮는 일반 원칙이다.
+  - **확인은 그 줄을 쓰는 자리에서 받는다** — KG 섹션의 *"Confirm the edge
+    count with the user before adding a term"* 과 같은 시점이고, 이 파일에
+    다른 시점은 없다. 커밋 경계는 **마감선**이지 확인 시점이 아니다:
+    미확인 편집을 스택에 남기면 트리거 하나에 「멈추지 말 것」 규칙을 타고
+    그대로 배포되고, `_ENT_STOP`·`_ENTITY_ALIASES`의 파괴는 편집이 아니라
+    **배포 후 부팅 스윕**에서 일어나므로 "아직 편집일 뿐"은 변명이 안 된다.
+    (2026-09-06 한때 "커밋에 넣기 전"이라고 썼다가 되돌렸다 — 그건 최상단의
+    「파이프라인을 멈추지 말 것」과 정면으로 부딪히는 시점이었다.)
+  - **force-push는 이 목록에 없다 — "확인받으면 되는 것"이 아니라 금지다**
+    (「Branch / push policy」 첫 항목). 배포 브랜치는 Copilot과 공유하므로
+    남의 커밋을 지우는 데 "응 해" 한 마디는 근거가 못 된다.
+    (2026-09-06 이 목록에 잘못 넣었다가 같은 날 제거.)
   (2026-09-06 추가: 이 원칙이 `AGENT_GUIDE.md`에만 있었는데 `CLAUDE.md`·
   `copilot-instructions.md` 둘 다 이 파일만 가리켜서, 이 파일만 읽는
   에이전트에겐 안전망이 통째로 안 보였다.)
@@ -286,6 +302,15 @@ go here; never push to a different branch without explicit permission.
 account `Noah_Lee@amat.com`) on this SAME deploy branch** — confirmed
 by user 2026-07-29 ("지켜봐, 나중엔 그쪽으로 넘어갈 것" — expect
 ongoing/increasing Copilot commits here; don't intervene unless asked).
+- **force-push to the deploy branch is forbidden, unconditionally.** Not
+  "confirm then proceed", and not something a passing 응/해 authorises —
+  if you think history must be rewritten, stop and explain why instead of
+  asking for a yes. Until 2026-09-06 the only force-push text in this
+  repo was the tail of the diverged-branch case below, i.e. a rule that
+  only existed inside an `if`; that is how a top-of-file bullet could
+  briefly list force-push among things you may do once confirmed, and how
+  two other files came to cite an "absolute rule" that was not written
+  anywhere. It is written here now.
 - Before pushing to the deploy branch: `git fetch` then try `git merge
   --ff-only`. If that fails the branch diverged (Copilot pushed) —
   never force-push or discard those commits. Inspect with `git log` /
@@ -424,9 +449,16 @@ fetch branch → `LOCAL==REMOTE` silent exit → else send "🚀 배포 시작" 
   line: "푸시 완료 (sha). 1분 내 자동 배포 + 텔레그램 알림 갈 거야."
 - Never tell the user to `git pull` / `compose up` / `restart`.
 - Never add cron (except one-off pinned-date on explicit request).
-- Manual exceptions: after a `.env` edit → `docker compose up -d
-  --force-recreate <svc>` (restart doesn't re-read env_file). `docker
-  logs` for diagnostics is read-only, fine to suggest.
+- Manual exceptions — this list is the complete one, keep it in sync with
+  Automation-first's one-off paragraph: after a `.env` edit → `docker
+  compose up -d --force-recreate <svc>` (restart doesn't re-read
+  env_file) · the OCR backend switch this file prescribes, `docker
+  compose --profile ocr-local up -d ocr-worker` / `docker compose stop
+  ocr-worker` (see `## OCR backend`) · `docker logs` for diagnostics
+  (read-only, fine to suggest) · one-off `docker exec` diagnostics and
+  data repairs. **`git pull` has no exception** — that is `auto_pull.sh`'s
+  job. (The OCR commands were missing here until 2026-09-06 while the
+  section above already allowed them.)
 
 ## Stuck ingest slots → auto-recover (don't revert to alert-only)
 
