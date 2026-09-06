@@ -145,7 +145,8 @@ async def resync_one(note: dict) -> str:
     """Re-fetch + re-synthesise an existing URL/YouTube note IN PLACE.
     Used to repair notes synthesised from the title (the title/body bug).
     Returns: 'ok' | 'skip' (non-url) | 'empty' (fetch failed) |
-    'synthfail'. Non-destructive: the old note is kept on any failure."""
+    'synthfail' | 'runaway' (model looped — see below). Non-destructive:
+    the old note is kept on any failure."""
     ref = (note.get("source_ref") or "").strip()
     stype = note.get("source_type") or "web"
     if not ref.startswith("http"):
@@ -157,9 +158,20 @@ async def resync_one(note: dict) -> str:
         title, body, _h, _l = await loaders.load_url(ref)
     if not (body or "").strip() or len((body or "").strip()) < 40:
         return "empty"
-    new = await synth.synthesize(stype, ref, body, title)
+    # mode must survive the resync — a 책 모드 note re-synthesised as
+    # "normal" silently loses its 장별 색인/치트시트 structure.
+    new = await synth.synthesize(stype, ref, body, title,
+                                 mode=note.get("mode") or "normal")
     if not new:
         return "synthfail"
+    if new.get("runaway"):
+        # The model looped. The sanitizer salvaged something readable,
+        # but it is worse than what is already on disk — and a runaway
+        # usually truncates before ===QUESTIONS===, so saving it would
+        # also wipe the note's SRS questions (2026-09-06, the DCF note).
+        log.warning("notes resync: runaway output for %s — keeping the "
+                    "existing note", note.get("id"))
+        return "runaway"
     ok = store.resync_note(
         note["id"], title=new.get("title") or title or note.get("title") or "",
         md=new.get("md") or "", questions=new.get("questions") or [],

@@ -2379,6 +2379,7 @@ WIKI_ENABLED=0(Chroma/meta.db 안 건드려 끄면 기존 RAG 그대로) · 상�
 • <b>/notes_guide</b> 학습 노트 상세 사용법(자료 넣기·노트 구성·대시보드·비용)
 • <b>/notes_resync [N]</b> 제목만 보고 잘못 합성된 URL·유튜브 노트를 다시
   가져와 재합성(제자리 — id·복습진도·중요·메모 유지). N 기본 10, 최대 50.
+  결과가 기존보다 나쁘면(절반 미만·문항 0개·모델 폭주) 덮어쓰지 않고 보존.
 """
 
 
@@ -4855,7 +4856,8 @@ async def cmd_kg_extract(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_notes_resync(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Repair URL/YouTube study notes that were synthesised from the title
     (the title/body unpack bug). Re-fetches + re-synthesises in place
-    (keeps id/SRS/중요/메모), capped at N (default 10, max 50)."""
+    (keeps id/SRS/중요/메모), capped at N (default 10, max 50). A result
+    that would lose information never lands — see store.resync_note."""
     if not _is_owner(update):
         return
     from .notes import store as _ns, channel as _nc
@@ -4872,7 +4874,7 @@ async def cmd_notes_resync(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not targets:
         await update.message.reply_text("재학습할 URL/유튜브 노트가 없어.")
         return
-    res = {"ok": 0, "empty": 0, "synthfail": 0, "skip": 0}
+    res = {"ok": 0, "empty": 0, "synthfail": 0, "skip": 0, "runaway": 0}
     async with _SustainedTyping(update, ctx):
         for t in targets:
             try:
@@ -4885,7 +4887,7 @@ async def cmd_notes_resync(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "📒 <b>노트 재학습 완료</b>\n"
         f"• 대상: {len(targets)}개 (web/blog/youtube, 최신순)\n"
         f"• ✅ 갱신 {res['ok']} · ⚠️ 본문 못가져옴 {res['empty']} · "
-        f"❌ 합성 실패 {res['synthfail']}\n"
+        f"❌ 합성 실패 {res['synthfail']} · 🔁 폭주라 보존 {res['runaway']}\n"
         "ℹ️ 더 남았으면 <code>/notes_resync 50</code> 으로 추가 실행.",
         parse_mode="HTML")
 

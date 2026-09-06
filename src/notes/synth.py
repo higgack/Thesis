@@ -254,6 +254,11 @@ def _mm_fix_bare_nodes(line: str, ids: dict) -> str:
 
 
 def _sanitize_mermaid(md: str) -> str:
+    """Back-compat thin wrapper — see _sanitize_mermaid_ex."""
+    return _sanitize_mermaid_ex(md)[0]
+
+
+def _sanitize_mermaid_ex(md: str) -> tuple[str, bool]:
     """Clean the model's mermaid blocks, and close any fence it left open.
 
     An unclosed ``` swallows the entire rest of the note: the dashboard
@@ -264,8 +269,17 @@ def _sanitize_mermaid(md: str) -> str:
     `## 📖 정리` down rendered as source). Appending the missing fence is
     deterministic and costs nothing; the alternative is re-running the
     synthesis and paying for it again.
+
+    Returns (cleaned, runaway). `runaway` is True only when the model
+    LOOPED — a single line of repeated junk had to be collapsed, or the
+    whole note ran past _MAX_NOTE_CHARS — and NOT when a fence was merely
+    closed, which is routine. Callers that OVERWRITE an existing note
+    (resync) must refuse a runaway result: on 2026-09-06 a resync of the
+    DCF note came back as one 149,644-char line, so the output never
+    reached ===QUESTIONS=== and the note lost its 5 SRS questions.
     """
     out, in_mm, in_fence = [], False, False
+    runaway = False
     mm_ids: dict[str, str] = {}
     for line in (md or "").split("\n"):
         clamped = _RUNAWAY_RUN_RE.sub(lambda m: m.group(1) * 20, line)
@@ -274,6 +288,7 @@ def _sanitize_mermaid(md: str) -> str:
             log.warning("note markdown: %d-char line collapsed to %d",
                         len(line), len(clamped))
             line = clamped
+            runaway = True
         st = line.strip()
         if st.startswith("```"):
             in_fence = not in_fence
@@ -300,13 +315,14 @@ def _sanitize_mermaid(md: str) -> str:
         out.append("```")
     res = "\n".join(out)
     if len(res) > _MAX_NOTE_CHARS:
+        runaway = True
         log.warning("note markdown %d chars — over %d, truncating; the "
                     "model most likely looped", len(res), _MAX_NOTE_CHARS)
         cut = res.rfind("\n", 0, _MAX_NOTE_CHARS)
         res = (res[:cut if cut > 0 else _MAX_NOTE_CHARS].rstrip()
                + "\n\n> ⚠️ 생성 결과가 비정상적으로 길어 여기서 잘렸습니다"
                  " (모델 반복 출력). 같은 자료를 다시 넣으면 재생성됩니다.\n")
-    return res
+    return res, runaway
 
 
 _MARKER_RE = re.compile(r"(?m)^===(TITLE|NOTE|QUESTIONS|CATEGORY)===\s*$")
@@ -455,7 +471,7 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
                         len(out or ""))
             return None
         log.warning("note synth: NOTE marker missing, using raw output")
-    note_md = _sanitize_mermaid(note_md)
+    note_md, runaway = _sanitize_mermaid_ex(note_md)
 
     today = datetime.now(_KST).date().isoformat()
     llm_title = (sections.get("TITLE") or "").splitlines()[0].strip() \
@@ -474,4 +490,8 @@ async def synthesize(source_type: str, source_ref: str, raw_text: str,
         "cost_krw": cost_krw,
         "gen_seconds": gen_seconds,
         "mode": mode,
+        # True = the sanitizer had to clamp a looped model output. New
+        # notes keep it anyway (a clamped note beats no note); the resync
+        # path refuses it rather than overwrite a good note.
+        "runaway": runaway,
     }

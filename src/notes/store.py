@@ -233,14 +233,40 @@ def resync_note(note_id: str, *, title: str, md: str, questions: list[dict],
     re-learn notes that were synthesised wrongly (the title/body bug).
     Keeps the note id, SRS state, category, and 중요(important) flag so
     dashboard memos/alarms keyed by id and review progress survive.
-    Returns False if the note id is unknown."""
+    Returns False if the note id is unknown, or if the new content would
+    LOSE information — see the loss guard below."""
     init_db()
     with _conn() as c:
         row = c.execute("SELECT md_path FROM notes WHERE id=?",
                         (note_id,)).fetchone()
         if row is None:
             return False
-        _atomic_write_text(Path(row["md_path"]), md or "")
+        # Loss guard — same principle as the wiki's LLM-rewrite guard: a
+        # resync OVERWRITES a note that is already good, so a bad
+        # generation must not be allowed to land. Both refusals are
+        # non-destructive; the caller reports failure and the old note
+        # stays exactly as it was. Added 2026-09-06 after a resync of the
+        # DCF note came back as a single 149,644-char looped line: the
+        # body shrank 2,902→1,558 chars AND the DELETE below wiped the
+        # note's 5 SRS questions, because the truncated output never
+        # reached the ===QUESTIONS=== marker. Recovering those questions
+        # needed the daily GCS backup.
+        md_path = Path(row["md_path"])
+        try:
+            old_md = md_path.read_text(encoding="utf-8")
+        except OSError:
+            old_md = ""
+        old_q = c.execute("SELECT COUNT(*) FROM questions WHERE note_id=?",
+                          (note_id,)).fetchone()[0]
+        if old_md.strip() and len(md or "") < len(old_md) * 0.5:
+            log.warning("note resync REFUSED (%s): %d chars would replace "
+                        "%d — under half", note_id, len(md or ""), len(old_md))
+            return False
+        if old_q and not questions:
+            log.warning("note resync REFUSED (%s): new synthesis has no "
+                        "questions but the note has %d", note_id, old_q)
+            return False
+        _atomic_write_text(md_path, md or "")
         now = _now()
         c.execute("UPDATE notes SET title=?, updated=?, cost_krw=?, "
                   "gen_seconds=? WHERE id=?",
