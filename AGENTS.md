@@ -51,11 +51,17 @@ the middle of a long file is what gets skimmed.
 Run `bash scripts/preflight.sh` FIRST — automates syntax via `compile()`
 (changed .py — NOT `ast.parse`, which passes symtable-stage SyntaxErrors
 like "used prior to global declaration"; 2026-08-27), ruff F821,
-`_HELP_TEXT` ≤4000, **Telegram-send safety for every
-guide constant** (splits each with `_split_for_telegram`'s exact logic
+`_HELP_TEXT` ≤4000, **Telegram-send safety for the FOUR guide constants
+that live in `bot.py`** (`_LOOKUP_` · `_PATENTS_` · `_PAPERS_` ·
+`_WIKI_GUIDE_TEXT`; splits each with `_split_for_telegram`'s exact logic
 and fails if any chunk exceeds 4000 or leaves an HTML tag open across
 the split — a tag left open makes Telegram reject that message; this
-used to only check the constant was non-empty, 2026-08-20), handler↔help
+used to only check the constant was non-empty, 2026-08-20). **It does
+NOT cover `_NOTES_GUIDE_TEXT`** — section 3 opens `bot.py` only, and
+that constant lives in `src/notes/telegram.py`, so after touching it
+apply the same two tests by hand: no chunk >4000 chars, no HTML tag left
+open across a split. This paragraph said "every guide constant" until
+2026-09-06, which is what made the gap invisible. Also: handler↔help
 cross-check (scans **all of `src/`**, not just `bot.py` — `notes/
 telegram.py` registers `/notes` + `/notes_guide`, and they were being
 skipped while the check then reported "all 112 traceable"; 114 today).
@@ -117,16 +123,35 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
 
 - **Read the code you're about to change, before changing it** — no
   blind edits, no patching from memory of what a function probably does.
-  This is about reading, NOT about showing the user a plan first: editing
-  needs no pre-approval (it only accumulates on disk). Committing does,
-  and the gate above is the sole source for that, over any workflow
-  assumption. (Was "Review first" until 2026-09-06, which had no object
-  and read to a fresh agent as "present a plan and wait".)
-- **되돌릴 수 없는 작업은 하기 전에 확인한다.** 편집 자체는 승인이 필요
+  This is about reading, NOT about showing the user a plan first: an
+  ORDINARY edit needs no permission — it only accumulates on disk. And
+  you never ask for the commit either; the gate above is **detected**
+  (a trigger word in the latest message), never solicited. (Was "Review
+  first" until 2026-09-06, which had no object and read to a fresh agent
+  as "present a plan and wait".)
+  - **"Ordinary" excludes these — they need asking first even as an
+    edit**: `## Cost defaults (don't change without asking)` · adding a
+    write/mutate tool to the MCP server · adding Chroma to the MCP server
+    (re-raise the RAM tradeoff) · dropping a LIVE command from
+    `_HELP_TEXT` · anything in the irreversible bullet below. Each is
+    stated in its own section; this list exists because the blanket
+    sentence above sits near the top and those sections do not
+    (2026-09-06 — the blanket was added that morning and silently
+    outranked all five by evening).
+- **되돌릴 수 없는 작업은 하기 전에 확인한다.** 보통의 편집은 승인이 필요
   없지만(디스크에만 쌓임) 되돌릴 수 없는 것은 다르다 — 데이터 삭제,
-  `_ENT_STOP`·`_ENTITY_ALIASES` 추가(엣지 대량 삭제·병합), `.env` 변경,
-  위키 토픽 삭제, 배포된 이력의 force-push. 개별 항목은 각 섹션에 자세히
-  있고, 이 줄은 그 목록에 없는 새로운 경우까지 덮는 일반 원칙이다.
+  `_ENT_STOP`·`_ENTITY_ALIASES` 추가(엣지 대량 삭제·병합), `.env` 변경
+  제안, 위키 토픽 삭제. 개별 항목은 각 섹션에 자세히 있고, 이 줄은 그
+  목록에 없는 새로운 경우까지 덮는 일반 원칙이다.
+  - **확인 시점은 "편집 전"이 아니라 "그 편집을 커밋에 넣기 전"이다.**
+    `_ENT_STOP`·`_ENTITY_ALIASES`의 파괴는 편집이 아니라 **배포 후 부팅
+    스윕**에서 일어난다 — 확인 없이 스택에 쌓아두면 트리거 하나에
+    「멈추지 말 것」 규칙을 타고 그대로 실행된다.
+  - **force-push는 이 목록에 없다 — "확인받으면 되는 것"이 아니라 금지다.**
+    「Branch / push policy」의 *"never force-push or discard those
+    commits"* 가 절대 규칙이고 이 줄은 그걸 약화시키지 않는다. 배포
+    브랜치는 Copilot과 공유하므로 남의 커밋을 지우는 데 "응 해" 한 마디는
+    근거가 못 된다. (2026-09-06 이 목록에 잘못 넣었다가 같은 날 제거.)
   (2026-09-06 추가: 이 원칙이 `AGENT_GUIDE.md`에만 있었는데 `CLAUDE.md`·
   `copilot-instructions.md` 둘 다 이 파일만 가리켜서, 이 파일만 읽는
   에이전트에겐 안전망이 통째로 안 보였다.)
@@ -173,7 +198,11 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
   Keep ≤4000 chars (single Telegram message). This is the same trigger
   as the guide-constants rule below — they were worded differently
   ("policy change" vs "command/feature/policy change") until 2026-09-06,
-  which left internal-behaviour changes undecided.
+  which left internal-behaviour changes undecided. **Tie-breaker for the
+  middle cases** (`LOCAL_RERANKER_ENABLED=0` made search faster;
+  `INGEST_SEM_CAPACITY` 4→3 changed throughput; a runaway retry doubles a
+  note's cost): update it. A line of help costs nothing; a behaviour the
+  user can feel but can't find documented costs a support round-trip.
 - **Never drop a LIVE command from the `_HELP_TEXT` listing.** (Removing
   the entry for a command you just deleted is the sync the rule above
   requires, not a violation of this one.) Tight on space →
@@ -188,9 +217,12 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
   `_HELP_TEXT` (≤4000) · `_LOOKUP_GUIDE_TEXT` (`/guide_lookup`, all
   commands) · `_PATENTS_GUIDE_TEXT` · `_PAPERS_GUIDE_TEXT` ·
   `_WIKI_GUIDE_TEXT` · `_NOTES_GUIDE_TEXT` (`src/notes/telegram.py`,
-  `/notes_guide` — the only one `preflight.sh` section 3 does NOT check;
-  verify it by hand until it does). Patent change→patents guide,
-  paper→papers, wiki→wiki, note→notes (all if it spans multiple).
+  `/notes_guide` — the only one `preflight.sh` section 3 does NOT check,
+  because it opens `bot.py` only; until that changes, apply section 3's
+  own two tests by hand: split it with `_split_for_telegram` and confirm
+  no chunk >4000 chars and no HTML tag left open across a split).
+  Patent change→patents guide, paper→papers, wiki→wiki, note→notes
+  (all if it spans multiple).
 - `.env` (VM) holds secrets (bot token, Google key, GitHub PAT, dashboard
   creds). Never echo it; if the user pastes it, warn + recommend rotation.
 - **Dashboard ⇄ Telegram parity (user request, 2026-06-24):** a new
@@ -214,10 +246,13 @@ output. Never "open editor and remove the line" / "save and exit" /
 
 "from now on / 매번 / 항상 / 자동으로 / 알아서" → APScheduler hook (this
 bot's own scheduler — the default choice) · docker compose service · git
-hook/Action · an EXISTING cron entry, extended. **Not a new cron entry**
-— the NEVER list above forbids that and the existing crontab already
-covers every case; this line used to read "→ cron · …" first, which
-prescribed the one remedy the same file bans twice (fixed 2026-09-06).
+hook/Action · an EXISTING cron entry, extended. **Not a new RECURRING
+cron entry** — the NEVER list above forbids that and the existing
+crontab already covers every case; this line used to read "→ cron · …"
+first, prescribing the remedy the same file bans (fixed 2026-09-06).
+A **one-off pinned-date** cron entry on explicit request is still fine
+and always was — the crontab has one (the EPO reminder). Don't read
+this line as refusing "2026-10-15에 한 번만 알림 걸어줘".
 Never leave RECURRING work as "run it yourself". Check existing
 `crontab -l` + `docker-compose.yml` first. If the user must do anything
 to keep it running, that's a bug.
@@ -231,11 +266,16 @@ agent following the letter would add a cron entry or a whole new
 command rather than hand over a `docker exec` one-liner (corrected
 2026-09-06 — the DCF-note diagnosis, repair and question-restore all
 ran on such one-liners). This does NOT reopen the deploy trio: `git
-pull` / `compose up` / `restart` stay banned even as a one-off (see
-Auto-deploy below), the only exception being the documented
-`--force-recreate` after a `.env` edit. A stalled deploy is not a
-"one-off repair" — `auto_pull.sh` already retries and the watchdogs
-already restart.
+pull` / `compose up` / `restart` stay banned as a way to make the bot
+pick up new code — that is `auto_pull.sh`'s job, and a stalled deploy is
+not a "one-off repair" because it already retries and the watchdogs
+already restart. The compose commands this file itself prescribes are
+NOT that, and stay allowed: `up -d --force-recreate <svc>` after a
+`.env` edit, and the OCR backend's documented
+`--profile ocr-local up -d ocr-worker` / `stop ocr-worker` switch. `git
+pull` has no such case — never hand it over. (Until 2026-09-06 this said
+the `.env` force-recreate was "the only exception", which the OCR
+section already falsified.)
 
 ## Branch / push policy
 
@@ -265,20 +305,25 @@ ongoing/increasing Copilot commits here; don't intervene unless asked).
   before every file edit, contradicting the batch posture above and
   making the user approve twice for one change; §3–4 mandate a
   five-section answer template, contradicting Token-lean output. §5 was
-  corrected 2026-09-06; §3–4 were left alone as the user's stylistic
-  call. The file still owns communication style, and on 승인·완료 rules
+  corrected 2026-09-06. The §3–4 TEXT was left alone at the user's
+  request, but only §4 keeps authority — §3 is overridden here, see the
+  bullets. The file still owns communication style, and on 승인·완료 rules
   THIS file wins — with the 출력 split spelled out, because "출력" covers
   two different things and collapsing them nullifies the preference the
   user chose to keep:
   - **§4 (답변 순서) is the exception — AGENT_GUIDE wins.** It says
     "기본으로 사용합니다", a default rather than "항상", so Token-lean's
     결론 먼저 still governs length and the ordering inside each section.
-    Both survive; neither deletes the other.
+    When it applies: a **proposal or an explanation** of a change. When
+    it does not: status reports, a command you are handing over, a
+    one-line factual answer, a diff summary. Without that split two
+    agents diverge — one puts five headings on a yes/no answer.
   - **§3's "사용자가 코드를 요청한 경우에만 코드를 제시합니다" gets NO
     such exception — this file wins.** VM ops commands, a failing
-    script's actual output, and the diff you are asking approval for get
-    shown whether or not code was asked for; verify-before-report and
-    「VM ops」 require it.
+    script's actual output, and the diff you are reporting get shown
+    whether or not code was asked for; verify-before-report and
+    「VM ops」 require it. (Do not read "the diff you are reporting" as
+    an approval request — you report the diff, you do not ask to edit.)
 
   Audit the two together — that sentence about "no overlap" is exactly
   what kept anyone from looking.
