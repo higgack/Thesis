@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import os
 import re
+import threading
 from pathlib import Path
 import httpx
 import trafilatura
@@ -8,6 +10,26 @@ from pypdf import PdfReader
 from youtube_transcript_api import YouTubeTranscriptApi
 
 log = logging.getLogger(__name__)
+
+# PyMuPDF text+table extraction is CPU-bound PYTHON, not a native call
+# that drops the GIL: find_tables() → get_drawings() builds a Point
+# object per path element in a list comprehension. Several large PDFs
+# extracting at once therefore fight the event loop for the GIL, and the
+# loop loses — 2026-09-08's worker dump caught thread tt_7 deep in
+# pymupdf/table.py:2959 while the loop sat idle in epoll.poll() and
+# missed two 60s heartbeats in a row (133s silent). That is the GIL
+# convoy effect: a thread that parks on I/O and wakes up has to win the
+# GIL back from N threads that never yield it voluntarily, and with
+# THREAD_POOL_WORKERS=24 it is one contender in twenty-five. Telegram
+# commands were being swallowed whole while this ran.
+#
+# Same remedy, same reasoning as ocr_client's _GLOBAL_OCR_SEM: bound the
+# number of threads doing this concurrently rather than the work itself.
+# 2 keeps both cores usefully busy while leaving the loop a real share.
+# INGEST_SEM_CAPACITY(3) × URL_WORK_CONCURRENCY(8) could otherwise put
+# ~10 extractions in flight at once.
+_PDF_EXTRACT_SEM = threading.BoundedSemaphore(
+    max(1, int(os.getenv("PDF_EXTRACT_CONCURRENCY", "2"))))
 
 # Kept in sync with pipeline.py's _YOUTUBE_ID_RE (m.youtube.com/embed/
 # added 2026-08-04 — the study-notes channel calls is_youtube() directly
@@ -1100,12 +1122,19 @@ def load_pdf(path: Path, on_stage=None) -> tuple[str, str, str | None, dict | No
             # gives the embedder a cleaner signal AND lets sparse-text pages
             # cross the auto-OCR threshold without spending Vision tokens.
             page_parts: list[str] = []
-            for page in doc:
-                t = page.get_text("text") or ""
-                tables_text = _extract_pdf_tables(page)
-                if tables_text:
-                    t = (t + "\n\n[Tables]\n" + tables_text).strip()
-                page_parts.append(t)
+            # Held for the whole document, not per page: the point is to
+            # cap how many threads are CPU-bound here at once, and a
+            # per-page acquire would let every in-flight PDF interleave
+            # and put us right back at ~10 concurrent extractions.
+            # Covers only this loop — the OCR fallback below has its own
+            # cap (_GLOBAL_OCR_SEM) and must not wait on this one.
+            with _PDF_EXTRACT_SEM:
+                for page in doc:
+                    t = page.get_text("text") or ""
+                    tables_text = _extract_pdf_tables(page)
+                    if tables_text:
+                        t = (t + "\n\n[Tables]\n" + tables_text).strip()
+                    page_parts.append(t)
             body = "\n\n".join(page_parts).strip()
         finally:
             # finally, not a trailing call — an exception mid-extraction
