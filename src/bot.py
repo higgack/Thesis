@@ -14905,13 +14905,50 @@ def main():
                 peak_lag = max(peak_lag, lag)
                 if time.monotonic() - last_dump >= _STALL_DUMP_COOLDOWN_SEC:
                     last_dump = time.monotonic()
-                    frame = _sys._current_frames().get(main_ident)
+                    frames = _sys._current_frames()
+                    frame = frames.get(main_ident)
                     stack = ("".join(_tb.format_stack(frame)) if frame
                              else "<loop thread frame unavailable>")
+                    # WORKER stacks too. The loop thread's stack answers
+                    # "is a sync call blocking the loop?" — and when the
+                    # answer is no, it shows only asyncio internals, which
+                    # is the GIL-starvation case and says nothing about
+                    # WHICH worker is eating the CPU. 40 of the 48 stalls
+                    # in data/loop_stalls.log on 2026-09-08 were exactly
+                    # that: unreadable, because the thread holding the GIL
+                    # was never dumped. Only threads with an /app/src
+                    # frame are printed (an idle pool thread parked in
+                    # threading.py `_wait` is noise), newest frames last,
+                    # capped so a stall can't bloat the log.
+                    workers = []
+                    try:
+                        # Derived, not the literal "/app/src/": this has to
+                        # work in the container AND wherever a test runs it.
+                        src_dir = str(Path(__file__).resolve().parent)
+                        names = {t.ident: t.name for t in _fts_th.enumerate()}
+                        for ident, wframe in frames.items():
+                            if ident == main_ident or len(workers) >= 5:
+                                continue
+                            wstack = "".join(_tb.format_stack(wframe))
+                            if src_dir not in wstack:
+                                continue
+                            tail = wstack.strip().splitlines()[-12:]
+                            workers.append(
+                                f"--- thread {names.get(ident, ident)} ---\n"
+                                + "\n".join(tail))
+                    except Exception:
+                        workers = ["<worker stacks unavailable>"]
+                    worker_dump = ("\n".join(workers) if workers
+                                   else "<no worker thread in app code — "
+                                        "CPU is elsewhere (native ext, GC, "
+                                        "or another container)>")
+                    stack = (stack + "\n-- workers holding the GIL --\n"
+                             + worker_dump + "\n")
                     log.warning(
                         "event loop silent %.0fs — loop thread stack "
                         "(a sync call on the loop shows the blocker; pure "
-                        "asyncio frames = GIL starvation by workers):\n%s",
+                        "asyncio frames = GIL starvation by the workers "
+                        "dumped below):\n%s",
                         lag, stack)
                     # Also append to data/ (a bind mount): the watchdog
                     # restarts with `up --force-recreate`, which replaces
