@@ -48,14 +48,18 @@ async def summarize(title: str, text: str, hint: str | None = None) -> str:
     so behaviour stays consistent across both entry points."""
     if hint and config.HINT_SUMMARY_MIN_CHARS <= len(hint) <= config.HINT_SUMMARY_MAX_CHARS:
         return hint.strip()
-    if token_len(text) <= 400:
+    # tiktoken off the loop — see the comment on the same call in
+    # _summarize_and_extract_impl. Also tokenises `text` once instead of
+    # twice, which the two-threshold version was doing.
+    n_tok = await asyncio.to_thread(token_len, text)
+    if n_tok <= 400:
         return text.strip()
-    if token_len(text) <= 12000:
+    if n_tok <= 12000:
         return await _summarize_one(title, text)
-    parts = split(text, size=8000, overlap=200)
+    parts = await asyncio.to_thread(split, text, 8000, 200)
     partials = await _summarize_partials(title, parts)
     combined = "\n\n".join(partials)
-    if token_len(combined) <= 4000:
+    if await asyncio.to_thread(token_len, combined) <= 4000:
         return combined
     return await _summarize_one(title, combined)
 
@@ -127,8 +131,17 @@ async def _summarize_and_extract_impl(
             return summary, {}, False
         return summary, await _extract_metadata_only(title, body, doc_type), True
 
-    # Body too short — passthrough, no LLM
-    if token_len(body) <= 400:
+    # Body too short — passthrough, no LLM.
+    # tiktoken runs OFF the loop from here down. `token_len`/`split` are
+    # CPU-bound and were being called straight from this coroutine, so a
+    # long document froze the event loop for the whole tokenisation:
+    # data/loop_stalls.log caught 130s inside _core_bpe.encode on
+    # 2026-09-08, during which every Telegram command was silently
+    # swallowed. pipeline.py already had this right one function over
+    # (`await asyncio.to_thread(split, body)` for the main chunking) —
+    # this module and the OCR-extend path were simply missed.
+    n_body_tok = await asyncio.to_thread(token_len, body)
+    if n_body_tok <= 400:
         return body.strip(), {}, False
 
     # Caller said meta is noise (short forwarded text etc.) — summary only
@@ -141,7 +154,7 @@ async def _summarize_and_extract_impl(
     # dominates input, so a single 12k call is cheaper than three
     # chained 4k calls + a final combine. 60-75% Flash-Lite call
     # reduction on medium-long PDFs.
-    if token_len(body) <= 12000:
+    if n_body_tok <= 12000:
         summary, metadata = await _combined_call(title, body, doc_type)
         return summary, metadata, True
 
@@ -149,10 +162,10 @@ async def _summarize_and_extract_impl(
     # the final pass with metadata. Partial size raised 4000 → 8000 so
     # a 100k-token PDF needs ~13 partials instead of 25 — same content
     # coverage, half the calls.
-    parts = split(body, size=8000, overlap=200)
+    parts = await asyncio.to_thread(split, body, 8000, 200)
     partials = await _summarize_partials(title, parts)
     combined_text = "\n\n".join(partials)
-    if token_len(combined_text) <= 12000:
+    if await asyncio.to_thread(token_len, combined_text) <= 12000:
         summary, metadata = await _combined_call(title, combined_text, doc_type)
         return summary, metadata, True
     # Very long after chain — fall back to old behaviour (rare)

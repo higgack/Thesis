@@ -308,7 +308,10 @@ async def extend_pdf_ocr(pdf_path: Path, doc_id: str,
             "pages_skipped": r.get("skipped", 0),
             "chunks_added": 0,
         }
-    new_chunks = split(ocr_text)
+    # Off the loop, exactly like the main chunking path below — tiktoken
+    # is CPU-bound and a long OCR result would freeze the event loop for
+    # the whole split (2026-09-08).
+    new_chunks = await asyncio.to_thread(split, ocr_text)
     chunk_items = [{
         "id": f"{doc_id}:ocr-{start_page}:{i}",
         "text": c,
