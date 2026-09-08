@@ -33,6 +33,32 @@ logging.basicConfig(
 )
 log = logging.getLogger("bot")
 
+
+class _SkippedJobFilter(logging.Filter):
+    """Drop APScheduler's "maximum number of running instances reached".
+
+    It fires once per missed tick while a long job runs, and the two
+    busiest jobs are deliberately long: dash_query_worker ticks every 2s
+    and an agent answer takes ~40s (20 lines per answer), dash_ingest_worker
+    ticks every 3s against a 300s timeout (100 lines per ingest). The
+    overrun is the designed behaviour — those workers are serial on
+    purpose — so every one of those lines is noise.
+
+    It is not only noise. Logging is synchronous: `logging.emit` writes to
+    stdout on whatever thread calls it, the event loop included, and
+    Docker's log driver can push back. 5 of the 45 real loop stalls in
+    data/loop_stalls.log ended inside logging/__init__.py:emit
+    (2026-09-08). Cutting the highest-volume line in the process reduces
+    that exposure. Everything else from apscheduler still gets through —
+    this filters one message, not the logger.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "maximum number of running instances" not in record.getMessage()
+
+
+logging.getLogger("apscheduler.scheduler").addFilter(_SkippedJobFilter())
+
 # Ingest concurrency cap. Sized for the live VM = e2-highmem-2 (2 vCPU,
 # 16 GB, upgraded 2026-07-05) + 11g bot mem_limit. RAM headroom is NOT
 # the binding constraint — 2 vCPUs are: raising this to 6 during the
