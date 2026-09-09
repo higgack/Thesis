@@ -417,7 +417,14 @@ def _stamp_heartbeat() -> None:
 # Those two failure classes need opposite fixes, and until now nothing
 # could tell them apart after the fact.
 _LOOP_BEAT_MONO = 0.0
-_STALL_DUMP_AFTER_SEC = 120     # well before the watchdog's 10min restart
+_LOOP_BEAT_INTERVAL_SEC = 2      # _loop_beat() task, NOT the 60s job
+# 120 → 25 (2026-09-09). The old value was forced by the beat: it came
+# from the 60s heartbeat job, so `lag` reached 60s on a healthy bot and
+# the threshold had to clear that. With a 2s beat, 25s is quiet on a
+# healthy loop and still well under the watchdog's 10-min restart —
+# and it finally covers the range that actually breaks things, since
+# Telegram replies give up at HTTPXRequest's 15s connect timeout.
+_STALL_DUMP_AFTER_SEC = 25
 _STALL_DUMP_COOLDOWN_SEC = 300  # at most one dump per 5min while stalled
 
 
@@ -14281,6 +14288,30 @@ async def _widen_thread_pool(app) -> None:
     log.info("default thread pool set to %d workers (asyncio would "
              "have used %d for %s cpus)",
              workers, min(32, (os.cpu_count() or 1) + 4), os.cpu_count())
+    asyncio.get_running_loop().create_task(_loop_beat())
+
+
+async def _loop_beat() -> None:
+    """Stamp _LOOP_BEAT_MONO every 2s so the stall dumper can see SHORT
+    stalls.
+
+    The beat used to come from the 60s heartbeat job, which meant `lag`
+    swung 0→60s on a perfectly healthy bot and the dump threshold had to
+    sit above that at 120s. Everything shorter was invisible — and short
+    is what hurts: HTTPXRequest gives Telegram a 15s connect timeout, so
+    ~30s of starvation is already enough to fail a reply. That is what
+    2026-09-08 23:48 KST looked like from the outside — four commands
+    answered by nothing, 21 httpx.ConnectTimeout out of
+    telegram/request/_httpxrequest.py, and no stall in the log, because
+    nothing that day crossed 120s at that hour.
+
+    A plain loop task, not a JobQueue entry: it measures exactly what we
+    care about (can the loop still run a callback?) with no scheduler in
+    the path, and it cannot be delayed by another job overrunning."""
+    while True:
+        global _LOOP_BEAT_MONO
+        _LOOP_BEAT_MONO = time.monotonic()
+        await asyncio.sleep(_LOOP_BEAT_INTERVAL_SEC)
 
 
 def main():
