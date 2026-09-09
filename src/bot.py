@@ -14959,16 +14959,33 @@ def main():
                             if src_dir not in wstack:
                                 continue
                             tail = wstack.strip().splitlines()[-12:]
+                            # RUNNING vs BLOCKED. A thread parked on a
+                            # lock has already RELEASED the GIL, so
+                            # listing it under "holding the GIL" points
+                            # the reader at the wrong thread: the
+                            # 2026-09-09T15:28 dump showed two writers
+                            # queued on meta._W_LOCK under that header
+                            # while whatever actually held the CPU went
+                            # unnamed. Heuristic on the deepest frame —
+                            # a hint for the reader, not a verdict.
+                            deepest = " ".join(tail[-2:])
+                            blocked = any(m in deepest for m in (
+                                "acquire(", "_W_LOCK", ".wait(", ".join()",
+                                "threading.py", "queue.py",
+                                "_wait_for_tstate_lock"))
+                            tag = "BLOCKED on a lock/IO" if blocked else "RUNNING"
                             workers.append(
-                                f"--- thread {names.get(ident, ident)} ---\n"
-                                + "\n".join(tail))
+                                f"--- thread {names.get(ident, ident)} "
+                                f"[{tag}] ---\n" + "\n".join(tail))
                     except Exception:
                         workers = ["<worker stacks unavailable>"]
                     worker_dump = ("\n".join(workers) if workers
                                    else "<no worker thread in app code — "
                                         "CPU is elsewhere (native ext, GC, "
                                         "or another container)>")
-                    stack = (stack + "\n-- workers holding the GIL --\n"
+                    stack = (stack + "\n-- worker threads in app code "
+                             "(RUNNING = the CPU/GIL suspects; BLOCKED "
+                             "ones are waiting, not hogging) --\n"
                              + worker_dump + "\n")
                     log.warning(
                         "event loop silent %.0fs — loop thread stack "
