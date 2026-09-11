@@ -354,9 +354,30 @@ async def on_notemode_callback(update: Update,
     _persist_pending()
     await q.answer()
     if entry is None:
+        # 중복 전달 방어. 텔레그램은 answerCallbackQuery 응답이 늦으면
+        # 같은 콜백을 다시 보내고, 이 봇은 실제로 2시간에 21건씩
+        # httpx.ConnectTimeout 을 낸다(2026-09-09 확인). 재전달이 오면
+        # pid 는 1차 전달이 이미 소비해서 없는데, 예전 코드는 그걸
+        # 무조건 "만료(48시간 경과)"라고 단정하고 **같은 메시지를 다시
+        # 편집**했다 — 1차가 써둔 "대기열 N번째"를 거짓 오류로 덮어써서,
+        # 5분 전에 넣은 자료가 이틀 지난 것처럼 보였다. 접수는 정상이고
+        # 큐에서 처리되는 중인데도.
+        #
+        # 그래서 단정하지 말고 큐를 먼저 본다. 나이를 알 방법이 없으니
+        # 만료라고 말할 근거도 없다.
+        _load_queue()
+        pos = next((i + 1 for i, e in enumerate(_MODE_QUEUE)
+                    if e.get("pid") == pid), 0)
         try:
-            await q.edit_message_text(
-                "⏳ 만료된 요청이야 (48시간 경과) — 자료를 다시 올려줘.")
+            if pos:
+                label = "📚 책 모드" if mode == "book" else "📝 일반"
+                await q.edit_message_text(
+                    f"{label} 선택됨 — 대기열 {pos}번째 (순서대로 자동 처리)")
+            else:
+                await q.edit_message_text(
+                    "이미 접수된 요청이야 — 처리 중이거나 끝났어.\n"
+                    "결과가 안 왔으면 자료를 다시 올려줘. "
+                    "(오래된 버튼이면 48시간이 지나 정리된 것일 수도 있어)")
         except Exception:
             pass
         return
@@ -367,6 +388,9 @@ async def on_notemode_callback(update: Update,
     entry["mode"] = "book" if mode == "book" else "normal"
     entry["q_chat_id"] = getattr(qmsg, "chat_id", None)
     entry["q_message_id"] = getattr(qmsg, "message_id", None)
+    # 큐에도 pid 를 남긴다 — 같은 콜백이 다시 전달됐을 때 위쪽 분기가
+    # "이미 큐에 있음"을 확인할 수 있는 유일한 단서다.
+    entry["pid"] = pid
     _MODE_QUEUE.append(entry)
     _persist_queue()
     pos = len(_MODE_QUEUE)
