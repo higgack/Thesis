@@ -120,8 +120,9 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
 3. stdlib·기존 의존성으로 되나? (새 패키지 추가는 최후)
 4. 한 줄/최소 diff로 되나?
 5. 그제서야 최소 구현
-- 부분 수정(Edit) > 통짜 파일 재생성. bot.py(~14.7k줄) 통독 금지 —
-  Grep/Explore(quick)로 필요한 함수만.
+- 부분 수정(Edit) > 통짜 파일 재생성. bot.py(~15.1k줄, 2026-09-11) 통독
+  금지 — Grep/Explore(quick)로 필요한 함수만. 이 숫자는 이제
+  `preflight.sh` 섹션 9가 실제 줄 수와 대조한다(문서만 낡는 걸 막으려고).
 - 설명은 결론 먼저, 필요한 만큼만; 안 갈 선택지 나열 금지.
 - 절약 대상 아님(non-negotiable): 검증·에러처리·보안·preflight·
   단계별 VM 안내(위 VM ops 규칙) — 여기서 줄이면 버그로 더 비쌈.
@@ -915,14 +916,30 @@ OCR `DPI=100` `AUTO_CAP=7` `SPARSE_THRESHOLD=800` `PROBE_PAGES=3`
   page becomes a rendered view → no info loss + DB-query contradiction
   detection. ~₩2/doc (Flash-Lite). Start only if append proves
   insufficient for information preservation.
-- **CodeGraph trial**: when `src/bot.py` hits ~15k lines (~14.7k on
-  2026-08-28),
-  trial `npx @colbymchenry/codegraph` to cut exploration token cost. Low
+- **CodeGraph trial**: when `src/bot.py` hits ~17k lines, trial
+  `npx @colbymchenry/codegraph` to cut exploration token cost. Low
   impact (cost is dominated by bot.py size + conversation length, not
   multi-file exploration). Compare token use before/after to decide.
+  - **The old ~15k trigger fired on 2026-09-11** (15,076 lines) and the
+    owner's call was to move it, not to run the trial: the note's own
+    "low impact" reasoning still holds, because a codebase-index tool
+    cuts MULTI-FILE exploration and this repo's cost is one very large
+    FILE. Re-armed at 17k so the question comes back rather than
+    disappearing. `preflight.sh` section 9 reads this threshold out of
+    this line, so changing the number here is all it takes.
+  - Growth measured the same day, for whoever decides next: 14,179
+    (2 months) → 14,412 (1 month) → 14,729 (2 weeks) → 15,076. About
+    +350 lines a fortnight and accelerating; ~17k lands around
+    2026-12 at that rate.
 - **bot.py command-routing refactor** (CowAgent-inspired, 2026-08-09
   review, not urgent/not now): if the ad hoc if/elif command dispatch in
   `bot.py` ever gets refactored, a priority-ordered handler-chain with
   explicit CONTINUE/BREAK semantics (à la chatgpt-on-wechat/CowAgent's
   plugin system) is a cleaner shape than what's there — noted for later,
   not a reason to touch working code now.
+  - **This, not the CodeGraph trial, is the lever on bot.py's size**, and
+    the owner said so explicitly on 2026-09-11 ("A + 나중에 C") while
+    re-arming the trigger above. Still deferred: splitting a 15k-line
+    file that is in production every minute is not a thing to start
+    alongside an incident. When it does get picked up, the growth
+    numbers recorded under the CodeGraph entry are the input.

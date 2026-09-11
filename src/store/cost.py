@@ -80,6 +80,20 @@ def _init_once(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE calls ADD COLUMN purpose TEXT NOT NULL DEFAULT 'unknown'")
     if "cached_tokens" not in cols:
         c.execute("ALTER TABLE calls ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0")
+    if "priced" not in cols:
+        # 0 = the call happened but carried no usage_metadata, so its
+        # token counts and cost are unknown rather than zero. Until
+        # 2026-09-11 record_resp() returned early on that and wrote NO
+        # row at all, which made the call itself invisible: diagnosing
+        # an empty dashboard answer on 2026-09-08 I read "only one
+        # purpose=query call" off this table and concluded there had
+        # been no tool round trip, when in fact the final answer call
+        # had come back without usage and was never recorded. The price
+        # being unknowable is not a reason to lose the fact that it ran.
+        # (Idea borrowed from oh-my-hermes, which shows unpriceable runs
+        # as `unknown` instead of dropping them.)
+        c.execute("ALTER TABLE calls ADD COLUMN priced INTEGER NOT NULL "
+                  "DEFAULT 1")
     _inited = True
 
 
@@ -125,7 +139,8 @@ def _normalize(model: str) -> str:
 
 
 def record(model: str, in_tokens: int = 0, out_tokens: int = 0,
-           purpose: str = "unknown", cached_tokens: int = 0) -> float:
+           purpose: str = "unknown", cached_tokens: int = 0,
+           priced: bool = True) -> float:
     """Persist one call. `purpose` is a free-form tag used for
     breakdowns ('ingest' vs 'query', etc.). `cached_tokens` is the
     cache-hit slice of `in_tokens` (billed at CACHED_INPUT_RATE).
@@ -138,10 +153,12 @@ def record(model: str, in_tokens: int = 0, out_tokens: int = 0,
         with _conn() as c:
             c.execute(
                 "INSERT INTO calls(ts, model, in_tokens, out_tokens, cost_krw,"
-                " purpose, cached_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " purpose, cached_tokens, priced) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (datetime.utcnow().isoformat(timespec="seconds"),
                  _normalize(model), int(in_tokens), int(out_tokens), cost,
-                 purpose or "unknown", int(cached_tokens)),
+                 purpose or "unknown", int(cached_tokens),
+                 1 if priced else 0),
             )
         return cost
     except Exception:
@@ -152,12 +169,18 @@ def record(model: str, in_tokens: int = 0, out_tokens: int = 0,
 def last_call(purpose: str) -> dict | None:
     """Most recent recorded call for a `purpose` tag — lets a caller
     surface the exact KRW cost of the call it just made (real token
-    counts, not an estimate). Low-concurrency callers only."""
+    counts, not an estimate). Low-concurrency callers only.
+
+    Priced rows only. An unpriced row (no usage_metadata) carries zeros,
+    and the one caller — notes/synth.py — treats any returned dict as
+    the real figure and skips its own token estimate, so letting one
+    through would stamp a note's cost as ₩0 instead of estimating it."""
     try:
         with _conn() as c:
             row = c.execute(
                 "SELECT cost_krw, in_tokens, out_tokens FROM calls "
-                "WHERE purpose=? ORDER BY rowid DESC LIMIT 1",
+                "WHERE purpose=? AND COALESCE(priced, 1)=1 "
+                "ORDER BY rowid DESC LIMIT 1",
                 (purpose,)).fetchone()
         if not row:
             return None
@@ -172,6 +195,13 @@ def record_resp(model: str, resp, purpose: str = "unknown") -> float:
     """Convenience wrapper — pull token counts off a Gemini response."""
     um = getattr(resp, "usage_metadata", None)
     if not um:
+        # Record the call with priced=0 rather than returning silently.
+        # The cost is unknown, but that it RAN is a fact, and dropping
+        # the row hid a real Gemini call during the 2026-09-08 empty-
+        # answer diagnosis — see the `priced` note in _init_once.
+        log.warning("cost: %s call for '%s' had no usage_metadata — "
+                    "recorded as unpriced", _normalize(model), purpose)
+        record(model, 0, 0, purpose, 0, priced=False)
         return 0.0
     in_tok = getattr(um, "prompt_token_count", 0) or 0
     out_tok = getattr(um, "candidates_token_count", 0) or 0
@@ -242,6 +272,22 @@ def today_krw() -> dict:
     today = datetime.now(KST).date()
     start = _kst_day_start_utc(today)
     return _since(start.isoformat(timespec="seconds"))
+
+
+def unpriced_today() -> int:
+    """How many of today's calls came back with no usage_metadata, so
+    their cost is unknown rather than zero. Surfaced in /usage — a
+    silent 0 would read as "that call was free" (2026-09-11)."""
+    try:
+        start = _kst_day_start_utc(datetime.now(KST).date())
+        with _conn() as c:
+            row = c.execute(
+                "SELECT COUNT(*) FROM calls WHERE ts >= ? "
+                "AND COALESCE(priced, 1)=0",
+                (start.isoformat(timespec="seconds"),)).fetchone()
+        return int(row[0] or 0)
+    except Exception:
+        return 0
 
 
 def period_krw(days: int) -> dict:

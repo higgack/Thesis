@@ -3009,6 +3009,7 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 "week": cost.period_krw(7),
                 "mtd": cost.month_to_date_krw(),
                 "daily": cost.daily_breakdown(7),
+                "unpriced": cost.unpriced_today(),
             }
         snap = await asyncio.to_thread(_gather_usage)
         s = snap["s"]
@@ -3049,6 +3050,16 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         # agent loop is reusing its cached prefix as intended.
         total_in = today.get("total_in", 0)
         total_cached = today.get("total_cached", 0)
+        # Calls whose price we could not compute. They are counted in
+        # the 콜 totals above but contribute ₩0, so without this line a
+        # missing usage_metadata reads as "that call was free".
+        unpriced_line = ""
+        if snap.get("unpriced"):
+            unpriced_line = (
+                f"\n    ⚠️ 가격 미상  {snap['unpriced']}콜 "
+                "(응답에 usage_metadata 없음 — 비용 합계에서 빠짐)"
+            )
+
         cache_line = ""
         if total_in:
             pct = total_cached / total_in * 100
@@ -3088,6 +3099,7 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"{cost_breakdown}"
             f"{purpose_breakdown}"
             f"{cache_line}"
+            f"{unpriced_line}"
             f"\n\n📅 최근 7일 (KST)\n{daily_block}"
             f"\n\n📖 모델 용도"
             f"\n  embedding   인입 chunk+summary / 질문 쿼리 임베딩"

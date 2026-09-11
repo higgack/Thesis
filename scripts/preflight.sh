@@ -375,13 +375,172 @@ rc=$?
 [[ $rc -eq 1 ]] && fail=1
 [[ $rc -eq 2 ]] && warn=1
 
+# ---- 8. guard / fallback deletion — WARN ------------------------------
+echo "── 8. guard·fallback deletion in this diff ──"
+python3 - <<'PY8'
+# AGENTS.md: "폴백·호환 경로는 지우지 않는다. 평소 안 타는 코드 대부분이
+# 실패 경로다." That rule has been prose-only, enforced by whoever
+# remembers it. This is the mechanical half — borrowed from
+# oh-my-hermes' completion_integrity.py, which refuses a completion
+# claim whose diff removes a guard without an adversarial regression to
+# replace it.
+#
+# WARNING, never blocking: deleting a guard is sometimes exactly right
+# (a fallback whose failure mode is gone). The point is that it should
+# be a decision, not a slip. A check that cried wolf would get ignored,
+# which is worse than not having it — so the vocabulary is deliberately
+# narrow and a line that merely MOVED is not reported.
+import re, subprocess, sys
+
+# Vocabulary derived from what THIS repo actually writes, not from the
+# words OMH's classifier uses. The first version matched \bsemaphore\b
+# and missed `with _GLOBAL_OCR_SEM:` entirely — a real guard deletion
+# sailed through the check in testing. Every concurrency guard here is
+# an abbreviated _..._SEM / _..._LOCK name.
+GUARD = re.compile(
+    r"(_[A-Z0-9_]*(?:SEM|LOCK)[A-Z0-9_]*"          # _GLOBAL_OCR_SEM, _W_LOCK
+    r"|\bexcept\b|\bfinally\b"                     # failure paths
+    r"|\b(?:fallback|back-compat|backcompat|legacy|guard)\b"
+    r"|\.bak\b|폴백|가드)", re.I)
+# An added line mentioning any of these says the removal was considered.
+EXCUSE = re.compile(r"\b(regression|adversarial|guard|fallback|폴백|"
+                    r"replaced by|대체)\b", re.I)
+
+try:
+    diff = subprocess.run(
+        ["git", "diff", "HEAD", "--unified=0", "--", "*.py", "*.sh"],
+        capture_output=True, text=True, timeout=30).stdout
+except Exception as e:
+    print(f"  \033[33mskipped — git diff failed ({e})\033[0m"); sys.exit(0)
+
+# Per FILE, not per diff. A first version pooled every addition in the
+# diff, so unrelated edits elsewhere that happened to contain the word
+# "guard" silenced a real removal in another file.
+removed, added = {}, {}
+cur = None
+for line in diff.splitlines():
+    if line.startswith("diff --git "):
+        cur = line.rsplit(" b/", 1)[-1]
+        removed.setdefault(cur, []); added.setdefault(cur, [])
+    elif cur is None:
+        continue
+    elif line.startswith("-") and not line.startswith("---"):
+        removed[cur].append(line[1:].strip())
+    elif line.startswith("+") and not line.startswith("+++"):
+        added[cur].append(line[1:].strip())
+
+hits = []
+for f, rem in removed.items():
+    add = added.get(f, [])
+    add_set = set(add)
+    gone = [r for r in rem if r and GUARD.search(r) and r not in add_set]
+    if not gone:
+        continue
+    if EXCUSE.search("\n".join(add)):
+        continue          # same file explains itself
+    hits.extend((f, r) for r in gone)
+
+if not hits:
+    print("  \033[32mno unexplained guard/fallback removals\033[0m"); sys.exit(0)
+print(f"  \033[33m{len(hits)} guard/fallback line(s) removed with nothing "
+      f"replacing them:\033[0m")
+for f, r in hits[:6]:
+    print(f"      - {f}: {r[:80]}")
+if len(hits) > 6:
+    print(f"      … {len(hits) - 6} more")
+print("  \033[33m→ AGENTS.md: 삭제 전에 어떤 사고가 이걸 만들었는지 먼저 찾을 것. "
+      "의도한 삭제면 무시해도 됨\033[0m")
+sys.exit(2)
+PY8
+rc=$?
+[[ $rc -eq 1 ]] && fail=1
+[[ $rc -eq 2 ]] && warn=1
+
+# ---- 9. AGENTS.md number drift — WARN ---------------------------------
+echo "── 9. AGENTS.md numbers vs live code ──"
+python3 - <<'PY9'
+# Borrowed from oh-my-hermes' maintenance/drift.py: hardcoded counts and
+# budgets in docs drift away from the values they describe, and nothing
+# notices. Reports EVERY drift in one pass (drift.py's own choice) so a
+# doc pass fixes them together instead of one per push.
+#
+# Two comparisons, both mechanical:
+#   (a) env-var defaults AGENTS.md states vs os.getenv() in src/
+#   (b) the src/bot.py line count AGENTS.md quotes
+import re, sys
+from pathlib import Path
+
+doc = Path("AGENTS.md")
+if not doc.is_file():
+    print("  \033[33mskipped — AGENTS.md not found\033[0m"); sys.exit(0)
+text = doc.read_text(encoding="utf-8")
+findings = []
+
+# (a) env defaults ------------------------------------------------------
+code_defaults = {}
+for f in Path("src").rglob("*.py"):
+    for m in re.finditer(r'os\.getenv\(\s*["\'](\w+)["\']\s*,\s*["\']([^"\']+)["\']',
+                         f.read_text(encoding="utf-8")):
+        code_defaults.setdefault(m.group(1), m.group(2))
+
+# Only the explicit "(default N)" form. The `NAME=N` form is NOT a code
+# default in this file — AGENTS.md uses it for LIVE .env values, several
+# of which deliberately differ from the code ("코드 기본값은 여전히 1이라
+# .env가 이긴다" for LOCAL_RERANKER_ENABLED, 4≠8 for
+# URL_WORK_CONCURRENCY). Matching those reported a documented decision as
+# drift, which is how a check earns being ignored.
+claimed = {}
+for m in re.finditer(r'`?(\b[A-Z][A-Z0-9_]{3,})`?[^\n]{0,40}?\(default\s+(\d+)\)', text):
+    claimed.setdefault(m.group(1), m.group(2))
+
+for name, want in claimed.items():
+    have = code_defaults.get(name)
+    if have is not None and have != want:
+        findings.append(f"{name}: AGENTS.md says {want}, code default is {have}")
+
+# (b) bot.py size -------------------------------------------------------
+bot = Path("src/bot.py")
+if bot.is_file():
+    lines = sum(1 for _ in bot.open(encoding="utf-8"))
+    # Only a SIZE claim — `bot.py(~15.1k줄)`. A bare "~17k lines" also
+    # appears in the CodeGraph trigger sentence, which is a threshold,
+    # not a claim about today's size; matching it made this check report
+    # its own trigger line as drift.
+    for m in re.finditer(r"bot\.py\(~?(\d+(?:[.,]\d+)?)k\s*(?:줄|lines)", text):
+        claim_k = float(m.group(1).replace(",", "."))
+        if abs(lines / 1000 - claim_k) >= 0.3:
+            findings.append(
+                f"src/bot.py: AGENTS.md says ~{m.group(1)}k lines, actual "
+                f"{lines:,}")
+    # Threshold read OUT of AGENTS.md, not hardcoded here — the whole
+    # point of this section is that a number in one place drifts from
+    # the number in another, and a copy of it in this script would be
+    # the next instance of exactly that.
+    trig = re.search(r"hits\s+~?(\d+)k\s+lines", text)
+    if trig and lines >= int(trig.group(1)) * 1000:
+        findings.append(
+            f"BACKLOG TRIGGER REACHED — src/bot.py is {lines:,} lines and "
+            f"AGENTS.md's CodeGraph trial fires at ~{trig.group(1)}k "
+            "(owner's call, do not start it unasked)")
+
+if not findings:
+    print("  \033[32mno drift (env defaults + bot.py size)\033[0m"); sys.exit(0)
+print(f"  \033[33m{len(findings)} drift finding(s) — fix them in one pass:\033[0m")
+for f in findings:
+    print(f"      · {f}")
+sys.exit(2)
+PY9
+rc=$?
+[[ $rc -eq 1 ]] && fail=1
+[[ $rc -eq 2 ]] && warn=1
+
 # ---- summary ----------------------------------------------------------
 echo
 if [[ $fail -ne 0 ]]; then
     echo "${RED}✗ preflight FAILED — blocking issue above. Do NOT push.${RST}"
     exit 1
 elif [[ $warn -ne 0 ]]; then
-    echo "${YEL}⚠ preflight passed with warnings — glance at section 2/4 above.${RST}"
+    echo "${YEL}⚠ preflight passed with warnings — glance at sections 2/4/8/9 above.${RST}"
     exit 0
 else
     echo "${GRN}✓ preflight clean.${RST}"
