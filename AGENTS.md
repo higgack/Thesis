@@ -249,6 +249,39 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
   Pure ops/admin commands (`/failed`, `/queue`, ack flows, etc.) are
   Telegram-only — no dashboard view needed.
 
+## Dashboard design tokens (`DESIGN.md`, 2026-09-12)
+
+Colours live in ONE place: `widgets.DESIGN_TOKENS_CSS` (`--important`,
+`--memo`, `--due`, `--danger`, `--accent`, `--tool-*`, surfaces, text).
+**`DESIGN.md` at the repo root is the agent-readable copy of it** plus the
+meaning of each token and the note-row state colours — read it before
+touching any `src/dashboard/*_render.py` CSS. Format borrowed from
+`google-labs-code/design.md` (alpha); their npm CLI is deliberately NOT a
+dependency — this is a Python repo and `preflight.sh` section 7 does the
+two checks worth having in stdlib.
+
+- **Never invent a colour.** Use `var(--token)`. Pulling one out of
+  Tailwind/GitHub/Material is how this codebase ended up with three
+  greens (`#2faf6a` `#10b981` `#2da44e`) and two oranges (`#f5a623`
+  `#f59e0b`). `git blame` on the 24 lines carrying the two most-repeated
+  of those (`#10b981` ×16, `#f59e0b` ×16) attributes every one to Claude
+  — zero to Copilot — so this is a rule about YOUR behaviour, not
+  someone else's.
+- **`widgets.py` and `DESIGN.md` change in the SAME commit.** Section 7
+  compares every token value in both directions and warns on drift; a
+  design doc nobody verifies is worse than none.
+- **Section 7 is a RATCHET, not a rule.** Today's debt is recorded as
+  baselines in the script (retyped-literal count, distinct off-palette
+  colours, the WCAG-failing selector list) and only an INCREASE warns, so
+  a clean run stays clean. Fix some debt → lower the baseline in the same
+  commit. Don't convert it into an unconditional 100-finding report: that
+  is the "notification with no off-switch" this file bans.
+- **The colour debt is NOT to be bulk-fixed unasked.** 21 rules are below
+  WCAG AA and ~89 off-palette colours remain; changing them changes what
+  the user sees, so it needs their eyes (owner's call, 2026-09-12: "A+B,
+  C는 나중에"). `wiki_render`/`universe_render` keep their own palettes on
+  purpose — folding them in is a design change, not a de-duplication.
+
 ## VM ops — always step-by-step
 
 Any command the user must run manually MUST include: (1) exact

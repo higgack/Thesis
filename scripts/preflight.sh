@@ -320,19 +320,22 @@ print(f"  \033[32mno loop-blocking writers ({len(WRITERS)} guarded fns)\033[0m")
 PY
 [[ $? -ne 0 ]] && fail=1
 
-echo "── 7. dashboard design-token drift ──"
-python3 - <<'PY'
-# The Q&A, KG and Note dashboards share one Linear palette. They used to
-# carry three byte-identical copies of it, which is the state a palette
-# drifts out of: a colour tweaked in one file and not the others reads
-# as a rendering bug rather than an edit. They now pull
-# widgets.DESIGN_TOKENS_CSS, and this check keeps it that way.
+echo "── 7. dashboard design tokens (DESIGN.md ⇄ code, 대비) ──"
+python3 - <<'PY7'
+# Section 7 — dashboard design tokens.
 #
-# wiki_render and universe_render are allowlisted because their palettes
-# differ ON PURPOSE — a Wikipedia look (--link, --link-visited, --toc-bg)
-# and a graph-canvas vocabulary (--ink, --lk, --node) whose values are
-# interpolated per render. Folding either in would change a design
-# rather than remove a duplication.
+# 7a (pre-existing, BLOCKING): the Q&A / KG / Note dashboards must not
+#     re-declare their own :root palette; they pull widgets.DESIGN_TOKENS_CSS.
+# 7b..7e (added 2026-09-12, WARN): DESIGN.md is the agent-readable copy of
+#     that palette. A doc nobody verifies rots, so these cross-check it
+#     against the live CSS and ratchet the colour debt that motivated it
+#     (three greens, two oranges — all introduced by an agent inventing a
+#     Tailwind colour instead of using the token that already existed).
+#
+# Every added check is a RATCHET, not a rule: today's debt is recorded as a
+# baseline and only an INCREASE warns. Without that, preflight would print
+# ~100 findings on every run forever, which is the "notification with no
+# off-switch" failure AGENTS.md bans.
 import re, sys
 from pathlib import Path
 
@@ -345,6 +348,7 @@ d = Path("src/dashboard")
 if not d.is_dir():
     print("  \033[33mskipped — src/dashboard not found\033[0m"); sys.exit(0)
 
+# ---- 7a: no duplicated palette blocks (BLOCKING) ----------------------
 bad, unknown = [], []
 for f in sorted(d.glob("*.py")):
     hits = BLK.findall(f.read_text(encoding="utf-8"))
@@ -362,15 +366,231 @@ if bad:
     print("  \033[31m→ replace the block with the shared constant, or add the"
           " file to ALLOWED_OWN here with a reason\033[0m")
     sys.exit(1)
+
+warn = []
 if unknown:
-    print("  \033[33mnew dashboard defines its own palette — intended?\033[0m")
     for n, c in unknown:
-        print(f"      {n}: {c} block(s)")
+        warn.append(f"new dashboard defines its own palette — intended? "
+                    f"{n} ({c} block(s))")
+
+# ---- colour helpers ---------------------------------------------------
+def _rgb(v):
+    """CSS colour literal -> (r,g,b,a) or None. Only the forms this
+    codebase actually writes; anything else is left to a human."""
+    v = v.strip()
+    m = re.fullmatch(r"#([0-9a-fA-F]{6})", v)
+    if m:
+        h = m.group(1)
+        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 1.0)
+    m = re.fullmatch(r"#([0-9a-fA-F]{3})", v)
+    if m:
+        h = m.group(1)
+        return tuple(int(c * 2, 16) for c in h) + (1.0,)
+    m = re.fullmatch(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*"
+                     r"(?:,\s*([\d.]+)\s*)?\)", v)
+    if m:
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)),
+                float(m.group(4)) if m.group(4) else 1.0)
+    return None
+
+# #fff / #000 are universal, not palette drift — a white label on a
+# coloured button is not someone re-typing --panel.
+NEUTRAL = {(255, 255, 255), (0, 0, 0)}
+
+# ---- live tokens out of widgets.py ------------------------------------
+wid_path = d / "widgets.py"
+wid_src = wid_path.read_text(encoding="utf-8")
+m = re.search(r'DESIGN_TOKENS_CSS\s*=\s*"""(.*?)"""', wid_src, re.S)
+css_tokens = {}          # name -> {theme: value}
+tok_block = ""
+if m:
+    tok_block = m.group(0)
+    css = m.group(1)
+    for theme, pat in (("light", r":root\{(.*?)\}"),
+                       ("dark", r'\[data-theme="dark"\]\{(.*?)\}')):
+        body = re.search(pat, css, re.S)
+        if not body:
+            continue
+        for k, v in re.findall(r"--([a-z-]+)\s*:\s*([^;]+?)\s*(?=;|$)",
+                               body.group(1), re.S):
+            css_tokens.setdefault(k, {})[theme] = v.strip()
+else:
+    warn.append("widgets.DESIGN_TOKENS_CSS not found — 7b~7e skipped")
+
+# ---- 7b: DESIGN.md must match the live tokens -------------------------
+# Deliberately a hand-rolled parse of a flat 2-level mapping rather than
+# PyYAML: preflight must run with nothing installed, and PyYAML is only
+# here transitively (chromadb). The file is written to stay in that subset.
+dmd = Path("DESIGN.md")
+doc_state = "DESIGN.md in sync"
+if css_tokens:
+    if not dmd.exists():
+        doc_state = "DESIGN.md 없음"
+        warn.append("DESIGN.md missing — the palette has no agent-readable "
+                    "copy (see AGENTS.md '## Dashboard design tokens')")
+    else:
+        txt = dmd.read_text(encoding="utf-8")
+        fm = re.match(r"---\n(.*?)\n---\n", txt, re.S)
+        if not fm:
+            doc_state = "DESIGN.md front matter 없음"
+            warn.append("DESIGN.md has no YAML front matter")
+        else:
+            doc = {}
+            cur = None
+            for line in fm.group(1).splitlines():
+                if re.match(r"^(colors|colorsDark):\s*$", line):
+                    cur = {"colors": "light",
+                           "colorsDark": "dark"}[line.split(":")[0]]
+                    continue
+                if re.match(r"^\S", line):
+                    cur = None
+                    continue
+                if cur is None:
+                    continue
+                kv = re.match(r"^\s{2}([a-z-]+):\s*\"?([^\"\n]+?)\"?\s*$", line)
+                if kv:
+                    doc.setdefault(cur, {})[kv.group(1)] = kv.group(2)
+            drift = []
+            for theme in ("light", "dark"):
+                live = {k: v[theme] for k, v in css_tokens.items()
+                        if theme in v and _rgb(v[theme])}
+                docd = doc.get(theme, {})
+                for k in sorted(set(live) | set(docd)):
+                    lv, dv = live.get(k), docd.get(k)
+                    if lv is None:
+                        drift.append(f"{theme}.{k}: DESIGN.md만 있음 ({dv})")
+                    elif dv is None:
+                        drift.append(f"{theme}.{k}: widgets.py만 있음 ({lv})")
+                    elif _rgb(lv) != _rgb(dv):
+                        drift.append(f"{theme}.{k}: widgets.py={lv} "
+                                     f"≠ DESIGN.md={dv}")
+            if drift:
+                doc_state = f"DESIGN.md {len(drift)}건 불일치"
+                warn.append("DESIGN.md ⇄ widgets.py 토큰 불일치 "
+                            f"{len(drift)}건 — 같은 커밋에서 맞출 것:")
+                warn.extend("    · " + x for x in drift[:12])
+
+# ---- literal scan (shared by 7c and 7d) -------------------------------
+PAL = {}                 # (r,g,b) -> {token names}
+for k, themes in css_tokens.items():
+    for v in themes.values():
+        c = _rgb(v)
+        if c:
+            PAL.setdefault(c[:3], set()).add(k)
+
+LIT = re.compile(r"#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b"
+                 r"|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(?:,\s*[\d.]+\s*)?\)")
+retyped, offpal = {}, {}
+for f in sorted(d.glob("*.py")):
+    src = f.read_text(encoding="utf-8")
+    if f.name == "widgets.py" and tok_block:
+        src = src.replace(tok_block, "")   # the definitions are not drift
+    for lit in LIT.findall(src):
+        c = _rgb(lit)
+        if c is None or c[:3] in NEUTRAL:
+            continue
+        (retyped if c[:3] in PAL else offpal).setdefault(c[:3], []).append(f.name)
+
+# 7c: a literal that IS a token — always fixable, never ambiguous.
+RETYPED_BUDGET = 19      # occurrences, 2026-09-12. Lower this as they go.
+n_retyped = sum(len(v) for v in retyped.values())
+# 7d: a colour the palette does not contain at all.
+OFFPAL_BUDGET = 89       # distinct colours, 2026-09-12. Lower as they go.
+n_offpal = len(offpal)
+
+if n_retyped > RETYPED_BUDGET:
+    warn.append(f"토큰과 같은 값을 숫자로 쓴 곳 {n_retyped}회 "
+                f"(기준선 {RETYPED_BUDGET}) — var(--토큰)을 쓸 것:")
+    for c, fs in sorted(retyped.items(), key=lambda x: -len(x[1]))[:6]:
+        warn.append(f"    · #{'%02x%02x%02x' % c} = --"
+                    f"{'/--'.join(sorted(PAL[c]))} ×{len(fs)}"
+                    f" [{','.join(sorted(set(fs)))}]")
+if n_offpal > OFFPAL_BUDGET:
+    warn.append(f"팔레트 밖 색 {n_offpal}종 (기준선 {OFFPAL_BUDGET}) — "
+                "새 색을 지어내지 말고 DESIGN.md의 토큰을 쓸 것:")
+    for c, fs in sorted(offpal.items(), key=lambda x: -len(x[1]))[:6]:
+        warn.append(f"    · #{'%02x%02x%02x' % c} ×{len(fs)}"
+                    f" [{','.join(sorted(set(fs)))}]")
+
+# ---- 7e: WCAG contrast on rules that set BOTH bg and fg literally -----
+# var()-driven pairs can't be resolved statically and are skipped; the
+# literal ones are exactly the off-palette set this section is about.
+def _lin(c):
+    c /= 255
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+def _lum(rgb):
+    return .2126 * _lin(rgb[0]) + .7152 * _lin(rgb[1]) + .0722 * _lin(rgb[2])
+
+def _over(fg, bg):
+    a = fg[3]
+    return tuple(fg[i] * a + bg[i] * (1 - a) for i in range(3))
+
+BASE = {"light": _rgb(css_tokens.get("bg", {}).get("light", "#ffffff")),
+        "dark": _rgb(css_tokens.get("bg", {}).get("dark", "#000000"))}
+RULE = re.compile(r"([^{}\n]+)\{([^{}]*)\}")
+# Selectors already below AA on 2026-09-12. Listed, not counted, so a NEW
+# offender is named even if an old one was fixed in the same diff.
+CONTRAST_DEBT = {
+    "notes_render.py .cat-투자론", "regenerate.py .cmd-badge.paid",
+    "notes_render.py .ndel:hover", "regenerate.py .del-btn:hover",
+    "notes_render.py .cat-반도체", "notes_render.py .cat-코인",
+    "notes_render.py .controls .bookfilter.active", "notes_render.py .cat-종목",
+    "wiki_render.py .wiki-badge.recent", "wiki_render.py .wiki-badge.new",
+    "notes_render.py .cat-스터디", "regenerate.py .cmd-badge.mutation",
+    "notes_render.py .cat-대학원", "notes_render.py .cat-공부",
+    "notes_render.py .cat-AI", "notes_render.py .cat-산업",
+    "kg_render.py .alarm-set", "notes_render.py .alarm-set",
+    "regenerate.py .alarm-set", "widgets.py .alarm-set,.alarm-setdt",
+    "wiki_render.py .topic-memo .alarm-set",
+}
+new_bad, still_bad = [], 0
+if BASE["light"] and BASE["dark"]:
+    for f in sorted(d.glob("*.py")):
+        for sel, body in RULE.findall(f.read_text(encoding="utf-8")):
+            b = re.search(r"background(?:-color)?\s*:\s*([^;}]+)", body)
+            c = re.search(r"(?<![-\w])color\s*:\s*([^;}]+)", body)
+            if not (b and c):
+                continue
+            bg, fg = _rgb(b.group(1)), _rgb(c.group(1))
+            if not bg or not fg:
+                continue
+            sel = " ".join(sel.split())
+            theme = "dark" if ("data-theme" in sel and "dark" in sel) else "light"
+            bgc = _over(bg, BASE[theme])
+            fgc = _over(fg, bgc)
+            hi, lo = max(_lum(bgc), _lum(fgc)), min(_lum(bgc), _lum(fgc))
+            ratio = (hi + .05) / (lo + .05)
+            if ratio >= 4.5:
+                continue
+            key = f"{f.name} {sel}"
+            if key in CONTRAST_DEBT:
+                still_bad += 1
+            else:
+                new_bad.append((round(ratio, 2), key))
+if new_bad:
+    warn.append(f"명암비 AA(4.5:1) 미달 규칙이 새로 {len(new_bad)}개 생김 "
+                "— 작은 글씨(11~13px)라 AA가 적용된다:")
+    for r, k in sorted(new_bad):
+        warn.append(f"    · {r}:1  {k}")
+
+# ---- report -----------------------------------------------------------
+allow = ", ".join(f"{k.split('_')[0]}={v}" for k, v in ALLOWED_OWN.items())
+summary = (f"tokens shared by {len(SHARED)} dashboards, "
+           f"{len(ALLOWED_OWN)} allowlisted ({allow})"
+           f" · {doc_state} · 부채 retyped {n_retyped}/{RETYPED_BUDGET}"
+           f", off-palette {n_offpal}/{OFFPAL_BUDGET}"
+           f", contrast {still_bad}/{len(CONTRAST_DEBT)}")
+if warn:
+    print("  \033[33m%d finding(s):\033[0m" % len([w for w in warn
+                                                   if not w.startswith("    ")]))
+    for w in warn:
+        print(("      " + w) if not w.startswith("    ") else ("    " + w))
+    print(f"  \033[33m(baseline: {summary})\033[0m")
     sys.exit(2)
-print("  \033[32mtokens shared by %d dashboards, %d allowlisted (%s)\033[0m"
-      % (len(SHARED), len(ALLOWED_OWN),
-         ", ".join(f"{k.split('_')[0]}={v}" for k, v in ALLOWED_OWN.items())))
-PY
+print("  \033[32m%s\033[0m" % summary)
+sys.exit(0)
+PY7
 rc=$?
 [[ $rc -eq 1 ]] && fail=1
 [[ $rc -eq 2 ]] && warn=1
@@ -540,7 +760,7 @@ if [[ $fail -ne 0 ]]; then
     echo "${RED}✗ preflight FAILED — blocking issue above. Do NOT push.${RST}"
     exit 1
 elif [[ $warn -ne 0 ]]; then
-    echo "${YEL}⚠ preflight passed with warnings — glance at sections 2/4/8/9 above.${RST}"
+    echo "${YEL}⚠ preflight passed with warnings — glance at sections 2/4/7/8/9 above.${RST}"
     exit 0
 else
     echo "${GRN}✓ preflight clean.${RST}"
