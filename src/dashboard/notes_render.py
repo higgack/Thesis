@@ -233,19 +233,21 @@ padding:5px 10px;font-weight:600}
 .alarm-set{background:#6366f1;color:#fff}
 .alarm-clear{background:rgba(148,163,184,.25);color:var(--muted)}
 .alarm-status{font-size:11px;color:#818cf8}
-.note-row[data-important="1"]{border-color:rgba(245,158,11,.55);
-background:rgba(245,158,11,.06)}
-[data-theme=dark] .note-row[data-important="1"]{background:rgba(245,158,11,.10)}
+.note-row[data-important="1"]{border-color:rgba(59,130,246,.60);
+background:rgba(59,130,246,.07)}
+[data-theme=dark] .note-row[data-important="1"]{background:rgba(59,130,246,.13)}
 .note-row[data-read="1"]{border-color:rgba(47,175,106,.55);
 background:rgba(47,175,106,.06)}
 [data-theme=dark] .note-row[data-read="1"]{background:rgba(47,175,106,.10)}
-/* ★ + ✓ together → blue. Placed last on purpose: the single-flag dark
-   rules above have the same (0,3,1) specificity, so only source order
-   keeps orange from winning the background back in dark mode. */
-.note-row[data-important="1"][data-read="1"]{border-color:rgba(59,130,246,.60);
-background:rgba(59,130,246,.07)}
+/* ★ alone → blue, ★ + ✓ together → orange (swapped 2026-09-12 per
+   user request; was orange / blue). Placed last on purpose: the
+   single-flag dark rules above have the same (0,3,1) specificity, so
+   only source order keeps blue from winning the background back in
+   dark mode. */
+.note-row[data-important="1"][data-read="1"]{border-color:rgba(245,158,11,.55);
+background:rgba(245,158,11,.06)}
 [data-theme=dark] .note-row[data-important="1"][data-read="1"]{
-background:rgba(59,130,246,.13)}
+background:rgba(245,158,11,.10)}
 .controls .impfilter{background:var(--panel);border:1px solid var(--border);
 color:var(--muted)}
 .controls .impfilter.active{background:var(--important);border-color:var(--important);color:#fff}
