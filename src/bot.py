@@ -1857,7 +1857,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 <b>【3. 핵심】</b> 자료→자동 수집·요약·임베딩·Obsidian · 자연어→에이전트 도구 자동 · 메모리 7턴(/reset) · 답변 끝 (자료 시점: YYYY.MM)
 
 <b>【4. 자연어 트리거】</b>
-🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 📑 disclosures "[회사] 공시" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL" · 회사+실적 질문→📌 실적 표(YoY·QoQ)+가이던스
+🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 📑 disclosures "[회사] 공시" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL" · 회사+실적 질문→📌 실적 표(YoY·QoQ)+가이던스+차트(누락시 표에서 자동 보강·이상치 경고)
 
 <b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·영상·YouTube·텍스트 전송
 • PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · [OCR] 강제 · 음성=Gemini STT · 영상=Gemini 네이티브 이해(20MB 한도) · YouTube=자막→Jina · <b>.txt/.md/.csv 학습 제외</b>
@@ -9495,6 +9495,112 @@ _F2_ROW_RE = re.compile(
     re.MULTILINE,
 )
 _F2_FIRST_NUM_RE = re.compile(r"(\d+(?:\.\d+)?)")
+# `4480~4556 (중앙값 4518, YoY +17.9%)` — the charts plot the median,
+# not the range floor, so a chart rebuilt from a table cell has to read
+# 중앙값 when it is there and fall back to the lone number when it isn't.
+_F2_MEDIAN_RE = re.compile(r"중앙값\s*([\d.]+)")
+# `title "연간 영업이익 추이 (억 원 · bar=중앙값)"` inside an xychart-beta
+# block, plus the axis lines a rebuilt twin chart has to copy.
+_F2_CHART_TITLE_RE = re.compile(r'^\s*title\s+"(.*?)"\s*$', re.MULTILINE)
+_F2_CHART_XAXIS_RE = re.compile(r"^\s*x-axis\s+\[(.*?)\]\s*$", re.MULTILINE)
+_F2_CHART_YAXIS_RE = re.compile(r'^\s*y-axis\s+"(.*?)"\s*$', re.MULTILINE)
+_F2_XLABEL_RE = re.compile(r'"([^"]+)"')
+_F2_BAR_RE = re.compile(r"^\s*bar\s+\[(.*?)\]\s*$", re.MULTILINE)
+
+
+def _f2_chart_kind(code: str) -> tuple[str, str] | None:
+    """Classify an xychart-beta block as (연간|분기, 매출|OP) from its
+    title. Returns None for anything that isn't an (F-2) chart — the
+    same answer can carry unrelated diagrams."""
+    if "xychart-beta" not in code:
+        return None
+    m = _F2_CHART_TITLE_RE.search(code)
+    if not m:
+        return None
+    title = m.group(1)
+    period = ("분기" if "분기" in title else
+              "연간" if "연간" in title else None)
+    if period is None:
+        return None
+    is_op = ("영업이익" in title) or ("OP" in title)
+    is_rev = "매출" in title
+    if is_op == is_rev:          # both or neither — not a clean pair half
+        return None
+    return (period, "OP" if is_op else "매출")
+
+
+def _f2_cell_value(cell: str) -> float | None:
+    """The number a chart would plot for this table cell: the median
+    when the cell carries a range, otherwise its single number."""
+    cell = (cell or "").strip()
+    if not cell or cell.startswith(("—", "-", "–")):
+        return None
+    m = _F2_MEDIAN_RE.search(cell)
+    if not m:
+        m = _F2_FIRST_NUM_RE.search(cell)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+def _f2_rows(body: str) -> list[tuple[str, str, str, str]]:
+    return [m.groups() for m in _F2_ROW_RE.finditer(body)]
+
+
+def _build_f2_twin_chart(sibling: str, want: str,
+                         rows: list[tuple[str, str, str, str]]) -> str | None:
+    """Rebuild the missing half of a 매출/OP chart pair from the table
+    rows that are already in the answer.
+
+    The prompt has demanded both charts since the first time one went
+    missing, and one still goes missing (케이씨텍, 2026-09-13: 연간
+    영업이익 차트만, 매출 차트 없음). AGENTS.md's own rule is that
+    tightening an LLM prompt further is the move that backfires, so this
+    reconstructs the chart instead of asking again. It invents nothing —
+    every value comes from a row the model already printed, and a period
+    whose cell is "—" is dropped from the x-axis (mermaid rejects null).
+    """
+    xm = _F2_CHART_XAXIS_RE.search(sibling)
+    ym = _F2_CHART_YAXIS_RE.search(sibling)
+    tm = _F2_CHART_TITLE_RE.search(sibling)
+    if not (xm and ym and tm):
+        return None
+    labels = _F2_XLABEL_RE.findall(xm.group(1))
+    if not labels:
+        return None
+    # Table rows keyed by bare period ("A.2025" / "2025" -> "2025").
+    idx = 2 if want == "OP" else 1          # groups: af, period, rev, op
+    by_period: dict[str, str] = {}
+    for af, period, rev_cell, op_cell in rows:
+        by_period[period.upper()] = (rev_cell, op_cell)[idx - 1]
+    keep_x, keep_v = [], []
+    for lab in labels:
+        bare = lab.split(".", 1)[-1].strip().upper() if "." in lab else lab.upper()
+        val = _f2_cell_value(by_period.get(bare, ""))
+        if val is None:
+            continue
+        keep_x.append(lab)
+        keep_v.append(val)
+    if len(keep_v) < 2:
+        return None
+    title = tm.group(1)
+    for a, b in (("영업이익", "매출"), ("OP", "매출")) if want == "매출" \
+            else (("매출", "영업이익"),):
+        if a in title:
+            title = title.replace(a, b)
+            break
+    else:
+        title = f"{want} ({title})"
+    xs = ", ".join(f'"{x}"' for x in keep_x)
+    vs = ", ".join(f"{v:g}" for v in keep_v)
+    return ("xychart-beta\n"
+            f'    title "{title}"\n'
+            f"    x-axis [{xs}]\n"
+            f'    y-axis "{ym.group(1)}"\n'
+            f"    bar [{vs}]")
 
 
 def _audit_f2_numbers(body: str) -> list[str]:
@@ -9564,6 +9670,139 @@ def _audit_f2_numbers(body: str) -> list[str]:
     return warnings
 
 
+
+def _audit_f2_structure(body: str, blocks: list[str]) -> tuple[str, list[str]]:
+    """Cross-check the (F-2) tables against the charts drawn from them,
+    repairing what can be repaired from data already in the answer.
+
+    Returns the (possibly extended) body and a list of user-facing
+    warnings. `blocks` is mutated in place when a chart is rebuilt, so
+    both the inline and the legacy render paths pick it up.
+
+    Three failures seen live, all of them rules the prompt already
+    states (케이씨텍, 2026-09-13):
+      • 매출/OP 차트 중 한쪽만 그림  → rebuild the twin from the table
+      • 차트에만 있고 표에 없는 기간 (차트 x-axis F.2027, 표엔 2025·2026뿐)
+      • 연간 표가 3개년 미만
+    Only the first is repairable without asserting a number the answer
+    never printed; the other two are reported.
+    """
+    warnings: list[str] = []
+    rows = _f2_rows(body)
+    if not rows and not blocks:
+        return body, warnings
+
+    charts: dict[tuple[str, str], int] = {}
+    for i, code in enumerate(blocks):
+        kind = _f2_chart_kind(code)
+        if kind and kind not in charts:
+            charts[kind] = i
+
+    # --- 1. a half-drawn 매출/OP pair -----------------------------------
+    for period in ("연간", "분기"):
+        have_rev = (period, "매출") in charts
+        have_op = (period, "OP") in charts
+        if have_rev == have_op:
+            continue
+        want = "OP" if have_rev else "매출"
+        sib_idx = charts[(period, "매출" if have_rev else "OP")]
+        built = _build_f2_twin_chart(blocks[sib_idx], want, rows)
+        if built is None:
+            warnings.append(
+                f"{period} 차트가 한쪽만 그려짐 ({want} 누락) — 표에서도 "
+                "재구성 불가 (해당 행이 비어 있음)"
+            )
+            continue
+        new_idx = len(blocks)
+        blocks.append(built)
+        ph = f"__MERMAID_BLOCK_{sib_idx}__"
+        if ph not in body:
+            blocks.pop()
+            continue
+        body = body.replace(
+            ph, f"{ph}\n\n📈 {period} {want} 차트 (표에서 자동 보강)\n"
+                f"__MERMAID_BLOCK_{new_idx}__", 1)
+        warnings.append(
+            f"{period} {want} 차트가 누락돼 표 숫자로 자동 생성함 "
+            "(값은 위 표와 동일 — 새로 추정한 숫자 아님)"
+        )
+
+    # --- 2. a period the charts plot but the table never lists ----------
+    # The 케이씨텍 answer charted F.2027 OP = 2011 while the annual table
+    # stopped at 2026, so the reader saw a bar with no row behind it.
+    # Re-state it as a row rather than inventing one: the value is read
+    # straight out of the chart the answer already drew, and the row is
+    # tagged so nobody mistakes it for the model's own formatting. Only
+    # appended AFTER the last row of the same kind — a mid-table insert
+    # would have to guess ordering, and the live failure is always a
+    # trailing forecast period.
+    table_periods = {p.upper() for _, p, _, _ in rows}
+    if table_periods:
+        found: dict[str, tuple[str, str, float]] = {}   # period -> (af, metric, val)
+        for (period, metric), i in charts.items():
+            xm = _F2_CHART_XAXIS_RE.search(blocks[i])
+            bm = _F2_BAR_RE.search(blocks[i])
+            if not (xm and bm):
+                continue
+            labs = _F2_XLABEL_RE.findall(xm.group(1))
+            try:
+                vals = [float(v) for v in bm.group(1).split(",")]
+            except ValueError:
+                continue
+            if len(labs) != len(vals):
+                continue
+            for lab, val in zip(labs, vals):
+                af, _, rest = lab.partition(".")
+                bare = (rest or lab).strip().upper()
+                if af not in ("A", "F"):
+                    af = "F"
+                if bare and bare not in table_periods and bare not in found:
+                    found[bare] = (af, metric, val)
+        for bare, (af, metric, val) in found.items():
+            is_q = "Q" in bare
+            same = [r for r in rows if ("Q" in r[1].upper()) == is_q]
+            if not same or bare <= same[-1][1].upper():
+                warnings.append(
+                    f"차트에는 있는데 표에 행이 없는 기간: {bare} — "
+                    "표에 해당 행이 빠졌습니다"
+                )
+                continue
+            prev_cell = same[-1][3 if metric == "OP" else 2]
+            prev = _f2_cell_value(prev_cell)
+            growth = ""
+            if prev and prev > 0:
+                tag = "QoQ" if is_q else "YoY"
+                growth = f" ({tag} {(val / prev - 1) * 100:+.1f}%)"
+            rev_txt = f"{val:g}{growth}" if metric == "매출" else "—"
+            op_txt = f"{val:g}{growth}" if metric == "OP" else "—"
+            row = (f"{af}. {bare}  매출 {rev_txt} | OP {op_txt}"
+                   "   ← 차트에서 자동 보강")
+            last_line = next(
+                (ln for ln in reversed(body.splitlines())
+                 if _F2_ROW_RE.match(ln) and
+                 ("Q" in (_F2_ROW_RE.match(ln).group(2).upper())) == is_q),
+                None,
+            )
+            if last_line is None:
+                continue
+            body = body.replace(last_line, last_line + "\n" + row, 1)
+            warnings.append(
+                f"{bare} 행이 표에서 누락돼 차트 값으로 자동 보강함 "
+                "(차트 bar = 중앙값이라 원본 range는 복원 불가)"
+            )
+
+    # --- 3. 연간 표가 3개년 미만 ----------------------------------------
+    # Re-parse: step 2 may have just appended the row that makes the
+    # count correct, and reporting the pre-repair number would be a
+    # warning about a state the user never sees.
+    annual = [p for _, p, _, _ in _f2_rows(body) if "Q" not in p.upper()]
+    if annual and len(annual) < 3:
+        warnings.append(
+            f"연간 표가 {len(annual)}개년뿐 — 규칙은 작년·올해·내년 "
+            "최소 3개년 (자료 없는 해도 '—' 행으로 유지)"
+        )
+    return body, warnings
+
 async def _send_agent_reply(send, result, send_photo=None, inherited: bool = False):
     # `inherited` is retained for the historical call-site shape but
     # is now always False — the inheritance fallback was removed
@@ -9620,10 +9859,26 @@ async def _send_agent_reply(send, result, send_photo=None, inherited: bool = Fal
             source_urls=source_urls)
         suffix_lines.append("📚 출처:" + formatted)
     audit = _audit_f2_numbers(body)
-    if audit:
+    # Structural pass runs on the stashed mermaid blocks, so it sees the
+    # charts the number audit above can't (body still carries only the
+    # __MERMAID_BLOCK_N__ placeholders at this point). It may append a
+    # rebuilt chart to `blocks` and a placeholder to `body`, which both
+    # render paths below already know how to walk.
+    # Never let a repair bug take down a reply: on failure, drop back to
+    # exactly what the model produced (body untouched, any half-appended
+    # chart truncated off `blocks` so the legacy path can't render an
+    # orphan with no placeholder pointing at it).
+    struct: list[str] = []
+    _n_blocks = len(blocks)
+    try:
+        body, struct = _audit_f2_structure(body, blocks)
+    except Exception:
+        log.exception("F-2 structure audit failed — reply sent unrepaired")
+        del blocks[_n_blocks:]
+    if audit or struct:
         suffix_lines.append(
-            "⚠️ 숫자 검증 경고 (자동 감지):\n"
-            + "\n".join(f"  • {a}" for a in audit)
+            "⚠️ 실적 데이터 검증 (자동 감지):\n"
+            + "\n".join(f"  • {a}" for a in audit + struct)
         )
     if result.get("tool_calls"):
         suffix_lines.append(_format_tool_calls(result["tool_calls"]))
