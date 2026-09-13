@@ -9506,6 +9506,26 @@ _F2_CHART_XAXIS_RE = re.compile(r"^\s*x-axis\s+\[(.*?)\]\s*$", re.MULTILINE)
 _F2_CHART_YAXIS_RE = re.compile(r'^\s*y-axis\s+"(.*?)"\s*$', re.MULTILINE)
 _F2_XLABEL_RE = re.compile(r'"([^"]+)"')
 _F2_BAR_RE = re.compile(r"^\s*bar\s+\[(.*?)\]\s*$", re.MULTILINE)
+# "1Q26" / "1Q2026" -> calendar year. Annual rows are the bare year.
+_F2_QUARTER_RE = re.compile(r"^([1-4])Q(\d{2}|\d{4})$", re.I)
+# The unit a cell is quoted in. 조 and 억 differ by 10,000×, so comparing
+# a 조-denominated annual row against 억-denominated quarters would
+# manufacture a contradiction out of nothing.
+_F2_UNIT_RE = re.compile(r"[\d.]\s*(조|억|십억|백만|만)")
+
+
+def _f2_year(period: str) -> int | None:
+    p = period.strip().upper()
+    m = _F2_QUARTER_RE.match(p)
+    if m:
+        y = m.group(2)
+        return int(y) if len(y) == 4 else 2000 + int(y)
+    return int(p) if p.isdigit() and len(p) == 4 else None
+
+
+def _f2_unit(cell: str) -> str | None:
+    m = _F2_UNIT_RE.search(cell or "")
+    return m.group(1) if m else None
 
 
 def _f2_chart_kind(code: str) -> tuple[str, str] | None:
@@ -9791,7 +9811,78 @@ def _audit_f2_structure(body: str, blocks: list[str]) -> tuple[str, list[str]]:
                 "(차트 bar = 중앙값이라 원본 range는 복원 불가)"
             )
 
-    # --- 3. 연간 표가 3개년 미만 ----------------------------------------
+    # --- 3. 연간 숫자 ⇄ 분기 숫자가 서로 모순 --------------------------
+    # 케이씨텍 (2026-09-13): 연간 F.2026 매출 4518, 그런데 같은 답변의
+    # 1Q26 1561 + 2Q26 1626 = 3187. 남는 두 분기가 평균 665 — 직전 분기
+    # 1626의 41%로 주저앉아야 성립하는데, 표의 3Q25→4Q25→1Q26은
+    # 960→1117→1561로 계속 오르고 2Q26 가이던스도 오름이다. 둘 중
+    # 하나는 잘못 뽑힌 숫자다.
+    #
+    # 임계는 "배수 2" 하나뿐 — 남은 분기 평균이 직전 분기의 절반 미만
+    # 이거나 두 배 초과일 때만 운다. 계절성으로는 이 폭이 잘 안 나고,
+    # 여기서 더 좁히면 정상 케이스를 오탐한다. 아는 분기가 4개면 배수가
+    # 아니라 합계를 직접 비교한다 (15% 여유 — 기타/조정 항목).
+    for metric, cell_idx in (("매출", 2), ("OP", 3)):
+        annual_of: dict[int, tuple[float, str | None]] = {}
+        quarters_of: dict[int, list[tuple[str, float, str | None]]] = {}
+        for af, period, rev_cell, op_cell in _f2_rows(body):
+            cell = (rev_cell, op_cell)[cell_idx - 2]
+            val = _f2_cell_value(cell)
+            if val is None or val <= 0:
+                continue
+            year = _f2_year(period)
+            if year is None:
+                continue
+            if "Q" in period.upper():
+                quarters_of.setdefault(year, []).append(
+                    (period.upper(), val, _f2_unit(cell)))
+            else:
+                annual_of[year] = (val, _f2_unit(cell))
+        for year, (annual, a_unit) in sorted(annual_of.items()):
+            qs = quarters_of.get(year) or []
+            if len(qs) < 2:
+                continue
+            if any(u != a_unit for _, _, u in qs):
+                continue          # 단위가 섞였으면 비교 자체가 무의미
+            qs.sort(key=lambda t: t[0])
+            total = sum(v for _, v, _ in qs)
+            if len(qs) >= 4:
+                if abs(total - annual) > annual * 0.15:
+                    warnings.append(
+                        f"{year} {metric}: 분기 4개 합 {total:g} vs 연간 "
+                        f"{annual:g} — 15% 넘게 어긋남 (한쪽이 잘못된 값)"
+                    )
+                continue
+            left = annual - total
+            n_left = 4 - len(qs)
+            last_q, last_v, _ = qs[-1]
+            if left <= 0:
+                warnings.append(
+                    f"{year} {metric}: 분기 {len(qs)}개 합 {total:g}이 "
+                    f"연간 {annual:g}를 이미 초과 — 한쪽이 잘못된 값"
+                )
+                continue
+            # Only when the known quarters are a PREFIX of the year
+            # (1Q, 1Q+2Q, 1Q+2Q+3Q). If what's known is 3Q+4Q instead,
+            # the "remaining" quarters are the EARLIER ones, and a
+            # ramping year legitimately has them far smaller — comparing
+            # them to 4Q would manufacture a contradiction. Found by
+            # running the prompt's own web-source example through this
+            # check (2026-09-13): annual OP 1.62 with 3Q 0.55 + 4Q 0.60
+            # is a normal H2-weighted ramp, not an error.
+            if [q for q, _, _ in qs] != [f"{i}Q{str(year)[2:]}"
+                                         for i in range(1, len(qs) + 1)]:
+                continue
+            avg_left = left / n_left
+            if avg_left < last_v / 2 or avg_left > last_v * 2:
+                warnings.append(
+                    f"{year} {metric}: 연간 {annual:g}와 분기 합 {total:g}"
+                    f"({len(qs)}개)가 안 맞음 — 남은 {n_left}개 분기가 "
+                    f"평균 {avg_left:.0f}이어야 성립하는데 직전 {last_q}는 "
+                    f"{last_v:g} (원본 자료에서 어느 쪽이 맞는지 확인 필요)"
+                )
+
+    # --- 4. 연간 표가 3개년 미만 ----------------------------------------
     # Re-parse: step 2 may have just appended the row that makes the
     # count correct, and reporting the pre-repair number would be a
     # warning about a state the user never sees.
