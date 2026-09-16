@@ -478,7 +478,37 @@ _LOOP_BEAT_INTERVAL_SEC = 2      # _loop_beat() task, NOT the 60s job
 # healthy loop and still well under the watchdog's 10-min restart —
 # and it finally covers the range that actually breaks things, since
 # Telegram replies give up at HTTPXRequest's 15s connect timeout.
-_STALL_DUMP_AFTER_SEC = 25
+#
+# 25 → 10 (2026-09-16). The line above already says a Telegram reply
+# gives up at HTTPXRequest's 15s connect timeout — so the band that
+# actually loses a reply is 10~25s, and the detector could not see it:
+# threshold 25s AND a 15s poll, which can miss a 10s window entirely.
+# The day-by-day counts say the same thing from the other side: stalls
+# ≥25s are FALLING (late-Aug ~3.3/day → 2026-09-09..16 ~1.6/day) while
+# the user reports swallowed commands getting MORE frequent. Those two
+# facts only fit if what is being felt is shorter than what is logged.
+# Env-overridable; raise it again if the dump volume gets noisy.
+def _env_int(name: str, default: int, floor: int) -> int:
+    """int from env, never fatal. A typo in the VM's .env must not stop
+    the bot from booting — it falls back to the code default and says so."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return max(floor, int(raw))
+    except (TypeError, ValueError):
+        logging.getLogger("bot").warning(
+            "%s=%r is not an integer — using %d", name, raw, default)
+        return default
+
+
+_STALL_DUMP_AFTER_SEC = _env_int("STALL_DUMP_AFTER_SEC", 10, 3)
+# Poll must be well under the threshold or a stall can start and end
+# between two checks. 15 → 3.
+_STALL_POLL_SEC = _env_int("STALL_POLL_SEC", 3, 1)
+# Unchanged at one dump per 5 min: the cooldown is what keeps a lower
+# threshold from flooding the file (worst case 288/day ≈ 0.9 MB against
+# the 2 MB rotation), and during a real storm you want the dumps.
 _STALL_DUMP_COOLDOWN_SEC = 300  # at most one dump per 5min while stalled
 
 
@@ -15390,7 +15420,7 @@ def main():
         last_dump = 0.0
         peak_lag = 0.0
         while True:
-            time.sleep(15)
+            time.sleep(_STALL_POLL_SEC)
             beat = _LOOP_BEAT_MONO
             if not beat:
                 continue          # loop hasn't stamped once yet (booting)
