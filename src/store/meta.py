@@ -801,6 +801,25 @@ def search_title(substring: str, limit: int = 20) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def documents_signature() -> tuple[int, str]:
+    """(row count, newest ingested_at) — a cheap stand-in for "did the
+    documents table change?".
+
+    Exists so the dashboard can skip rebuilding its title→URL map on a
+    tick where nothing was ingested; that rebuild is a full-table scan
+    that holds the GIL and showed up inside a 40s event-loop stall
+    (2026-09-16). Count alone is not enough — a re-ingest can replace a
+    row's URL without changing the count — so the newest timestamp rides
+    along. Both come off indexed aggregates.
+    """
+    with _conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS n, COALESCE(MAX(ingested_at), '') AS t "
+            "FROM documents"
+        ).fetchone()
+    return (int(row["n"]), str(row["t"]))
+
+
 def title_url_map() -> dict[str, str]:
     """One-shot {title: source_url} for every doc whose source is an
     http(s) URL. Built in a SINGLE scan so the dashboard can resolve a

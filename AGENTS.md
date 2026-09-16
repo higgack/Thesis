@@ -523,6 +523,43 @@ fetch branch → `LOCAL==REMOTE` silent exit → else send "🚀 배포 시작" 
   job. (The OCR commands were missing here until 2026-09-06 while the
   section above already allowed them.)
 
+## 씹힘(swallowed commands) = GIL 기아지 루프 블록이 아니다 (2026-09-16)
+
+`data/loop_stalls.log` 10건(2026-09-10~16, 25~46초)을 읽고 나온 결론.
+**10건 전부 루프 자체는 정상 위치**(`selector.poll`·SSL handshake·
+`sock.send`·aiohttp 파싱)에 있었다. 루프가 막힌 게 아니라 **GIL을 못 받은
+것**이다. 그래서 CPU는 90% 밑, heartbeat는 신선 → **워치독 둘 다 안 운다.**
+「stale heartbeat = 루프에 동기 작업」 규칙(Auto-deploy 섹션)은 여전히
+맞지만, **씹힘은 그 규칙으로 안 잡히는 별개 증상**이다. 스택 덤프부터 볼 것.
+
+- **GIL을 붙잡고 있던 워커**(덤프에 RUNNING으로 찍힌 것): PyMuPDF 표 추출
+  (`table.py`, `fz_new_display_list_from_page` — SWIG C는 GIL을 안 놓는다)
+  · tiktoken `_core_bpe.encode` · sqlite `fetchall()` · KG의
+  `[dict(r) for r in rows]` · `fts_upsert`의 `executemany(DELETE …)`.
+  **I/O가 아니라 전부 CPU/GIL 작업이다** — `_widen_thread_pool`의
+  "this work is I/O-bound and releases the GIL"이라는 근거는 이 덤프들이
+  반증한다. 그래도 **풀을 24에서 줄이지 말 것**: 2026-08-28 사고(명령이
+  ingest 뒤에 큐잉)가 그걸 넓힌 이유고, 줄이면 그 사고가 돌아온다.
+- **`sys.setswitchinterval` 기본 5ms → 1ms** (`GIL_SWITCH_INTERVAL`로
+  override 가능). 여기서 실측: GIL 점유 워커 12개 + 50ms마다 깨는 루프 →
+  추가 지연 중앙값 36.9ms(5ms) → 19.7ms(2ms) → **9.1ms(1ms)**, 최대
+  146 → 103 → **67ms**. **완치가 아니라 완화다** — MuPDF 호출 하나는
+  여전히 통째로 GIL을 쥔다(그걸 막는 게 `loaders.py`의 `_PDF_EXTRACT_SEM`).
+  되돌리려면 그 머신에서 같은 실측을 먼저 하고 판단할 것.
+- **대시보드 `regenerate()`가 상습범이다.** 최근 3건 중 2건에서 RUNNING
+  워커가 이것이었다: `title_url_map().fetchall()`(2026-09-16 40초 덤프의
+  유일한 앱 스레드) · `kg.top_entities()` · `kg.date_histogram()`.
+  `title_url_map`은 이제 `meta.documents_signature()`(행수 + 최신
+  `ingested_at`)로 게이트한다 — **행수만 보면 안 된다**: 재인제스트는
+  행수를 그대로 둔 채 URL만 바꾼다(스크래치 DB로 재현 확인).
+- **`meta.py` `_W_LOCK` 컨보이**가 10건 중 6건에 보인다 — `upsert_doc`·
+  `fts_upsert`·`chunk_embed_remember`·`summary_cache_remember` 네댓 개가
+  한 락에 줄 선다. 루프를 직접 막진 않지만(전부 워커) ingest를 느리게
+  하고 스레드를 오래 살려둬 기아를 키운다. **아직 안 고쳤다** — 락 구조를
+  바꾸는 일이라 별도 작업이고, 고치기 전에 `fts_upsert`의
+  `executemany(DELETE FROM chunk_fts)` 비용부터 측정할 것.
+
+
 ## Stuck ingest slots → auto-recover (don't revert to alert-only)
 
 `_check_stuck_ingests` (`bot.py`, 10-min tick) escalates now, it does

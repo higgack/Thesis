@@ -665,6 +665,9 @@ def _esc(s) -> str:
 # The old per-call search_title() fan-out (N sources × full-table LIKE,
 # every 60 s) pegged a worker thread at ~100% CPU around the clock.
 _SOURCE_URL_CACHE: dict[str, str] = {}
+# (rows, newest ingested_at) the cache above was built from; see the
+# rebuild guard in regenerate(). None = never built.
+_SOURCE_URL_SIG: tuple | None = None
 
 
 def _source_li(title: str) -> str:
@@ -2181,12 +2184,32 @@ def regenerate() -> None:
         # per-source LIKE query. This is the fix for the worker thread
         # that sat at ~100% CPU 24/7 (py-spy: regenerate → _source_li →
         # meta.search_title on every card's every source, every 60 s).
-        global _SOURCE_URL_CACHE
+        # ...and only REBUILD it when `documents` actually changed
+        # (2026-09-16). The scan above still ran every single tick: a
+        # full-table SELECT + a Python dict built row by row, which holds
+        # the GIL between rows. `data/loop_stalls.log` caught it as the
+        # lone RUNNING app thread during a 40s event-loop stall
+        # (2026-09-16T03:34, `title_url_map ... .fetchall()`), and the
+        # box has 2 vCPUs, so one GIL-holding worker is enough to starve
+        # the loop and swallow a Telegram button press.
+        #
+        # The guard is (row count, newest ingested_at) — two indexed
+        # aggregates, microseconds — and it is deliberately NOT count
+        # alone: a re-ingest that replaces a row leaves the count equal
+        # while changing the URL. Falls open (rebuild) on any error.
+        global _SOURCE_URL_CACHE, _SOURCE_URL_SIG
         try:
-            _SOURCE_URL_CACHE = meta_store.title_url_map()
+            sig = meta_store.documents_signature()
         except Exception:
-            log.exception("title_url_map failed; source links degraded")
-            _SOURCE_URL_CACHE = {}
+            sig = None
+        if sig is None or sig != _SOURCE_URL_SIG or not _SOURCE_URL_CACHE:
+            try:
+                _SOURCE_URL_CACHE = meta_store.title_url_map()
+                _SOURCE_URL_SIG = sig
+            except Exception:
+                log.exception("title_url_map failed; source links degraded")
+                _SOURCE_URL_CACHE = {}
+                _SOURCE_URL_SIG = None
         rows = qna.recent(limit=2000)
         today = cost.today_krw()
         mtd = cost.month_to_date_krw()

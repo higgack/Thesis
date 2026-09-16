@@ -4,6 +4,7 @@ import html
 import logging
 import os
 import re
+import sys
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -14691,6 +14692,31 @@ async def _widen_thread_pool(app) -> None:
     which serialize their writers regardless. The point is that an
     unrelated read no longer waits behind them.
     """
+    # Hand the GIL over more often than CPython's 5 ms default
+    # (2026-09-16). The pool below is 24 threads on a 2-vCPU box, and
+    # `data/loop_stalls.log` shows what that costs: in every one of the
+    # 10 dumps from 2026-09-10..16 the event loop was sitting in a
+    # perfectly normal place (selector.poll, an SSL handshake, sock.send)
+    # while worker threads were RUNNING inside code that holds the GIL —
+    # PyMuPDF table extraction, tiktoken encode, sqlite fetchall, a
+    # `[dict(r) for r in rows]` over the KG. The loop was not blocked, it
+    # was starved, which is why a Telegram button press gets swallowed
+    # with CPU under 90% and the heartbeat fresh (neither watchdog fires).
+    #
+    # Measured here, 12 GIL-holding workers against a loop that should
+    # wake every 50 ms — median extra lag 36.9 ms at 5 ms, 19.7 ms at
+    # 2 ms, 9.1 ms at 1 ms; worst case 146 → 103 → 67 ms. The cost is a
+    # few more context switches, which this box can afford: it is
+    # latency-bound, not throughput-bound, and ingest is already capped
+    # at INGEST_SEM_CAPACITY=3. Env-overridable so the VM can be retuned
+    # without a deploy. NOTE: this shortens the starvation, it does not
+    # remove it — a single MuPDF call still holds the GIL for its whole
+    # duration (that is what _PDF_EXTRACT_SEM in loaders.py bounds).
+    try:
+        sys.setswitchinterval(
+            max(0.0005, float(os.getenv("GIL_SWITCH_INTERVAL", "0.001"))))
+    except Exception:
+        log.warning("setswitchinterval failed; keeping CPython default")
     import concurrent.futures as _cf
     workers = max(8, int(os.getenv("THREAD_POOL_WORKERS", "24")))
     asyncio.get_running_loop().set_default_executor(
