@@ -34,6 +34,59 @@ logging.basicConfig(
 log = logging.getLogger("bot")
 
 
+# Every Telegram API call is made against a URL that CARRIES the bot
+# token — `.../bot<id>:<secret>/sendMessage`. httpx puts the URL in its
+# exception messages, so a network error (the recurring ConnectTimeout)
+# writes the token into stdout, into `data/loop_stalls.log`, and from
+# there into any log the user pastes into a chat to ask about it.
+# Nothing redacted it. Root filter, so it covers `telegram.*`, `httpx.*`
+# and our own loggers at once. (Idea from NousResearch/hermes-agent's
+# v2026.8.31 "redaction sweep across logs and error messages",
+# 2026-09-16 — the only item in that release this repo could use.)
+_TOKEN_RE = re.compile(r"(bot)\d{6,}:[A-Za-z0-9_-]{20,}")
+
+
+class _RedactSecretsFilter(logging.Filter):
+    """Blank bot tokens out of every log record, message and args alike.
+
+    Mutates `record.msg`/`record.args` rather than returning False — the
+    line still has to be readable, it just must not carry the secret.
+    Never raises: a logging filter that throws would take down the call
+    site it was meant to protect.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if isinstance(record.msg, str) and "bot" in record.msg:
+                record.msg = _TOKEN_RE.sub(r"\1<redacted>", record.msg)
+            if record.args:
+                if isinstance(record.args, dict):
+                    record.args = {
+                        k: (_TOKEN_RE.sub(r"\1<redacted>", v)
+                            if isinstance(v, str) else v)
+                        for k, v in record.args.items()}
+                elif isinstance(record.args, tuple):
+                    record.args = tuple(
+                        _TOKEN_RE.sub(r"\1<redacted>", a)
+                        if isinstance(a, str) else a for a in record.args)
+        except Exception:
+            pass
+        return True
+
+
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_RedactSecretsFilter())
+
+
+def redact_secrets(text: str) -> str:
+    """Same scrub for text that never goes through logging — the stall
+    dumper's stack frames, a Telegram error message echoed to the user."""
+    try:
+        return _TOKEN_RE.sub(r"\1<redacted>", text)
+    except Exception:
+        return text
+
+
 class _SkippedJobFilter(logging.Filter):
     """Drop APScheduler's "maximum number of running instances reached".
 
@@ -15404,7 +15457,8 @@ def main():
                                 # glance and is 9h wrong.
                                 f"\n===== "
                                 f"{_dt.datetime.now().astimezone().isoformat()} "
-                                f"silent {lag:.0f}s =====\n{stack}")
+                                f"silent {lag:.0f}s ====="
+                                f"\n{redact_secrets(stack)}")
                     except Exception:
                         log.debug("stall dump file write failed",
                                   exc_info=True)

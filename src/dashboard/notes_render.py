@@ -204,6 +204,29 @@ color:#ef4444;transform:translateY(-1px)}
 [data-theme=dark] .ndel{background:rgba(71,85,105,.45);
 border-color:rgba(100,116,139,.55);color:#cbd5e1}
 .note-row.removing{opacity:0;transform:scale(.97);transition:.2s}
+/* 월/일 접기 섹션 (2026-09-16). 색은 전부 DESIGN.md 토큰 — 새 색을
+   지어내면 preflight 섹션 7이 잡는다. */
+.m-sec,.d-sec{margin:0 0 6px}
+.m-sec>summary,.d-sec>summary{cursor:pointer;list-style:none;display:flex;
+align-items:center;gap:8px;border-radius:8px;user-select:none}
+.m-sec>summary::-webkit-details-marker,
+.d-sec>summary::-webkit-details-marker{display:none}
+.m-sec>summary::before,.d-sec>summary::before{content:'▸';
+color:var(--muted);font-size:11px;transition:transform .15s}
+.m-sec[open]>summary::before,.d-sec[open]>summary::before{transform:rotate(90deg)}
+.m-sec>summary{background:var(--panel-alt);border:1px solid var(--border);
+padding:9px 12px;font-weight:700;font-size:14px;color:var(--heading)}
+.m-sec>summary:hover{border-color:var(--accent)}
+.d-sec>summary{padding:6px 10px;font-size:12.5px;color:var(--muted);
+font-weight:600}
+.d-sec>summary:hover{color:var(--accent)}
+.m-body{padding:8px 0 2px 10px}
+.d-body{padding:2px 0 6px}
+.g-count{margin-left:auto;font-size:11px;color:var(--muted);
+background:var(--panel);border:1px solid var(--border);border-radius:999px;
+padding:1px 8px;font-weight:600}
+.m-sec.g-empty,.d-sec.g-empty{display:none}
+#notes-list.flat .m-sec{display:none}
 .nstar{cursor:pointer;background:transparent;border:0;color:var(--muted);
 font-size:17px;line-height:1;padding:2px 4px;border-radius:6px;transition:.12s}
 .nstar:hover{color:var(--important);transform:scale(1.15)}
@@ -569,21 +592,58 @@ _INDEX_JS = r"""
       if(ok) shown++;
     });
     var c=document.getElementById('note-count'); if(c) c.textContent=shown;
+    regroup(!!(t || curType!=='all' || curCat!=='all' || curImportant
+               || curMemo || curBook));
+  }
+  // 섹션 머리의 건수를 보이는 행 기준으로 다시 세고, 0건이면 통째로
+  // 감춘다. 필터가 걸린 상태면 결과가 접힌 섹션 안에 숨는 일이 없도록
+  // 자동으로 펼친다 (필터를 풀면 원래 접힘 상태로 돌아간다).
+  function regroup(forceOpen){
+    if(!listEl || listEl.classList.contains('flat')) return;
+    ['d-sec','m-sec'].forEach(function(cls){
+      listEl.querySelectorAll('.'+cls).forEach(function(sec){
+        var n=0;
+        sec.querySelectorAll('.note-row').forEach(function(r){
+          if(r.style.display !== 'none') n++; });
+        sec.classList.toggle('g-empty', n===0);
+        var cnt=sec.querySelector(':scope > summary > .g-count');
+        if(cnt) cnt.textContent = n+'건';
+        if(forceOpen && n>0){
+          // 펼치기 전에 원래 상태를 한 번만 기록 — 필터를 여러 번 바꿔도
+          // 처음의 접힘 상태가 덮어씌워지지 않는다.
+          if(sec.dataset.wasOpen === undefined)
+            sec.dataset.wasOpen = sec.open ? '1' : '0';
+          sec.open = true;
+        } else if(forceOpen === false && sec.dataset.wasOpen !== undefined){
+          sec.open = sec.dataset.wasOpen === '1';
+          delete sec.dataset.wasOpen;
+        }
+      });
+    });
   }
   // 정렬: 날짜순(서버가 이미 최신순으로 내려주므로 원본 DOM 순서로 복귀)
   // / 종류별·유형별(고정 우선순위 배열 내 위치, 동순위는 최신순 유지).
   var listEl = document.getElementById('notes-list');
+  // 행이 월/일 <details> 안에 들어가면서 원래 부모까지 기억해야 한다 —
+  // 종류별/유형별 정렬은 행을 listEl로 끌어내므로, 날짜순으로 돌아올 때
+  // 제자리(그 날짜 섹션)로 넣어줄 곳이 필요하다.
   var origOrder = listEl ? Array.prototype.slice.call(
-    listEl.querySelectorAll('.note-row')) : [];
+    listEl.querySelectorAll('.note-row')).map(function(r){
+      return {el: r, parent: r.parentNode}; }) : [];
   var TYPE_ORDER = ['문서','텍스트','블로그','웹','유튜브'];
   var sortSel = document.getElementById('sortSel');
   var curSort = 'date';
   function sortRows(mode){
     if(!listEl) return;
     if(mode === 'date'){
-      origOrder.forEach(function(r){ listEl.appendChild(r); });
+      listEl.classList.remove('flat');
+      origOrder.forEach(function(o){ o.parent.appendChild(o.el); });
+      regroup();
       return;
     }
+    // 종류별·유형별은 날짜 묶음을 가로지르므로 평탄화한다 (섹션은 CSS로
+    // 숨기고 행만 listEl 바로 아래로). 날짜순으로 돌아가면 복구된다.
+    listEl.classList.add('flat');
     var order = mode === 'cat' ? CATS : TYPE_ORDER;
     var attr = mode === 'cat' ? 'cat' : 'tbucket';
     var rows = Array.prototype.slice.call(listEl.querySelectorAll('.note-row'));
@@ -599,6 +659,14 @@ _INDEX_JS = r"""
     });
     rows.forEach(function(r){ listEl.appendChild(r); });
   }
+  var expandBtn = document.getElementById('expandall');
+  if(expandBtn) expandBtn.addEventListener('click', function(){
+    var secs = listEl ? listEl.querySelectorAll('.d-sec,.m-sec') : [];
+    var anyClosed = Array.prototype.some.call(secs, function(x){
+      return !x.open && !x.classList.contains('g-empty'); });
+    Array.prototype.forEach.call(secs, function(x){ x.open = anyClosed; });
+    expandBtn.textContent = anyClosed ? '⊖ 전체 접기' : '⊕ 전체 펼치기';
+  });
   if(sortSel) sortSel.addEventListener('change', function(){
     curSort = sortSel.value; sortRows(curSort); saveView();
   });
@@ -782,6 +850,53 @@ def _head(title: str) -> str:
     )
 
 
+def _group_rows_by_date(rows: list[tuple[str, str]]) -> str:
+    """Wrap the flat note rows in collapsible 월 → 일 sections.
+
+    1,793 notes in one scroll is what prompted this (사용자 요청,
+    2026-09-16). The Q&A dashboard already had the same 월/일 `<details>`
+    shape, so this mirrors it rather than inventing a second one.
+
+    Open state is deliberately narrower than the Q&A page's: there the
+    whole current month opens, here only the newest DAY does (a single
+    day of notes is already ~20 rows; a month is hundreds). The month
+    itself opens so the day list is visible without a click.
+
+    Rows keep their exact `.note-row` markup and order, so every existing
+    selector (filter, sort, ★/✓ toggles, delete) still finds them.
+    """
+    from itertools import groupby
+    if not rows:
+        return ""
+    # An entry with no day key is the empty-state placeholder.
+    if len(rows) == 1 and not rows[0][0]:
+        return rows[0][1]
+    out: list[str] = []
+    newest_day = next((d for d, _ in rows if d), "")
+    for month, m_iter in groupby(rows, key=lambda r: (r[0] or "")[:7]):
+        m_rows = list(m_iter)
+        m_open = " open" if any(d == newest_day for d, _ in m_rows) else ""
+        out.append(
+            f"<details class='m-sec'{m_open} data-month=\"{_esc(month)}\">"
+            f"<summary>📅 {_esc(month)}"
+            f"<span class='g-count'>{len(m_rows)}건</span></summary>"
+            f"<div class='m-body'>"
+        )
+        for day, d_iter in groupby(m_rows, key=lambda r: r[0] or ""):
+            d_rows = list(d_iter)
+            d_open = " open" if day == newest_day else ""
+            out.append(
+                f"<details class='d-sec'{d_open} data-day=\"{_esc(day)}\">"
+                f"<summary>{_esc(day) or '(날짜 없음)'}"
+                f"<span class='g-count'>{len(d_rows)}건</span></summary>"
+                f"<div class='d-body'>"
+            )
+            out.extend(html for _, html in d_rows)
+            out.append("</div></details>")
+        out.append("</div></details>")
+    return "\n".join(out)
+
+
 def _render_index(token: str, notes: list[dict],
                   st: dict, cost: dict | None = None,
                   bodies: dict | None = None) -> str:
@@ -799,8 +914,8 @@ def _render_index(token: str, notes: list[dict],
     bucket_counts: dict[str, int] = {}
     unknown_types: dict[str, int] = {}
     if not notes:
-        rows.append("<div class='empty'>아직 노트가 없어요. 학습 채널에 "
-                    "자료를 올리면 여기에 노트로 쌓입니다.</div>")
+        rows.append(("", "<div class='empty'>아직 노트가 없어요. 학습 채널에 "
+                     "자료를 올리면 여기에 노트로 쌓입니다.</div>"))
     for n in notes:
         learned = (n.get("updated") or "")[:10]
         hay = _plain((bodies.get(n["id"]) or {}).get("md") or "")
@@ -816,7 +931,7 @@ def _render_index(token: str, notes: list[dict],
         _memo_txt = (_nmemos.get(str(n["id"])) or "").strip()
         hasmemo = 1 if _memo_txt else 0
         is_book = 1 if (n.get("mode") or "normal") == "book" else 0
-        rows.append(
+        rows.append((learned, 
             f"<div class='note-row' data-id=\"{_esc(n['id'])}\" "
             f"data-text=\"{_esc(hay)}\" data-tbucket=\"{_esc(tbucket)}\" "
             f"data-cat=\"{_esc(cat)}\" data-important=\"{imp}\" "
@@ -837,7 +952,7 @@ def _render_index(token: str, notes: list[dict],
             f"<span class='meta'>학습 {_esc(learned)}</span>"
             f"<button class='ndel' type='button' title='노트 삭제'>🗑</button>"
             f"</div>"
-        )
+        ))
     if unknown_types:
         # A source_type no producer in this repo emits. The note still
         # renders (it lands in 문서), but silence is what let image/video/
@@ -911,9 +1026,10 @@ def _render_index(token: str, notes: list[dict],
         "<option value='cat'>🏷 종류별</option>"
         "<option value='type'>📁 유형별</option>"
         "</select>"
+        "<button id='expandall' type='button' class='reset' title='모든 날짜 펼치기/접기'>⊕ 전체 펼치기</button>"
         "<button id='reset' type='button' class='reset'>초기화</button></div>",
         sec_title_html,
-        f"<div id='notes-list'>{chr(10).join(rows)}</div>",
+        f"<div id='notes-list'>{_group_rows_by_date(rows)}</div>",
         "<div class='footer'>대시보드는 읽기 전용 · 🗑 = 노트 삭제</div>",
         f"<script>{_INDEX_JS}</script>",
         _widgets.live_reload_js("notes"),
