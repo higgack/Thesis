@@ -754,13 +754,83 @@ rc=$?
 [[ $rc -eq 1 ]] && fail=1
 [[ $rc -eq 2 ]] && warn=1
 
+# ---- 10. wiki_render CSS/JS change without a _TPL_VERSION bump — WARN --
+echo "── 10. wiki_render 템플릿 버전 ──"
+python3 - <<'PY10'
+# wiki_render.py renders topic pages INCREMENTALLY: a page whose .md has
+# not changed is never rewritten, so a CSS/JS edit in this file reaches
+# already-rendered pages ONLY when _TPL_VERSION changes (that string is
+# in the cache fingerprint, and a fingerprint change forces a full
+# rebuild). The file says so in its own comment — and the author still
+# shipped a .wiki-table change without the bump on 2026-09-17, which is
+# why this check exists rather than another sentence in the comment.
+import re, subprocess, sys
+
+try:
+    diff = subprocess.run(
+        ["git", "diff", "HEAD", "--unified=0", "--", "src/dashboard/wiki_render.py"],
+        capture_output=True, text=True, timeout=30).stdout
+except Exception as e:
+    print(f"  \033[33mskipped — git diff failed ({e})\033[0m"); sys.exit(0)
+if not diff.strip():
+    print("  \033[32mwiki_render.py 변경 없음\033[0m"); sys.exit(0)
+
+changed = [l[1:] for l in diff.splitlines()
+           if l[:1] in "+-" and not l.startswith(("+++", "---"))]
+
+# Compare the VALUE, not the presence of the name: editing the comment on
+# that line changes the diff line without changing the fingerprint, and a
+# check that accepted it would pass exactly the edit it exists to catch
+# (caught by its own test on 2026-09-17).
+VER = re.compile(r'_TPL_VERSION\s*=\s*[\'"]([^\'"]+)[\'"]')
+
+
+def _ver(text):
+    m = VER.search(text or "")
+    return m.group(1) if m else None
+
+
+try:
+    head = subprocess.run(
+        ["git", "show", "HEAD:src/dashboard/wiki_render.py"],
+        capture_output=True, text=True, timeout=30).stdout
+except Exception:
+    head = ""
+now = open("src/dashboard/wiki_render.py", encoding="utf-8").read()
+bumped = _ver(head) is not None and _ver(head) != _ver(now)
+# Markup/CSS/JS shapes, not prose: a selector/property line, a tag, or a
+# DOM call. Deliberately loose — a false "needs a bump" costs one edit,
+# a miss costs every already-rendered page keeping stale markup.
+MARKUP = re.compile(
+    r"[{;]\s*$|^\s*[.#@][\w-]+\s*[,{]|</?[a-z]+[ >]|querySelector|"
+    r"addEventListener|classList|innerHTML|style\.|:\s*var\(--")
+hits = [l.strip()[:70] for l in changed if MARKUP.search(l)]
+if hits and not bumped:
+    print("  \033[33mwiki_render.py 의 마크업/CSS/JS 가 바뀌었는데 "
+          "_TPL_VERSION 은 그대로다:\033[0m")
+    for h in hits[:5]:
+        print(f"      · {h}")
+    print("  \033[33m→ 이미 렌더된 토픽 페이지는 옛 마크업을 그대로 "
+          "서빙한다. _TPL_VERSION 을 한 칸 올릴 것 "
+          "(전체 재빌드가 돌아 200페이지/틱으로 따라잡는다)\033[0m")
+    sys.exit(2)
+if bumped:
+    print("  \033[32m_TPL_VERSION bump 확인됨\033[0m")
+else:
+    print("  \033[32m마크업/CSS/JS 변경 없음 (bump 불필요)\033[0m")
+sys.exit(0)
+PY10
+rc=$?
+[[ $rc -eq 1 ]] && fail=1
+[[ $rc -eq 2 ]] && warn=1
+
 # ---- summary ----------------------------------------------------------
 echo
 if [[ $fail -ne 0 ]]; then
     echo "${RED}✗ preflight FAILED — blocking issue above. Do NOT push.${RST}"
     exit 1
 elif [[ $warn -ne 0 ]]; then
-    echo "${YEL}⚠ preflight passed with warnings — glance at sections 2/4/7/8/9 above.${RST}"
+    echo "${YEL}⚠ preflight passed with warnings — glance at sections 2/4/7/8/9/10 above.${RST}"
     exit 0
 else
     echo "${GRN}✓ preflight clean.${RST}"

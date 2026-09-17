@@ -1146,6 +1146,48 @@ def _build_footnotes_html(footnotes: list[dict]) -> str:
     )
 
 
+def _excerpt_from_md(path, page_md: str | None = None) -> str:
+    """토픽 .md 에서 카드 발췌 한 줄을 뽑는다.
+
+    페이지 렌더와 분리된 이유: 렌더는 예산(_MAX_PAGES_PER_CALL)에 걸리지만
+    발췌는 걸리면 안 된다. 예산에 걸린 토픽이 캐시 값을 쓰게 두었더니,
+    캐시가 한 번 오염되면 위키 첫 화면의 카드가 전부 같은 문장을 달고
+    나왔다 (2026-09-17, "Kimchi…" → "CJ온스타일…"). 캐시를 고쳐 쓰는 대신
+    매번 .md 에서 직접 뽑는다 — 오염될 값 자체가 없어진다.
+
+    비용을 위해 파일 앞부분만 읽는다. 발췌는 첫 인용구나 첫 본문 줄에서
+    오므로 8KB면 충분하고, 위키 페이지는 30K자까지 커진다.
+    """
+    def _scan(text: str) -> str:
+        lines = (text or "").strip().split("\n")
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith(">"):
+                return stripped.lstrip("> ").strip()
+        if len(lines) > 2:
+            for line in lines[1:6]:
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    return stripped
+        return ""
+
+    if page_md is not None:
+        return _scan(page_md)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            head = fh.read(8192)
+            got = _scan(head)
+            if got:
+                return got
+            # 앞 8KB 안에서 못 찾았을 때만 전체를 읽는다. 머리말 인용구가
+            # 그보다 뒤에 있거나, 첫 줄 하나가 8KB를 넘어 쪼개진 경우다 —
+            # 드물지만 예전 코드는 전체를 읽었으므로 여기서 물러서면
+            # 발췌가 있던 카드가 빈 카드가 된다.
+            return _scan(head + fh.read())
+    except OSError:
+        return ""
+
+
 def _render_topic_page(topic: str, page_md: str, meta: dict,
                        token: str, all_topics: list[str],
                        source_url_map: dict[str, str] | None = None,
@@ -1487,7 +1529,7 @@ def render_wiki(token: str) -> int:
     # _TPL_VERSION: bump on ANY template/CSS/JS change in this file —
     # the incremental skip means already-rendered topic pages would
     # otherwise keep old markup forever (their .md never changes).
-    _TPL_VERSION = "16"  # bumped: ★/메모 강조색 토큰화(var(--important)/--memo)
+    _TPL_VERSION = "18"  # bumped: 표 가로 스크롤 + 카드 발췌 .md 직독
     cache_path = config.DATA_DIR / "wiki_render_cache.json"
     fp = hashlib.sha1(
         ("|".join(all_topics) + "\x00" + token + "\x00" + _TPL_VERSION
@@ -1637,30 +1679,20 @@ def render_wiki(token: str) -> int:
         rendered = False
         if topic in stale_names and budget_left <= 0:
             deferred += 1
-            # 이번 패스에서 안 그렸을 뿐 이전 발췌는 캐시에 남아 있다 —
-            # 빈 카드를 내보내지 말고 그걸 쓴다 (아래 else 와 같은 처리).
-            _cached = entries.get(topic) or {}
-            excerpt = _cached.get("excerpt", "")
-            search_text = _cached.get("search_text", "")
+            # 페이지는 안 그리지만 발췌는 .md 에서 직접 뽑는다. 캐시를
+            # 쓰던 코드는 캐시가 오염되면 그 오염을 그대로 내보냈다.
+            # search_text(전문 검색용)는 전체 파일이 필요해 비싸므로
+            # 캐시를 유지한다 — 틀려도 검색이 한 번 덜 걸릴 뿐이고,
+            # 화면에 글자로 나오지 않는다.
+            excerpt = _excerpt_from_md(md_file)
+            search_text = (entries.get(topic) or {}).get("search_text", "")
         elif topic in stale_names:
             try:
                 page_md = md_file.read_text(encoding="utf-8")
             except Exception:
                 continue
 
-            lines = page_md.strip().split("\n")
-            excerpt = ""
-            for line in lines:
-                stripped = line.strip()
-                if stripped.startswith(">"):
-                    excerpt = stripped.lstrip("> ").strip()
-                    break
-            if not excerpt and len(lines) > 2:
-                for line in lines[1:6]:
-                    stripped = line.strip()
-                    if stripped and not stripped.startswith("#"):
-                        excerpt = stripped
-                        break
+            excerpt = _excerpt_from_md(md_file, page_md)
             search_text = _wiki_search_text(page_md)
 
             page_html = _render_topic_page(
@@ -1681,6 +1713,12 @@ def render_wiki(token: str) -> int:
             budget_left -= 1
             rendered = True
         else:
+            # 변경 없는 토픽은 캐시를 그대로 쓴다. 이 분기의 캐시 값은
+            # 그 토픽 페이지를 실제로 그릴 때 그 토픽의 .md 에서 뽑아
+            # 넣은 것이라 정확하고(2026-09-17 라이브 캐시 200건 확인:
+            # 토픽마다 제대로 된 발췌), 여기서까지 .md 를 다시 읽으면
+            # 재빌드가 끝난 뒤에도 매 틱 2,300개 파일을 읽게 된다 —
+            # 2 vCPU 박스에서 그건 새 병목을 만드는 짓이다.
             excerpt = (entries.get(topic) or {}).get("excerpt", "")
             search_text = (entries.get(topic) or {}).get("search_text", "")
 
