@@ -551,11 +551,16 @@ h4.wiki-h { font-size: 15px; border-bottom: none; }
 }
 .fn-back:hover { text-decoration: underline; }
 .wiki-spacer { height: 8px; }
+/* 노트 본문과 같은 처리 (2026-09-17). 넓은 표가 창을 밀어내던 것을
+   가로 스크롤로 바꾼다. width:100% 제거의 대가로 좁은 표는 내용 폭으로
+   붙는다 — 인포박스(.wiki-infobox table)는 폭이 고정이라 그대로 둔다. */
 .wiki-table {
-  width: 100%; border-collapse: collapse; margin: 12px 0;
+  border-collapse: collapse; margin: 12px 0;
+  display: block; overflow-x: auto; max-width: 100%;
   font-size: 14px;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 }
+.wiki-table th, .wiki-table td { overflow-wrap: break-word; }
 .wiki-table th, .wiki-table td {
   padding: 6px 12px; border: 1px solid var(--border-light);
   text-align: left;
@@ -1621,10 +1626,22 @@ def render_wiki(token: str) -> int:
         total_docs += doc_count
         all_doc_ids.update(_doc_ids)
 
+        # 반복마다 반드시 초기화할 것. excerpt 를 아래 elif 안에서만
+        # 만들다 보니, 예산에 걸려 건너뛴 토픽은 아무 값도 못 받고 **직전
+        # 반복의 excerpt 를 그대로 물려받았다** — 위키 첫 화면의 카드가
+        # 전부 같은 문장("Kimchi는 CLI 코딩 에이전트…")을 달고 나온 원인
+        # (2026-09-17). 페이지 안의 내용은 멀쩡한데 카드만 틀린 이유도
+        # 이것이다: 카드 발췌만 이 변수에서 오고 본문은 md 에서 온다.
+        excerpt = ""
         search_text = ""
         rendered = False
         if topic in stale_names and budget_left <= 0:
             deferred += 1
+            # 이번 패스에서 안 그렸을 뿐 이전 발췌는 캐시에 남아 있다 —
+            # 빈 카드를 내보내지 말고 그걸 쓴다 (아래 else 와 같은 처리).
+            _cached = entries.get(topic) or {}
+            excerpt = _cached.get("excerpt", "")
+            search_text = _cached.get("search_text", "")
         elif topic in stale_names:
             try:
                 page_md = md_file.read_text(encoding="utf-8")

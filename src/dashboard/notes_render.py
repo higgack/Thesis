@@ -337,7 +337,15 @@ overflow-wrap:break-word}
 .note-body h1{font-size:22px}.note-body h2{font-size:18px;margin-top:24px;
 border-bottom:1px solid var(--border-soft);padding-bottom:6px}
 .note-body h3{font-size:15px;margin-top:18px}
-.note-body table{border-collapse:collapse;margin:12px 0;width:100%}
+/* 넓은 표는 끊는 게 아니라 가로 스크롤 (사용자 요청 2026-09-17).
+   셀을 쪼개면 숫자 표가 읽히지 않으므로 줄바꿈이 답이 아니다.
+   display:block 이 표를 스크롤 상자로 만들고, 안쪽 표는 내용 폭을
+   유지한다. width:100% 를 뺐기 때문에 **좁은 표는 이제 창 폭까지
+   늘어나지 않고 내용 폭으로 붙는다** — 되돌리려면 width:100% 를
+   다시 넣으면 되지만, 그러면 넓은 표가 다시 창을 밀어낸다. */
+.note-body table{border-collapse:collapse;margin:12px 0;
+display:block;overflow-x:auto;max-width:100%}
+.note-body th,.note-body td{overflow-wrap:break-word}
 .note-body th,.note-body td{border:1px solid var(--border);padding:6px 10px;
 font-size:13px;text-align:left}
 .note-body th{background:var(--panel-alt)}
