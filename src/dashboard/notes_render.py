@@ -323,7 +323,17 @@ border:1px solid var(--border)}
 .empty{text-align:center;padding:60px 20px;color:var(--muted)}
 .back{color:var(--muted);font-size:13px;display:inline-block;margin-bottom:16px}
 .note-body{background:var(--panel);border:1px solid var(--border);
-border-radius:12px;padding:24px 28px;box-shadow:var(--shadow);line-height:1.75}
+border-radius:12px;padding:24px 28px;box-shadow:var(--shadow);line-height:1.75;
+/* 노트 본문 첫 줄은 synth.py가 붙이는 `> 출처: <URL> · 학습일 …`
+   인용구다. 네이버 블로그처럼 proxyReferer가 URL을 통째로 다시 담는
+   주소는 공백이 하나도 없는 한 덩어리여서, CSS 기본값
+   overflow-wrap:normal 로는 끊을 자리가 없다 → 박스가 창 밖까지
+   밀려난다 (2026-09-17). break-word 는 "그 단어만으로 줄을 넘칠 때"만
+   끊으므로 일반 문장의 줄바꿈은 그대로다. */
+overflow-wrap:break-word}
+/* 링크는 한 단계 더 — anywhere 는 min-content 폭 계산에도 반영돼서
+   부모가 내용 크기로 늘어나는 것까지 막는다. */
+.note-body a{overflow-wrap:anywhere;word-break:break-all}
 .note-body h1{font-size:22px}.note-body h2{font-size:18px;margin-top:24px;
 border-bottom:1px solid var(--border-soft);padding-bottom:6px}
 .note-body h3{font-size:15px;margin-top:18px}
