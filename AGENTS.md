@@ -565,12 +565,47 @@ fetch branch → `LOCAL==REMOTE` silent exit → else send "🚀 배포 시작" 
   **누적 건수로 판단하지 말 것**: `grep -c`는 63이지만 그건 22일치 합이고,
   내가 처음 "10건"이라고 한 것은 `tail -c 40000`(파일 끝 40KB)만 본
   표본이었다. 항상 날짜별로 쪼개서 **하루 몇 건**인지로 볼 것.
-- **`meta.py` `_W_LOCK` 컨보이**가 10건 중 6건에 보인다 — `upsert_doc`·
-  `fts_upsert`·`chunk_embed_remember`·`summary_cache_remember` 네댓 개가
-  한 락에 줄 선다. 루프를 직접 막진 않지만(전부 워커) ingest를 느리게
-  하고 스레드를 오래 살려둬 기아를 키운다. **아직 안 고쳤다** — 락 구조를
-  바꾸는 일이라 별도 작업이고, 고치기 전에 `fts_upsert`의
-  `executemany(DELETE FROM chunk_fts)` 비용부터 측정할 것.
+- **범인은 `meta.py` `_W_LOCK` 컨보이로 확정됐다** (2026-09-17, 임계를
+  10초로 내린 첫날 27건 집계). 임계 25초 시절엔 하루 1~2건이던 것이
+  **27건** — 지속시간이 10·11·11·11·12·12·14·17·23·24·25초에 몰려 있고
+  25초 넘는 건 34s·45s 둘뿐이다. **그동안 못 본 구간에 문제가 다 있었다.**
+  - **BLOCKED 88 vs RUNNING 43** — 2:1로 락 대기다. GIL 기아가 아니라
+    **락 컨보이**가 주범이라는 뜻이고, 둘은 대응이 정반대다.
+  - 앱 프레임 빈도: `_wconn` **90회**(= `with _W_LOCK`) · `fts_upsert` 43
+    · `ocr_cache_put` 20 · `summary_cache_remember` 18 · `upsert_doc` 10
+    · `chunk_embed_remember` 10 · `regenerate` 12. 라이브러리는
+    telegram 60 · pymupdf 30 · chromadb 22.
+  - **`ocr_cache_put` 이 새로 드러난 얼굴이다.** 페이지 한 장의 OCR
+    결과를 한 행씩 INSERT 하는데, 그게 per-PDF `ThreadPoolExecutor
+    (max_workers=7)` 안에서 돌아 PDF 3개면 최대 21개 스레드가 **전역**
+    `_W_LOCK` 을 한 행 쓰자고 번갈아 잡는다. 한 문서분을 모아 한 번에
+    쓰는 것이 자연스러운 모양이다.
+  - **진짜 원인은 `chunk_fts` 의 `cid UNINDEXED` 였다** (2026-09-17 측정
+    후 확정). FTS5 는 `UNINDEXED` 열에 어떤 인덱스도 만들지 않으므로
+    `WHERE cid=?` 는 **전체 스캔**이다. 그런데 `fts_upsert` 가 청크마다
+    그 DELETE 를 돌렸다 — 문서 하나(수백 청크)를 넣을 때마다 67만 행
+    테이블을 수백 번, 그것도 전역 `_W_LOCK` 을 쥔 채로.
+    - 라이브 확인: `cid` 단건 조회 200회가 **끝나지 않는다**(머신에서
+      직접 재보다 중단). `chunk_fts` 673,664행 · `meta.db` 4.8GB.
+    - 스크래치 DB 20만 행 실측: `DELETE WHERE cid=?` 건당 **60.4ms** →
+      rowid 방식 **2.0ms (31배)**, 문서 단위 삭제 72ms → 3ms. 67만 행이면
+      격차가 더 크고, 300청크 문서 하나가 락을 수십 초 쥔다 — 관측된
+      10~45초 스톨과 일치한다.
+    - **2026-08 의 "3일간 CPU 100%, `_wconn` 경합(heavy `fts_upsert`)"
+      도 같은 원인이었다.** 그때는 원인을 못 찾고 CPU 워치독을 추가하는
+      것으로 덮었다.
+  - **고침: `chunk_fts_map(cid PRIMARY KEY, rid, doc_id)`** (2026-09-17).
+    rowid 는 FTS5 의 진짜 키라 `DELETE ... WHERE rowid=?` 가 즉시 찾는다.
+    `fts_upsert`·`fts_insert`·`fts_clear`·`fts_delete_doc(s)`·
+    `fts_existing_cids` 가 전부 이 표를 거친다. 기존 행 백필은 `init()`
+    에서 개수 비교로 1회(순차 스캔 1번, 20만 행 0.4초 → 67만 행 약 1초).
+    **`chunk_fts` 에 쓰는 새 경로를 추가하면 매핑도 같이 써야 한다** —
+    안 그러면 그 행은 영영 못 지운다.
+  - `ocr_cache_put`(덤프 20회)은 **범인이 아니라 피해자**다. 한 행 쓰자고
+    줄을 서 있었을 뿐이라, 락이 짧아지면 같이 풀린다. 먼저 이것부터
+    배치로 묶으려던 것은 잘못된 방향이었다.
+  - 진단 과정의 교훈: 원인을 **두 번 잘못 짚었다**(캐시 오염 가설, 배포
+    전 화면을 배포 후로 착각). **라이브 출력을 보기 전에 고치지 말 것.**
 
 
 ## Stuck ingest slots → auto-recover (don't revert to alert-only)

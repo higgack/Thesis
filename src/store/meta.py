@@ -165,6 +165,41 @@ def init():
             )
         except sqlite3.OperationalError as e:
             log.warning("FTS5 unavailable (%s) — keyword search dense-only", e)
+        # cid/doc_id 는 위에서 UNINDEXED 로 선언돼 있다. FTS5 는 UNINDEXED
+        # 열에 어떤 인덱스도 만들지 않으므로 `WHERE cid=?` 는 전체 스캔이다.
+        # fts_upsert 가 청크마다 그 DELETE 를 돌리면서, 문서 하나를 넣을
+        # 때마다 67만 행짜리 테이블을 청크 수만큼 훑었다 — 그것도 전역
+        # _W_LOCK 을 쥔 채로. 2026-09-17 스톨 덤프의 `_wconn` 90회가 그
+        # 줄이고, 2026-08 "3일간 CPU 100%, _wconn 경합" 도 같은 원인이다.
+        #
+        # 그래서 cid → FTS rowid 매핑을 일반 테이블로 따로 둔다. rowid 는
+        # FTS5 의 진짜 키라 `DELETE ... WHERE rowid=?` 는 즉시 찾는다.
+        # 스크래치 DB 20만 행 측정: 건당 60.4ms → 2.0ms (31배), 문서 단위
+        # 삭제 72ms → 3ms. 운영은 67만 행이라 격차가 더 크다.
+        try:
+            c.execute(
+                "CREATE TABLE IF NOT EXISTS chunk_fts_map("
+                " cid TEXT PRIMARY KEY,"
+                " rid INTEGER NOT NULL,"
+                " doc_id TEXT)"
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS ix_fts_map_doc "
+                      "ON chunk_fts_map(doc_id)")
+            # 기존 행 백필 — 한 번의 순차 스캔. 부분적으로 끝난 상태
+            # (중간에 죽은 경우)도 다시 채우도록 개수로 판단한다.
+            n_map = c.execute(
+                "SELECT COUNT(*) FROM chunk_fts_map").fetchone()[0]
+            n_fts = c.execute("SELECT COUNT(*) FROM chunk_fts").fetchone()[0]
+            if n_fts > n_map:
+                log.info("chunk_fts_map 백필 시작 — %d행 (한 번만 돈다)",
+                         n_fts - n_map)
+                c.execute(
+                    "INSERT OR REPLACE INTO chunk_fts_map(cid, rid, doc_id) "
+                    "SELECT cid, rowid, doc_id FROM chunk_fts")
+                log.info("chunk_fts_map 백필 완료 — %d행", n_fts)
+        except sqlite3.OperationalError as e:
+            # FTS5 가 아예 없는 환경. 매핑도 의미가 없으니 조용히 넘어간다.
+            log.warning("chunk_fts_map 준비 실패 (%s)", e)
 
 
 @contextmanager
@@ -226,16 +261,48 @@ def _fts_query(text: str) -> str:
     return " OR ".join('"' + t.replace('"', "") + '"' for t in toks)
 
 
+def _fts_drop_by_cid(c, cids: list[str]) -> None:
+    """chunk_fts_map 으로 rowid 를 찾아 지운다. 매핑에 없는 cid 는 인덱스에
+    도 없다는 뜻이라 아무 일도 하지 않는다 — 예전 코드가 그 경우에도 전체
+    스캔을 한 번 돌던 자리다(신규 ingest 는 거의 전부 이 경우다)."""
+    if not cids:
+        return
+    BATCH = 500
+    for i in range(0, len(cids), BATCH):
+        part = cids[i:i + BATCH]
+        ph = ",".join("?" * len(part))
+        rids = [r[0] for r in c.execute(
+            f"SELECT rid FROM chunk_fts_map WHERE cid IN ({ph})", part)]
+        if rids:
+            rph = ",".join("?" * len(rids))
+            c.execute(f"DELETE FROM chunk_fts WHERE rowid IN ({rph})", rids)
+            c.execute(f"DELETE FROM chunk_fts_map WHERE cid IN ({ph})", part)
+
+
+def _fts_insert_rows(c, rows: list[tuple[str, str | None, str]]) -> None:
+    """INSERT + 매핑 기록. executemany 가 아니라 루프인 이유는 행마다
+    lastrowid 가 필요해서다 (FTS5 가상 테이블도 lastrowid 를 채운다 —
+    sqlite 3.45.1 에서 확인). INSERT 자체가 비용의 대부분이라 루프
+    오버헤드는 무시할 수준이다."""
+    mapping = []
+    for cid, doc_id, text in rows:
+        cur = c.execute(
+            "INSERT INTO chunk_fts(cid, doc_id, text) VALUES(?,?,?)",
+            (cid, doc_id, text))
+        mapping.append((cid, cur.lastrowid, doc_id))
+    c.executemany(
+        "INSERT OR REPLACE INTO chunk_fts_map(cid, rid, doc_id) "
+        "VALUES(?,?,?)", mapping)
+
+
 def fts_upsert(rows: list[tuple[str, str | None, str]]) -> None:
     """Incremental upsert on ingest. rows = [(cid, doc_id, text)]."""
     if not rows:
         return
     with _wconn() as c:
         try:
-            c.executemany("DELETE FROM chunk_fts WHERE cid=?",
-                          [(r[0],) for r in rows])
-            c.executemany(
-                "INSERT INTO chunk_fts(cid, doc_id, text) VALUES(?,?,?)", rows)
+            _fts_drop_by_cid(c, [r[0] for r in rows])
+            _fts_insert_rows(c, rows)
         except sqlite3.OperationalError:
             pass
 
@@ -247,8 +314,7 @@ def fts_insert(rows: list[tuple[str, str | None, str]]) -> None:
         return
     with _wconn() as c:
         try:
-            c.executemany(
-                "INSERT INTO chunk_fts(cid, doc_id, text) VALUES(?,?,?)", rows)
+            _fts_insert_rows(c, rows)
         except sqlite3.OperationalError:
             pass
 
@@ -257,6 +323,7 @@ def fts_clear() -> None:
     with _wconn() as c:
         try:
             c.execute("DELETE FROM chunk_fts")
+            c.execute("DELETE FROM chunk_fts_map")
         except sqlite3.OperationalError:
             pass
 
@@ -264,7 +331,12 @@ def fts_clear() -> None:
 def fts_delete_doc(doc_id: str) -> None:
     with _wconn() as c:
         try:
-            c.execute("DELETE FROM chunk_fts WHERE doc_id=?", (doc_id,))
+            rids = [r[0] for r in c.execute(
+                "SELECT rid FROM chunk_fts_map WHERE doc_id=?", (doc_id,))]
+            if rids:
+                ph = ",".join("?" * len(rids))
+                c.execute(f"DELETE FROM chunk_fts WHERE rowid IN ({ph})", rids)
+                c.execute("DELETE FROM chunk_fts_map WHERE doc_id=?", (doc_id,))
         except sqlite3.OperationalError:
             pass
 
@@ -274,7 +346,11 @@ def fts_delete_docs(doc_ids: list[str]) -> None:
     ids instead of one DELETE per doc. chunk_fts's doc_id column is
     UNINDEXED (FTS5 gives unindexed columns no secondary index), so each
     per-doc DELETE was a full scan of the whole keyword table; a batch of
-    N docs did N full scans. Chunked to a safe SQLite placeholder count."""
+    N docs did N full scans. Chunked to a safe SQLite placeholder count.
+
+    2026-09-17: 배치로 묶어도 스캔은 스캔이라, 이제 chunk_fts_map 에서
+    rowid 를 찾아 지운다. 이 docstring 이 UNINDEXED 문제를 정확히 적어두고도
+    같은 병을 앓던 fts_upsert 는 안 고쳤던 것이 이번 사고의 뿌리다."""
     if not doc_ids:
         return
     BATCH = 500
@@ -283,8 +359,20 @@ def fts_delete_docs(doc_ids: list[str]) -> None:
             for i in range(0, len(doc_ids), BATCH):
                 chunk = doc_ids[i:i + BATCH]
                 ph = ",".join("?" * len(chunk))
-                c.execute(f"DELETE FROM chunk_fts WHERE doc_id IN ({ph})",
-                         chunk)
+                rids = [r[0] for r in c.execute(
+                    f"SELECT rid FROM chunk_fts_map WHERE doc_id IN ({ph})",
+                    chunk)]
+                if not rids:
+                    continue
+                # rowid 목록이 500개 배치의 청크 수만큼 커질 수 있어
+                # placeholder 한도에 맞춰 다시 쪼갠다.
+                for j in range(0, len(rids), BATCH):
+                    part = rids[j:j + BATCH]
+                    rph = ",".join("?" * len(part))
+                    c.execute(
+                        f"DELETE FROM chunk_fts WHERE rowid IN ({rph})", part)
+                c.execute(
+                    f"DELETE FROM chunk_fts_map WHERE doc_id IN ({ph})", chunk)
         except sqlite3.OperationalError:
             pass
 
@@ -306,11 +394,18 @@ def fts_existing_cids(cids: list[str]) -> set:
         return set()
     with _conn() as c:
         try:
-            qs = ",".join("?" * len(cids))
-            rows = c.execute(
-                f"SELECT cid FROM chunk_fts WHERE cid IN ({qs})", cids
-            ).fetchall()
-            return {r[0] for r in rows}
+            # 매핑 테이블에 묻는다 — cid 가 PRIMARY KEY 라 즉시 찾는다.
+            # chunk_fts 에 직접 묻던 예전 코드는 UNINDEXED 열이라 배치마다
+            # 전체 스캔이었고, 백필이 이걸 청크마다 불렀다.
+            out: set = set()
+            BATCH = 500
+            for i in range(0, len(cids), BATCH):
+                part = cids[i:i + BATCH]
+                qs = ",".join("?" * len(part))
+                out.update(r[0] for r in c.execute(
+                    f"SELECT cid FROM chunk_fts_map WHERE cid IN ({qs})",
+                    part))
+            return out
         except sqlite3.OperationalError:
             return set()
 
