@@ -361,6 +361,17 @@ section already falsified.)
 Deploy branch: `claude/personal-rag-knowledge-base-sLSvV`. Work commits
 go here; never push to a different branch without explicit permission.
 
+**A fresh container starts on `main`, which does NOT hold this codebase.**
+`main` (5 commits) shares only the root commit `5ee24ec` with the deploy
+branch — no `AGENTS.md`, no `src/`, just an unrelated "Honey model
+evaluation" stub whose rules are not this project's, so this file cannot
+warn the session that most needs warning. Check the branch FIRST, before
+reading anything: `git log --oneline -1` not showing the deploy branch's
+tip → `git fetch origin claude/personal-rag-knowledge-base-sLSvV` then
+`git checkout -B <session branch> origin/claude/personal-rag-knowledge-base-sLSvV`
+(force-push ban below is deploy-branch-only; re-basing a session branch is
+fine). Hit 2026-09-18: a session read `main`'s stub for a whole turn.
+
 **Repo is SHARED with another AI agent (GitHub Copilot, user's work
 account `Noah_Lee@amat.com`) on this SAME deploy branch** — confirmed
 by user 2026-07-29 ("지켜봐, 나중엔 그쪽으로 넘어갈 것" — expect
