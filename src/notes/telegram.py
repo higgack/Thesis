@@ -221,6 +221,7 @@ _NOTES_GUIDE_TEXT = """📒 <b>학습 노트 사용법</b>
   핵심 모델 → 장별 핵심 → 용어집 → 치트시트 구조로 정리
   (음성·영상·사진은 묻지 않고 일반). 호출은 동일 1회, 비용 거의 같음.
 • 선택하면 DM으로 <i>📒 노트 만드는 중…</i> → 완료/실패 알림
+• <b>중복은 합성 전에 걸러짐</b>(비용 0): 같은 URL·파일명이거나 본문이 같으면 새 노트를 안 만들고 <b>♻️ 이미 노트가 있어 건너뜀</b>으로 알려줌. 추적 파라미터만 다른 URL·이름만 바꾼 파일도 본문 해시로 잡음. 두뇌(RAG)에 이미 있는 자료는 <b>막지 않음</b> — 보관용과 되새김질용은 별개라 일부러 그렇게 뒀음.
 • 텍스트 살아있는 자료가 최적 (스캔 PDF는 OCR, 최대 7p)
 
 <b>2. 노트 = 요약이 아님</b>
@@ -468,6 +469,9 @@ async def _process_study_post_inner(msg, ctx: ContextTypes.DEFAULT_TYPE,
     urls = _URL_RE.findall(text)
     note_ids: list[str] = []
     err: str | None = None
+    # 이번 요청에서 중복으로 건너뛴 노트를 구분해 보여주려면 반드시
+    # 여기서 시작해야 한다 (channel._DUP_NOTES 주석 참조).
+    channel.begin_dup_tracking()
     try:
         # 0) 음성/오디오 → 두뇌 경로와 같은 Gemini STT → 전사문으로 노트.
         #    임시 파일로 받고 전사 후 즉시 삭제 (노트는 텍스트만 보존;
@@ -581,12 +585,31 @@ async def _process_study_post_inner(msg, ctx: ContextTypes.DEFAULT_TYPE,
 
     # Build the outcome message (success / empty / error).
     if note_ids:
-        lines = ["📒 <b>학습 노트 생성 완료</b>"]
-        for nid in note_ids:
+        # ingest_text() 는 중복일 때 **기존 노트 id 를 그대로 반환**하므로
+        # note_ids 만으로는 새 노트와 구분이 안 된다. 둘을 갈라서 보여준다
+        # — 안 그러면 중복이 실제로 걸러졌는지 화면으로 확인할 수 없고,
+        # 그게 사용자가 "중복 잘 잡는 거 맞지?" 라고 되묻게 된 이유다
+        # (2026-09-18). RAG 쪽의 "🚫 학습 안 함 (duplicate)" 와 같은 역할.
+        dups = channel.duplicates()
+        fresh = [x for x in note_ids if x not in dups]
+        skipped = [x for x in note_ids if x in dups]
+
+        def _entry(nid: str) -> str:
             n = store.get_note(nid)
             title = (n or {}).get("title") or nid
             link = _dash_link(nid)
-            lines.append(f"• <b>{title}</b>" + (f"\n  🔗 {link}" if link else ""))
+            return f"• <b>{title}</b>" + (f"\n  🔗 {link}" if link else "")
+
+        lines: list[str] = []
+        if fresh:
+            lines.append("📒 <b>학습 노트 생성 완료</b>")
+            lines.extend(_entry(x) for x in fresh)
+        if skipped:
+            if fresh:
+                lines.append("")
+            lines.append("♻️ <b>이미 노트가 있어 건너뜀</b> "
+                         "(LLM 합성 안 함 → 비용 0)")
+            lines.extend(_entry(x) for x in skipped)
         out = "\n".join(lines)
     elif err:
         out = f"⚠️ 노트 생성 실패: {err}"

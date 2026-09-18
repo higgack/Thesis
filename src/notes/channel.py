@@ -12,6 +12,7 @@ the stable surface that handler calls.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 from pathlib import Path
 
@@ -93,6 +94,36 @@ async def _triaged_pdf_extract(p: Path) -> tuple[str, str | None]:
     return body.strip(), title
 
 
+# 중복으로 건너뛴 노트 id 모음. ingest_text() 는 중복일 때 **기존 노트
+# id 를 그대로 반환**하므로, 호출부에서 "새로 만든 것"과 구분할 방법이
+# 없었다 — 그래서 텔레그램에는 둘 다 "📒 학습 노트 생성 완료" 로 나갔고,
+# 사용자는 중복이 실제로 걸러졌는지 화면으로 확인할 수 없었다
+# (RAG 쪽은 "🚫 학습 안 함 (duplicate)" 로 알려주는데, 2026-09-18).
+#
+# 반환 타입을 바꾸면 호출부 8곳을 손대야 해서 ContextVar 로 옆길을 냈다.
+# asyncio.create_task 가 컨텍스트를 복사하므로 핸들러마다 자기 집합을
+# 갖는다 — 단, **핸들러 시작에서 begin_dup_tracking() 을 반드시 호출**할
+# 것. 그 set() 대입이 태스크 로컬을 만드는 지점이다.
+_DUP_NOTES: "contextvars.ContextVar[set[str] | None]" = contextvars.ContextVar(
+    "notes_dup_ids", default=None)
+
+
+def begin_dup_tracking() -> None:
+    """이번 요청에서 중복으로 건너뛴 노트를 기록하기 시작한다."""
+    _DUP_NOTES.set(set())
+
+
+def duplicates() -> set[str]:
+    """begin_dup_tracking() 이후 중복으로 건너뛴 노트 id."""
+    return set(_DUP_NOTES.get() or ())
+
+
+def _mark_duplicate(nid: str) -> None:
+    cur = _DUP_NOTES.get()
+    if cur is not None and nid:
+        cur.add(nid)
+
+
 async def ingest_text(source_type: str, source_ref: str, raw_text: str,
                       title: str | None = None,
                       mode: str = "normal") -> str | None:
@@ -113,6 +144,7 @@ async def ingest_text(source_type: str, source_ref: str, raw_text: str,
         if dup:
             log.info("notes ingest: duplicate source '%s' → skip (note %s)",
                      source_ref, dup)
+            _mark_duplicate(dup)
             return dup
     # Content-level dedup fallback (2026-08-09): the source_ref check above
     # only catches an exact URL/filename repeat — it misses the same
@@ -126,6 +158,7 @@ async def ingest_text(source_type: str, source_ref: str, raw_text: str,
         if dup:
             log.info("notes ingest: duplicate content (hash=%s) → skip (note %s)",
                      content_hash, dup)
+            _mark_duplicate(dup)
             return dup
     log.info("notes ingest: %s '%s' (%d chars)",
              source_type, source_ref, len((raw_text or "")))
