@@ -362,10 +362,13 @@ Deploy branch: `claude/personal-rag-knowledge-base-sLSvV`. Work commits
 go here; never push to a different branch without explicit permission.
 
 **A fresh container starts on `main`, which does NOT hold this codebase.**
-`main` (5 commits) shares only the root commit `5ee24ec` with the deploy
-branch — no `AGENTS.md`, no `src/`, just an unrelated "Honey model
-evaluation" stub whose rules are not this project's, so this file cannot
-warn the session that most needs warning. Check the branch FIRST, before
+`main` shares only the root commit `5ee24ec` with the deploy branch — no
+`src/`, just an unrelated "Honey model evaluation" stub whose rules are
+not this project's. THIS file cannot warn the session that most needs
+warning (it is not there to be read), so `main` carries its own copy of
+the warning since `c8949e9` (2026-09-18): `CLAUDE.md` · `AGENTS.md` ·
+`.github/copilot-instructions.md` · `README.md`, all four saying only
+this. Keep them in sync with this paragraph. Check the branch FIRST, before
 reading anything: `git log --oneline -1` not showing the deploy branch's
 tip → `git fetch origin claude/personal-rag-knowledge-base-sLSvV` then
 `git checkout -B <session branch> origin/claude/personal-rag-knowledge-base-sLSvV`
