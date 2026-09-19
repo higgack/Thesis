@@ -247,9 +247,12 @@ def _build_payload() -> dict | None:
     notes_by_src: dict[str, list] = defaultdict(list)
     for _n in notes:
         _ref = (_n.get("source_ref") or "").strip()
-        # "study-text" is the shared constant ref for pasted plain text —
-        # it identifies no source and would glue unrelated notes together.
-        if _ref and _ref != "study-text":
+        # "study-text" is the ref prefix for pasted plain text — it
+        # identifies no source and would glue unrelated notes together.
+        # Matched by PREFIX, not equality: since 2026-09-19 the ref carries
+        # a per-text hash ("study-text:a1b2c3d4") so notes dedup works on
+        # short pastes, and an equality check would silently stop firing.
+        if _ref and not _ref.startswith("study-text"):
             notes_by_src[_ref].append(_n)
 
     # Relation strings dominate the page: measured at 59% of the payload,

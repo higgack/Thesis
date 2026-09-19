@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import hashlib
 import logging
 from pathlib import Path
 
@@ -136,10 +137,27 @@ async def ingest_text(source_type: str, source_ref: str, raw_text: str,
     raw_text = strip_invisible(raw_text)
     if title:
         title = strip_invisible(title)
-    # RAG-style dedup: if this source (URL/file) already has a note, skip
-    # — no duplicate note, no wasted LLM synth. Plain-text shares the
-    # constant ref "study-text", so it's excluded (would collide).
-    if source_type != "text" and source_ref:
+    # 붙여넣기 글에는 중복 방어가 **두 겹 다 꺼져 있었다** (2026-09-19).
+    # ① 출처 대조: 붙여넣기는 전부 "study-text" 한 값을 쓰므로 그대로
+    #    비교하면 서로 다른 글까지 같은 것으로 잡힌다 — 그래서 일부러
+    #    제외했는데, 제외만 하고 대체 수단을 안 뒀다.
+    # ② 본문 해시: compute_body_hash 는 정규화 후 200자 미만이면 '' 를
+    #    돌려주고, '' 면 조회 자체를 건너뛴다.
+    # 짧은 글은 둘 다 빠져나가 매번 새 노트 + LLM 합성 비용이 나갔다.
+    # 라이브 실측: 붙여넣기 노트 275개 중 148개(54%)가 본문 해시 없음.
+    # 고침은 RAG 가 pipeline.ingest_text 에서 이미 쓰는 `<label>:<hash8>`
+    # 모양을 그대로 가져온 것이다 — 그쪽엔 길이 하한이 없다. 글마다 출처가
+    # 달라지므로 ①이 되살아나고, 서로 다른 글이 엉길 일도 없다.
+    # **compute_body_hash 의 200자 하한은 건드리지 않는다**: 그건 서로 다른
+    # 짧은 *문서*가 같다고 잡히는 것을 막는 장치라 목적이 다르고, 내리면
+    # RAG 쪽 dedup 까지 같이 헐거워진다.
+    if source_type == "text":
+        hash8 = hashlib.sha1(
+            (raw_text or "").strip().encode("utf-8")).hexdigest()[:8]
+        source_ref = f"{source_ref}:{hash8}"
+    # RAG-style dedup: if this source (URL/file/pasted text) already has a
+    # note, skip — no duplicate note, no wasted LLM synth.
+    if source_ref:
         dup = await asyncio.to_thread(store.note_id_by_source, source_ref)
         if dup:
             log.info("notes ingest: duplicate source '%s' → skip (note %s)",
