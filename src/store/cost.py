@@ -116,10 +116,30 @@ def _conn():
         c.close()
 
 
+# 가격표에 없는 모델을 이미 경고한 적이 있는지 (모델당 1회만 운다).
+# record() 는 Gemini 호출마다 돌기 때문에 무조건 경고하면 로그가 넘친다.
+_UNPRICED_WARNED: set[str] = set()
+
+
 def _price_krw(model: str, in_tokens: int, out_tokens: int,
                cached_tokens: int = 0) -> float:
     p = _PRICES_USD.get(model) or _PRICES_USD.get(_normalize(model))
     if not p:
+        # 0.0 을 돌려주는 것 자체는 그대로 둔다 — 비용 추적이 사용자
+        # 요청을 깨서는 안 된다(record 의 계약). 다만 **조용히** 0 이면
+        # 안 된다: 모델 ID 만 바꾸는 마이그레이션에서 모든 호출이 ₩0 으로
+        # 기록되고, 그 위에 얹힌 위키/KG 일일 예산(각 ₩2,000)과 /usage 가
+        # 통째로 무력화되는데 에러가 아니라 아무도 모른다. Gemini 2.5 가
+        # 2026-10-20 지원 중단 예고를 받았으므로(us-central1 종료
+        # 2027-03-31) 이 경로는 가정이 아니라 예정된 일이다.
+        # 모델을 바꿀 때는 _PRICES_USD 에 새 단가를 **같은 커밋에** 넣을 것.
+        key = _normalize(model)
+        if key not in _UNPRICED_WARNED:
+            _UNPRICED_WARNED.add(key)
+            log.warning(
+                "cost: 가격표에 없는 모델 '%s' — 이 모델의 호출은 ₩0 으로 "
+                "기록되어 예산 경보가 울리지 않는다. _PRICES_USD 에 단가를 "
+                "추가할 것 (src/store/cost.py).", key)
         return 0.0
     # prompt_token_count already includes cached_tokens — split them so
     # the cached slice is billed at the discounted rate.
