@@ -13,11 +13,12 @@
 | 심화 rev3 | [draft_expanded_rev3.md](../manuscript/draft_expanded_rev3.md) | 서론·비교·결론·표·전면부 |
 | 심화 rev4 | [draft_expanded_rev4.md](../manuscript/draft_expanded_rev4.md) · [.docx](../manuscript/draft_expanded_rev4.docx) | §4.5 기술 네트워크 그림 삽입 |
 | 심화 rev5 | [draft_expanded_rev5.md](../manuscript/draft_expanded_rev5.md) · [.docx](../manuscript/draft_expanded_rev5.docx) | 하이퍼그래프 관점(§4.5·7.3) |
-| **최신 rev6** | [draft_expanded_rev6.md](../manuscript/draft_expanded_rev6.md) · [.docx](../manuscript/draft_expanded_rev6.docx) | **검증 문헌 반영: Petralia2020·Caviggioli2016·KnowMade(§2·§4·§6)** |
+| 심화 rev6 | [draft_expanded_rev6.md](../manuscript/draft_expanded_rev6.md) · [.docx](../manuscript/draft_expanded_rev6.docx) | 검증 문헌 반영: Petralia2020·Caviggioli2016·KnowMade(§2·§4·§6) |
+| **최신 rev7** | [draft_expanded_rev7.md](../manuscript/draft_expanded_rev7.md) · [.docx](../manuscript/draft_expanded_rev7.docx) | **인용 보강만: 융합 측정 3전통(Cho&Kim2014·Hwang2020·Zhu&Motohashi2022) §2.3·§6.6** |
 
 - 파이프라인 산출물: [stage1 연구브리프](../manuscript/stage1_research_brief.md) · [outline](../manuscript/outline.md) · [stage2.5 무결성](../manuscript/stage2_5_integrity_report.md) · [stage3 리뷰](../manuscript/stage3_review.md) · [stage4 응답](../manuscript/stage4_response.md) · [stage3' 재검토](../manuscript/stage3prime_rereview.md) · [stage4.5 최종무결성](../manuscript/stage4_5_final_integrity.md) · [stage6 과정기록](../manuscript/stage6_process_record.md)
 - 마감 안내: [FINALIZE_NOTES.md](../manuscript/FINALIZE_NOTES.md)
-- §2 문헌 보강 후보: [lit_candidates.md](../manuscript/lit_candidates.md) (paper-lookup 실검색, 서지 확정 후 반영)
+- §2 문헌 보강 후보: [lit_candidates.md](../manuscript/lit_candidates.md) — **A·B·C 전량 rev6/rev7에 반영 완료**. 추가 보강은 새 후보 탐색부터 필요.
 - 그림: [기술 네트워크 설명](../manuscript/figures/tech_network.md) · 렌더 `tech_network_rich.png`(영문)/`tech_network_rich_ko.png`(한글)
 - 원자료: [manuscript/sources/](../manuscript/sources/) (① 영문 계량분석, ② 국문 특허분석 PDF+txt)
 
@@ -47,7 +48,7 @@
 - 사용: 세션 끝 "체크포인트" 저장 → 커밋 / 새 세션 "세션 시작"으로 복원
 
 ## 🗺 빠른 길잡이
-- **논문 읽기/제출** → rev6 (`.docx`, 최신)
+- **논문 읽기/제출** → rev7 (`.docx`, 최신)
 - **참고문헌 검색·색인** → `rag/` (+경량은 OpenKB)
 - **기술 네트워크 그림** → `manuscript/figures/`
 - **새 도구 검토 결과** → `docs/tooling/`

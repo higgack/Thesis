@@ -10,20 +10,21 @@
   - https://www.knowmade.com/ (Hybrid Bonding Patent Landscape)
 
 ## B. 기술융합(§2.3) — 학술
-- **Technology fusion: Identification and analysis of the drivers of technology convergence using patent data**, *Technological Forecasting & Social Change*(추정) — 융합 '동인' 분석. https://www.sciencedirect.com/science/article/abs/pii/S0166497216300293 ★서지확정
-- **Identifying the technology convergence using patent text information: a GCN-based approach**, *TFSC*(2022) — 텍스트+그래프합성곱 융합 식별. https://www.sciencedirect.com/science/article/abs/pii/S0040162522000099 ★서지확정
-- **The effect of collaborative innovation on ICT-based technological convergence: a patent-based analysis**, *PLOS ONE*(2020) — 공동분류 기반 융합 측정. https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0228616 ★서지확정
-- **Entropy and Gravity Concepts as New Methodological Indexes to Investigate Technological Convergence: Patent Network-Based Approach**, *PLOS ONE* — 네트워크 기반 융합 지표. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4051643/ ★서지확정
+- ✅**rev6 반영** — **Caviggioli, F. (2016).** Technology fusion: Identification and analysis of the drivers of technology convergence using patent data. *Technovation, 55–56*, 22–32. (저널명은 TFSC가 아니라 **Technovation** — 게이트에서 정정) → §2.3
+- ✅**rev7 반영** — **Zhu, C., & Motohashi, K. (2022).** Identifying the technology convergence using patent text information: A graph convolutional networks (GCN)-based approach. *TFSC, 176*, 121477. doi:10.1016/j.techfore.2022.121477 → §2.3(측정 전통 2: 텍스트·표상학습), §6.6(결정론적 CPC 대비 트레이드오프)
+- ✅**rev7 반영** — **Hwang, I. (2020).** The effect of collaborative innovation on ICT-based technological convergence: A patent-based analysis. *PLOS ONE, 15*(2), e0228616. doi:10.1371/journal.pone.0228616 → §2.3(측정 전통 3: 융합 동인), §6.6(조직 간 관계 vs 특허 내재 속성 — 범위 한계 명시)
+- ✅**rev7 반영** — **Cho, Y., & Kim, M. (2014).** Entropy and gravity concepts as new methodological indexes to investigate technological convergence: Patent network-based approach. *PLOS ONE, 9*(6), e98009. doi:10.1371/journal.pone.0098009 → §2.3(측정 전통 1: 분류체계 기반 지표화), §6.6(집계지표 vs 특허단위 조작화)
 
 ## C. 범용기술(GPT, §2.2/§6.2) — 학술
-- **Mapping general purpose technologies with patent data**, *Research Policy*(2020) — **GPT 3차원 지표(개선성·범용성·보완성)** = 우리가 §6.2에서 "generality 미산출"이라 한계로 남긴 부분의 **방법론 출처**. https://www.sciencedirect.com/science/article/abs/pii/S0048733320300925 ★서지확정
+- ✅**rev6 반영** — **Petralia, S. (2020).** Mapping general purpose technologies with patent data. *Research Policy, 49*(7), 104013. — **GPT 3차원 지표(개선성·범용성·보완성)** = 우리가 §6.2에서 "generality 미산출"이라 한계로 남긴 부분의 **방법론 출처**. https://www.sciencedirect.com/science/article/abs/pii/S0048733320300925 ★서지확정
   - 데이터셋: Harvard Dataverse "GPT Indicators" (doi:10.7910/DVN/PQGHKA)
 - **Hall & Trajtenberg, Uncovering GPTs with Patent Data**, NBER WP 10901 (2004) — *이미 본문 인용 중*(재확인).
 
 ## 반영 계획
-- **B·C**는 §2.3·§2.2/§6.2(향후과제 generality 산출)와 §6.6(선행연구 비교)에 1~2편씩 보강 → 서지 확정 후.
-- **A(KnowMade)**는 §4.2/§4.7에 "외부 산업분석과의 정합" 한 문장으로 추가(산업 자료 표기) → 우리 수치 신뢰도 강화.
-- 모든 추가는 **재현 가능한 실재 출처**만, 무결성 게이트 통과 후 본문 반영(다음 작업 시 rev6 후보).
+- ~~**B·C**는 §2.3·§2.2/§6.2와 §6.6에 1–2편씩 보강 → 서지 확정 후.~~ → **완료**: C(Petralia)는 rev6, B 잔여 3편은 **rev7**에 반영. Caviggioli는 rev6 반영.
+- ~~**A(KnowMade)**는 §4.2/§4.7에 추가~~ → **완료(rev6)**.
+- **B목록 전량 소진.** 추가 인용 보강은 새 후보 탐색부터 필요.
+- 모든 추가는 **재현 가능한 실재 출처**만, 무결성 게이트 통과 후 본문 반영. rev7의 3건은 서지를 **독립 2회 교차확인**함(PLOS/NCBI/Crossref는 프록시 차단 → WebSearch 교차검증으로 대체).
 
 ## 재사용 도구
 네트워크 되는 환경(학생 크레딧 등)에선 `python rag/paper_lookup.py "<질의>"`로 arXiv·Semantic Scholar 직접 검색 가능
