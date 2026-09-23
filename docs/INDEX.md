@@ -23,8 +23,10 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **v4_ko(최신)** | [manuscript_v4_ko.md](../journal/manuscript_v4_ko.md) · [.docx](../journal/manuscript_v4_ko.docx) | 유저 수정 반영(한양대·Yole Group) + 문장 다듬기 89곳 + 참고문헌 57편 재검증 |
+| **v5_ko(최신)** | [manuscript_v5_ko.md](../journal/manuscript_v5_ko.md) · [.docx](../journal/manuscript_v5_ko.docx) | 심사 의견 1–4 반영: 경계 넘기=통합형으로 정의 정합, 융합 vs 수직통합 구분, 관할권 해석 완화, CPC 재분류 대안 | 
+| v4_ko | [manuscript_v4_ko.md](../journal/manuscript_v4_ko.md) · [.docx](../journal/manuscript_v4_ko.docx) | 유저 수정 반영(한양대·Yole Group) + 문장 다듬기 89곳 + 참고문헌 57편 재검증 |
 | v3_ko | [manuscript_v3_ko.md](../journal/manuscript_v3_ko.md) · [.docx](../journal/manuscript_v3_ko.docx) | v2_ko에서 Elsevier 요소(하이라이트·선언문·각주) 제거, 그림 캡션 1회, 학술형 제목 |
+| 심사·자료 | [review_v4_ko.md](../journal/review_v4_ko.md) · [DATA_REQUEST_ko.md](../journal/DATA_REQUEST_ko.md) | 내부 심사 의견 · 재분석용 원자료 명세 |
 | 안내 | [README_ko.md](../journal/README_ko.md) | 저널 적합성 표, 가정(영어·사후가설), 남은 작업(S1·저자정보·그림 300dpi) |
 | 그림 | `journal/figures/` | 자료①②에서 추출한 8개 그림 |
 
