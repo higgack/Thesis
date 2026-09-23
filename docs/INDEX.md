@@ -20,6 +20,8 @@
 | 버전 | 파일 | 성격 |
 |---|---|---|
 | **v1** | [manuscript_v1.md](../journal/manuscript_v1.md) · [.docx](../journal/manuscript_v1.docx) | 영문, Elsevier(Technovation/TFSC) 양식. RQ3·RQ4 중심, 융합 이론 + 반도체 산업구조 이론, 가설 H1–H3b, 참고문헌 61편 전수 검증 |
+| **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
+| **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | 안내 | [README_ko.md](../journal/README_ko.md) | 저널 적합성 표, 가정(영어·사후가설), 남은 작업(S1·저자정보·그림 300dpi) |
 | 그림 | `journal/figures/` | 자료①②에서 추출한 8개 그림 |
 

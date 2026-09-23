@@ -3,7 +3,10 @@
 > 작성: session-checkpoint (첫 핸드오프) · 브랜치: `claude/quirky-darwin-ph188p` (PR #8, main 미병합)
 > 프로젝트: higgack/Thesis = AI 보조 학술 논문 작성 워크스페이스 (원격 컨테이너=휘발성)
 
-## Priority 0 (신규, 2026-09-23) — 저널 논문 v1 검토 대기
+## Priority 0 (신규, 2026-09-23) — 저널 논문 3종 검토 대기
+영문 v1 + **국문 v1_ko(번역)** + **국문 Rev1_ko(7단계 논리 재구성, 김민구 외 2022 『지능정보연구』 체재 참조)** 작성 완료. Rev1 핵심: RQ1 수렴(63.6%·통합형 최빈·재구성), RQ2 결정요인(범위 OR 1.267), RQ3 국가·기업 전략(표 7 유형 종합). 다음: 유저/교수 검토 → 국내 저널 확정 → 양식 조정 → v2.
+
+## Priority 0-old (2026-09-23) — 저널 논문 v1 검토 대기
 `journal/manuscript_v1.md`(+docx) 작성 완료. 교수님 피드백(RQ1·2 배경화, RQ3·4 집중, 융합 이론, 가설+기여) 반영. **유저/교수 검토 후 v2**: (a) 소속·이메일 placeholder, (b) HARKing 방어용 확장 명세 재추정(출원인 유형·청구항 수), (c) Supplementary S1(자료② 출원인 지표 영문화), (d) 그림 300dpi 재출력, (e) 언어(영어) 확인. 상세: `journal/README_ko.md`.
 
 ## Priority 1 (다음에 가장 먼저)
