@@ -3,6 +3,9 @@
 > 작성: session-checkpoint (첫 핸드오프) · 브랜치: `claude/quirky-darwin-ph188p` (PR #8, main 미병합)
 > 프로젝트: higgack/Thesis = AI 보조 학술 논문 작성 워크스페이스 (원격 컨테이너=휘발성)
 
+## Priority 0 (신규, 2026-09-23) — 저널 논문 v1 검토 대기
+`journal/manuscript_v1.md`(+docx) 작성 완료. 교수님 피드백(RQ1·2 배경화, RQ3·4 집중, 융합 이론, 가설+기여) 반영. **유저/교수 검토 후 v2**: (a) 소속·이메일 placeholder, (b) HARKing 방어용 확장 명세 재추정(출원인 유형·청구항 수), (c) Supplementary S1(자료② 출원인 지표 영문화), (d) 그림 300dpi 재출력, (e) 언어(영어) 확인. 상세: `journal/README_ko.md`.
+
 ## Priority 1 (다음에 가장 먼저)
 **학교 학위논문 양식(template)이 나오면** → `academic-paper` format-convert로 **rev7을 그 양식으로 변환** +
 **부록의 그림 11개·세부 표 7개(원본 ①② 이미지)를 §해당 위치에 삽입**. (현재 양식 미정 → 사용자 대기 중)
@@ -23,7 +26,8 @@
 - 새 GitHub repo 생성/푸시 불가(환경 권한: higgack/Thesis만). 산출물은 tarball/PR로 전달.
 
 ## 컨텍스트 메모 (반복 방지)
-- 최신 논문본: **`manuscript/draft_expanded_rev7.md`** (+ `.docx`) — rev6에 **인용 보강만** 추가: §2.3에 기술융합 측정 3전통(Cho & Kim 2014 엔트로피·중력 / Zhu & Motohashi 2022 텍스트·GCN / Hwang 2020 협력혁신 동인), §6.6에 본 연구 조작화와의 대비(집계 vs 특허단위, 결정론 CPC vs 학습기반, 특허 내재속성 vs 조직 간 관계 — 범위 한계 명시). 직전본: `draft_expanded_rev6.md` (+ `.docx`) — rev5(§4.5 한글 기술네트워크 그림 + **하이퍼그래프 관점**(CPC동시분류=다대다) 방법론 단서·향후과제 7.3(f))에 **검증된 인용 3건 반영**: Petralia(2020, Research Policy) §2.2/§6.2/§7.3(d), Caviggioli(2016, Technovation) §2.3, KnowMade/Yole(2024) §4.2. 버전: draft→expanded→rev1~rev7 모두 보존.
+- 저널 논문: **`journal/manuscript_v1.md`** — 영문, Technovation 양식, 참고문헌 61편 검증(`journal/refs_ledger.md`). ASME JEP 2026 항목은 저자 미확인으로 제외.
+- 최신 학위논문본: **`manuscript/draft_expanded_rev7.md`** (+ `.docx`) — rev6에 **인용 보강만** 추가: §2.3에 기술융합 측정 3전통(Cho & Kim 2014 엔트로피·중력 / Zhu & Motohashi 2022 텍스트·GCN / Hwang 2020 협력혁신 동인), §6.6에 본 연구 조작화와의 대비(집계 vs 특허단위, 결정론 CPC vs 학습기반, 특허 내재속성 vs 조직 간 관계 — 범위 한계 명시). 직전본: `draft_expanded_rev6.md` (+ `.docx`) — rev5(§4.5 한글 기술네트워크 그림 + **하이퍼그래프 관점**(CPC동시분류=다대다) 방법론 단서·향후과제 7.3(f))에 **검증된 인용 3건 반영**: Petralia(2020, Research Policy) §2.2/§6.2/§7.3(d), Caviggioli(2016, Technovation) §2.3, KnowMade/Yole(2024) §4.2. 버전: draft→expanded→rev1~rev7 모두 보존.
 - 도구 검토 누계: rag-kb-tools-eval + rtk·notebooklm·ppt-master·kg-gen·OpenKB·unlimited-ocr·lat.md·sovereign-skills·kami·awesome-design-md·**hyper-extract(채택)**·im-not-ai·builderio-skills·_misc(agentic-prompt-research/elephant-agent).
 - 그림 라벨 규칙(유저 지정): 한국기업=한글(삼성전자), 외국 장비사/기업=영어, 공정/구조 일부 영어(Chiplet/Dicing/Surface Prep), 관할권=한글.
 - 도구 검토 누적: `docs/tooling/` (rtk·notebooklm-mcp·ppt-master·kg-gen·OpenKB·unlimited-ocr·lat.md·sovereign-skills·kami·awesome-design-md) + 평가서. 레포 지식맵: `docs/INDEX.md`.

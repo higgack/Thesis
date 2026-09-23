@@ -16,6 +16,13 @@
 | 심화 rev6 | [draft_expanded_rev6.md](../manuscript/draft_expanded_rev6.md) · [.docx](../manuscript/draft_expanded_rev6.docx) | 검증 문헌 반영: Petralia2020·Caviggioli2016·KnowMade(§2·§4·§6) |
 | **최신 rev7** | [draft_expanded_rev7.md](../manuscript/draft_expanded_rev7.md) · [.docx](../manuscript/draft_expanded_rev7.docx) | **인용 보강만: 융합 측정 3전통(Cho&Kim2014·Hwang2020·Zhu&Motohashi2022) §2.3·§6.6** |
 
+## 📰 저널 투고용 논문 (journal/)
+| 버전 | 파일 | 성격 |
+|---|---|---|
+| **v1** | [manuscript_v1.md](../journal/manuscript_v1.md) · [.docx](../journal/manuscript_v1.docx) | 영문, Elsevier(Technovation/TFSC) 양식. RQ3·RQ4 중심, 융합 이론 + 반도체 산업구조 이론, 가설 H1–H3b, 참고문헌 61편 전수 검증 |
+| 안내 | [README_ko.md](../journal/README_ko.md) | 저널 적합성 표, 가정(영어·사후가설), 남은 작업(S1·저자정보·그림 300dpi) |
+| 그림 | `journal/figures/` | 자료①②에서 추출한 8개 그림 |
+
 - 파이프라인 산출물: [stage1 연구브리프](../manuscript/stage1_research_brief.md) · [outline](../manuscript/outline.md) · [stage2.5 무결성](../manuscript/stage2_5_integrity_report.md) · [stage3 리뷰](../manuscript/stage3_review.md) · [stage4 응답](../manuscript/stage4_response.md) · [stage3' 재검토](../manuscript/stage3prime_rereview.md) · [stage4.5 최종무결성](../manuscript/stage4_5_final_integrity.md) · [stage6 과정기록](../manuscript/stage6_process_record.md)
 - 마감 안내: [FINALIZE_NOTES.md](../manuscript/FINALIZE_NOTES.md)
 - §2 문헌 보강 후보: [lit_candidates.md](../manuscript/lit_candidates.md) — **A·B·C 전량 rev6/rev7에 반영 완료**. 추가 보강은 새 후보 탐색부터 필요.
