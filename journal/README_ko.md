@@ -1,166 +1,22 @@
-# 저널 투고용 논문 — 안내문 (한글)
-
-> 대상 파일: `journal/manuscript_v1.md` (+ `manuscript_v1.docx`, `figures/`)
-> 작성일: 2026-09-23 · 기반 자료: ① 계량분석 보고서(EN), ② 특허분석 학기 과제(KO), 학위논문 rev6/rev7
-> 교수님 피드백 반영: **RQ1·RQ2는 배경(§3 Research context)으로 축소, RQ3·RQ4에 집중**, 기술융합을 이론적 배경으로, **가설 + 기존 이론에의 기여** 명시.
 
 ---
 
-## 1. 무엇을 만들었나
+# v4_ko (2026-09-23) — 유저 수정 반영 + 문장 다듬기 + 참고문헌 재검증
 
-| 항목 | 내용 |
-|---|---|
-| 제목 | *When the back end reaches into the front end: Technological convergence and boundary-spanning patents in semiconductor hybrid bonding* |
-| 언어 | **영어** (아래 §4 "가정" 참조) |
-| 구조 | Elsevier(Technovation/TFSC) 표준: Highlights(5) → Abstract(218단어) → Keywords(6) → 1 Introduction → 2 Theoretical background & hypotheses (2.1 융합 이론 · 2.2 반도체 가치사슬 내 융합 · 2.3 특허 측정 · 2.4 가설 H1–H3b) → 3 Research context (구 RQ1 거시분석 = 배경) → 4 Data & methods → 5 Results (RQ3·RQ4 = 본론) → 6 Discussion (6.1 이론적 기여 · 6.2 실무·정책 · 6.3 한계) → 7 Conclusion → CRediT·이해상충·Funding·Data availability·**AI 사용 고지**(Elsevier 필수) → Appendix A(CPC·검색전략)·B(범위 모형 전체표) → Figure captions → References |
-| 분량 | 본문 약 7,500단어(표·캡션 포함; 참고문헌 제외) — Technovation 통상 범위(8–10k) 내 |
-| 표 | Table 1(생태계 지표), 2(변수), 3(음이항), 4(이항 로짓), 5(다항 로짓), 6(가설 검정 요약), A1, B1 |
-| 그림 | Fig.1 HB vs HBM 출원추이(②) · Fig.2 Top-10 출원인(②) · Fig.3 기술네트워크(영문판) · Fig.4 연도별 출원(①) · Fig.5 예측 breadth(①) · Fig.6 ROC(①) · Fig.7 process-only 예측확률(①) · Fig.A1 검색전략(②) |
-| 참고문헌 | **61편**, 전부 서지 검증(`journal/refs_ledger.md`에 검증 기록). 신규 검증 46편 + rev6/rev7에서 기존 검증분 + 표준 교과서 2편 |
+유저 수정 2건 반영: 소속 → 한양대학교 기술경영학과; KnowMade/Yole → **Yole Group, 2024**로 통일(참고문헌은 Yole Group (KnowMade), 2024).
+문장 다듬기 89곳: 번역투(‘우리는’, 줄표 삽입구, ‘cf.’) 제거, 연구질문 3개를 첫째·둘째·셋째로 명시, §5.1 IRR 중복 문장 정리, 학술 문체로 통일. 수치·표·참고문헌은 v3와 동일.
 
-### 핵심 재구성 — 학위논문과 어떻게 다른가
+## 참고문헌 실재·정확성 검증 (57편)
 
-| 학위논문(rev7) | 저널 논문(v1) |
-|---|---|
-| RQ1(거시 생태계)이 한 장(제4장) | §3 Research context 1개 절로 압축, **Table 1 한 장**으로 지표 요약 |
-| RQ2(breadth 결정요인)이 §5.1 | §5.1 + Appendix B로 이동, "범위 = 설명변수" 역할로 재정의 |
-| RQ3·RQ4가 §5.2–5.3, §6.1 | **논문 전체의 본론**. 가설 4개로 구조화, Table 6에 검정 요약 |
-| 융합 이론 = §2.3 한 절 | §2 전체(2.1–2.4)를 융합 이론 + 반도체 산업구조 이론으로 재구축 |
-| "거시–미시 수렴" 서사 | **"산업 내(intra-industry)·공정단계 간(cross-stage) 융합"**이라는 이론적 개념으로 승격 → 기존 융합 문헌(산업 간 융합)과의 차별점 = 기여 1 |
-| 시간 추세: "전공정 지향 감소" | **"재구성(recomposition)"** 개념: process-only는 감소, integrated는 유지(RRR 0.993 n.s.) → 융합이 '더 많이'가 아니라 '형태를 바꾸며' 진행 = 기여 3. 교수님의 "전에는 따로 놀았다, 지금은…"에 대한 정직한 답 |
-
-### 가설과 결과 (Table 6)
-
-| 가설 | 예측 | 근거 이론 | 결과 |
+| 구분 | 편수 | 검증 방법 | 결과 |
 |---|---|---|---|
-| H1 | 기술범위↑ → 경계 넘음(전공정 청구)↑ | Kodama 융합, Lerner 특허범위, Ziedonis 포트폴리오 | OR 1.267***, RRR integrated 1.403*** / process-only 0.905** → **지지** |
-| H2 | 성숙할수록 process-only↓, integrated는 유지 | Hacklin 단계모형, W2W→D2W 산업궤적 | RRR process-only 0.913***/년, integrated 0.993 n.s. → **지지** |
-| H3a | 중국 출원청 = 전공정·process-only 지향 | Lee & Lim 추격이론, Hu & Jefferson·Dang & Motohashi 중국 특허 | OR 1.650**, RRR 2.687***, breadth IRR 0.785*** → **지지** |
-| H3b | 일본 출원청 = 넓고 process-only 거의 없음 | Langlois & Steinmueller 장비·소재 강점, Sakakibara & Branstetter 다항청구 | IRR 1.270*, RRR 0.086***, OR 0.483 n.s. → **대체로 지지** |
+| 이번 세션 WebSearch 2회 이상 교차확인 | 46 | RePEc/EconPapers·출판사 목록·Google Scholar·SSRN·저자 CV (`journal/refs_ledger.md`) | 전부 실재, 권·호·쪽 일치 |
+| 오늘 재확인 | 6 | Curran & Leker 2011 (TFSC 78(2) 256–273) · Kwon et al. 2020 (TASM 32(4) 363–378, DOI 10.1080/09537325.2019.1661374) · Hausman et al. 1984 (Econometrica 52(4) 909–938) · Petralia 2020 (RP 49(7) 104013) · Hall & Trajtenberg 2004 (NBER w10901) · Yole/KnowMade 2024 (2024-09 발간, 5,800+ 특허) | 전부 일치 |
+| 이전 세션(학위논문 게이트)에서 확인 | 5 | Caviggioli 2016 · Cho & Kim 2014 · Hwang 2020 · Zhu & Motohashi 2022 · Cameron & Trivedi 2013 | 일치 |
+| 표준 교과서·1차 자료 | 3 | McFadden 1974 (Zarembka ed.) · Hosmer et al. 2013 (3판) · EPO PATSTAT 2025 | — |
 
----
+**본문 인용 ↔ 참고문헌 목록 교차검증:** 불일치 0건. 본문에서 인용된 문헌이 목록에 없거나, 목록에 있으나 본문에서 인용되지 않은 문헌 없음.
 
-## 2. 이론적 배경으로 넣은 외국 문헌 (요청 2번)
+**인용 내용의 정확성(주장↔출처) 점검에서 수정한 것:** Kapoor & Adner 2012의 실증 맥락은 DRAM(본문 명시) · Bröring et al. 2006 제목은 ‘…in an era of industry convergence: Evidence from nutraceuticals and functional foods’ · Fai & von Tunzelmann 2001은 ‘수렴 여부를 검토’로 완화 · Athreye & Keeble 2000 제목은 ScienceDirect 표기 기준.
 
-### (a) 기술융합 이론 — 고전 → 최신
-Rosenberg 1963(JEH) · Kodama 1992(HBR) · Gambardella & Torrisi 1998(RP) · Athreye & Keeble 2000(Technovation) · Fai & von Tunzelmann 2001(SCED) · Bröring et al. 2006(R&D Mgmt) · Hacklin et al. 2009(TFSC, 단계모형) · Curran et al. 2010 · Curran & Leker 2011(TFSC) · Hacklin et al. 2013(MIT SMR) · Geum et al. 2016(TFSC) · Sick et al. 2019(Technovation) · **Sick & Bröring 2022(TFSC 리뷰)** · Caviggioli 2016 · Hwang 2020
-
-### (b) 특허 기반 융합 측정
-Karvonen & Kässi 2013 · Preschitschek et al. 2013(Foresight, 의미분석 vs IPC) · Cho & Kim 2014 · Lee et al. 2015 · Jeong et al. 2015(Scientometrics) · Song et al. 2017 · Kwon et al. 2020 · Zhu & Motohashi 2022(GCN) · No & Park 2010
-
-### (c) **반도체 산업구조·수직분업** (요청하신 "반도체 관련" 부분)
-- Langlois & Steinmueller 1999 — 반도체 산업 경쟁우위의 진화 (Mowery & Nelson 편)
-- **Macher & Mowery 2004** — 수직 전문화(팹리스·파운드리·OSAT 분리)
-- Brown & Linden 2009 — *Chips and Change* (MIT Press)
-- **Kapoor 2013 (Org. Sci.)** — 반도체 산업에서 "분업 바람 속 통합의 지속" ← 파운드리의 패키징 내재화를 설명하는 핵심 근거
-- **Kapoor & Adner 2012 (Org. Sci.)** — "만드는 것 vs 아는 것": 지식 경계가 생산 경계보다 넓을 때의 이점 (DRAM)
-- Adner & Kapoor 2010 (SMJ) — 반도체 리소그래피 생태계
-- Brusoni, Prencipe & Pavitt 2001 (ASQ) — "firms know more than they make"
-- Jacobides, Knudsen & Augier 2006 (RP) — 산업 아키텍처
-- Ernst 2005 (IJIM) — 칩 설계 모듈성의 한계
-- Khan, Hounshell & Fuchs 2018 (Nature Electronics) — 무어의 법칙 종말과 정책
-- Arden et al. 2010 (ITRS More-than-Moore) · Iyer 2016 · Lau 2021, 2022 (패키징 공학)
-- Hall & Ziedonis 2001 · Ziedonis 2004 — 반도체 특허 행태
-- Lerner 1994 · Marco et al. 2019 — 특허 범위(scope)
-- 관할권: Lee & Lim 2001(한국 추격) · Hu & Jefferson 2009 · Dang & Motohashi 2015 · Grimes & Du 2022(중국 반도체 GVC) · Sakakibara & Branstetter 2001(일본 1988 개혁)
-
-**솔직한 보고:** "반도체 전/후공정 경계에 융합 측정을 적용한" 동료심사 논문은 검색으로 찾지 못했습니다. 산업 기사(SemiEngineering, SEMICON Japan)만 "경계 흐려짐"을 언급합니다. **이것이 곧 이 논문의 gap이고, 기여 1(산업 내 융합)의 근거입니다.** §1과 §2.2에 그렇게 서술했습니다.
-
----
-
-## 3. 저널 양식 적합성 (요청 3번)
-
-| 저널 | 출판사·분야 | 적합도 | 이유 / 조정 필요 |
-|---|---|---|---|
-| **Technovation** (1순위) | Elsevier, 기술혁신경영 | ★★★ | Caviggioli 2016·Sick et al. 2019 게재지. 융합+특허+산업구조 조합이 정확히 맞음. **현재 원고가 이 양식** (Highlights 필수, 참고문헌 name–year) |
-| **TFSC** (2순위) | Elsevier, 기술예측 | ★★★ | 융합 문헌의 본산(Hacklin·Curran·Sick·Zhu). 양식 동일 → 그대로 투고 가능. 다만 "예측" 함의를 §6에 한 문단 추가 권장 |
-| Research Policy | Elsevier, 혁신경제 | ★★☆ | 인과 식별 요구가 높음. 현재 결과는 associational → 응용인 FE·IV 추가 없이는 리스크 |
-| IEEE Trans. Eng. Mgmt | IEEE, 공학경영 | ★★☆ | 형식 변환 필요(IEEE 번호 인용, 2단). 내용은 적합 |
-| J. Eng. Tech. Mgmt / Scientometrics | Elsevier / Springer | ★★☆ | 측정방법론 강조 시 대안 |
-| 국내: 기술혁신학회지·기술혁신연구 | KCI | ★★☆ | 한글 번역 필요 — 요청 시 학위논문 rev7 문체로 변환 가능 |
-
-Elsevier 투고 시 별도 파일: (1) Highlights (본문에 포함됨, 분리 제출), (2) Title page (저자·소속·이메일 — **현재 placeholder**), (3) Graphical abstract(선택 — Fig.3 축소판 활용 가능), (4) Declaration of interest, (5) Supplementary Material S1.
-
----
-
-## 4. 가정·주의사항 (반드시 읽어주세요)
-
-1. **언어 = 영어.** "유명한 저널(산업공학·기술경영·경영학)"을 SSCI급 국제저널로 해석했습니다. 국내 KCI 저널이 목표라면 말씀 주세요 — 번역·문체 변환은 한 세션이면 됩니다.
-2. **가설은 분석 이후에 세워졌습니다(사후 가설).** 자료 ①의 회귀는 가설 없이 수행됐고, 이번에 이론에서 가설을 도출해 "검정"으로 서술했습니다. 이론 기반 가설을 기존 데이터에 검정하는 것 자체는 통상적이지만, **결과를 보고 가설을 맞춘 것(HARKing)이 아닌지** 심사자가 물을 수 있습니다. 방어 방법: (a) H2를 보면 결과가 단순하지 않습니다(integrated n.s.) — 결과에 맞춰 만든 가설이라면 이렇게 쓰지 않았을 것; (b) 가능하면 **모형을 한 번 더 돌려** 추가 통제(출원인 유형, 청구항 수)를 넣은 확장 명세로 재검정 → §5.4 robustness에 추가. 이게 가장 확실합니다.
-3. **모든 수치는 자료 ①②에서 인용, 재계산 아님.** Table 3–5·B1은 ①의 Table 2–4를 그대로 옮겼습니다(1:1 대조 완료). Table 1은 ②의 지표를 옮겼습니다. Fig.7의 "1/4 vs 1/7 vs 1/50"은 ①의 그림에서 읽은 근사값입니다.
-4. **Supplementary Material S1**은 아직 없습니다. 자료 ②(학기 과제)의 출원인 분석 부분을 영문으로 정리해 S1로 만들어야 합니다(Table 1·Fig.1·2의 출처).
-5. **저자 정보 placeholder**: 소속 대학, 이메일, Acknowledgements. 채워주세요.
-6. **그림 해상도**: Fig.1·2·4–7·A1은 원본 보고서에서 추출한 PNG입니다. 투고 시 Elsevier 기준(300 dpi, TIFF/EPS)으로 **원자료에서 재출력**해야 합니다. Fig.3(네트워크)은 `manuscript/figures/`의 결정론 KG 영문판 — 저널용으로는 CII/SLI 수치 라벨을 줄인 간결판이 나을 수 있습니다.
-7. **ASME JEP 2026 논문 제외**: 학위논문 참고문헌에 있던 "Manufacturing challenges of hybrid bonding…" (J. Electron. Packag. 148(1))은 **저자를 확인할 수 없어** 저널 논문에서 뺐습니다. 학위논문 rev7에도 저자 미상 ★확인 상태로 남아 있으니 확인 필요.
-8. **AI 사용 고지**: Elsevier는 생성형 AI 사용 시 본문에 고지를 요구합니다. 문안을 넣어 두었습니다 — 저자가 사실에 맞게 수정하세요.
-9. 단일 저자에 "we"를 썼습니다(편집자적 we, 경영학 저널 관행). "I"로 통일을 원하시면 일괄 변경 가능합니다.
-
----
-
-## 5. 다음 단계 제안
-
-1. **[저자]** 소속·이메일 입력, AI 고지 문안 확인, §6.2 한국 시사점 톤 점검
-2. **[분석 재실행 권장]** 자료 ① 데이터로 확장 명세(출원인 유형 더미·청구항 수) 재추정 → HARKing 방어 + robustness 강화. Stata/R 코드가 있으면 바로 붙일 수 있습니다.
-3. **[S1 작성]** 자료 ②의 출원인 지표를 영문 표 3–4개로 정리
-4. **[그림 재출력]** 300 dpi
-5. **[교수님 검토]** 특히 §2.4 가설 문구와 §6.1 "recomposition" 해석
-6. 검토 후 → v2 (동일 파일 보존, `manuscript_v2.md`로 분기)
-
-
----
-
-# 국문판 2종 (2026-09-23 추가)
-
-| 파일 | 성격 | 분량 |
-|---|---|---|
-| `manuscript_v1_ko.md` / `.docx` | **영문 v1의 국문 번역.** 구조·수치·참고문헌 61편 동일. 국문초록 + 영문 Abstract 병기 | 본문 약 25,000자(한글 12,700자) ≈ 19–21쪽(참고문헌·부록·그림 포함 약 30쪽) |
-| `manuscript_rev1_ko.md` / `.docx` | **Rev1: 7단계 논리로 재구성한 국문 저널판.** 국내 KCI 체재(김민구 외, 2022 『지능정보연구』 참조): 국문초록→서론→이론적 배경→연구방법→분석결과(RQ1·2·3)→논의→결론→참고문헌(국내/국외)→영문 Abstract→부록 | 본문 약 24,000자 ≈ 18–20쪽(참고문헌·부록·그림 포함 약 30쪽) |
-
-## Rev1이 반영한 7단계 논리 → 논문 위치
-
-| # | 말씀하신 논리 | Rev1에서의 위치 | 핵심 근거 문헌 |
-|---|---|---|---|
-| 1 | 무어의 법칙 종언, 전공정 선폭 축소의 한계 | §1.1 | 이종호·오철 2022; 박지민 2019(레티클 한계); Khan et al. 2018 *Nature Electronics*; Arden et al. 2010(More-than-Moore) |
-| 2 | 접합 기반 후공정의 중요성 증가 | §1.2 | Iyer 2016; Lau 2021, 2022; 오유진 2025(PPAC); 김기윤·이성주 2024(마이크로범프 한계) |
-| 3 | 후공정이 전공정 기술을 요구 → 같은 산업 내 융합 | §1.3, §2.2 | Kapoor 2013; Macher & Mowery 2004; Jacobides et al. 2006; 지일용 2025(TSMC 내재화) |
-| 4 | 기술 연구는 많으나 특허 관점 분석은 적음 | §1.4 | Lau 리뷰(기술) vs KnowMade 2024(산업보고서) vs 국내 top-down 특허연구; **김민구 외 2022**(OLED)를 "특허로 산업 전체 흐름을 볼 수 있음"의 선례로 인용하되 공정 단계 간 융합은 안 다뤘다고 구분 |
-| 5 | 기반기술·전방 응용이 넓은 GPT 후보로서 하이브리드 본딩 선정 | §1.5, §2.4 | Bresnahan & Trajtenberg 1995; Hall & Trajtenberg 2004; Petralia 2020; 금연욱·김의석 2023(기반 장비·소재); 우징원·남은영 2023, 김민규 외 2025(전방 응용) |
-| 6 | 전·후공정이 특허에서 실제로 융합·수렴하는가 | **RQ1 → §4.2** | 63.6% / 통합형 최빈 45.8%(표 3) + 거시 정합(TSMC RTA, 장비사) + 시간적 형태 = **재구성** |
-| 7 | 침투의 결정요인 + 국가·기업 전략 방향 | **RQ2 → §4.3, RQ3 → §4.4** | 표 4–6(음이항·로짓·다항로짓); **표 7 국가·기업 전략 유형 종합**(신규) |
-
-## 김민구 외(2022) 논문을 어떻게 참조했나
-
-- **형식 템플릿**: 국문 KCI 저널 체재(국문초록·주제어 → 본문 → 참고문헌 [국내]/[국외] 분리 → 영문 Abstract·Key Words), 표·그림 번호 방식.
-- **방법론 선례**: PATSTAT + IPC 집합·키워드 결합 검색(Benson & Magee 2013) → Rev1 §3.1에서 "김민구 외(2022)와 마찬가지로" 명시. Benson & Magee 2013은 해당 논문 참고문헌에서 서지를 가져왔습니다(Scientometrics 96(1), 69–82).
-- **지표 선례**: 전방 인용·다양성(1−HHI)·독창성(Jaffe et al. 1993) → Rev1 §2.4에서 GPT 검정의 향후 방법으로, §5.3 한계에서 후속 과제로 연결.
-- **선행연구 위치**: §1.4·§2.3에서 "디스플레이에서 특허로 산업 전체 흐름을 본 선례"로 인용하되, 기술군 *간* 가치 비교이지 공정 단계 *간* 융합은 아니라고 명확히 구분 → 우리 gap 강조.
-
-## 국문판 주의사항
-
-1. **Rev1은 v1과 수치·모형·참고문헌이 동일**하고 서론·이론·결과의 *배열과 서사*만 다릅니다. 표 번호는 Rev1 기준으로 다시 매겼습니다(표 1 변수 → 표 2 생태계 지표 → 표 3 전략 유형 분포 → 표 4–6 회귀 → 표 7 전략 유형 종합 → 표 8 가설 요약).
-2. **"전에는 따로 놀았다, 지금은 이러할 것이다"에 대한 Rev1의 답(§4.2 (3))**: 2010년 이전 표본이 극소수라 전/후 시기 분할은 통계적으로 무의미하다고 밝히고, 대신 연도 추세로 *형태 변화*를 보였습니다 — 공정 단독형↓(RRR 0.913***), 통합형 유지(0.993 n.s.) = **재구성**. 이것이 정직한 답입니다. 단순한 "융합 증가"로 쓰면 데이터와 어긋납니다.
-3. **GPT는 선정 근거이지 검정 결과가 아닙니다**(§2.4, §5.3). 일반성 지수를 계산하지 않았으므로 "GPT다"라고 단정하지 않았습니다. 데이터가 있으면 김민구 외(2022)식 다양성·독창성 지수를 붙여 검정할 수 있습니다.
-4. **국내 참고문헌 11편**은 학위논문 rev7의 검증 목록에서 가져왔고, 김민구 외(2022)만 이번에 PDF 원문에서 서지를 확정했습니다.
-5. Rev1 참고문헌: 국내 11편 + 국외 62편 = **73편**. v1 대비 Song et al. 2017·Trajtenberg et al. 1997은 Rev1 본문에서 인용하지 않아 제외했고, Benson & Magee 2013과 Jaffe et al. 1993(독창성 지수 출처)을 김민구 외(2022)의 참고문헌 서지로 추가했습니다.
-6. 국내 저널 후보: **기술혁신학회지, 기술혁신연구, 지능정보연구(방법론 강조 시), 한국산학기술학회논문지, 지식재산연구**. 각 저널의 세부 양식(분량 제한, 인용 형식)은 확정 후 조정합니다.
-
-
----
-
-# v2_ko (2026-09-23, 유저 지시 반영)
-
-유저가 선택한 본은 **v1_ko(영문 v1의 국문 번역, Elsevier 구조)**. 지시: §3.2(출원 동학과 생태계 구조, 표 1)는 내용상 맞지 않으므로 삭제, 부록은 본문에 편입.
-
-| 변경 | 내용 |
-|---|---|
-| 삭제 | §3.2 전체(HB vs HBM 추이, 상위 10 출원인, CII·SLI·PFS 지표 표 1, 기술 네트워크 그림) — 자료②에서 온 출원인 수준 분석으로, 특허 단위 경계 넘기 분석과 데이터 단위가 달라 정합성이 떨어졌음 |
-| 대체 | §3을 "하이브리드 본딩 기술과 산업 지형" 한 절로 통합. 삭제분 자리에는 **외부 출처만으로** 산업 지형 한 문단 추가(KnowMade/Yole 2024 선도 출원인, Lau 2022 파운드리 내재화, Kapoor 2013) → §4 이하로 이어지는 다리 역할 |
-| 편입 | 부록 A(CPC 정의 표 + 검색전략 그림) → §4.1 데이터 본문(표 1, 그림 1). 부록 B(OLS·로버스트·Poisson·음이항 전체 비교) → §5.1의 표 3으로 승격(음이항 단독 표 대체), IRR은 본문 문장으로 |
-| 그림 | 그림 1–3(자료② 출처) 삭제. 그림 1 검색전략, 2 연도별 출원, 3 예측 범위, 4 ROC, 5 공정 단독형 예측확률 — 모두 참조 지점에 인라인 배치, 말미 캡션 목록 삭제 |
-| 파급 수정 | 서론 RQ3 "기업과 관할권" → "출원청(관할권)"; §6.1 네 번째 함의에서 YMTC·TSMC 생태계 근거 제거 → 문헌 근거(Hu & Jefferson, Dang & Motohashi, Langlois & Steinmueller, Sakakibara & Branstetter, Lau 2022)로 대체; 데이터 가용성에서 S1 삭제; §2.2·§3의 "부록 A" 참조 → 표 1 |
-| 참고문헌 | 생태계 절에서만 쓰이던 Narin 1987·1997, H. Ernst 2003, Soete 1987 제거 → 57편 |
-
-v1_ko는 보존. 영문 v1과 Rev1_ko에는 적용하지 않음(요청 시 동일 방식으로 적용 가능).
-
-**v3_ko (유저 지시, v2_ko는 §3.2 삭제·부록 편입 시점으로 보존):** 국문 저널 체재에 맞지 않는 Elsevier 요소 제거 — 하이라이트, 저자 각주 placeholder(^a/*), 원고 메타 노트, 말미 선언문 6종(CRediT·이해상충·연구비·데이터 가용성·AI 사용 선언·감사의 글). 그림 캡션은 이미지 아래 1회만(pandoc 중복 라벨 제거). ⚠ AI 사용 고지는 본문에서 뺐으므로 투고 저널이 요구하면 투고 시스템/표지에서 별도 제출.
-v3_ko 제목: 「반도체 하이브리드 본딩 특허에 나타난 전공정–후공정 간 기술융합: 경계를 넘는 특허의 결정요인과 관할권별 전략 분화」.
+**제외한 문헌:** ASME J. Electron. Packag. 148(1) 010801 (2026) — 저자 확인 불가로 미인용.
