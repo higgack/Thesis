@@ -1,6 +1,6 @@
-# 후공정이 전공정으로 들어갈 때: 반도체 하이브리드 본딩에서의 기술융합과 경계를 넘는 특허
+# 반도체 하이브리드 본딩 특허에 나타난 전공정–후공정 간 기술융합: 경계를 넘는 특허의 결정요인과 관할권별 전략 분화
 
-**When the back end reaches into the front end: Technological convergence and boundary-spanning patents in semiconductor hybrid bonding**
+**Front-end/back-end technological convergence in semiconductor hybrid bonding patents: Determinants of boundary-spanning patents and jurisdictional strategy differentiation**
 
 **이형규** ([대학명] 기술경영학과)
 
