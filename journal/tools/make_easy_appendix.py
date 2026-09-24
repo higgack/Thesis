@@ -14,7 +14,7 @@ if r16:
 NUMS = []  # formatted numbers used, for the manuscript number audit
 def stars(p): return '\\*\\*\\*' if p < 0.01 else ('\\*\\*' if p < 0.05 else ('\\*' if p < 0.10 else ''))
 def cell(d, k='rrr'):
-    if d is None: return '—'
+    if d is None or d['se_log'] > 50: return '—'   # not identified (no observations in the cell)
     NUMS.extend([f"{d[k]:.3f}", f"{d['se_log']:.3f}"])
     return f"{d[k]:.3f}{stars(d['p'])} ({d['se_log']:.3f})"
 rows = [('yc','출원연도(yc)'),('breadth','기술범위'),('ccode_CN','중국(CN)'),('ccode_KR','한국(KR)'),('ccode_TW','대만(TW)'),
@@ -61,7 +61,7 @@ def mnl_table(eq, label, tno):
 out.append(mnl_table('Integrated', '통합형', 'B1'))
 out.append(mnl_table('Process', '공정 단독형', 'B2'))
 jp = r['jp_2010_types']; ot = r['other_2010_types']
-out.append(f"*주:* 2010년 이후 표본의 일본 출원은 {sum(jp.values())}건(조립 단독형 {jp['Assembly']}, 통합형 {jp['Integrated']}, 공정 단독형 {jp['Process']})뿐이어서 해당 계수는 신뢰할 수 없고, 기타 출원청은 공정 단독형이 0건이어서 공정 단독형 방정식의 계수가 식별되지 않는다(표시 생략).\n")
+out.append(f"*주:* 2010년 이후 표본의 일본 출원은 {sum(jp.values())}건(조립 단독형 {jp['Assembly']}, 통합형 {jp['Integrated']}, 공정 단독형 {jp['Process']})뿐이어서 해당 계수는 신뢰할 수 없고, 기타 출원청은 공정 단독형이 0건이어서 공정 단독형 방정식의 계수가 식별되지 않는다. 식별되지 않는 계수(해당 범주에 관측치가 없는 경우)는 —로 표시하였다.\n")
 nbs = [('nb_base','기준'),('nb_dedup','동일 제목 중복 제거'),('nb_clean','무관 용법 제외'),('nb_le2022','2023–2024년 제외'),('nb_2010','2010년 이후')]
 if r16: nbs.insert(3, ('nb_core','핵심 표본'))
 hdr = '| | ' + ' | '.join(s[1] for s in nbs) + ' |\n|---|' + ':---:|'*len(nbs) + '\n'

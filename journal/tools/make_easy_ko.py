@@ -60,7 +60,7 @@ for kind in ('표','그림'):
 # numbers subset check
 s1 = pathlib.Path('supplement_S1_v9_ko.md').read_text(encoding='utf-8')
 s2 = pathlib.Path('supplement_S2_v9_ko.md').read_text(encoding='utf-8')
-pat = r'(?<![\d.])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\d])'
+pat = r'(?<![\d./])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\d])'   # numbers after '/' are CPC symbols, not statistics
 def nums(t): return set(x.replace(',','') for x in re.findall(pat, t))
 pool = nums(v9) | nums(s1) | nums(s2) | nums(v9.replace(',','')) | nums(s1.replace(',',''))
 pool |= {'2.7'}   # derived: RRR 2.687 rounded in prose
