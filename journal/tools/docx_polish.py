@@ -104,12 +104,6 @@ def polish_table(tbl, text_width_twips):
             else:
                 w = min(full, longest + 8.0)
             maxw[j] = max(maxw[j], w)
-    total = sum(maxw)
-    widths = [max(int(text_width_twips * w / total), 700) for w in maxw]
-    # rescale if minimums pushed us over
-    s = sum(widths)
-    if s > text_width_twips:
-        widths = [int(w * text_width_twips / s) for w in widths]
     # font size by width pressure
     if ncols >= 9:
         sz = 15   # 7.5 pt
@@ -119,6 +113,31 @@ def polish_table(tbl, text_width_twips):
         sz = 17   # 8.5 pt
     else:
         sz = 18   # 9 pt
+    # longest unbreakable token per column -> minimum width in twips (never wrap a token)
+    longest_tok = [1.0] * ncols
+    for r in rows:
+        for j, c in enumerate(r.cells[:ncols]):
+            for tok in re.split(r'\s+', c.text.strip()):
+                longest_tok[j] = max(longest_tok[j], _weight(tok))
+    def widths_for(sz_):
+        pt = sz_ / 2.0
+        mins = [int(w * 0.5 * pt * 20 + 160) for w in longest_tok]
+        total = sum(maxw)
+        prop = [int(text_width_twips * w / total) for w in maxw]
+        ws = [max(a, b) for a, b in zip(prop, mins)]
+        s = sum(ws)
+        if s > text_width_twips:
+            # shrink only the slack above the minimums
+            slack = [a - b for a, b in zip(ws, mins)]
+            excess = s - text_width_twips
+            tot_slack = sum(slack)
+            if tot_slack > 0:
+                ws = [a - int(excess * (sl / tot_slack)) for a, sl in zip(ws, slack)]
+        return ws, sum(ws)
+    widths, s = widths_for(sz)
+    while s > text_width_twips and sz > 13:
+        sz -= 1
+        widths, s = widths_for(sz)
     # apply grid + cell widths
     tblPr = tbl._tbl.tblPr
     lay = tblPr.find(qn('w:tblLayout'))
