@@ -53,3 +53,4 @@ Method: WebSearch (proxy blocks PLOS/NCBI/Crossref/publisher pages). Each entry 
 | — | Previously verified (rev6/rev7): Cho & Kim 2014; Hwang 2020; Zhu & Motohashi 2022; Caviggioli 2016; Curran & Leker 2011; Kwon et al. 2020; Petralia 2020; Hall & Trajtenberg 2004; Cameron & Trivedi 2013; Hausman et al. 1984; Narin et al. 1987; KnowMade/Yole 2024 | ✅ | |
 | — | Standard method refs (not re-searched): McFadden 1974 (Zarembka ed., Frontiers in Econometrics, 105–142); Hosmer, Lemeshow & Sturdivant 2013 (Applied Logistic Regression, 3rd ed., Wiley) | ✅ (textbook) | |
 | ✗ | ASME J. Electron. Packag. 148(1) 010801 (2026) "Manufacturing challenges of hybrid bonding…" | DROPPED | authors not retrievable (ASME blocked) — excluded from journal paper |
+| 47 | Karvonen & Kässi (2012) Int. J. Business and Systems Research 6(2), 150–175, DOI 10.1504/IJBSR.2012.046353 | ✅ | Inderscience listing + RG; added v7 (closest prior work on intra-value-chain convergence) |
