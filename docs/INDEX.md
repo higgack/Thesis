@@ -23,7 +23,8 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **v15_ko(쉬운 판, 최신)** | [manuscript_v15_ko.md](../journal/manuscript_v15_ko.md) · [.docx](../journal/manuscript_v15_ko.docx) | v14에서 PATSTAT 판본·추출일 자리표시자 제거 |
+| **v16_ko(쉬운 판, 최신)** | [manuscript_v16_ko.md](../journal/manuscript_v16_ko.md) · [.docx](../journal/manuscript_v16_ko.docx) | v15 + 외부 구성·논리 검토 반영(제목 완화, 개념–측정 대응표, 청구 표현 제거, H3a/H3b, 예측확률 그림, 핵심 표본·군집 SE 행) |
+| v15_ko | [manuscript_v15_ko.md](../journal/manuscript_v15_ko.md) · [.docx](../journal/manuscript_v15_ko.docx) | v14에서 PATSTAT 판본·추출일 자리표시자 제거 |
 | v14_ko | [manuscript_v14_ko.md](../journal/manuscript_v14_ko.md) · [.docx](../journal/manuscript_v14_ko.docx) | v13 + 외부 인용 검증 보고서 반영(Macher 페이지·DOI, Hacklin 2010, KnowMade 표기, PATSTAT 자리표시자, 표현 완화) |
 | v13_ko | [manuscript_v13_ko.md](../journal/manuscript_v13_ko.md) · [.docx](../journal/manuscript_v13_ko.docx) | v12 + 영문 저자 줄 축약 |
 | v12_ko | [manuscript_v12_ko.md](../journal/manuscript_v12_ko.md) · [.docx](../journal/manuscript_v12_ko.docx) | v11 + 출원인 정보 문구 수정(6.2·6.3절) |
