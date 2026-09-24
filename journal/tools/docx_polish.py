@@ -121,7 +121,7 @@ def polish_table(tbl, text_width_twips):
                 longest_tok[j] = max(longest_tok[j], _weight(tok))
     def widths_for(sz_):
         pt = sz_ / 2.0
-        mins = [int(w * 0.5 * pt * 20 + 160) for w in longest_tok]
+        mins = [int(w * 0.62 * pt * 20 + 220) for w in longest_tok]
         total = sum(maxw)
         prop = [int(text_width_twips * w / total) for w in maxw]
         ws = [max(a, b) for a, b in zip(prop, mins)]
