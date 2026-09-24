@@ -4,7 +4,7 @@
 > 프로젝트: higgack/Thesis = AI 보조 학술 논문 작성 워크스페이스 (원격 컨테이너=휘발성)
 
 ## Priority 0 (신규, 2026-09-23) — 저널 논문 3종 검토 대기
-**유저 선택: v1_ko 계열.** → **`journal/manuscript_v8_ko.md`(+docx, 보충자료 S1 v8)가 현재 최신.** v6=HB.csv 재추정, v7=정합성·가독성, v8=학기 과제(KR/KR_Final) 수치 대조(전부 일치) + 그림 1(개념도, D2W 오기 수정)·그림 3(OLS 잔차)·표 3(출원청별 유형 분포) 추가 + AI 문체 제거('명세'→'모형 설정', 기울임·줄표 제거). 출원인 정보는 구할 수 없음(유저 확인) → 관할권 해석은 '경쟁·보호의 장'. Rev1_ko는 보류. 원자료 `journal/data/`(gitignore)는 컨테이너 재생성 시 유저에게 다시 받아야 함.
+**유저 선택: v1_ko 계열.** → **`journal/manuscript_v9_ko.md`(+docx, S1·S2 v9)가 현재 최신.** v9 = 7관점 심사(151건) 반영(`review_v8_ko.md`); 모든 수치는 `tools/robustness_v9.py` → `robustness/results_v9.json`에서 생성. 저널 타깃: TASM(영문)·기술혁신연구(국문), `target_journals_ko.md`. 다음 단계: v9를 TASM 영문판·기술혁신연구 국문판으로 변환(스크립트 `scratchpad/wf_translate_format.js` 준비됨; 참고문헌 CAD/APA는 `refs_cad_v9.md`/`refs_apa_v9.md`). v6=HB.csv 재추정, v7=정합성·가독성, v8=학기 과제(KR/KR_Final) 수치 대조(전부 일치) + 그림 1(개념도, D2W 오기 수정)·그림 3(OLS 잔차)·표 3(출원청별 유형 분포) 추가 + AI 문체 제거('명세'→'모형 설정', 기울임·줄표 제거). 출원인 정보는 구할 수 없음(유저 확인) → 관할권 해석은 '경쟁·보호의 장'. Rev1_ko는 보류. 원자료 `journal/data/`(gitignore)는 컨테이너 재생성 시 유저에게 다시 받아야 함.
 영문 v1 + **국문 v1_ko(번역)** + **국문 Rev1_ko(7단계 논리 재구성, 김민구 외 2022 『지능정보연구』 체재 참조)** 작성 완료. Rev1 핵심: RQ1 수렴(63.6%·통합형 최빈·재구성), RQ2 결정요인(범위 OR 1.267), RQ3 국가·기업 전략(표 7 유형 종합). 다음: 유저/교수 검토 → 국내 저널 확정 → 양식 조정 → v2.
 
 ## Priority 0-old (2026-09-23) — 저널 논문 v1 검토 대기
