@@ -1,4 +1,4 @@
-"""Assemble manuscript_v10_ko.md (simplified Korean version) from sources/ko_v10/*.md.
+"""Assemble manuscript_v11_ko.md (simplified Korean version) from sources/ko_v11/*.md.
 
 Reference list: entries of manuscript_v9_ko.md (Elsevier Harvard, with DOIs) that are
 cited in the v10 text. Audits: citation <-> reference list, table/figure order,
@@ -6,7 +6,7 @@ and every decimal/large number in v10 must occur in v9_ko or supplement S1 (numb
 are never new).
 """
 import re, pathlib, sys
-src = pathlib.Path('sources/ko_v10')
+src = pathlib.Path('sources/ko_v11')
 order = ['00_front.md','01_intro.md','02_theory.md','03_context.md','04_data.md','05_results.md','06_discussion.md']
 body = '\n'.join((src/f).read_text(encoding='utf-8').rstrip()+'\n' for f in order)
 v9 = pathlib.Path('manuscript_v9_ko.md').read_text(encoding='utf-8')
@@ -33,7 +33,7 @@ missing = sorted(c for c in cited if c not in {k for k,_ in keyed})
 dropped = sorted(k for k,_ in keyed if k not in cited)
 appendix = (src/'07_appendix.md').read_text(encoding='utf-8')
 text = body + '\n## 참고문헌 (References)\n\n' + '\n\n'.join(kept) + '\n\n---\n\n' + appendix
-pathlib.Path('manuscript_v10_ko.md').write_text(text, encoding='utf-8')
+pathlib.Path('manuscript_v11_ko.md').write_text(text, encoding='utf-8')
 print('cited', len(cited), 'kept refs', len(kept), 'dropped', len(dropped))
 print('cited but not in v9 list:', missing)
 fails = len(missing)
