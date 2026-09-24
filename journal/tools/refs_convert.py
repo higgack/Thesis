@@ -108,6 +108,8 @@ def convert(md, doi_map=None):
         auth = parse_authors(d['authors'])
         doi = d.get('doi') or (doi_map or {}).get(ln[:40]) or ''
         doi = doi.rstrip('.')
+        if doi and not doi.startswith('http'):
+            doi = 'https://doi.org/' + doi
         title_c = headline(d['title'])
         # Chicago: single quotes inside a quoted title; no period after a title ending in ? or !
         inner = re.sub(r'"([^"]*)"', r"'\1'", title_c)
