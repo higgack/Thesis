@@ -35,3 +35,4 @@ rag/sources/*
 rag/kg_output/
 rag/openkb/
 rag/hyper_extract_output/
+journal/data/
