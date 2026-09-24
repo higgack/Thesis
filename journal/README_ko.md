@@ -83,7 +83,7 @@
 
 ---
 
-# v10_ko / v11_ko / v12_ko / v13_ko (2026-09-24) — 쉬운 판(가정·유보 축소)
+# v10_ko … v14_ko (2026-09-24/25) — 쉬운 판(가정·유보 축소)
 
 **목적:** v9는 심사 방어를 위해 유보와 강건성 항목이 많아 읽기 어렵다는 유저 판단 → 본문을 v9의 60% 분량(본문 약 28,600자)으로 줄이고 문장을 짧게 고친 판. 숫자는 v9·S1·S2에 있는 값만 사용(`tools/make_v10_ko.py`가 자동 검증: 신규 숫자 0, 인용 44편 ↔ 참고문헌 44편 일치, 표 1–9·그림 1–5 순서).
 
@@ -100,7 +100,7 @@
 
 **v10_ko**: `manuscript_v10_ko.md/.docx` + 별도 보충자료 `supplement_S1_v10_ko`, `supplement_S2_v10_ko`(v9 S1·S2와 동일 내용).
 
-**v11_ko(단일 파일)**: `manuscript_v11_ko.md/.docx`. v10 본문 + 참고문헌 + 부록 A(OLS·Poisson·음이항 비교), 부록 B(재추정 전체 계수: 표 B1 통합형, B2 공정 단독형, B3 음이항), 부록 C(무관 용법 판정 기준과 분포). 별도 보충자료 없음. **v13_ko(최신)**: v12에서 영문 저자 줄만 "HyungKyu Lee (Department of Management of Technology, Hanyang University)"로 축약. **v12_ko**: v11에서 출원인 정보 문구만 수정. 6.2절 앞 절("자료에 출원인 정보가 없으므로 … 말할 수 없지만") 삭제, 6.3절 첫째 한계를 "출원청 단위 분석, 출원인 정보 미결합, PATSTAT 결합이 다음 단계" 두 문장으로 축약(유저 지시: 접근 불가일 뿐 결합 가능한 정보이므로 약점으로 강조하지 않음). 빌드: `python3 tools/make_easy_appendix.py N && python3 tools/make_easy_ko.py N`(원본 `sources/ko_vN/`; 검증: 신규 숫자 0, 인용 44 ↔ 참고문헌 44, 표·그림 순서). 규칙: 본문 변경은 항상 새 버전 번호로. 군집 표준오차·기간 경계 이동·IIA·분류 관행 점검은 v9 보충자료 S1에만 남김.
+**v11_ko(단일 파일)**: `manuscript_v11_ko.md/.docx`. v10 본문 + 참고문헌 + 부록 A(OLS·Poisson·음이항 비교), 부록 B(재추정 전체 계수: 표 B1 통합형, B2 공정 단독형, B3 음이항), 부록 C(무관 용법 판정 기준과 분포). 별도 보충자료 없음. **v14_ko(최신)**: 외부 인용 검증 보고서(2026-09-25, 유저 제공) 반영. 검증 완료 항목만 수정: Macher & Mowery(2004) pp. 317–355 + DOI(Emerald 확인), Hacklin et al.(2010, IJTM 49(1–3), 220–249, DOI 확인) 추가 후 4단계 모형 인용을 2010으로 이관(2009는 공진화 순환에만), Yole Group → KnowMade(2024) 저자 표기(보도자료·제품 페이지에서 "TSMC, Adeia, YMTC, Intel, Samsung leading" 확인), PATSTAT 판본·추출일 자리표시자([Spring/Autumn], [YYYY-MM-DD]) 삽입, 파운드리 내재화 인과 표현 완화, W2W→D2W "확대"로 수정, 10 µm/1 µm 구분, "청구항" 표현 4곳을 "분류/포괄/출원 단위 보호"로 수정(초록 포함). 미반영: pinpoint page(원문 미확인 페이지는 추가하지 않음), "청구" 약칭의 전면 교체(4.2절 정의로 유지). 참고문헌 44→45편. 참고문헌 덮어쓰기는 `sources/ko_v14/refs_extra.md`. **v13_ko**: v12에서 영문 저자 줄만 "HyungKyu Lee (Department of Management of Technology, Hanyang University)"로 축약. **v12_ko**: v11에서 출원인 정보 문구만 수정. 6.2절 앞 절("자료에 출원인 정보가 없으므로 … 말할 수 없지만") 삭제, 6.3절 첫째 한계를 "출원청 단위 분석, 출원인 정보 미결합, PATSTAT 결합이 다음 단계" 두 문장으로 축약(유저 지시: 접근 불가일 뿐 결합 가능한 정보이므로 약점으로 강조하지 않음). 빌드: `python3 tools/make_easy_appendix.py N && python3 tools/make_easy_ko.py N`(원본 `sources/ko_vN/`; 검증: 신규 숫자 0, 인용 44 ↔ 참고문헌 44, 표·그림 순서). 규칙: 본문 변경은 항상 새 버전 번호로. 군집 표준오차·기간 경계 이동·IIA·분류 관행 점검은 v9 보충자료 S1에만 남김.
 
 # v9_ko (2026-09-24) — 7관점 심사 검토 반영본 + 저널 타깃 선정
 

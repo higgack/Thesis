@@ -31,6 +31,13 @@ def key(ref):
     yr = re.search(r'\b((?:19|20)\d\d[a-z]?)\.', ref).group(1)
     return (first, yr)
 keyed = [(key(r), r) for r in refs_v9]
+# per-version overrides: sources/ko_vN/refs_extra.md replaces (same first author + year) or adds entries
+extra = src/'refs_extra.md'
+if extra.exists():
+    for line in extra.read_text(encoding='utf-8').splitlines():
+        if line.strip():
+            k = key(line); keyed = [(kk, rr) for kk, rr in keyed if kk != k] + [(k, line)]
+keyed.sort(key=lambda kr: kr[1].lower())
 kept = [r for k, r in keyed if k in cited]
 missing = sorted(c for c in cited if c not in {k for k,_ in keyed})
 dropped = sorted(k for k,_ in keyed if k not in cited)
