@@ -110,7 +110,7 @@ Song, C. H., D. Elvers, and J. Leker. 2017. "Anticipation of Converging Technolo
 
 Trajtenberg, M., R. Henderson, and A. Jaffe. 1997. "University versus Corporate Patents: A Window on the Basicness of Invention." *Economics of Innovation and New Technology* 5 (1): 19–50. https://doi.org/10.1080/10438599700000006.
 
-Yole Group (KnowMade). 2024. *Hybrid Bonding Patent Landscape Analysis 2024*. Industry report. Nantes: KnowMade.
+Yole Group. 2024. *Hybrid Bonding Patent Landscape Analysis 2024*. Industry report. Sophia Antipolis: KnowMade (Yole Group).
 
 Zhu, C., and K. Motohashi. 2022. "Identifying the Technology Convergence Using Patent Text Information: A Graph Convolutional Networks (GCN)-Based Approach." *Technological Forecasting and Social Change* 176: 121477. https://doi.org/10.1016/j.techfore.2022.121477.
 

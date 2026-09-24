@@ -102,6 +102,15 @@
 
 **저널 타깃(`journal/target_journals_ko.md`):** 영문 1순위 Technology Analysis & Strategic Management(T&F; Chicago author-date), 2순위 Asian Journal of Technology Innovation. 국문 1순위 기술혁신연구(기술경영경제학회), 2순위 한국혁신학회지. 투고규정 원문은 프록시 차단으로 미열람(미확인 항목은 보고서에 표시).
 
+**저널 양식본 3종(2026-09-24):**
+| 파일 | 양식 | 비고 |
+|---|---|---|
+| `manuscript_v9_ko.md/.docx` (+ `supplement_S1_v9_ko`, `supplement_S2_v9_ko`) | 우리 양식(Elsevier Harvard 인용) | 원본 |
+| `manuscript_v9_ko_JTI.md/.docx` | 기술혁신연구(기술경영경제학회) 임시 양식: Ⅰ–Ⅶ장, 1./1) 절, `<표 n>`/`<그림 n>`, APA(&) 인용, 국문요약+주제어 앞, 영문 Abstract 뒤, 부록 A/B | `tools/make_kr_journal_v9.py`; 투고규정 원문 미확인(kci/dbpia 접근 불가) → 상단 메모 참조. 바탕체 지정 |
+| `manuscript_v9_en_TASM.md/.docx` (+ `supplement_v9_en.md/.docx`) | Technology Analysis & Strategic Management(T&F): Chicago author-date 인용, 영문 초록 213단어, 키워드 6개, Disclosure/Funding/Data availability 문단, 보충자료 분리(Table S1–S28, Figure S1–S2) | `tools/make_en_journal_v9.py`(감사: 한글 잔존 0, 표·그림 번호 순서, 인용↔참고문헌 58편 일치). 표 번호: 표 8(기간 분포)→Table S1, 표 9→Table 8; 그림 3·5→Figure S1·S2, 그림 4·6·7→Figure 3·4·5. 본문 약 11,750단어(TASM 분량 제한은 미확인; 8,000단어 기준이면 축약 필요) |
+
+모든 v9 DOCX는 `tools/build_v9_docx.sh`로 재생성(pandoc → `docx_polish.py`). polish 스크립트는 하이픈 줄바꿈 인식과 최소 열 너비 보존 로직을 보강(별표 `***` 줄바꿈 제거).
+
 **DOCX 표 가독성:** `journal/tools/docx_polish.py`(열 너비 자동, 표 글자 7.5–9pt, 행 분할 금지, 머리글 반복, 주석 행 병합)를 모든 DOCX에 적용.
 
 **보류(저자 확인 필요):** PATSTAT 판본(2025 Spring/Autumn)과 추출일, ITRS 백서 URL, 교신저자 이메일, KnowMade 발행지 표기.

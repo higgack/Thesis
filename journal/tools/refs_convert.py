@@ -85,8 +85,8 @@ MANUAL = {
                'Macher, J. T., & Mowery, D. C. (2004). Vertical specialization and industry structure in high technology industries. In J. A. C. Baum & A. M. McGahan (Eds.), *Business strategy over the industry lifecycle* (Advances in Strategic Management, Vol. 21, pp. 317–356). Emerald.'),
  'McFadden, D.': ('McFadden, D. 1974. "Conditional Logit Analysis of Qualitative Choice Behavior." In *Frontiers in Econometrics*, edited by P. Zarembka, 105–142. New York: Academic Press.',
                'McFadden, D. (1974). Conditional logit analysis of qualitative choice behavior. In P. Zarembka (Ed.), *Frontiers in econometrics* (pp. 105–142). Academic Press.'),
- 'Yole Group': ('Yole Group (KnowMade). 2024. *Hybrid Bonding Patent Landscape Analysis 2024*. Industry report. Nantes: KnowMade.',
-               'Yole Group (KnowMade). (2024). *Hybrid bonding patent landscape analysis 2024* [Industry report]. KnowMade.'),
+ 'Yole Group': ('Yole Group. 2024. *Hybrid Bonding Patent Landscape Analysis 2024*. Industry report. Sophia Antipolis: KnowMade (Yole Group).',
+               'Yole Group. (2024). *Hybrid bonding patent landscape analysis 2024* [Industry report]. KnowMade (Yole Group).'),
 }
 
 def convert(md, doi_map=None):

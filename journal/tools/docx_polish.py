@@ -117,7 +117,8 @@ def polish_table(tbl, text_width_twips):
     longest_tok = [1.0] * ncols
     for r in rows:
         for j, c in enumerate(r.cells[:ncols]):
-            for tok in re.split(r'\s+', c.text.strip()):
+            # whitespace and hyphens are line-break opportunities
+            for tok in re.split(r'\s+|(?<=-)', c.text.strip()):
                 longest_tok[j] = max(longest_tok[j], _weight(tok))
     def widths_for(sz_):
         pt = sz_ / 2.0
@@ -131,7 +132,9 @@ def polish_table(tbl, text_width_twips):
             slack = [a - b for a, b in zip(ws, mins)]
             excess = s - text_width_twips
             tot_slack = sum(slack)
-            if tot_slack > 0:
+            if excess >= tot_slack:
+                ws = list(mins)          # never go below the no-wrap minimums
+            elif tot_slack > 0:
                 ws = [a - int(excess * (sl / tot_slack)) for a, sl in zip(ws, slack)]
         return ws, sum(ws)
     widths, s = widths_for(sz)
