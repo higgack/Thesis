@@ -1,10 +1,11 @@
-"""Generate sources/ko_v11/07_appendix.md (부록 A–C) from robustness/results_v9.json.
+"""Generate sources/ko_v<N>/07_appendix.md (usage: python3 tools/make_easy_appendix.py 12) (부록 A–C) from robustness/results_v9.json.
 
 부록 A: OLS / Poisson / 음이항 비교 (values from manuscript_v9_ko.md Table 4, verified)
 부록 B: full re-estimation results (MNL both equations, NB) across the specifications used in 5.4
 부록 C: identification of irrelevant uses of the search terms (criteria and counts)
 """
-import json, pathlib
+import json, pathlib, sys
+VER = sys.argv[1] if len(sys.argv) > 1 else '12'
 r = json.load(open('robustness/results_v9.json'))
 def stars(p): return '\\*\\*\\*' if p < 0.01 else ('\\*\\*' if p < 0.05 else ('\\*' if p < 0.10 else ''))
 def cell(d, k='rrr'):
@@ -70,5 +71,5 @@ off_order = [('US','미국'),('CN','중국'),('JP','일본'),('EP','EPO'),('WO',
 out.append('**표 C1.** 무관 용법으로 판정한 출원 68건의 분포.\n')
 out.append('| 구분 | 건수 |\n|---|---:|\n' + ''.join(f'| 출원청: {nm} | {bo.get(c,0)} |\n' for c,nm in off_order) +
            f"| 유형: 조립 단독형 | {bt.get('Assembly',0)} |\n| 유형: 통합형 | {bt.get('Integrated',0)} |\n| 유형: 공정 단독형 | {bt.get('Process',0)} |\n| 출원 시기: 2014년 이전 | {fp['pre2015']} |\n| 출원 시기: 2015년 이후 | {fp['n']-fp['pre2015']} |\n")
-pathlib.Path('sources/ko_v11/07_appendix.md').write_text('\n'.join(out), encoding='utf-8')
+pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text('\n'.join(out), encoding='utf-8')
 print('appendix written')
