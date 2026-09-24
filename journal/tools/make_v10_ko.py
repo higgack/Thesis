@@ -31,7 +31,8 @@ keyed = [(key(r), r) for r in refs_v9]
 kept = [r for k, r in keyed if k in cited]
 missing = sorted(c for c in cited if c not in {k for k,_ in keyed})
 dropped = sorted(k for k,_ in keyed if k not in cited)
-text = body + '\n## 참고문헌 (References)\n\n' + '\n\n'.join(kept) + '\n'
+appendix = (src/'07_appendix.md').read_text(encoding='utf-8')
+text = body + '\n## 참고문헌 (References)\n\n' + '\n\n'.join(kept) + '\n\n---\n\n' + appendix
 pathlib.Path('manuscript_v10_ko.md').write_text(text, encoding='utf-8')
 print('cited', len(cited), 'kept refs', len(kept), 'dropped', len(dropped))
 print('cited but not in v9 list:', missing)
@@ -53,7 +54,7 @@ pat = r'(?<![\d.])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\d])'
 def nums(t): return set(x.replace(',','') for x in re.findall(pat, t))
 pool = nums(v9) | nums(s1) | nums(s2) | nums(v9.replace(',','')) | nums(s1.replace(',',''))
 pool |= {'2.7'}   # derived: RRR 2.687 rounded in prose
-new = sorted(x for x in nums(main) if x not in pool and ('.' in x or ',' in x or len(x)>=3))
+new = sorted(x for x in nums(main + appendix) if x not in pool and ('.' in x or ',' in x or len(x)>=3))
 print('numbers in v10 not found in v9/S1/S2:', new); fails += len(new)
 print('chars', len(main), 'FAILS', fails)
 sys.exit(1 if fails else 0)

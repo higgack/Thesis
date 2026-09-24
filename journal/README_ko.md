@@ -98,7 +98,7 @@
 | 판정 | H3a 지지(예외), H3b 유보 | H1·H2·H3 모두 지지, H3 공정 단독형 부분은 '최근 2년 출원 의존'을 표 8·결론에 명시 |
 | 참고문헌 | 58편 | 44편(인용된 것만) |
 
-파일: `manuscript_v10_ko.md/.docx`, `supplement_S1_v10_ko.md/.docx`, `supplement_S2_v10_ko.md/.docx`(S1·S2는 v9와 동일 내용, 머리말만 v10 절 번호로 수정). 원고 절 원본: `sources/ko_v10/`.
+파일: `manuscript_v10_ko.md/.docx` 단일 파일(별도 보충자료 없음). 본문 뒤 참고문헌, 그 뒤 부록 A(OLS·Poisson·음이항 비교), 부록 B(재추정 전체 계수: 표 B1 통합형, B2 공정 단독형, B3 음이항), 부록 C(무관 용법 판정 기준과 분포). 부록은 `tools/make_v10_appendix.py`가 `robustness/results_v9.json`에서 생성. 원고 절 원본: `sources/ko_v10/`. 군집 표준오차·기간 경계 이동·IIA·분류 관행 점검 결과는 v9 보충자료 S1에만 남김.
 
 # v9_ko (2026-09-24) — 7관점 심사 검토 반영본 + 저널 타깃 선정
 
