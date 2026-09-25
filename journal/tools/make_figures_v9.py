@@ -21,7 +21,9 @@ years = list(range(min(yc), max(yc) + 1)); vals = [yc.get(y, 0) for y in years]
 fig, ax = plt.subplots(figsize=(7.5, 4))
 ax.bar(years, vals, color=NAVY, width=0.8)
 ax.set_xlabel(T('출원연도','Filing year')); ax.set_ylabel(T('출원 건수','Number of applications')); ax.set_xlim(1966, 2025)
-ax.axvspan(2022.5, 2024.5, color='#bbbbbb', alpha=0.35, lw=0); ax.text(2023.5, max(vals) * 0.93, T('공개 시차','publication lag'), ha='center', fontsize=8, color='#444')
+ax.set_ylim(0, max(vals) * 1.14)
+ax.axvspan(2022.5, 2024.5, color='#bbbbbb', alpha=0.35, lw=0)
+ax.text(2023.5, max(vals) * 1.07, T('공개 시차','publication lag'), ha='center', va='center', fontsize=8.5, color='#333', bbox=dict(boxstyle='round,pad=0.25', fc='white', ec='#999', lw=0.6))
 fig.tight_layout(); fig.savefig(f'figures/fig2_applications_by_year{SUF}.png'); plt.close(fig)
 
 # Fig 3: OLS residuals vs fitted
