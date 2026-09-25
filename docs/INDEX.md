@@ -23,7 +23,8 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **v18_ko(쉬운 판, 최신)** | [manuscript_v18_ko.md](../journal/manuscript_v18_ko.md) · [.docx](../journal/manuscript_v18_ko.docx) | v17 + 잔여사항 검토 반영(분석단위·검색 절차·표기 통일·그림 캡션·5.4/5.5 분리·한계 6항·결론 4문단) |
+| **v19_ko(쉬운 판, 최신)** | [manuscript_v19_ko.md](../journal/manuscript_v19_ko.md) · [.docx](../journal/manuscript_v19_ko.docx) | v18 + 최종 평가 반영(그림 1 재작성, H3 메커니즘 문단, 전구 기술 표본 설명, CPC 개정 한계, 표현 완화 2곳) |
+| v18_ko | [manuscript_v18_ko.md](../journal/manuscript_v18_ko.md) · [.docx](../journal/manuscript_v18_ko.docx) | v17 + 잔여사항 검토 반영(분석단위·검색 절차·표기 통일·그림 캡션·5.4/5.5 분리·한계 6항·결론 4문단) |
 | v17_ko | [manuscript_v17_ko.md](../journal/manuscript_v17_ko.md) · [.docx](../journal/manuscript_v17_ko.docx) | v16 + 계량분석 검토 반영(H1 구성적 특징, 조정 범위 부록 이동, H3b 제한적 지지, 출원청 계수 해석, 결론 3층 구조) |
 | v16_ko | [manuscript_v16_ko.md](../journal/manuscript_v16_ko.md) · [.docx](../journal/manuscript_v16_ko.docx) | v15 + 외부 구성·논리 검토 반영(제목 완화, 개념–측정 대응표, 청구 표현 제거, H3a/H3b, 예측확률 그림, 핵심 표본·군집 SE 행) |
 | v15_ko | [manuscript_v15_ko.md](../journal/manuscript_v15_ko.md) · [.docx](../journal/manuscript_v15_ko.docx) | v14에서 PATSTAT 판본·추출일 자리표시자 제거 |
