@@ -73,7 +73,7 @@ body += '| N | ' + ' | '.join(str(r[key]['n']) for key,_ in nbs) + ' |\n'
 out.append('**표 B3.** 기술범위의 음이항 모형: 표본별 발생률비(출원청 기준 = 미국; 괄호 안은 로그 계수의 표준오차; \\* p < 0.10, \\*\\* p < 0.05, \\*\\*\\* p < 0.01).\n\n' + hdr + body)
 if r16:
     b = r16['fit']; s1 = r.get('iia', None)
-    out.append('**무관 대안의 독립성(IIA).** 다항 로짓의 IIA 가정을 간접 점검하기 위해 공정 단독형을 제외한 표본(N = 763)에서 통합형 대 조립 단독형을 이항 로짓으로 추정하면 기술범위 OR 1.463, 출원연도 0.987, 중국 출원청 1.177로, 다항 로짓 통합형 방정식의 값(1.403, 0.993, 1.205)과 거의 같다. 세 번째 대안의 존재가 통합형 방정식의 추정을 왜곡한다는 징후는 없다.\n')
+    out.append('**대안 제외 민감도 분석.** IIA 가정과 관련된 민감성을 간접적으로 살피기 위해 공정 단독형을 제외한 표본(N = 763)에서 통합형 대 조립 단독형의 이항 로짓을 추정하였다. 기술범위 OR 1.463, 출원연도 0.987, 중국 출원청 1.177로, 주요 계수의 방향과 상대적 크기는 다항 로짓 통합형 방정식의 값(1.403, 0.993, 1.205)과 유사했다. 이는 공정 단독형을 제외해도 통합형 관련 결과의 실질적 해석이 크게 달라지지 않음을 보여주는 민감도 분석이며, 정식 IIA 검정(Hausman–McFadden, Small–Hsiao)을 대체하지는 않는다.\n')
 out.append('2010년 이후 표본에서 출원연도의 IRR이 1보다 작아지는 것은 본문 제5.1절에서 언급한 대로다. 2010년 이후 표본의 일본 계수(IRR 1.577)는 기술범위가 21인 같은 제목의 출원 4건에 좌우되며, 이 4건을 빼면 1.057(p = 0.75)이 된다.\n')
 fp = r['fp']
 out.append('### 부록 C. 검색어의 무관한 용법\n')
@@ -91,5 +91,9 @@ if r16:
     NUMS.extend([f"{f['mnl_lr']:.1f}", f"{f['mnl_pr2']:.3f}", f"{f['logit_lr']:.1f}", f"{f['logit_pr2']:.3f}", str(f['mnl_df']), str(f['logit_df'])])
     for v in ps.values(): NUMS.extend([f"{v['mean_n24']:.2f}", f"{v['mean_n21']:.2f}", f"{100*v['share_any24']:.1f}"])
     NUMS.extend([str(co['n']), str(co['pre2015'])] + [f"{100*x:.1f}" for x in co['shares'].values()])
+    import math
+    for d in (r['mnl_base']['Integrated']['breadth'], r['mnl_base']['Process']['yc'], r['mnl_base']['Process']['ccode_CN'], r['nb_base']['ccode_CN']):
+        NUMS.extend([f"{math.exp(d['b']-1.96*d['se_log']):.3f}", f"{math.exp(d['b']+1.96*d['se_log']):.3f}"])
+    NUMS.append('1.96')
     pathlib.Path(f'sources/ko_v{VER}/numbers_extra.txt').write_text('\n'.join(sorted(set(NUMS))), encoding='utf-8')
 print('appendix written')
