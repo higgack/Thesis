@@ -23,7 +23,8 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **v22_ko(쉬운 판, 최신)** | [manuscript_v22_ko.md](../journal/manuscript_v22_ko.md) · [.docx](../journal/manuscript_v22_ko.docx) | v21 + 선별 검토 반영(초록 정확성, 주제어, IIA 하향, 표 6 역할, 95% CI, 그림 1·표 1 표현) |
+| **v23_ko(쉬운 판, 최신)** | [manuscript_v23_ko.md](../journal/manuscript_v23_ko.md) · [.docx](../journal/manuscript_v23_ko.docx) | v22 + breadth_adj 정의·계산식·예시 명시(유형 최소치 조정 CPC 범위) |
+| v22_ko | [manuscript_v22_ko.md](../journal/manuscript_v22_ko.md) · [.docx](../journal/manuscript_v22_ko.docx) | v21 + 선별 검토 반영(초록 정확성, 주제어, IIA 하향, 표 6 역할, 95% CI, 그림 1·표 1 표현) |
 | v21_ko | [manuscript_v21_ko.md](../journal/manuscript_v21_ko.md) · [.docx](../journal/manuscript_v21_ko.docx) | v20 + AI 검사 잔여 14블록 2차 문체 재작성(내용·숫자 불변) |
 | v20_ko | [manuscript_v20_ko.md](../journal/manuscript_v20_ko.md) · [.docx](../journal/manuscript_v20_ko.docx) | v19 + AI 검사 표시 20블록 문체 재작성(내용·숫자 불변) |
 | v19_ko | [manuscript_v19_ko.md](../journal/manuscript_v19_ko.md) · [.docx](../journal/manuscript_v19_ko.docx) | v18 + 최종 평가 반영(그림 1 재작성, H3 메커니즘 문단, 전구 기술 표본 설명, CPC 개정 한계, 표현 완화 2곳) |
