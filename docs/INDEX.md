@@ -23,7 +23,8 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **v27_ko(학술지 투고본, 최신)** | [manuscript_v27_ko.md](../journal/manuscript_v27_ko.md) · [.docx](../journal/manuscript_v27_ko.docx) | v26 + 3.3에 가설–모형 대응표(Table 3), 이후 표 번호 4–6 |
+| **v28_ko(학술지 투고본, 최신)** | [manuscript_v28_ko.md](../journal/manuscript_v28_ko.md) · [.docx](../journal/manuscript_v28_ko.docx) | v27 + Table 3 계수 열을 Table 2 변수명(yc, ccode)으로 통일 |
+| **v27_ko** | [manuscript_v27_ko.md](../journal/manuscript_v27_ko.md) · [.docx](../journal/manuscript_v27_ko.docx) | v26 + 3.3에 가설–모형 대응표(Table 3), 이후 표 번호 4–6 |
 | **v26_ko** | [manuscript_v26_ko.md](../journal/manuscript_v26_ko.md) · [.docx](../journal/manuscript_v26_ko.docx) | v25를 가설별 절(4.2 H1 / 4.3 H2 / 4.4 H3a·3b / 4.5 강건성)로 재편 |
 | v25_ko(학술지 투고본) | [manuscript_v25_ko.md](../journal/manuscript_v25_ko.md) · [.docx](../journal/manuscript_v25_ko.docx) | 본문 v24의 41%, 표 5·그림 2, 참고문헌 42편 |
 | **v24_ko_KAIS(학술지 축약본)** | [manuscript_v24_ko_KAIS.md](../journal/manuscript_v24_ko_KAIS.md) · [.docx](../journal/manuscript_v24_ko_KAIS.docx) | 한국산학기술학회논문지 형식: 5장 구조, 번호 인용, 영문 표·그림 제목, 본문 v24의 57% |
