@@ -23,6 +23,7 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
+| **v24_ko_KAIS_short(학술지 최축약본)** | [manuscript_v24_ko_KAIS_short.md](../journal/manuscript_v24_ko_KAIS_short.md) · [.docx](../journal/manuscript_v24_ko_KAIS_short.docx) | 본문 v24의 40%, 표 4·그림 2, 참고문헌 42편 |
 | **v24_ko_KAIS(학술지 축약본)** | [manuscript_v24_ko_KAIS.md](../journal/manuscript_v24_ko_KAIS.md) · [.docx](../journal/manuscript_v24_ko_KAIS.docx) | 한국산학기술학회논문지 형식: 5장 구조, 번호 인용, 영문 표·그림 제목, 본문 v24의 57% |
 | **v24_ko(쉬운 판, 최신)** | [manuscript_v24_ko.md](../journal/manuscript_v24_ko.md) · [.docx](../journal/manuscript_v24_ko.docx) | v23 + 4.4 분석방법 상세화(모형 역할 표 5, 모형식, IRR/OR/RRR 해석, 판정 원칙); 표 6–11로 번호 이동 |
 | v23_ko | [manuscript_v23_ko.md](../journal/manuscript_v23_ko.md) · [.docx](../journal/manuscript_v23_ko.docx) | v22 + breadth_adj 정의·계산식·예시 명시(유형 최소치 조정 CPC 범위) |

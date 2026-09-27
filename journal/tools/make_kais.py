@@ -7,9 +7,9 @@ Sources: sources/ko_kais/*.md (author-year citations in the text).
 Usage: python3 tools/make_kais.py [--base 24]
 """
 import re, sys, pathlib, argparse
-ap = argparse.ArgumentParser(); ap.add_argument('--base', default='24'); a = ap.parse_args()
-src = pathlib.Path('sources/ko_kais')
-order = ['00_front.md','01_intro.md','02_theory.md','03_method.md','04_results.md','05_conclusion.md']
+ap = argparse.ArgumentParser(); ap.add_argument('--base', default='24'); ap.add_argument('--src', default='sources/ko_kais'); ap.add_argument('--out', default=None); a = ap.parse_args()
+src = pathlib.Path(a.src)
+order = sorted(f.name for f in src.glob('0*.md'))
 text = '\n'.join((src/f).read_text(encoding='utf-8').rstrip()+'\n' for f in order)
 base = pathlib.Path(f'manuscript_v{a.base}_ko.md').read_text(encoding='utf-8')
 harvard = [l for l in base.split('## 참고문헌')[1].split('## 부록')[0].splitlines() if re.match(r'^[A-Z]', l)]
@@ -85,7 +85,7 @@ left = [x for x in re.findall(r'[A-Z][a-z]+(?: et al\.| and [A-Z][a-z]+)?,? \(?(
 refs_out = [to_kais(refmap[k]) for k, n in sorted(numbers.items(), key=lambda kv: kv[1])]
 ref_block = '\n\n'.join(f'[{i+1}] {r}' for i, r in enumerate(refs_out))
 out = text + '\n## References\n\n' + ref_block + '\n'
-pathlib.Path(f'manuscript_v{a.base}_ko_KAIS.md').write_text(out, encoding='utf-8')
+pathlib.Path(a.out or f'manuscript_v{a.base}_ko_KAIS.md').write_text(out, encoding='utf-8')
 
 # ---------- audits ----------
 fails = 0
