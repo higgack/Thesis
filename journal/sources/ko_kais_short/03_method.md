@@ -18,11 +18,21 @@
 
 ### 3.2 데이터 및 변수
 
-자료는 PATSTAT Global 2025년판에서 가져왔다(European Patent Office, 2025). CPC H01L21 또는 H01L24 계열 기호를 하나 이상 가진 출원 가운데 영문 제목에 *hybrid bonding*, *direct bonding*, *Cu–Cu*, *copper to copper*, *metal-oxide bond* 중 하나 이상이 들어 있는 출원을 남겼다. 출원–CPC 쌍 5,277건을 출원 식별자별로 집계하면 1968–2024년의 928건이 되며, 분석단위는 개별 특허출원이다. 추출 단계에서 두 클래스 밖의 기호는 보존되지 않았으므로 모든 기호는 H01L21 계열(202개)과 H01L24 계열(60개)의 서브그룹 기호 262개다. 이 광의의 표본은 현대의 하이브리드 본딩뿐 아니라 초기 직접 접합 전구 기술을 함께 포착한다. 본 연구는 H01L21을 전공정 그 자체로 보지 않는다. 표본의 H01L21 계열 기호 1,636건 가운데 조립 단계 공정(패키지 부품 제조, 실장·봉지, 리드 부착, 다이싱)이 403건(24.6%)이며, 그럼에도 하이브리드 본딩의 성능을 좌우하는 웨이퍼 준비, 표면 처리, 평탄화가 H01L21에 다수 포함되고 접합·인터커넥트 기술은 H01L24에 모여 있으므로 두 클래스의 공동분류를 제조공정 영역과 접합 영역 사이의 경계 넘기를 재는 대리측정치로 쓴다.
+자료는 PATSTAT Global 2025년판에서 가져왔다(European Patent Office, 2025). Table 1의 검색 전략에 따라 CPC H01L21 또는 H01L24 계열 기호를 하나 이상 가진 출원을 후보로 한정한 뒤, 영문 제목을 소문자로 바꾸어 지정 키워드(*hybrid bonding*, *direct bonding*, *Cu–Cu*, *copper to copper*, *metal-oxide bond*) 중 하나 이상이 들어 있는 출원만 남겼다. 두 조건을 모두 만족해야 하며, 검색에는 두 클래스의 인덱싱 코드도 썼으나 추출된 레코드에는 본 클래스의 기호만 보존되었다. 출원–CPC 쌍 5,277건을 출원 식별자별로 집계하면 1968–2024년의 928건이 되며, 분석단위는 개별 특허출원이다. 추출 단계에서 두 클래스 밖의 기호는 보존되지 않았으므로 모든 기호는 H01L21 계열(202개)과 H01L24 계열(60개)의 서브그룹 기호 262개다. 이 광의의 표본은 현대의 하이브리드 본딩뿐 아니라 초기 직접 접합 전구 기술을 함께 포착한다.
 
-Table 1은 변수를 정의한다. 기술범위(breadth)는 출원별 H01L21·H01L24 계열의 서로 다른 CPC 서브그룹 수로 분류 기호의 수로 범위를 재는 Lerner(1994)의 방식을 두 클래스 안에 적용한 것이다. 통합형은 최소 breadth가 2이고 단독형은 1이므로, 보유 클래스마다 최소 1개 기호를 차감한 유형 최소치 조정 CPC 범위(breadth_adj)를 탐색적 지표로 따로 둔다. 자료에 출원인 정보가 없으므로 출원청 계수는 관할권의 인과효과가 아니라 해당 출원청에 제출된 발명 포트폴리오의 조건부 구성 차이로 해석한다.
+**Table 1.** Search strategy for hybrid-bonding-related applications
 
-**Table 1.** Variable definitions
+| Step | Condition | Description |
+|---|---|---|
+| CPC | H01L21 | Processes and apparatus for manufacturing semiconductor devices, including wafer bonding (21/18, 21/20), isolation, interconnect and TSV (21/76), substrate and insulating-layer treatment (21/02), CMP (21/30–21/32); also assembly-stage processes (21/48, 21/50–21/58, 21/60, 21/78) and equipment (21/67–21/68) |
+| CPC | H01L24 | Connector structures, bump, layer and wire connections, and related methods and apparatus for connecting or disconnecting semiconductor or solid-state bodies |
+| Keyword | Title | At least one of *hybrid bonding*, *direct bonding*, *Cu–Cu*, *copper to copper*, *metal-oxide bond* (both the CPC and the keyword condition must hold) |
+
+Table 1이 보여주듯 H01L21에는 웨이퍼 제조공정 외에 조립 단계의 제조공정과 공정 장치도 포함되므로, 본 연구는 H01L21을 전공정 그 자체로 보지 않는다. 표본의 H01L21 계열 기호 1,636건 가운데 조립 단계 공정(패키지 부품 제조, 실장·봉지, 리드 부착, 다이싱)이 403건(24.6%)이며, 그럼에도 하이브리드 본딩의 성능을 좌우하는 웨이퍼 준비, 표면 처리, 평탄화가 H01L21에 다수 포함되고 접합·인터커넥트 기술은 H01L24에 모여 있으므로 두 클래스의 공동분류를 제조공정 영역과 접합 영역 사이의 경계 넘기를 재는 대리측정치로 쓴다.
+
+Table 2은 변수를 정의한다. 기술범위(breadth)는 출원별 H01L21·H01L24 계열의 서로 다른 CPC 서브그룹 수로 분류 기호의 수로 범위를 재는 Lerner(1994)의 방식을 두 클래스 안에 적용한 것이다. 통합형은 최소 breadth가 2이고 단독형은 1이므로, 보유 클래스마다 최소 1개 기호를 차감한 유형 최소치 조정 CPC 범위(breadth_adj)를 탐색적 지표로 따로 둔다. 자료에 출원인 정보가 없으므로 출원청 계수는 관할권의 인과효과가 아니라 해당 출원청에 제출된 발명 포트폴리오의 조건부 구성 차이로 해석한다.
+
+**Table 2.** Variable definitions
 
 | Variable | Definition | Type | Caution |
 |---|---|---|---|
