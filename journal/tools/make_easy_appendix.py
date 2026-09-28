@@ -83,7 +83,10 @@ off_order = [('US','미국'),('CN','중국'),('JP','일본'),('EP','EPO'),('WO',
 out.append('**표 C1.** 무관 용법으로 판정한 출원 68건의 분포.\n')
 out.append('| 구분 | 건수 |\n|---|---:|\n' + ''.join(f'| 출원청: {nm} | {bo.get(c,0)} |\n' for c,nm in off_order) +
            f"| 유형: 조립 단독형 | {bt.get('Assembly',0)} |\n| 유형: 통합형 | {bt.get('Integrated',0)} |\n| 유형: 공정 단독형 | {bt.get('Process',0)} |\n| 출원 시기: 2014년 이전 | {fp['pre2015']} |\n| 출원 시기: 2015년 이후 | {fp['n']-fp['pre2015']} |\n")
-pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text('\n'.join(out), encoding='utf-8')
+_txt = '\n'.join(out)
+if int(VER) >= 30:  # v30 thesis: breadth model moved to section 5.3
+    _txt = _txt.replace('본문 제5.1절과 제5.4절(일본)', '본문 제5.3절과 제5.4절(일본)').replace('본문 제5.1절에서 언급한', '본문 제5.3절에서 언급한')
+pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text(_txt, encoding='utf-8')
 if r16:
     # numbers used in the main text that come from results_v16 (rounded as printed)
     c = r16['contrasts']; f = r16['fit']; ps = r16['period_symbols']; co = r16['core']

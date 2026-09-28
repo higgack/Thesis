@@ -65,8 +65,8 @@ def nums(t): return set(x.replace(',','') for x in re.findall(pat, t))
 pool = nums(v9) | nums(s1) | nums(s2) | nums(v9.replace(',','')) | nums(s1.replace(',',''))
 pool |= {'2.7'}   # derived: RRR 2.687 rounded in prose
 pool |= set(re.findall(r'^#+ (\d+\.\d+)', main, re.M))   # section numbers such as 4.4
-extra_nums = src/'numbers_extra.txt'
-if extra_nums.exists(): pool |= set(extra_nums.read_text(encoding='utf-8').split())
+for extra_nums in sorted(src.glob('numbers_*.txt')):   # numbers_extra.txt (appendix) + numbers_v30.txt (convergence indicators) etc.
+    pool |= set(extra_nums.read_text(encoding='utf-8').split())
 new = sorted(x for x in nums(main + appendix) if x not in pool and ('.' in x or ',' in x or len(x)>=3))
 print('numbers not found in v9/S1/S2/extra:', new); fails += len(new)
 print('chars', len(main), 'FAILS', fails)
