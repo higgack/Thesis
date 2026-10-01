@@ -916,6 +916,7 @@ _CJK_TRANSLATE: dict[str, str] = {
     "神達": "미탁",
     "慧榮科技": "실리콘모션",
     "緯穎": "위영",
+    "美光": "마이크론", "美光科技": "마이크론",
     "美银证券": "BofA Securities",
     "群聯": "Phison",
     "聯發科": "미디어텍",
@@ -937,7 +938,23 @@ _CJK_TRANSLATE: dict[str, str] = {
 _SEED_ALIASES: dict[str, str] = {
     "NVIDIA Corporation": "엔비디아",
     "Samsung SDI": "삼성SDI",
+    # 2026-10-01 사용자 요청: 영어 "Micron Technology, Inc." 카드(출처 2)가
+    # 한글 "마이크론"(출처 46)과 따로 생겼다. 한글·영어는 글자가 하나도 안
+    # 겹쳐 2·3단계(글자 비교)로는 영원히 못 잡는다. "Micron Technology"
+    # 하나로 ", Inc." · "Inc" · 대소문자 변형이 전부 잡히고(_SEED_BY_KEY),
+    # 맨이름과 한글 정식 상호는 dedup 키가 달라 따로 둔다.
+    "Micron Technology": "마이크론",
+    "Micron": "마이크론",
+    "마이크론테크놀로지": "마이크론",
 }
+
+# 위 시드를 _dedup_key 로 다시 색인한 것. resolve_topic 의 **마지막 단계**
+# (새 페이지를 만들기 직전)에서만 쓴다 — 1a 의 정확 일치는 쉼표 하나,
+# "Inc" 하나 차이로 빗나가서 시드가 막으려던 영어 병행 페이지가 그대로 다시
+# 생겼다. _dedup_key 는 2단계가 이미 '같은 토픽 이름'으로 쓰는 기준이라
+# 새 개념이 아니다.
+_SEED_BY_KEY: dict[str, str] = {
+    _dedup_key(k): v for k, v in _SEED_ALIASES.items() if _dedup_key(k)}
 
 
 # Topics permanently blocked from the wiki — generic, contentless labels
@@ -953,7 +970,8 @@ def is_topic_blocked(topic: str) -> bool:
 def resolve_topic(proposed: str) -> str:
     """Map a proposed topic name to an existing canonical topic.
     Checked at ingest time so duplicates are prevented, not just detected.
-    Order: exact alias → CJK translate → dedup-key → substring → passthrough."""
+    Order: exact alias → seed → CJK translate → dedup-key → substring →
+    seed format-variant → passthrough."""
     # 1) Exact alias hit (covers Korean↔English pairs set by merge)
     aliases = _load_aliases()
     if proposed in aliases:
@@ -994,6 +1012,18 @@ def resolve_topic(proposed: str) -> str:
         shorter, longer = (pk, ek) if len(pk) <= len(ek) else (ek, pk)
         if _is_substr_dup(shorter, longer):
             return existing
+
+    # 4) 시드의 형식 변형 ("MICRON TECHNOLOGY INC" → 마이크론). 일부러 맨
+    # 마지막이다 — 여기까지 왔다는 건 기존 페이지 어디에도 안 맞아 **새
+    # 페이지를 만들 참**이라는 뜻이고, 시드는 바로 그걸 막으려고 있다.
+    # 1a 옆에 두면 이미 살아 있는 영어 페이지(예: 따로 키워온 "NVIDIA")로
+    # 가던 문서까지 말없이 한글 쪽으로 돌려버린다 — 이 자리에서는 2단계가
+    # 먼저 그 페이지를 찾아주므로 기존 흐름은 하나도 안 바뀐다.
+    # 같은 키끼리면 이미 그 토픽 자신이므로 보내지 않는다(재귀 차단).
+    hit = _SEED_BY_KEY.get(pk)
+    if hit and _dedup_key(hit) != pk:
+        _save_alias(proposed, hit)
+        return resolve_topic(hit)
 
     return proposed
 
