@@ -25,6 +25,7 @@ from __future__ import annotations
 import html
 import logging
 import os
+import re
 import threading
 
 from . import widgets as _widgets
@@ -1387,6 +1388,53 @@ def _format_bullets(escaped: str) -> str:
     return '\n'.join(out)
 
 
+# ```mermaid 펜스 — bot.py 의 _MERMAID_BLOCK_RE 와 같은 모양(들여쓴 펜스 허용).
+# 대시보드는 bot.py 를 import 하지 않으므로 패턴만 같게 둔다.
+_MERMAID_FENCE_RE = re.compile(
+    r"^[ \t]*```mermaid[^\n]*\n(.*?)\n[ \t]*```", re.DOTALL | re.MULTILINE)
+
+
+def _answer_html(text: str) -> str:
+    """답변 본문 → HTML. ```mermaid 블록은 <pre class='mermaid'> 로 바꿔
+    브라우저에서 그림으로 그린다(_QNA_MERMAID_JS). 텔레그램은 같은 블록을
+    사진으로 보내는데 대시보드엔 그 코드가 글자로 찍히거나(대시보드에서 한
+    질문) 아예 없었다(텔레그램에서 한 질문, 2026-10-02 이전 행).
+    코드는 이스케이프해서 넣는다 — 모델 출력이 HTML 로 해석될 일이 없고,
+    mermaid 는 textContent 를 읽으므로 원문 그대로 받는다.
+    다이어그램이 없는 답변은 예전과 **글자 하나 다르지 않게** 나간다."""
+    text = text or ""
+    out: list[str] = []
+    pos = 0
+    for m in _MERMAID_FENCE_RE.finditer(text):
+        before = text[pos:m.start()].strip("\n")
+        if before.strip():
+            out.append(_format_bullets(_esc(before)))
+        out.append(f"<pre class='mermaid'>{_esc(m.group(1).strip())}</pre>")
+        pos = m.end()
+    if not out:
+        return _format_bullets(_esc(text))
+    rest = text[pos:].strip("\n")
+    if rest.strip():
+        out.append(_format_bullets(_esc(rest)))
+    # .answer 는 pre-wrap 이라 "\n" 으로 이으면 그림 위아래로 빈 줄이 생긴다.
+    return "".join(out)
+
+
+def _cost_chip(v) -> str:
+    """질문 1건에 쓴 Gemini 비용(₩). NULL = 2026-10-02 이전 행이라 모름 —
+    0 으로 지어내지 않고 아예 안 그린다. ₩0 은 캐시 적중(모델 호출 없음)."""
+    if v is None:
+        return ""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return ""
+    # 10원 미만은 소수 한 자리(₩3.2) — 반올림하면 대부분 ₩0 이나 ₩1 로 뭉개진다.
+    txt = "₩0" if v == 0 else (f"₩{v:,.0f}" if v >= 10 else f"₩{v:,.1f}")
+    return ("<span class='cost-chip' title='이 질문에 쓴 Gemini 비용 "
+            "(검색·임베딩·답변 합성까지 모든 호출 합계)'>" + txt + "</span>")
+
+
 def _card_data_text(it: dict) -> str:
     """Searchable haystack for the JS filter — lowercased, ascii-safe.
     Intentionally limited to question + answer only. Including tool
@@ -1397,7 +1445,8 @@ def _card_data_text(it: dict) -> str:
     chips instead."""
     parts = [
         it.get("question") or "",
-        it.get("answer") or "",
+        # 차트 문법(xychart-beta, x-axis …)으로 검색이 걸리지 않게 뺀다.
+        _MERMAID_FENCE_RE.sub(" ", it.get("answer") or ""),
     ]
     return _esc(" ".join(parts).lower())[:5000]
 
@@ -1437,6 +1486,77 @@ def _kst_hhmm(ts_iso: str) -> str:
         return ts_iso[11:16]
 
 
+# 질문 카드의 다이어그램·비용 칩. 색은 전부 디자인 토큰 (DESIGN.md).
+_QA_DIAGRAM_CSS = """
+.answer .mermaid { white-space: normal; text-align: center; margin: 14px 0;
+  background: var(--panel-alt); border: 1px solid var(--border-soft);
+  border-radius: 8px; padding: 10px; overflow-x: auto; }
+.answer .mermaid svg { max-width: 100%; height: auto; }
+.answer pre.mermaid:not([data-done="1"]) { white-space: pre-wrap;
+  text-align: left; font-size: 12px; color: var(--muted); }
+.cost-chip { margin-left: 8px; font-size: 12px; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+"""
+
+# 다이어그램은 실제로 있을 때만 mermaid(~2.8MB)를 받는다 — notes_render 와
+# 같은 방식. 목록은 카드를 **펼칠 때** 그린다: 접힌 카드 안은 크기가 0 이라
+# 미리 그리면 망가지고, 2,000장을 한꺼번에 그릴 이유도 없다. securityLevel
+# 은 strict — 답변은 모델 출력이고 그 재료는 남이 쓴 문서다.
+_QNA_MERMAID_JS = """
+(function(){
+  function load(cb){
+    if(window.mermaid){ cb(); return; }
+    (window._qmmdQ = window._qmmdQ || []).push(cb);
+    if(window._qmmdLoading) return;
+    window._qmmdLoading = true;
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js';
+    s.onload = function(){
+      var q = window._qmmdQ || []; window._qmmdQ = [];
+      q.forEach(function(f){ f(); });
+    };
+    document.head.appendChild(s);
+  }
+  function shown(n){
+    for(var d = n.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')){
+      if(!d.open) return false;
+    }
+    return true;
+  }
+  function renderIn(root){
+    var nodes = Array.prototype.filter.call(
+      root.querySelectorAll('pre.mermaid:not([data-done])'), shown);
+    if(!nodes.length) return;
+    nodes.forEach(function(n){ n.dataset.done = 'pending'; });
+    load(function(){
+      var dark = document.documentElement.dataset.theme === 'dark';
+      window.mermaid.initialize({startOnLoad:false, securityLevel:'strict',
+        theme: dark ? 'dark' : 'default'});
+      nodes.forEach(function(node, i){
+        var src = node.textContent;
+        window.mermaid.render('qmmd' + Date.now() + '_' + i, src).then(function(res){
+          node.innerHTML = res.svg;
+          node.dataset.done = '1';
+        }).catch(function(){
+          // 문법이 깨진 차트는 코드를 그대로 보여준다 (빈 칸보다 낫다).
+          node.dataset.done = 'err';
+        });
+      });
+    });
+  }
+  // toggle 은 버블링되지 않는다 — 캡처 단계에서 받는다.
+  document.addEventListener('toggle', function(e){
+    var d = e.target;
+    if(d && d.tagName === 'DETAILS' && d.open) renderIn(d);
+  }, true);
+  function first(){ renderIn(document); }
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', first);
+  } else { first(); }
+})();
+"""
+
+
 def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
     from . import widgets as _widgets
     try:
@@ -1459,7 +1579,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         "<meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
         "<title>🧠 Second Brain Archive</title>",
-        f"<style>{_INDEX_CSS}{_widgets.ALARM_CSS}</style>",
+        f"<style>{_INDEX_CSS}{_widgets.ALARM_CSS}{_QA_DIAGRAM_CSS}</style>",
         f"<script>{_THEME_SWITCHER_JS}</script>",
         "</head><body><div class='layout'>",
         "<header>",
@@ -1620,13 +1740,14 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
                     "<details><summary>"
                     "<div class='row1'>"
                     f"<span>{_esc(_kst_hhmm(it['ts']))}</span>"
-                    f"{tool_chips}{model_chip}{star_btn}{del_btn}"
+                    f"{tool_chips}{model_chip}"
+                    f"{_cost_chip(it.get('cost_krw'))}{star_btn}{del_btn}"
                     "</div>"
                     "<div class='question'>"
                     f"<a href='q-{int(it['id'])}.html'>Q. {_esc(it['question'])}</a>"
                     "</div></summary>"
                     f"{warn}"
-                    f"<div class='answer'>{_format_bullets(_esc(it['answer']))}</div>"
+                    f"<div class='answer'>{_answer_html(it['answer'])}</div>"
                     f"{sources_html}"
                     f"<div class='qa-memo' data-id='{int(it['id'])}'>"
                     "<div class='qa-memo-h'>📝 내 메모</div>"
@@ -1649,6 +1770,7 @@ def _render_index(rows: list[dict], stats: dict, token: str = "") -> str:
         f"{stats['total_qna']:,}건 누적 · 무제한 보관</div>"
     )
     parts.append(f"<script>{_INDEX_JS}</script>")
+    parts.append(f"<script>{_QNA_MERMAID_JS}</script>")
     parts.append(f"<script>{_LINKIFY_JS}</script>")
     parts.append(f"<script>{_widgets.ALARM_JS}</script>")
     parts.append(_widgets.live_reload_js("qna"))
@@ -1735,23 +1857,26 @@ def _render_detail(item: dict, token_dir: str) -> str:
         "<meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
         f"<title>Q&A · {int(item['id'])}</title>",
-        f"<style>{_DETAIL_CSS}{_widgets.ALARM_CSS}{_QA_MEMO_CSS}</style>",
+        f"<style>{_DETAIL_CSS}{_widgets.ALARM_CSS}{_QA_MEMO_CSS}"
+        f"{_QA_DIAGRAM_CSS}</style>",
         f"<script>{_THEME_SWITCHER_JS}</script>",
         "</head><body><main>",
         "<a class='back' href='index.html'>← 목록으로</a>",
         "<div class='meta'>",
         f"<span>{_esc(_kst_day(item['ts']))} {_esc(_kst_hhmm(item['ts']))}</span>",
         model_chip,
+        _cost_chip(item.get("cost_krw")),
         tool_chips,
         "</div>",
         f"<h1>{_esc(item['question'])}</h1>",
         warn,
-        f"<div class='answer'>{_format_bullets(_esc(item['answer']))}</div>",
+        f"<div class='answer'>{_answer_html(item['answer'])}</div>",
         sources_html,
         memo_box,
         "</main>",
         f"<script>{_SRC_INGEST_JS}</script>",
         f"<script>{_DETAIL_JS}</script>",
+        f"<script>{_QNA_MERMAID_JS}</script>",
         f"<script>{_LINKIFY_JS}</script>",
         f"<script>{_memo_js}</script>",
         f"<script>{_widgets.ALARM_JS}</script>",

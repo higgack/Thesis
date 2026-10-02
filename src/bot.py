@@ -1884,7 +1884,7 @@ async def _await_interactive_idle(
 _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【1. 대시보드】</b> Auth·다크19~07
-📊 Q&amp;A http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/
+📊 Q&amp;A(질문별 ₩·차트) http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/
 🕸 KG http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/kg/
 📚 Wiki http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/wiki/
 📒 학습 http://136.115.27.77:8082/1e68e9fae4e6fb1f8298bdee768eb73b/notes/
@@ -2038,7 +2038,8 @@ append. query·expected_sources 자동, expected_facts는 비워둠(네가 채�
 
 <b>/deep &lt;질문&gt;</b>
 Gemini 2.5 Pro 강제 사용. 기본 답변은 Flash, /deep 만 Pro (비용 ~4배,
-정확도/추론 강함).
+정확도/추론 강함). 실제로 든 비용은 대시보드 Q&amp;A 카드의 ₩ 표시
+(검색·임베딩·합성 전부 합계, 같은 질문 1시간 내 재질문은 캐시라 ₩0).
 언제: 복잡한 다단계 추론 · 다수 자료 종합 비판 검토 · 수치 audit 필요.
 
 <b>자연어 트리거 (대화창 직접):</b>
@@ -10058,6 +10059,21 @@ async def _send_agent_reply(send, result, send_photo=None, inherited: bool = Fal
     if result.get("tool_calls"):
         suffix_lines.append(_format_tool_calls(result["tool_calls"]))
 
+    # 대시보드 보관용 본문 (2026-10-02). 텔레그램은 다이어그램을 사진으로
+    # 따로 보내므로 아래에서 돌려주는 body 는 자리표시를 지운 것이고, 호출부가
+    # 그걸 그대로 qna.record 에 넣어서 대시보드 카드엔 그림이 **아예 없었다**.
+    # 같은 자리에 ```mermaid 를 되살려 result 에 실어 둔다 — F-2 감사가
+    # 재구성한 차트까지 포함되므로 텔레그램에서 본 것과 같은 그림이다.
+    # 돌려주는 body 는 그대로 둔다: 대화 기록(_record_turn)에 차트 코드가
+    # 들어가면 후속 질문마다 그 토큰을 다시 낸다.
+    def _restore_block(m: "re.Match[str]") -> str:
+        i = int(m.group(1))
+        if 0 <= i < len(blocks):
+            return f"\n```mermaid\n{blocks[i]}\n```\n"
+        return ""
+    result["archive_text"] = re.sub(
+        r"__MERMAID_BLOCK_(\d+)__", _restore_block, body).strip()
+
     if send_photo is not None and blocks:
         # Inline mode. Split on placeholder tokens, walk parts in
         # order. The split keeps the captured index group so we know
@@ -10307,11 +10323,12 @@ async def _finalize_agent_reply(message, ctx: ContextTypes.DEFAULT_TYPE,
             qna.record,
             chat_id=chat_id,
             question=text,
-            answer=body,
+            answer=result.get("archive_text") or body,
             sources=result.get("sources") or [],
             tools=result.get("tool_calls") or [],
             model=result.get("model"),
             warning=result.get("warning"),
+            cost_krw=result.get("cost_krw"),
         )
         try:
             from .dashboard import regenerate as dashboard_regen
@@ -12132,7 +12149,10 @@ def _alarm_card_text(kind: str, item_id: str) -> tuple[str, str]:
             from .store import qna
             r = qna.get(int(item_id))
             if r:
-                return (r.get("question") or "Q&A", (r.get("answer") or "")[:600])
+                # 보관 본문엔 다이어그램 코드(```mermaid)가 들어 있다 —
+                # 알람 미리보기 600자를 차트 문법으로 채우지 않게 뺀다.
+                ans = _MERMAID_BLOCK_RE.sub("", r.get("answer") or "").strip()
+                return (r.get("question") or "Q&A", ans[:600])
         elif kind == "note":
             from .notes import store as _ns
             n = _ns.get_note(item_id)
@@ -12493,11 +12513,13 @@ async def _drain_pending_pro(ctx: ContextTypes.DEFAULT_TYPE):
             await asyncio.to_thread(_persist_chat_history)
             await asyncio.to_thread(
                 qna.record,
-                chat_id=chat_id, question=question, answer=body,
+                chat_id=chat_id, question=question,
+                answer=result.get("archive_text") or body,
                 sources=result.get("sources") or [],
                 tools=result.get("tool_calls") or [],
                 model=result.get("model"),
                 warning=result.get("warning"),
+                cost_krw=result.get("cost_krw"),
             )
             from .dashboard import regenerate as dashboard_regen
             await asyncio.to_thread(dashboard_regen.regenerate)
@@ -14649,6 +14671,7 @@ async def _dash_query_worker(ctx: "ContextTypes.DEFAULT_TYPE") -> None:
                     tools=result.get("tool_calls") or [],
                     model=result.get("model"),
                     warning=result.get("warning"),
+                    cost_krw=result.get("cost_krw"),
                 )
             except Exception:
                 log.exception("dash worker: qna.record failed")

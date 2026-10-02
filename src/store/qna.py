@@ -47,6 +47,12 @@ def _init_once(c: sqlite3.Connection) -> None:
     cols = {r[1] for r in c.execute("PRAGMA table_info(qna)")}
     if "important" not in cols:
         c.execute("ALTER TABLE qna ADD COLUMN important INTEGER DEFAULT 0")
+    if "cost_krw" not in cols:
+        # 질문 1건에 쓴 Gemini 비용 합계(₩) — agent.run 의 cost.track_run()
+        # 이 모은 값 (2026-10-02). 이전 행은 NULL: 그때 비용은 질문별로 묶여
+        # 기록되지 않았고, cost.db 의 시간대로 역산하면 동시에 돈 인제스트가
+        # 섞여 틀린 숫자가 된다 — 모르는 건 0 이 아니라 '없음'으로 둔다.
+        c.execute("ALTER TABLE qna ADD COLUMN cost_krw REAL")
     _inited = True
 
 
@@ -71,15 +77,16 @@ def record(chat_id: int, question: str, answer: str,
            sources: list[str] | None = None,
            tools: list[str] | None = None,
            model: str | None = None,
-           warning: str | None = None) -> None:
+           warning: str | None = None,
+           cost_krw: float | None = None) -> None:
     """Persist one Q&A turn. Errors are swallowed — archiving must
     never block a user reply."""
     try:
         with _conn() as c:
             c.execute(
                 "INSERT INTO qna(ts, chat_id, question, answer, "
-                "sources, tools, model, warning) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "sources, tools, model, warning, cost_krw) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     datetime.utcnow().isoformat(timespec="seconds"),
                     int(chat_id),
@@ -89,6 +96,7 @@ def record(chat_id: int, question: str, answer: str,
                     json.dumps(tools or [], ensure_ascii=False),
                     model,
                     warning,
+                    None if cost_krw is None else float(cost_krw),
                 ),
             )
     except Exception:
@@ -97,7 +105,7 @@ def record(chat_id: int, question: str, answer: str,
 
 def _row_to_dict(row: tuple) -> dict:
     cols = ("id", "ts", "question", "answer", "sources",
-            "tools", "model", "warning", "important")
+            "tools", "model", "warning", "important", "cost_krw")
     d = dict(zip(cols, row))
     try:
         d["sources"] = json.loads(d["sources"] or "[]")
@@ -119,7 +127,7 @@ def recent(limit: int = 100, offset: int = 0,
             like = f"%{search}%"
             cur = c.execute(
                 "SELECT id, ts, question, answer, sources, tools, "
-                "model, warning, important FROM qna "
+                "model, warning, important, cost_krw FROM qna "
                 "WHERE question LIKE ? OR answer LIKE ? "
                 "ORDER BY ts DESC LIMIT ? OFFSET ?",
                 (like, like, int(limit), int(offset)),
@@ -127,7 +135,7 @@ def recent(limit: int = 100, offset: int = 0,
         else:
             cur = c.execute(
                 "SELECT id, ts, question, answer, sources, tools, "
-                "model, warning, important FROM qna "
+                "model, warning, important, cost_krw FROM qna "
                 "ORDER BY ts DESC LIMIT ? OFFSET ?",
                 (int(limit), int(offset)),
             )
@@ -138,7 +146,7 @@ def get(qna_id: int) -> dict | None:
     with _conn() as c:
         cur = c.execute(
             "SELECT id, ts, question, answer, sources, tools, "
-            "model, warning, important FROM qna WHERE id = ?",
+            "model, warning, important, cost_krw FROM qna WHERE id = ?",
             (int(qna_id),),
         )
         row = cur.fetchone()

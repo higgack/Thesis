@@ -802,7 +802,9 @@ async def run(message: str, deep: bool = False,
     """
     cache_key = _answer_cache_key(message, deep, history)
     if (cached := _answer_cache_lookup(cache_key)) is not None:
-        return {**cached, "cached": True}
+        # 캐시에 든 cost_krw 는 첫 실행의 비용이다. 이번엔 모델을 한 번도
+        # 안 불렀으므로 0 — 안 그러면 같은 비용이 두 카드에 두 번 찍힌다.
+        return {**cached, "cached": True, "cost_krw": 0.0}
 
     contents: list[types.Content] = []
     for turn in (history or []):
@@ -828,8 +830,14 @@ async def run(message: str, deep: bool = False,
         "step": 0,
         "pro_decision": None,
     }
-    result = await _loop(state)
-    result = await _enforce_tool_use(state, result)
+    # 질문 1건 = 이 블록. 에이전트 루프·도구 안의 LLM 호출·질의 임베딩·
+    # 도구 재시도(_enforce_tool_use)까지 전부 cost.record() 를 거치므로
+    # 여기서 합산된다. 대시보드 질문 카드의 비용 표시가 이 값이다.
+    with cost.track_run() as _acc:
+        result = await _loop(state)
+        result = await _enforce_tool_use(state, result)
+    if isinstance(result, dict):
+        result["cost_krw"] = _acc[0]
     # Only cache successful, non-error answers — error states surface
     # quickly enough that re-trying might succeed on the next pass.
     if result and not result.get("error") and result.get("text"):
@@ -922,12 +930,16 @@ async def resume(state_id: str, decision: str) -> dict:
             "tool_calls": state["tool_calls"],
             "model": state["model"],
             "query": state["message"],
+            # 취소해도 확인 전까지 검색·합성에 쓴 비용은 이미 나갔다.
+            "cost_krw": state.get("cost_krw") or 0.0,
         }
     state["pro_decision"] = decision
     if decision == "pro":
         state["model"] = config.DEEP_MODEL
-    result = await _loop(state)
+    with cost.track_run(start=state.get("cost_krw") or 0.0) as _acc:
+        result = await _loop(state)
     result["query"] = state["message"]
+    result["cost_krw"] = _acc[0]
     return result
 
 
@@ -1060,6 +1072,9 @@ async def _loop(state: dict) -> dict:
                 "step": step + 1,
                 "pro_decision": None,
                 "ts": time.time(),
+                # 여기까지 쓴 비용 — resume() 이 이어서 더한다. 안 그러면
+                # 버튼 누른 뒤의 비용만 카드에 찍혀 실제보다 적게 보인다.
+                "cost_krw": cost.run_cost_so_far() or 0.0,
             }
             log.info("suspending for Pro confirmation: %d docs, state_id=%s",
                      compare_papers_count, state_id)

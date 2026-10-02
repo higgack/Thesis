@@ -10,8 +10,10 @@ The KRW conversion is hard-coded to a sane default; pricing per model
 mirrors Gemini 2.5 public list rates as of late 2025."""
 from __future__ import annotations
 
+import contextvars
 import logging
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
@@ -116,6 +118,36 @@ def _conn():
         c.close()
 
 
+# 질문 1건(에이전트 실행 1회)에 든 비용을 모으는 자리 (2026-10-02, 대시보드
+# 질문별 비용 표시). track_run() 블록 안에서 일어난 record() 는 — 같은
+# 태스크든, 거기서 갈라진 태스크·to_thread 작업이든(컨텍스트가 복사되며 같은
+# 리스트를 가리킨다) — 전부 여기에 더해진다. 동시에 도는 다른 질문·인제스트는
+# 자기 컨텍스트에 이 값이 없으므로 섞이지 않는다. 아래 last_call() 은 "가장
+# 최근 행"이라 동시 실행에서 남의 비용을 집을 수 있어 질문 단위 합산에 못 쓴다.
+_RUN_COST: "contextvars.ContextVar[list[float] | None]" = contextvars.ContextVar(
+    "cost_run_acc", default=None)
+# 임베딩 등 to_thread 워커가 같은 리스트에 동시에 더할 수 있다.
+_RUN_LOCK = threading.Lock()
+
+
+@contextmanager
+def track_run(start: float = 0.0):
+    """이 블록 안의 모든 Gemini 호출 비용(₩)을 acc[0] 에 모은다. `start` 는
+    Pro 확인 버튼으로 끊겼다 이어지는 실행이 앞부분 비용을 들고 오는 자리."""
+    acc = [float(start or 0.0)]
+    tok = _RUN_COST.set(acc)
+    try:
+        yield acc
+    finally:
+        _RUN_COST.reset(tok)
+
+
+def run_cost_so_far() -> float | None:
+    """현재 track_run() 블록의 누적 비용. 블록 밖이면 None."""
+    acc = _RUN_COST.get()
+    return acc[0] if acc is not None else None
+
+
 # 가격표에 없는 모델을 이미 경고한 적이 있는지 (모델당 1회만 운다).
 # record() 는 Gemini 호출마다 돌기 때문에 무조건 경고하면 로그가 넘친다.
 _UNPRICED_WARNED: set[str] = set()
@@ -170,6 +202,11 @@ def record(model: str, in_tokens: int = 0, out_tokens: int = 0,
     try:
         cost = _price_krw(_normalize(model), in_tokens, out_tokens,
                           cached_tokens)
+        # DB 기록보다 먼저 더한다 — 기록이 실패해도 돈은 이미 나갔다.
+        acc = _RUN_COST.get()
+        if acc is not None:
+            with _RUN_LOCK:
+                acc[0] += cost
         with _conn() as c:
             c.execute(
                 "INSERT INTO calls(ts, model, in_tokens, out_tokens, cost_krw,"
