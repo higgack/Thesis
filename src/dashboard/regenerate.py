@@ -1100,7 +1100,7 @@ _INDEX_JS = r"""
   function askEsc(s){
     return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
-  function askRenderBody(s){
+  function askRenderText(s){
     var h = askEsc(s);
     h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
     h = h.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
@@ -1117,6 +1117,29 @@ _INDEX_JS = r"""
     }
     if (inUl) out.push('</ul>');
     return out.join('\n');
+  }
+  // ```mermaid 블록을 서식 처리 **전에** 떼어 그림 자리로 바꾼다 (2026-10-03).
+  // 그대로 두면 위 `code` 정규식이 펜스의 백틱을 먹어 차트 코드가 깨진
+  // <code> 덩어리로 찍혔다. 정규식은 bot.py _MERMAID_BLOCK_RE 와 같은 모양
+  // (들여쓴 펜스 허용). split 은 캡처 그룹을 결과에 끼워 넣으므로 짝수 칸이
+  // 본문, 홀수 칸이 차트 코드다. 그림은 _QNA_MERMAID_JS 가 그린다.
+  function askRenderBody(s){
+    var parts = (s || '').split(/^[ \t]*```mermaid[^\n]*\n([\s\S]*?)\n[ \t]*```/m);
+    if (parts.length === 1) return askRenderText(s);
+    var out = [];
+    for (var i = 0; i < parts.length; i++){
+      if (i % 2 === 0){
+        var t = parts[i].replace(/^\n+|\n+$/g, '');
+        if (t.trim()) out.push(askRenderText(t));
+      } else {
+        out.push("<pre class='mermaid'>" + askEsc(parts[i].trim()) + "</pre>");
+      }
+    }
+    return out.join('');
+  }
+  function askDiagrams(){
+    // 패널이 보이는 상태에서 불러야 한다 — 숨긴 채 그리면 크기가 0 이다.
+    if (window._qnaRenderDiagrams) window._qnaRenderDiagrams(askPanel);
   }
   function askClose(){
     if (askPoll){ clearInterval(askPoll); askPoll = null; }
@@ -1185,6 +1208,7 @@ _INDEX_JS = r"""
     askPanel.innerHTML = askHeader(qText, kindChip) + body;
     askPanel.classList.remove('hidden');
     askWire(qText);
+    askDiagrams();
   }
   function askSubmit(q){
     if (askPoll){ clearInterval(askPoll); askPoll = null; }
@@ -1240,6 +1264,10 @@ _INDEX_JS = r"""
       askPanel.innerHTML = askHistory.pop();
       askPanel.classList.remove('hidden');
       askWire();
+      // 저장된 HTML 에 그리던 중(pending)이 섞여 있으면 코드만 남는다.
+      askPanel.querySelectorAll('pre.mermaid[data-done="pending"]')
+        .forEach(function(n){ n.removeAttribute('data-done'); });
+      askDiagrams();
     } else {
       askClose();
     }
@@ -1486,13 +1514,14 @@ def _kst_hhmm(ts_iso: str) -> str:
         return ts_iso[11:16]
 
 
-# 질문 카드의 다이어그램·비용 칩. 색은 전부 디자인 토큰 (DESIGN.md).
+# 질문 카드·대시보드 질문창의 다이어그램과 비용 칩. 색은 전부 디자인 토큰 (DESIGN.md).
 _QA_DIAGRAM_CSS = """
-.answer .mermaid { white-space: normal; text-align: center; margin: 14px 0;
-  background: var(--panel-alt); border: 1px solid var(--border-soft);
+.answer .mermaid, .ask-body .mermaid { white-space: normal; text-align: center;
+  margin: 14px 0; background: var(--panel-alt); border: 1px solid var(--border-soft);
   border-radius: 8px; padding: 10px; overflow-x: auto; }
-.answer .mermaid svg { max-width: 100%; height: auto; }
-.answer pre.mermaid:not([data-done="1"]) { white-space: pre-wrap;
+.answer .mermaid svg, .ask-body .mermaid svg { max-width: 100%; height: auto; }
+.answer pre.mermaid:not([data-done="1"]),
+.ask-body pre.mermaid:not([data-done="1"]) { white-space: pre-wrap;
   text-align: left; font-size: 12px; color: var(--muted); }
 .cost-chip { margin-left: 8px; font-size: 12px; color: var(--muted);
   font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -1544,6 +1573,8 @@ _QNA_MERMAID_JS = """
       });
     });
   }
+  // 대시보드 질문창(.ask-panel)이 답을 받은 뒤 부른다.
+  window._qnaRenderDiagrams = renderIn;
   // toggle 은 버블링되지 않는다 — 캡처 단계에서 받는다.
   document.addEventListener('toggle', function(e){
     var d = e.target;
