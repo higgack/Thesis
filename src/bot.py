@@ -1688,6 +1688,13 @@ async def _send_body_with_mermaid(update, ctx, body: str,
             if not (0 <= block_idx < len(blocks)):
                 continue
             code = blocks[block_idx]
+            if isinstance(ctx.bot, _FakeBot):
+                # 대시보드 head-less 실행 (2026-10-03). _CapturedReply 는
+                # 사진 바이트를 담지 못해(캡션만 남는다) 차트가 통째로
+                # 사라졌고, 그 PNG 를 만드는 외부 렌더 호출만 헛돌았다.
+                # 코드를 넘겨 대시보드 질문창이 브라우저에서 그리게 한다.
+                ctx.bot.capture_mermaid(code)
+                continue
             try:
                 png = await _render_mermaid_png(code)
                 await ctx.bot.send_photo(
@@ -14281,18 +14288,40 @@ _DASH_MUTATION_COMMANDS = frozenset({
 
 class _CapturedReply:
     """Collects the text a handler would have sent to Telegram, so a
-    read-only command can run head-less for the dashboard. Inline
-    keyboards and media are dropped — the dashboard renders text only."""
+    command can run head-less for the dashboard. Inline keyboards are
+    dropped; mermaid charts pass through as code for the dashboard to draw
+    (see _send_body_with_mermaid) — a photo's bytes can't be captured.
+
+    Each captured chunk is a "message" with an id, so an edit REPLACES it
+    the way Telegram does (2026-10-03). Before, ids were all 0 and
+    _FakeBot had no edit_message_text: its __getattr__ no-op swallowed the
+    call as a success, so every command that writes its result by editing
+    the "⏳" status bubble (search_patents, patent_stats, kipris_*, kr_* …)
+    showed ONLY the spinner on the dashboard.
+
+    Ids are NEGATIVE (-1, -2, …). Real Telegram ids are positive, and
+    _ingest_message persists status ids to active_bubbles.json, which the
+    REAL bot edits on restart — a positive fake id would overwrite a real
+    old message in the owner chat. Telegram rejects ≤0 ids, as it did 0."""
 
     def __init__(self):
         self.chunks: list[str] = []
 
-    def add(self, text) -> None:
-        if text:
-            self.chunks.append(str(text))
+    def add(self, text) -> int:
+        if not text:
+            return 0
+        self.chunks.append(str(text))
+        return -len(self.chunks)
+
+    def replace(self, mid, text) -> bool:
+        if (text and isinstance(mid, int) and mid < 0
+                and -mid <= len(self.chunks)):
+            self.chunks[-mid - 1] = str(text)
+            return True
+        return False
 
     def text(self) -> str:
-        return "\n\n".join(self.chunks).strip()
+        return "\n\n".join(c for c in self.chunks if c).strip()
 
 
 class _FakeChat:
@@ -14310,40 +14339,36 @@ class _FakeUser:
 
 
 class _FakeMessage:
-    def __init__(self, sink: "_CapturedReply", text: str = ""):
+    def __init__(self, sink: "_CapturedReply", text: str = "", mid: int = 0):
         self._sink = sink
         self.text = text
         self.caption = None
         self.chat = _FakeChat()
-        self.message_id = 0
+        self.message_id = mid
 
     async def reply_text(self, text=None, **kw):
-        self._sink.add(text)
-        return _FakeMessage(self._sink)
+        return _FakeMessage(self._sink, mid=self._sink.add(text))
 
     async def reply_html(self, text=None, **kw):
-        self._sink.add(text)
-        return _FakeMessage(self._sink)
+        return _FakeMessage(self._sink, mid=self._sink.add(text))
 
     async def reply_markdown(self, text=None, **kw):
-        self._sink.add(text)
-        return _FakeMessage(self._sink)
+        return _FakeMessage(self._sink, mid=self._sink.add(text))
 
     async def reply_markdown_v2(self, text=None, **kw):
-        self._sink.add(text)
-        return _FakeMessage(self._sink)
+        return _FakeMessage(self._sink, mid=self._sink.add(text))
 
     async def edit_text(self, text=None, **kw):
-        self._sink.add(text)
-        return _FakeMessage(self._sink)
+        # Telegram 의 edit 은 그 메시지를 바꾼다 — 덧붙이지 않는다.
+        if not self._sink.replace(self.message_id, text):
+            self._sink.add(text)
+        return self
 
     async def reply_photo(self, photo=None, caption=None, **kw):
-        self._sink.add(caption)
-        return _FakeMessage(self._sink)
+        return _FakeMessage(self._sink, mid=self._sink.add(caption))
 
     async def reply_document(self, document=None, caption=None, **kw):
-        self._sink.add(caption)
-        return _FakeMessage(self._sink)
+        return _FakeMessage(self._sink, mid=self._sink.add(caption))
 
     async def reply_chat_action(self, *a, **kw):
         return None
@@ -14354,16 +14379,27 @@ class _FakeBot:
         self._sink = sink
 
     async def send_message(self, chat_id=None, text=None, **kw):
-        self._sink.add(text)
-        return _FakeMessage(self._sink)
+        return _FakeMessage(self._sink, mid=self._sink.add(text))
+
+    async def edit_message_text(self, text=None, chat_id=None,
+                                message_id=None, **kw):
+        # 인자 순서는 python-telegram-bot 과 같다(text 가 첫 번째).
+        # 이 메서드가 없던 동안 __getattr__ 의 no-op 이 받아서 결과가
+        # 사라졌다 — _CapturedReply docstring 참조.
+        if not self._sink.replace(message_id, text):
+            self._sink.add(text)
+        return _FakeMessage(
+            self._sink, mid=message_id if isinstance(message_id, int) else 0)
 
     async def send_photo(self, chat_id=None, caption=None, **kw):
-        self._sink.add(caption)
-        return _FakeMessage(self._sink)
+        return _FakeMessage(self._sink, mid=self._sink.add(caption))
 
     async def send_document(self, chat_id=None, caption=None, **kw):
-        self._sink.add(caption)
-        return _FakeMessage(self._sink)
+        return _FakeMessage(self._sink, mid=self._sink.add(caption))
+
+    def capture_mermaid(self, code: str) -> None:
+        """차트를 PNG 대신 코드로 남긴다 — 대시보드 질문창이 그린다."""
+        self._sink.add(f"<pre class='mermaid'>{html.escape(code)}</pre>")
 
     def __getattr__(self, name):
         # Any other bot API call → async no-op, so a read-only handler
