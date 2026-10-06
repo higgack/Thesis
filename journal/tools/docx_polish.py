@@ -26,7 +26,11 @@ def _weight(text):
         o = ord(ch)
         if 0xAC00 <= o <= 0xD7A3 or 0x3000 <= o <= 0x9FFF:
             w += 2.0
-        elif ch in '()%*.,':
+        elif ch == '*':
+            w += 0.8      # asterisks render wider than half a digit
+        elif ch == '\u2212':
+            w += 1.4      # typographic minus is wider than a digit
+        elif ch in '()%.,':
             w += 0.5
         else:
             w += 1.0
