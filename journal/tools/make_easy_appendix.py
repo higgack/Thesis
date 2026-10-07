@@ -85,6 +85,8 @@ out.append('| 구분 | 건수 |\n|---|---:|\n' + ''.join(f'| 출원청: {nm} | {
            f"| 유형: 조립 단독형 | {bt.get('Assembly',0)} |\n| 유형: 통합형 | {bt.get('Integrated',0)} |\n| 유형: 공정 단독형 | {bt.get('Process',0)} |\n| 출원 시기: 2014년 이전 | {fp['pre2015']} |\n| 출원 시기: 2015년 이후 | {fp['n']-fp['pre2015']} |\n")
 _txt = '\n'.join(out)
 if int(VER) >= 32:  # v32 thesis: office hypothesis removed -> no breadth (NB) model, office dummies are unreported controls
+    if int(VER) >= 38:  # v38: the 2023–2024 exclusion check is no longer reported
+        specs[:] = [sp for sp in specs if sp[0] != 'mnl_le2022']
     rows = [('yc', '출원연도(yc)'), ('breadth', '기술범위')]
     out2 = ['## 부록\n', '### 부록 A. 재추정 결과 전체\n',
             '표 A1과 A2는 본문의 강건성 요약표(표 11)에 실은 재추정의 전체 계수다. 각 열은 표본 또는 변수 정의를 하나씩 바꾼 다항 로짓이며, 기준 열은 본문의 다항 로짓 표와 같다. 모든 열에 출원청 더미를 통제변수로 넣었으나 계수는 생략하였다. 조정 범위는 출원이 보유한 클래스마다 최소 1개 기호를 차감한 유형 최소치 조정 CPC 범위(breadth_adj)를, 동일 제목 중복 제거는 같은 제목의 출원 가운데 가장 이른 1건만 남긴 표본을, 좁은 전공정 정의는 H01L21의 조립 단계 공정 기호를 제조공정으로 세지 않은 변수를, 무관 용법 제외는 부록 B의 68건을 뺀 표본을, 핵심 표본은 제목에 hybrid bonding이 들어 있는 출원만 남긴 표본을, 2023–2024년 제외는 공개 시차의 영향을 받는 두 해를 뺀 표본을 뜻한다. 2010년 이후 표본은 본문 제5.2절에서 언급한 것이다.\n']
@@ -103,6 +105,8 @@ if int(VER) >= 30:  # v30 thesis: breadth model moved to section 5.3
 if int(VER) >= 37:  # v37: type renamed 조립 단독형 -> 접합 단독형; H01L21 assembly-stage subgroups called 패키징 단계
     for a, b in [('조립 단독형', '접합 단독형'), ('조립 단계 공정', '패키징 단계 공정'), ('조립 단계의', '패키징 단계의')]:
         _txt = _txt.replace(a, b)
+if int(VER) >= 38:
+    _txt = _txt.replace(', 2023–2024년 제외는 공개 시차의 영향을 받는 두 해를 뺀 표본을 뜻한다.', '을 뜻한다.').replace('출원만 남긴 표본을을 뜻한다.', '출원만 남긴 표본을 뜻한다.')
 pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text(_txt, encoding='utf-8')
 if r16:
     # numbers used in the main text that come from results_v16 (rounded as printed)
