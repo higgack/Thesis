@@ -100,6 +100,9 @@ if int(VER) >= 32:  # v32 thesis: office hypothesis removed -> no breadth (NB) m
     _txt = '\n'.join(out2)
 if int(VER) >= 30:  # v30 thesis: breadth model moved to section 5.3
     _txt = _txt.replace('본문 제5.1절과 제5.4절(일본)', '본문 제5.3절과 제5.4절(일본)').replace('본문 제5.1절에서 언급한', '본문 제5.3절에서 언급한')
+if int(VER) >= 37:  # v37: type renamed 조립 단독형 -> 접합 단독형; H01L21 assembly-stage subgroups called 패키징 단계
+    for a, b in [('조립 단독형', '접합 단독형'), ('조립 단계 공정', '패키징 단계 공정'), ('조립 단계의', '패키징 단계의')]:
+        _txt = _txt.replace(a, b)
 pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text(_txt, encoding='utf-8')
 if r16:
     # numbers used in the main text that come from results_v16 (rounded as printed)

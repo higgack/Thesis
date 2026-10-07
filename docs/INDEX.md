@@ -23,7 +23,8 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **v36_ko(학위논문본, 최신)** | [manuscript_v36_ko.md](../journal/manuscript_v36_ko.md) · [.docx](../journal/manuscript_v36_ko.docx) | v35 + 6.1 인터페이스 단락 삭제, 영문 초록을 국문 초록에 맞춤 |
+| **v37_ko(학위논문본, 최신)** | [manuscript_v37_ko.md](../journal/manuscript_v37_ko.md) · [.docx](../journal/manuscript_v37_ko.docx) | 유저 수정 v36 기준: 노란 표시 문장 수정, 조립 단독형 → 접합 단독형 등 용어 통일, 그림 6·7 범례 갱신 |
+| **v36_ko(학위논문본)** | [manuscript_v36_ko.md](../journal/manuscript_v36_ko.md) · [.docx](../journal/manuscript_v36_ko.docx) | v35 + 6.1 인터페이스 단락 삭제, 영문 초록을 국문 초록에 맞춤 |
 | **v35_ko(학위논문본)** | [manuscript_v35_ko.md](../journal/manuscript_v35_ko.md) · [.docx](../journal/manuscript_v35_ko.docx) | v34 + 그림 출처 참고문헌 2건을 학기 과제 표기에 맞춤 |
 | **v34_ko(학위논문본, 유저 수정 정리판)** | [manuscript_v34_ko.md](../journal/manuscript_v34_ko.md) · [.docx](../journal/manuscript_v34_ko.docx) | 유저 New.docx(교수 지적·약점 문장 삭제, 그림 2개 추가) 기준: 그림 1–7 재번호·캡션·본문 언급, 참고문헌 47편(Deca 2023, Applied Materials 2025 추가), 문장·용어 정리 |
 | **v33_ko(학위논문본, 융합의 시간적 전개판)** | [manuscript_v33_ko.md](../journal/manuscript_v33_ko.md) · [.docx](../journal/manuscript_v33_ko.docx) | v32를 "공정 간 융합과 그 시간적 전개"로 재구성: 제목(형성·확산·재편), 연구질문, 가설 도입부, 결과 순서, 논의(표 14 세 국면), 결론 |
