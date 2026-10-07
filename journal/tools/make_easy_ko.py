@@ -37,7 +37,10 @@ if extra.exists():
     for line in extra.read_text(encoding='utf-8').splitlines():
         if line.strip():
             k = key(line); keyed = [(kk, rr) for kk, rr in keyed if kk != k] + [(k, line)]
-keyed.sort(key=lambda kr: kr[1].lower())
+import unicodedata
+def _fold(t):  # v39+: alphabetical order ignoring diacritics (Bröring sorts as Broring)
+    return ''.join(c for c in unicodedata.normalize('NFKD', t) if not unicodedata.combining(c)).lower()
+keyed.sort(key=(lambda kr: _fold(kr[1])) if int(VER) >= 39 else (lambda kr: kr[1].lower()))
 kept = [r for k, r in keyed if k in cited]
 missing = sorted(c for c in cited if c not in {k for k,_ in keyed})
 dropped = sorted(k for k,_ in keyed if k not in cited)
