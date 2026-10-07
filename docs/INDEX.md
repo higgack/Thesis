@@ -23,7 +23,8 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **v34_ko(학위논문본, 유저 수정 정리판, 최신)** | [manuscript_v34_ko.md](../journal/manuscript_v34_ko.md) · [.docx](../journal/manuscript_v34_ko.docx) | 유저 New.docx(교수 지적·약점 문장 삭제, 그림 2개 추가) 기준: 그림 1–7 재번호·캡션·본문 언급, 참고문헌 47편(Deca 2023, Applied Materials 2025 추가), 문장·용어 정리 |
+| **v35_ko(학위논문본, 최신)** | [manuscript_v35_ko.md](../journal/manuscript_v35_ko.md) · [.docx](../journal/manuscript_v35_ko.docx) | v34 + 그림 출처 참고문헌 2건을 학기 과제 표기에 맞춤 |
+| **v34_ko(학위논문본, 유저 수정 정리판)** | [manuscript_v34_ko.md](../journal/manuscript_v34_ko.md) · [.docx](../journal/manuscript_v34_ko.docx) | 유저 New.docx(교수 지적·약점 문장 삭제, 그림 2개 추가) 기준: 그림 1–7 재번호·캡션·본문 언급, 참고문헌 47편(Deca 2023, Applied Materials 2025 추가), 문장·용어 정리 |
 | **v33_ko(학위논문본, 융합의 시간적 전개판)** | [manuscript_v33_ko.md](../journal/manuscript_v33_ko.md) · [.docx](../journal/manuscript_v33_ko.docx) | v32를 "공정 간 융합과 그 시간적 전개"로 재구성: 제목(형성·확산·재편), 연구질문, 가설 도입부, 결과 순서, 논의(표 14 세 국면), 결론 |
 | **v32_ko(학위논문본, 핵심 기술 가설판)** | [manuscript_v32_ko.md](../journal/manuscript_v32_ko.md) · [.docx](../journal/manuscript_v32_ko.docx) | 유저 수정 v24 기준: 출원청 가설(H3a·H3b) 삭제, 기술 클러스터·기술 네트워크(4.4절) 추가, 새 H3(핵심 기술 × 출원 시기) |
 | **v31_ko(학위논문본, 다차원 융합 측정판)** | [manuscript_v31_ko.md](../journal/manuscript_v31_ko.md) · [.docx](../journal/manuscript_v31_ko.docx) | v30 + 지도교수 측정지표 틀 반영(Jaccard, 엔트로피, 코사인 거리, Rao-Stirling, E-I, 매개 중심성, 신규 조합) |
