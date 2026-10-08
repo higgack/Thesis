@@ -62,7 +62,7 @@ for kind in ('표','그림'):
     for m in re.finditer(rf'{kind} (\d+)', main):
         n=int(m.group(1))
         if n not in first: first.append(n)
-    caps=[int(m.group(1)) for m in re.finditer(rf'^\*\*{kind} (\d+)\.\*\*', main, re.M)]
+    caps=[int(m.group(1)) for m in re.finditer(rf'^\*\*\[?{kind} (\d+)\.(?:\]\{{\.mark\}})?\*\*', main, re.M)]   # v47+: caption number may be highlighted
     ok = first==sorted(first) and caps==sorted(caps) and set(caps)==set(first)
     print(kind, first, caps, 'OK' if ok else '!! MISMATCH'); fails += (not ok)
 # numbers subset check

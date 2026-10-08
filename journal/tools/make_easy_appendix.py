@@ -117,6 +117,8 @@ if int(VER) >= 39:  # v39: sample names and wording as in the main text; Appendi
                   '키워드 필터의 검색어는 하이브리드 본딩과 무관한 뜻으로도 쓰인다. 대부분은 *direct bonding*이 다른 뜻으로 쓰인 경우이고, 일부는 화학 결합이나 전력 모듈용 접합 시트를 뜻하는 *hybrid bonding*이다.'),
                  ('해당 출원은 68건이며', '해당 출원은 68건(*direct bonding* 63건, *hybrid bonding* 5건)이며')]:
         _txt = _txt.replace(a, b)
+if int(VER) >= 47:  # v47: a table was added in 5.3, so the re-estimation table is now Table 12 (highlighted)
+    _txt = _txt.replace('본문 표 11에 실은', '본문 [표 12]{.mark}에 실은')
 pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text(_txt, encoding='utf-8')
 if r16:
     # numbers used in the main text that come from results_v16 (rounded as printed)
