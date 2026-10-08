@@ -14,4 +14,6 @@ Sternitzke, C., Bartkowski, A., Schramm, R., 2008. Visualizing patent statistics
 
 Deca Technologies, 2023. Conference presentation at the IMAPS 19th International Conference and Exhibition on Device Packaging. International Microelectronics Assembly and Packaging Society (IMAPS).
 
-Applied Materials, 2025. Kinex(키넥스) 다이 투 웨이퍼 하이브리드 본딩 통합 시스템 [Kinex integrated die-to-wafer hybrid bonding system; 김지혜 작성]. 어플라이드머티리얼즈(Applied Materials) 홈페이지.
+Applied Materials, 2025. Kinex(키넥스) 다이 투 웨이퍼 하이브리드 본딩 통합 시스템(김지혜 작성) [Web page]. 어플라이드머티리얼즈(Applied Materials) 홈페이지.
+
+Song, C.H., Elvers, D., Leker, J., 2017. Anticipation of converging technology areas – A refined approach for the identification of attractive fields of innovation. Technological Forecasting and Social Change 116, 98–115. https://doi.org/10.1016/j.techfore.2016.11.001

@@ -109,6 +109,14 @@ if int(VER) >= 39:  # v39: label the narrow definition as in the main text
     _txt = _txt.replace('좁은 전공정 정의', '좁은 제조공정 정의')
 if int(VER) >= 38:
     _txt = _txt.replace(', 2023–2024년 제외는 공개 시차의 영향을 받는 두 해를 뺀 표본을 뜻한다.', '을 뜻한다.').replace('출원만 남긴 표본을을 뜻한다.', '출원만 남긴 표본을 뜻한다.')
+if int(VER) >= 39:  # v39: sample names and wording as in the main text; Appendix B covers both search terms
+    for a, b in [('핵심 표본', '*hybrid bonding* 표본'), ('제목에 hybrid bonding이', '제목에 *hybrid bonding*이'),
+                 ('본문의 강건성 요약표(표 11)에 실은 재추정의 전체 계수다.', '본문 표 11에 실은 재추정에 조정 범위와 2010년 이후 표본을 더해 전체 계수를 보인다.'),
+                 ('기술범위 OR 1.463, 출원연도 0.987로', '기술범위의 승산비는 1.463, 출원연도는 0.987로'),
+                 ('키워드 필터의 *direct bonding*은 하이브리드 본딩과 무관한 뜻으로도 쓰인다.',
+                  '키워드 필터의 검색어는 하이브리드 본딩과 무관한 뜻으로도 쓰인다. 대부분은 *direct bonding*이 다른 뜻으로 쓰인 경우이고, 일부는 화학 결합이나 전력 모듈용 접합 시트를 뜻하는 *hybrid bonding*이다.'),
+                 ('해당 출원은 68건이며', '해당 출원은 68건(*direct bonding* 63건, *hybrid bonding* 5건)이며')]:
+        _txt = _txt.replace(a, b)
 pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text(_txt, encoding='utf-8')
 if r16:
     # numbers used in the main text that come from results_v16 (rounded as printed)
