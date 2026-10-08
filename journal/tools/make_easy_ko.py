@@ -42,6 +42,10 @@ def _fold(t):  # v39+: alphabetical order ignoring diacritics (Bröring sorts as
     return ''.join(c for c in unicodedata.normalize('NFKD', t) if not unicodedata.combining(c)).lower()
 keyed.sort(key=(lambda kr: _fold(kr[1])) if int(VER) >= 39 else (lambda kr: kr[1].lower()))
 kept = [r for k, r in keyed if k in cited]
+mark = src/'refs_mark.txt'
+if int(VER) >= 46 and mark.exists():  # v46+: references listed as "Surname year" are highlighted in yellow (new in this version)
+    mk = {tuple(l.split()) for l in mark.read_text(encoding='utf-8').splitlines() if l.strip()}
+    kept = [f'[{r}]{{.mark}}' if k in mk else r for k, r in keyed if k in cited]
 missing = sorted(c for c in cited if c not in {k for k,_ in keyed})
 dropped = sorted(k for k,_ in keyed if k not in cited)
 appendix = (src/'07_appendix.md').read_text(encoding='utf-8')
