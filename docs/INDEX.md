@@ -23,7 +23,8 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **v41_ko(학위논문본, 최종)** | [manuscript_v41_ko.md](../journal/manuscript_v41_ko.md) · [.docx](../journal/manuscript_v41_ko.docx) | 유저 수정 v40 기준: 초록 접합 단독형 증가폭, 결과의 가설 굵은 제목을 문장으로, H3 재추정 목적 설명, 6.1 굵은 제목을 문장으로 |
+| **v42_ko(학위논문본, 최종)** | [manuscript_v42_ko.md](../journal/manuscript_v42_ko.md) · [.docx](../journal/manuscript_v42_ko.docx) | 유저 수정 v41 기준: "다이 취급 공정" → "임시 기판을 이용한 다이 지지·봉지 공정" 등 "취급" 표현 정리 |
+| **v41_ko(학위논문본)** | [manuscript_v41_ko.md](../journal/manuscript_v41_ko.md) · [.docx](../journal/manuscript_v41_ko.docx) | 유저 수정 v40 기준: 초록 접합 단독형 증가폭, 결과의 가설 굵은 제목을 문장으로, H3 재추정 목적 설명, 6.1 굵은 제목을 문장으로 |
 | **v40_ko(학위논문본)** | [manuscript_v40_ko.md](../journal/manuscript_v40_ko.md) · [.docx](../journal/manuscript_v40_ko.docx) | v39 + 제목·주제어 "공정 단계" 띄어쓰기 |
 | **v39_ko(학위논문본)** | [manuscript_v39_ko.md](../journal/manuscript_v39_ko.md) · [.docx](../journal/manuscript_v39_ko.docx) | 유저 수정 v38 기준: 표 8·A1·A2 행 순서 통일, CPC 재분류 한계 추가, 전체 최종 검토(논리·구성·용어·맞춤법) |
 | **v38_ko(학위논문본)** | [manuscript_v38_ko.md](../journal/manuscript_v38_ko.md) · [.docx](../journal/manuscript_v38_ko.docx) | 유저 수정 v37 기준: 표 9 행 순서, 2023–2024년 제외 재추정 삭제, 노란 표시 문장 수정 |

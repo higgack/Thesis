@@ -45,7 +45,8 @@ kept = [r for k, r in keyed if k in cited]
 missing = sorted(c for c in cited if c not in {k for k,_ in keyed})
 dropped = sorted(k for k,_ in keyed if k not in cited)
 appendix = (src/'07_appendix.md').read_text(encoding='utf-8')
-text = body + '\n## 참고문헌 (References)\n\n' + '\n\n'.join(kept) + '\n\n---\n\n' + appendix
+sep = '\n\n' if int(VER) >= 42 else '\n\n---\n\n'  # v42+: no rule between references and appendix (user removed it)
+text = body + '\n## 참고문헌 (References)\n\n' + '\n\n'.join(kept) + sep + appendix
 pathlib.Path(f'manuscript_v{VER}_ko.md').write_text(text, encoding='utf-8')
 print('cited', len(cited), 'kept refs', len(kept), 'dropped', len(dropped))
 print('cited but not in v9 list:', missing)
