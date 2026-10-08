@@ -118,7 +118,7 @@ if int(VER) >= 39:  # v39: sample names and wording as in the main text; Appendi
                  ('해당 출원은 68건이며', '해당 출원은 68건(*direct bonding* 63건, *hybrid bonding* 5건)이며')]:
         _txt = _txt.replace(a, b)
 if int(VER) >= 47:  # v47: a table was added in 5.3, so the re-estimation table is now Table 12 (highlighted)
-    _txt = _txt.replace('본문 표 11에 실은', '본문 [표 12]{.mark}에 실은')
+    _txt = _txt.replace('본문 표 11에 실은', '본문 [표 12]{.mark}에 실은' if int(VER) == 47 else '본문 표 12에 실은')  # v48+: final, no highlight
 pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text(_txt, encoding='utf-8')
 if r16:
     # numbers used in the main text that come from results_v16 (rounded as printed)

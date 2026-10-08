@@ -23,7 +23,8 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **v47_ko(학위논문본, 최종본 업데이트, 노란색 표시본)** | [manuscript_v47_ko.md](../journal/manuscript_v47_ko.md) · [.docx](../journal/manuscript_v47_ko.docx) | v46 + 5.3 표 11(영역별 Jaccard, 매개 중심성 비중, 허브·다리), 기존 표 11–14 → 12–15(번호도 노란색) |
+| **v48_ko(학위논문본, 최종본)** | [manuscript_v48_ko.md](../journal/manuscript_v48_ko.md) · [.docx](../journal/manuscript_v48_ko.docx) | v47에서 노란색 표시 제거 + 추가 부분 최종 검토 수정(용어 "결합 강도", 허브 정의, 재편기 다리 기호 다섯 개, 6.1 문장) |
+| **v47_ko(학위논문본, 노란색 표시본)** | [manuscript_v47_ko.md](../journal/manuscript_v47_ko.md) · [.docx](../journal/manuscript_v47_ko.docx) | v46 + 5.3 표 11(영역별 Jaccard, 매개 중심성 비중, 허브·다리), 기존 표 11–14 → 12–15(번호도 노란색) |
 | **v46_ko(학위논문본, 표 추가 전 노란색 표시본)** | [manuscript_v46_ko.md](../journal/manuscript_v46_ko.md) · [.docx](../journal/manuscript_v46_ko.docx) | v45 + 제조공정 영역별 Jaccard, 시기별 네트워크의 허브·다리(매개 중심성); 4.5·5.3·6.1·참고문헌 2편, 추가 부분 노란색 |
 | **v45_ko(학위논문본, 지표 추가 전 최종본)** | [manuscript_v45_ko.md](../journal/manuscript_v45_ko.md) · [.docx](../journal/manuscript_v45_ko.docx) | v44와 본문 동일, 유저 요청으로 v45 최종본으로 저장 |
 | **v44_ko(학위논문본, 검토보고서 반영본)** | [manuscript_v44_ko.md](../journal/manuscript_v44_ko.md) · [.docx](../journal/manuscript_v44_ko.docx) | v43 + 검토보고서의 타당한 항목만 문장 반영(재편기 "유의하지 않음", 초록 끝 문장, 4.4 네트워크 구성, 5.1 시기 구분 근거, 6.1 "주변"의 뜻; 새 분석 없음) |
