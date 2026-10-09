@@ -23,8 +23,10 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **v52_ko(학위논문본, 교수 수정 반영본, 최종본 아님)** | [manuscript_v52_ko.md](../journal/manuscript_v52_ko.md) · [.docx](../journal/manuscript_v52_ko.docx) | 지도교수 변경 내용 추적 반영: 새 제목, 연구질문 RQ1–RQ3, 가설 절 삭제·2장 재구성, 3장 하위 절, 4장 제목, 5장을 RQ별로 재배치, 표 14를 연구질문별 요약으로 |
-| **v51_ko(학위논문본, 최종본)** | [manuscript_v51_ko.md](../journal/manuscript_v51_ko.md) · [.docx](../journal/manuscript_v51_ko.docx) | 유저 수정 v50("공정" → "기술" 세 곳, 클래스 괄호 설명은 분류명으로 바로잡음) + 표 11 "연결 기호" |
+| **v53_ko(학위논문본, 최종본)** | [manuscript_v53_ko.md](../journal/manuscript_v53_ko.md) · [.docx](../journal/manuscript_v53_ko.docx) | 교수 수정 반영(v52) + 전체 최종 검토 수정(띄어쓰기 통일, 3.2 첫 문장, 5장 안내문, 표 14 도입문, 결론 첫 단락 RQ 정렬) |
+| **이형규 저장본(v51)** | [이형규_v51_ko.md](../journal/이형규_v51_ko.md) · [.docx](../journal/이형규_v51_ko.docx) | 교수 수정 전 가설(H1–H3) 체계 최종본 v51 사본, 나중에 쓰려고 보관 |
+| **v52_ko(학위논문본, 교수 수정 반영본, 최종 검토 전)** | [manuscript_v52_ko.md](../journal/manuscript_v52_ko.md) · [.docx](../journal/manuscript_v52_ko.docx) | 지도교수 변경 내용 추적 반영: 새 제목, 연구질문 RQ1–RQ3, 가설 절 삭제·2장 재구성, 3장 하위 절, 4장 제목, 5장을 RQ별로 재배치, 표 14를 연구질문별 요약으로 |
+| **v51_ko(학위논문본, 교수 수정 전 최종본)** | [manuscript_v51_ko.md](../journal/manuscript_v51_ko.md) · [.docx](../journal/manuscript_v51_ko.docx) | 유저 수정 v50("공정" → "기술" 세 곳, 클래스 괄호 설명은 분류명으로 바로잡음) + 표 11 "연결 기호" |
 | **v50_ko(학위논문본, 이전 최종본)** | [manuscript_v50_ko.md](../journal/manuscript_v50_ko.md) · [.docx](../journal/manuscript_v50_ko.docx) | 유저 수정 v49("융합 자리" → "융합", "다리" → "연결") + 남은 "다리" 다섯 곳도 "연결"로 |
 | **v49_ko(학위논문본, "다리" 표현 수정 전 최종본)** | [manuscript_v49_ko.md](../journal/manuscript_v49_ko.md) · [.docx](../journal/manuscript_v49_ko.docx) | v48 + 5.3 재편기 다리 기호 21/67121·21/67766·21/67092에 CPC 명칭 추가 |
 | **v48_ko(학위논문본, CPC 명칭 추가 전 최종본)** | [manuscript_v48_ko.md](../journal/manuscript_v48_ko.md) · [.docx](../journal/manuscript_v48_ko.docx) | v47에서 노란색 표시 제거 + 추가 부분 최종 검토 수정(용어 "결합 강도", 허브 정의, 재편기 다리 기호 다섯 개, 6.1 문장) |
