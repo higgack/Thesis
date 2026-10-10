@@ -23,10 +23,11 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **v56_ko(학위논문본, 유저 수정 v55 + 1–3절 글쓰기 보강)** | [manuscript_v56_ko.md](../journal/manuscript_v56_ko.md) · [.docx](../journal/manuscript_v56_ko.docx) | 유저 수정 반영, 영문 초록·RQ 표기 일치, "예컨대" 교체, 서론·이론적 배경·연구 맥락의 단락 연결과 학술적 문체 보강(최종본 지정 전) |
-| **v55_ko(학위논문본, 교수 2차 피드백 반영본)** | [manuscript_v55_ko.md](../journal/manuscript_v55_ko.md) · [.docx](../journal/manuscript_v55_ko.docx) | v54 기준: 초록을 숫자 없이 RQ1–RQ3 결과 위주로, 전체 문어체 교정, 단락 연결 보강, 6.1 이론적 함의와 결론을 RQ1–RQ3에 맞춤(최종본 지정 전) |
-| **v54_ko(학위논문본, 최종본)** | [manuscript_v54_ko.md](../journal/manuscript_v54_ko.md) · [.docx](../journal/manuscript_v54_ko.docx) | 유저 수정 v53(서론 연구 질문 문장 삭제) + 기여 세 단락이 RQ1–RQ3을 정의하도록 고침 |
-| **v53_ko(학위논문본, 이전 최종본)** | [manuscript_v53_ko.md](../journal/manuscript_v53_ko.md) · [.docx](../journal/manuscript_v53_ko.docx) | 교수 수정 반영(v52) + 전체 최종 검토 수정(띄어쓰기 통일, 3.2 첫 문장, 5장 안내문, 표 14 도입문, 결론 첫 단락 RQ 정렬) |
+| **v57_ko(학위논문본, 최종본)** | [manuscript_v57_ko.md](../journal/manuscript_v57_ko.md) · [.docx](../journal/manuscript_v57_ko.docx) | 유저 수정 v56(서론 분류명 굵게, 지시어 정리) + 2.4 마지막 단락이 기술범위 설명에 바로 이어지도록 앞 단락의 두 연구 순서 조정 |
+| **v56_ko(학위논문본, 유저 수정 v55 + 1–3절 글쓰기 보강)** | [manuscript_v56_ko.md](../journal/manuscript_v56_ko.md) · [.docx](../journal/manuscript_v56_ko.docx) | 유저 수정 반영, 영문 초록·RQ 표기 일치, "예컨대" 교체, 서론·이론적 배경·연구 맥락의 단락 연결과 학술적 문체 보강 |
+| **v55_ko(학위논문본, 교수 2차 피드백 반영본)** | [manuscript_v55_ko.md](../journal/manuscript_v55_ko.md) · [.docx](../journal/manuscript_v55_ko.docx) | v54 기준: 초록을 숫자 없이 RQ1–RQ3 결과 위주로, 전체 문어체 교정, 단락 연결 보강, 6.1 이론적 함의와 결론을 RQ1–RQ3에 맞춤 |
+| **v54_ko(학위논문본, 이전 최종본)** | [manuscript_v54_ko.md](../journal/manuscript_v54_ko.md) · [.docx](../journal/manuscript_v54_ko.docx) | 유저 수정 v53(서론 연구 질문 문장 삭제) + 기여 세 단락이 RQ1–RQ3을 정의하도록 고침 |
+| **v53_ko(학위논문본, 옛 최종본)** | [manuscript_v53_ko.md](../journal/manuscript_v53_ko.md) · [.docx](../journal/manuscript_v53_ko.docx) | 교수 수정 반영(v52) + 전체 최종 검토 수정(띄어쓰기 통일, 3.2 첫 문장, 5장 안내문, 표 14 도입문, 결론 첫 단락 RQ 정렬) |
 | **이형규 저장본(v51)** | [이형규_v51_ko.md](../journal/이형규_v51_ko.md) · [.docx](../journal/이형규_v51_ko.docx) | 교수 수정 전 가설(H1–H3) 체계 최종본 v51 사본, 나중에 쓰려고 보관 |
 | **v52_ko(학위논문본, 교수 수정 반영본, 최종 검토 전)** | [manuscript_v52_ko.md](../journal/manuscript_v52_ko.md) · [.docx](../journal/manuscript_v52_ko.docx) | 지도교수 변경 내용 추적 반영: 새 제목, 연구질문 RQ1–RQ3, 가설 절 삭제·2장 재구성, 3장 하위 절, 4장 제목, 5장을 RQ별로 재배치, 표 14를 연구질문별 요약으로 |
 | **v51_ko(학위논문본, 교수 수정 전 최종본)** | [manuscript_v51_ko.md](../journal/manuscript_v51_ko.md) · [.docx](../journal/manuscript_v51_ko.docx) | 유저 수정 v50("공정" → "기술" 세 곳, 클래스 괄호 설명은 분류명으로 바로잡음) + 표 11 "연결 기호" |
