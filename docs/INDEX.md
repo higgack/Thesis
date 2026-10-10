@@ -23,6 +23,7 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
+| **v56_ko(학위논문본, 유저 수정 v55 + 1–3절 글쓰기 보강)** | [manuscript_v56_ko.md](../journal/manuscript_v56_ko.md) · [.docx](../journal/manuscript_v56_ko.docx) | 유저 수정 반영, 영문 초록·RQ 표기 일치, "예컨대" 교체, 서론·이론적 배경·연구 맥락의 단락 연결과 학술적 문체 보강(최종본 지정 전) |
 | **v55_ko(학위논문본, 교수 2차 피드백 반영본)** | [manuscript_v55_ko.md](../journal/manuscript_v55_ko.md) · [.docx](../journal/manuscript_v55_ko.docx) | v54 기준: 초록을 숫자 없이 RQ1–RQ3 결과 위주로, 전체 문어체 교정, 단락 연결 보강, 6.1 이론적 함의와 결론을 RQ1–RQ3에 맞춤(최종본 지정 전) |
 | **v54_ko(학위논문본, 최종본)** | [manuscript_v54_ko.md](../journal/manuscript_v54_ko.md) · [.docx](../journal/manuscript_v54_ko.docx) | 유저 수정 v53(서론 연구 질문 문장 삭제) + 기여 세 단락이 RQ1–RQ3을 정의하도록 고침 |
 | **v53_ko(학위논문본, 이전 최종본)** | [manuscript_v53_ko.md](../journal/manuscript_v53_ko.md) · [.docx](../journal/manuscript_v53_ko.docx) | 교수 수정 반영(v52) + 전체 최종 검토 수정(띄어쓰기 통일, 3.2 첫 문장, 5장 안내문, 표 14 도입문, 결론 첫 단락 RQ 정렬) |
