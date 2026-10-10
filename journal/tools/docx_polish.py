@@ -6,8 +6,9 @@
   compact cell margins, thin top/bottom/header rules (journal style)
 - captions: table caption paragraph kept with the table; figure image kept with its caption
 - optional: East Asian body font (e.g. "맑은 고딕" or "바탕")
+- optional: point size for table/figure captions and table notes (the user set 10 pt in Word; v59+)
 
-Usage: python docx_polish.py in.docx out.docx [--ea-font "바탕"] [--body-pt 10.5]
+Usage: python docx_polish.py in.docx out.docx [--ea-font "바탕"] [--body-pt 10.5] [--caption-pt 10]
 """
 import sys
 import re
@@ -215,7 +216,21 @@ def _is_caption(p, kind):
     return t.startswith(kind + ' ') and (re.match(r'^%s \d+\.' % kind, t) is not None or re.match(r'^<%s \d+>' % kind, t) is not None or re.match(r'^%s \d+[.:]' % kind, t) is not None)
 
 
-def polish(path_in, path_out, ea_font=None, body_pt=None):
+def _set_run_size(p, pt):
+    half = str(int(round(pt * 2)))
+    for run in p.runs:
+        rPr = run._r.get_or_add_rPr()
+        for tag in ('w:sz', 'w:szCs'):
+            el = rPr.find(qn(tag))
+            if el is None:
+                el = OxmlElement(tag); rPr.append(el)
+            el.set(qn('w:val'), half)
+
+
+CAPTION_RE = re.compile(r'^(표 [A-Z]?\d+\.|그림 \d+\.|주:)')   # table/figure captions (incl. appendix tables) and table notes
+
+
+def polish(path_in, path_out, ea_font=None, body_pt=None, caption_pt=None):
     doc = Document(path_in)
     for s in doc.sections:
         s.page_width = Mm(210); s.page_height = Mm(297)
@@ -238,6 +253,11 @@ def polish(path_in, path_out, ea_font=None, body_pt=None):
                     pPr = OxmlElement('w:pPr'); el.insert(0, pPr)
                 if pPr.find(qn('w:keepNext')) is None:
                     pPr.append(OxmlElement('w:keepNext'))
+    # optional caption size (body paragraphs only; table cells keep their own sizes)
+    if caption_pt:
+        for p in doc.paragraphs:
+            if CAPTION_RE.match(p.text.strip()):
+                _set_run_size(p, caption_pt)
     # optional fonts
     if ea_font or body_pt:
         styles = doc.styles
@@ -259,10 +279,12 @@ def polish(path_in, path_out, ea_font=None, body_pt=None):
 
 if __name__ == '__main__':
     args = sys.argv[1:]
-    ea = None; bp = None
+    ea = None; bp = None; cp = None
     if '--ea-font' in args:
         i = args.index('--ea-font'); ea = args[i + 1]; del args[i:i + 2]
     if '--body-pt' in args:
         i = args.index('--body-pt'); bp = float(args[i + 1]); del args[i:i + 2]
-    polish(args[0], args[1], ea, bp)
+    if '--caption-pt' in args:
+        i = args.index('--caption-pt'); cp = float(args[i + 1]); del args[i:i + 2]
+    polish(args[0], args[1], ea, bp, cp)
     print('polished ->', args[1])
