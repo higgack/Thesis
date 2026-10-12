@@ -9,9 +9,9 @@
 - optional: point size for table/figure captions and table notes (the user set 10 pt in Word; v59+)
 - optional: front page as in the professor's file of 10-12 (v60+): English title in Times New Roman
   14 pt bold red, author line in Times New Roman bold, affiliation and e-mail lines in Times New Roman
-  with the same indents
+  with the same indents; --front-black is the same with the title in black (v61+, the user's request)
 
-Usage: python docx_polish.py in.docx out.docx [--ea-font "바탕"] [--body-pt 10.5] [--caption-pt 10] [--front]
+Usage: python docx_polish.py in.docx out.docx [--ea-font "바탕"] [--body-pt 10.5] [--caption-pt 10] [--front | --front-black]
 """
 import sys
 import re
@@ -256,13 +256,13 @@ def _indent(p, left, hanging=None):
         ind.set(qn('w:hanging'), str(hanging))
 
 
-def front_page(doc):
+def front_page(doc, title_color='FF0000'):
     """Title / authors / affiliation / e-mail paragraphs as in the professor's file (v60+)."""
     ps = [p for p in doc.paragraphs if p.text.strip()][:4]
     title, authors, affil, email = ps
     assert authors.text.startswith('HyungKyu Lee') and email.text.startswith('Email:'), [p.text[:20] for p in ps]
     for r in title.runs:
-        _tnr(r, 14, True, 'FF0000')
+        _tnr(r, 14, True, title_color)
     for r in authors.runs:
         _tnr(r, bold=True)
     for r in affil.runs + email.runs:
@@ -277,7 +277,7 @@ CAPTION_RE = re.compile(r'^(표 [A-Z]?\d+\.|그림 \d+\.|주:)')   # table/figur
 def polish(path_in, path_out, ea_font=None, body_pt=None, caption_pt=None, front=False):
     doc = Document(path_in)
     if front:
-        front_page(doc)
+        front_page(doc, '000000' if front == 'black' else 'FF0000')
     for s in doc.sections:
         s.page_width = Mm(210); s.page_height = Mm(297)
         s.left_margin = s.right_margin = Mm(25)
@@ -332,8 +332,10 @@ if __name__ == '__main__':
         i = args.index('--body-pt'); bp = float(args[i + 1]); del args[i:i + 2]
     if '--caption-pt' in args:
         i = args.index('--caption-pt'); cp = float(args[i + 1]); del args[i:i + 2]
-    fr = '--front' in args
-    if fr:
-        args.remove('--front')
+    fr = False
+    if '--front' in args:
+        args.remove('--front'); fr = True
+    if '--front-black' in args:
+        args.remove('--front-black'); fr = 'black'
     polish(args[0], args[1], ea, bp, cp, fr)
     print('polished ->', args[1])
