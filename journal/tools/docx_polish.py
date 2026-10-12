@@ -7,8 +7,11 @@
 - captions: table caption paragraph kept with the table; figure image kept with its caption
 - optional: East Asian body font (e.g. "맑은 고딕" or "바탕")
 - optional: point size for table/figure captions and table notes (the user set 10 pt in Word; v59+)
+- optional: front page as in the professor's file of 10-12 (v60+): English title in Times New Roman
+  14 pt bold red, author line in Times New Roman bold, affiliation and e-mail lines in Times New Roman
+  with the same indents
 
-Usage: python docx_polish.py in.docx out.docx [--ea-font "바탕"] [--body-pt 10.5] [--caption-pt 10]
+Usage: python docx_polish.py in.docx out.docx [--ea-font "바탕"] [--body-pt 10.5] [--caption-pt 10] [--front]
 """
 import sys
 import re
@@ -227,11 +230,54 @@ def _set_run_size(p, pt):
             el.set(qn('w:val'), half)
 
 
+def _tnr(run, size_pt=None, bold=None, color=None):
+    rPr = run._r.get_or_add_rPr()
+    rFonts = rPr.find(qn('w:rFonts'))
+    if rFonts is None:
+        rFonts = OxmlElement('w:rFonts'); rPr.insert(0, rFonts)
+    for k in ('w:ascii', 'w:hAnsi', 'w:cs'):
+        rFonts.set(qn(k), 'Times New Roman')
+    if size_pt:
+        run.font.size = Pt(size_pt)
+    if bold is not None:
+        run.font.bold = bold
+    if color:
+        from docx.shared import RGBColor
+        run.font.color.rgb = RGBColor.from_string(color)
+
+
+def _indent(p, left, hanging=None):
+    pPr = p._p.get_or_add_pPr()
+    ind = pPr.find(qn('w:ind'))
+    if ind is None:
+        ind = OxmlElement('w:ind'); pPr.append(ind)
+    ind.set(qn('w:left'), str(left))
+    if hanging:
+        ind.set(qn('w:hanging'), str(hanging))
+
+
+def front_page(doc):
+    """Title / authors / affiliation / e-mail paragraphs as in the professor's file (v60+)."""
+    ps = [p for p in doc.paragraphs if p.text.strip()][:4]
+    title, authors, affil, email = ps
+    assert authors.text.startswith('HyungKyu Lee') and email.text.startswith('Email:'), [p.text[:20] for p in ps]
+    for r in title.runs:
+        _tnr(r, 14, True, 'FF0000')
+    for r in authors.runs:
+        _tnr(r, bold=True)
+    for r in affil.runs + email.runs:
+        _tnr(r)
+    _indent(affil, 240, 240)   # second line ("Seoul, Korea") indented, as in the professor's file
+    _indent(email, 240)
+
+
 CAPTION_RE = re.compile(r'^(표 [A-Z]?\d+\.|그림 \d+\.|주:)')   # table/figure captions (incl. appendix tables) and table notes
 
 
-def polish(path_in, path_out, ea_font=None, body_pt=None, caption_pt=None):
+def polish(path_in, path_out, ea_font=None, body_pt=None, caption_pt=None, front=False):
     doc = Document(path_in)
+    if front:
+        front_page(doc)
     for s in doc.sections:
         s.page_width = Mm(210); s.page_height = Mm(297)
         s.left_margin = s.right_margin = Mm(25)
@@ -286,5 +332,8 @@ if __name__ == '__main__':
         i = args.index('--body-pt'); bp = float(args[i + 1]); del args[i:i + 2]
     if '--caption-pt' in args:
         i = args.index('--caption-pt'); cp = float(args[i + 1]); del args[i:i + 2]
-    polish(args[0], args[1], ea, bp, cp)
+    fr = '--front' in args
+    if fr:
+        args.remove('--front')
+    polish(args[0], args[1], ea, bp, cp, fr)
     print('polished ->', args[1])

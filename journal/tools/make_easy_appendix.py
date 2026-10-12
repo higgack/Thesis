@@ -146,6 +146,10 @@ if int(VER) >= 55:  # v55: the professor's second review asks for a formal writt
                  ('68건의 제목 목록은 저자에게 요청하면 제공한다.', '68건의 제목 목록은 요청 시 저자가 제공한다.')]:
         assert _txt.count(a) == 1, a
         _txt = _txt.replace(a, b)
+if int(VER) >= 60:  # v60: the professor asks for RQ labels only where they are needed
+    a = '본문의 핵심 기술 모형(RQ3)도 동일한 표본을 사용한다.'
+    assert _txt.count(a) == 1, a
+    _txt = _txt.replace(a, '본문의 핵심 기술 모형도 동일한 표본을 사용한다.')
 pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text(_txt, encoding='utf-8')
 if r16:
     # numbers used in the main text that come from results_v16 (rounded as printed)
