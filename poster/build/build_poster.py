@@ -75,11 +75,17 @@ def text(x, y, w, h, paras, anchor='t', margin=0.0, wrap=True, autofit=False, na
     etree.SubElement(bp, qn('a:noAutofit'))
     for i, pd in enumerate(paras):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        set_para(p, pd.get('align', PP_ALIGN.LEFT), pd.get('after', 0), pd.get('line'), pd.get('bullet'), pd.get('indent', 0), pd.get('before', 0))
+        set_para(p, pd.get('align', PP_ALIGN.LEFT), pd.get('after', 0), _pitch(pd), pd.get('bullet'), pd.get('indent', 0), pd.get('before', 0))
         for rr in pd['runs']:
             t, size, col, bold = norm(rr)
             r = p.add_run(); r.text = t; font_run(r, size, col, bold)
     return tb
+
+LINE_K = 1.2
+
+def _pitch(pd):
+    mx = max(norm(r)[1] for r in pd['runs'])
+    return Pt(round(mx * LINE_K * (pd.get('line') or 1.0), 1))
 
 def norm(rr):
     rr = tuple(rr)
@@ -122,7 +128,7 @@ def shape_text(sh, paras, anchor='m', margin=0.2):
     tf.vertical_anchor = {'t': MSO_ANCHOR.TOP, 'm': MSO_ANCHOR.MIDDLE, 'b': MSO_ANCHOR.BOTTOM}[anchor]
     for i, pd in enumerate(paras):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        set_para(p, pd.get('align', PP_ALIGN.CENTER), pd.get('after', 0), pd.get('line'), pd.get('bullet'), pd.get('indent', 0))
+        set_para(p, pd.get('align', PP_ALIGN.CENTER), pd.get('after', 0), _pitch(pd), pd.get('bullet'), pd.get('indent', 0))
         for (t, size, col, bold) in map(norm, pd['runs']):
             r = p.add_run(); r.text = t; font_run(r, size, col, bold)
     return sh
@@ -212,7 +218,7 @@ def fill_ph(idx, x, y, w, h, paras, anchor='t'):
     etree.SubElement(bp, qn('a:noAutofit'))
     for i, pd in enumerate(paras):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        set_para(p, pd.get('align', PP_ALIGN.LEFT), pd.get('after', 0), pd.get('line'), None, 0)
+        set_para(p, pd.get('align', PP_ALIGN.LEFT), pd.get('after', 0), _pitch(pd), None, 0)
         for (t, size, col, bold) in map(norm, pd['runs']):
             r = p.add_run(); r.text = t; font_run(r, size, col, bold)
 
@@ -471,7 +477,7 @@ text(X0, 80.45, 21.0, 3.4, [P(('주요 참고문헌', 12, NAVY, True))] + [P((r,
 text(37.8, 80.45, X1 - 37.8, 3.4, [
     P(('Contact', 12, NAVY, True), align=PP_ALIGN.RIGHT),
     P(('이형규 · 한양대학교 기술경영학과', 12, TEXT), align=PP_ALIGN.RIGHT),
-    P(('higgack@gmail.com', 12, TEXT), align=PP_ALIGN.RIGHT),
+    P(('higgack@naver.com', 12, TEXT), align=PP_ALIGN.RIGHT),
     P(('자료: EPO PATSTAT Global · 분석 단위: 특허출원', 10.5, MUTED), align=PP_ALIGN.RIGHT)], anchor='t')
 
 prs.save(OUT); print('saved', OUT)

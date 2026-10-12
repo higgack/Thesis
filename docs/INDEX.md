@@ -23,7 +23,8 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **리서치데이 포스터 v1(A1)** | [poster_v1.pptx](../poster/poster_v1.pptx) · [.pdf](../poster/poster_v1.pdf) | 2026 한양MOT 리서치데이(10-31) 포스터 초안, 학과 A1 템플릿 기반, 논문 v59 수치 |
+| **리서치데이 포스터 v2 세트(A1)** | [poster_v2.pptx](../poster/poster_v2.pptx) · [B](../poster/poster_v2_B_pse.pptx) · [C](../poster/poster_v2_C_classic.pptx) · [D](../poster/poster_v2_D_dark.pptx) · [비교](../poster/poster_v2_overview.png) | v2 기본형(v1 + naver 메일)과 예시 참고 변형 3종(문제·해결·평가형, 학술 클래식형, 다크 임팩트형) |
+| 리서치데이 포스터 v1(A1) | [poster_v1.pptx](../poster/poster_v1.pptx) · [.pdf](../poster/poster_v1.pdf) | 2026 한양MOT 리서치데이(10-31) 포스터 초안, 학과 A1 템플릿 기반, 논문 v59 수치 |
 | **v59_ko(학위논문본, 최종본)** | [manuscript_v59_ko.md](../journal/manuscript_v59_ko.md) · [.docx](../journal/manuscript_v59_ko.docx) | v58과 같은 원문 + 유저가 맞춘 표·그림 설명과 표 주 글자 크기 10pt 복원(`docx_polish.py --caption-pt 10`); 최종 .docx는 유저가 Word로 저장해 보낸 파일(내용·서식 동일) |
 | **v58_ko(학위논문본, 이전 최종본)** | [manuscript_v58_ko.md](../journal/manuscript_v58_ko.md) · [.docx](../journal/manuscript_v58_ko.docx) | v57 전체 검토 후 수정: 35.4% → 35.3%(반올림 오류), 3.1 형태 수와 그림 2 일치, 초록 용어·비교 대상 명시, 용어 통일, 그림 5 범례 용어 |
 | **v57_ko(학위논문본, 옛 최종본)** | [manuscript_v57_ko.md](../journal/manuscript_v57_ko.md) · [.docx](../journal/manuscript_v57_ko.docx) | 유저 수정 v56(서론 분류명 굵게, 지시어 정리) + 2.4 마지막 단락이 기술범위 설명에 바로 이어지도록 앞 단락의 두 연구 순서 조정 |
