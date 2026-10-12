@@ -26,7 +26,8 @@
 | **리서치데이 포스터 v3(A1, B안 최종 후보)** | [poster_v3.pptx](../poster/poster_v3.pptx) · [.pdf](../poster/poster_v3.pdf) | 유저가 고른 B안(문제·해결·평가형)을 다듬은 판 |
 | 리서치데이 포스터 v2 세트(A1) | [poster_v2.pptx](../poster/poster_v2.pptx) · [B](../poster/poster_v2_B_pse.pptx) · [C](../poster/poster_v2_C_classic.pptx) · [D](../poster/poster_v2_D_dark.pptx) · [비교](../poster/poster_v2_overview.png) | v2 기본형(v1 + naver 메일)과 예시 참고 변형 3종(문제·해결·평가형, 학술 클래식형, 다크 임팩트형) |
 | 리서치데이 포스터 v1(A1) | [poster_v1.pptx](../poster/poster_v1.pptx) · [.pdf](../poster/poster_v1.pdf) | 2026 한양MOT 리서치데이(10-31) 포스터 초안, 학과 A1 템플릿 기반, 논문 v59 수치 |
-| **v63_ko(저널 투고용 최종본, 노란색 유지)** | [manuscript_v63_ko.md](../journal/manuscript_v63_ko.md) · [.docx](../journal/manuscript_v63_ko.docx) | v62 + Applied Materials(2025) 참고문헌에 URL·접속일 추가, 회사 한글 이름 공식 표기(노란색) |
+| **v64_ko(저널 투고용 최종본, 노란색 없음)** | [manuscript_v64_ko.md](../journal/manuscript_v64_ko.md) · [.docx](../journal/manuscript_v64_ko.docx) | v63과 글자 동일, 노란색 표시만 모두 제거한 투고용 |
+| **v63_ko(노란색 유지판 — 고친 곳 표시)** | [manuscript_v63_ko.md](../journal/manuscript_v63_ko.md) · [.docx](../journal/manuscript_v63_ko.docx) | v62 + Applied Materials(2025) 참고문헌에 URL·접속일 추가, 회사 한글 이름 공식 표기(노란색) |
 | **v62_ko(저널 투고용 이전 최종본)** | [manuscript_v62_ko.md](../journal/manuscript_v62_ko.md) · [.docx](../journal/manuscript_v62_ko.docx) | v61 전체 최종 검토: RQ2·RQ3 "공정 단계 간"으로 용어 통일, 표 9 "출원 시기"; 노란색은 그대로(새로 고친 곳도 노란색) |
 | **v61_ko(v60 + 수정 부분 노란색, 이전 최종본)** | [manuscript_v61_ko.md](../journal/manuscript_v61_ko.md) · [.docx](../journal/manuscript_v61_ko.docx) | 제목 검정, 교수 최종 파일 대비 고친 부분·추가 인용·추가 참고문헌 7편 노란색 표시; 글자는 v60과 같음("첫째로," 쉼표만 복원) |
 | **v60_ko(교수 최종본 반영 + 투고 저널 인용, 이전 최종본)** | [manuscript_v60_ko.md](../journal/manuscript_v60_ko.md) · [.docx](../journal/manuscript_v60_ko.docx) | 교수 10-12 최종 파일 반영(영문 제목·저자, 초록, 영문 초록·그림 1 삭제), 불필요한 RQ 표기 정리, JIK·TASM·IEEE Access 논문 7편 인용 추가(참고문헌 55편) |
