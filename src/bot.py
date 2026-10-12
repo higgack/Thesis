@@ -2754,12 +2754,27 @@ async def _send_pieces_with_throttle(
     return first_id
 
 
+def _is_own_channel_post(update: Update) -> bool:
+    """A post in one of MY channels (only admins can post there).
+    Channel posts carry no sender, so _is_owner() is always False for
+    them (2026-10-12; on_channel_post routes /help here). Forwarded
+    posts are refused so a relayed "/help" from a source channel doesn't
+    answer itself. Same channel set on_channel_post accepts."""
+    msg = update.channel_post
+    if not msg or getattr(msg, "forward_origin", None):
+        return False
+    cid = str(msg.chat.id)
+    if config.STUDY_CHANNEL_ID and cid == config.STUDY_CHANNEL_ID:
+        return True
+    return not config.TELEGRAM_CHANNEL_ID or cid == config.TELEGRAM_CHANNEL_ID
+
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _is_owner(update):
+    if not (_is_owner(update) or _is_own_channel_post(update)):
         return
     async with _SustainedTyping(update, ctx):
         for chunk in _split_for_telegram(_HELP_TEXT):
-            await update.message.reply_text(
+            await update.effective_message.reply_text(
                 chunk, parse_mode="HTML", disable_web_page_preview=True,
             )
 
@@ -9371,6 +9386,14 @@ _PENDING_PRO_RUN_QUEUE: list[dict] = []
 async def on_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     msg = update.channel_post
     if not msg:
+        return
+    # CommandHandler never sees channel posts (PTB's default filter is
+    # UpdateType.MESSAGES = message/edited_message only), so /help typed
+    # in the channel fell through to ingest. Route it here; cmd_start
+    # itself checks the post is from one of my channels.
+    head = (msg.text or "").strip().split(maxsplit=1)
+    if head and head[0].split("@", 1)[0].lower() in ("/help", "/start"):
+        await cmd_start(update, ctx)
         return
     # Dedicated study-notes channel → route to the 체화 pipeline instead
     # of the brain ingest (keeps study material out of the wiki).
