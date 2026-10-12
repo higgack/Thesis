@@ -23,7 +23,8 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **리서치데이 포스터 v5(A1, 최신)** | [poster_v5.pptx](../poster/poster_v5.pptx) · [.pdf](../poster/poster_v5.pdf) | v4에서 저자를 발표자 이형규만으로(강민구 교수님 삭제, 유저 요청) |
+| **리서치데이 포스터 v6(A1, 최신 — 제출용 PPTX)** | [poster_v6.pptx](../poster/poster_v6.pptx) · [.pdf](../poster/poster_v6.pdf) | v5를 PowerPoint(맑은 고딕) 기준으로 다시 배치해 글 넘침·겹침 제거(`check_fit.py`로 검사) |
+| 리서치데이 포스터 v5(A1) | [poster_v5.pptx](../poster/poster_v5.pptx) · [.pdf](../poster/poster_v5.pdf) | v4에서 저자를 발표자 이형규만으로(강민구 교수님 삭제, 유저 요청) |
 | 리서치데이 포스터 v4(A1, 논문 v64 기준) | [poster_v4.pptx](../poster/poster_v4.pptx) · [.pdf](../poster/poster_v4.pdf) | v3 + 새 논문 제목(국문 표현 + 교수님 영문 제목), 저자 이형규·강민구, 소속 기술경영전문대학원, RQ 문구·주제어를 논문과 같게, 템플릿 "P" 상자 삭제 |
 | 리서치데이 포스터 v3(A1, B안) | [poster_v3.pptx](../poster/poster_v3.pptx) · [.pdf](../poster/poster_v3.pdf) | 유저가 고른 B안(문제·해결·평가형)을 다듬은 판 |
 | 리서치데이 포스터 v2 세트(A1) | [poster_v2.pptx](../poster/poster_v2.pptx) · [B](../poster/poster_v2_B_pse.pptx) · [C](../poster/poster_v2_C_classic.pptx) · [D](../poster/poster_v2_D_dark.pptx) · [비교](../poster/poster_v2_overview.png) | v2 기본형(v1 + naver 메일)과 예시 참고 변형 3종(문제·해결·평가형, 학술 클래식형, 다크 임팩트형) |

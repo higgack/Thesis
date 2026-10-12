@@ -3,10 +3,12 @@
 - 행사: 2026-10-31(토) 12:00~, 융합교육관 602·608호 및 6층 복도. 포스터 제출 마감 10-27(화) 17:00 (곽상숙, kwagss72@hanyang.ac.kr) — 기한 내 제출 시 행정팀 일괄 출력.
 - 모든 판은 학과 A1 템플릿(`build/template_A1.pptx`) 위에 만들었고, 글꼴은 맑은 고딕, 차트는 PowerPoint 기본 차트(직접 수정 가능)입니다. v1–v3의 내용과 수치는 학위논문 최종본 v59, **v4는 저널 투고본 v64**(수치는 v59와 같음)를 따릅니다.
 - PDF는 미리보기용입니다(이 환경에 맑은 고딕이 없어 Noto Sans CJK로 렌더링). 줄 간격은 글자 크기의 1.2배 고정값이라 PowerPoint와 미리보기의 줄 높이가 같습니다.
+- **PowerPoint 글자 폭(v6부터):** 맑은 고딕은 미리보기 글꼴보다 6–13% 넓고(유저 캡처로 보정), PowerPoint는 한글을 띄어쓰기에서만 줄바꿈합니다("절단·조립·패키징"은 한 단어). 그래서 v6부터는 폭을 1.2배로 잡아 배치하고(`common.WSCALE`), `python3 check_fit.py ../poster_vN.pptx 1.2`로 모든 글상자의 넘침을 검사합니다(0건이어야 함). 미리보기 PDF에는 PowerPoint보다 여백이 조금 더 보입니다.
 
 | 판 | 파일 | 성격 |
 |---|---|---|
-| **v5 (최신)** | `poster_v5.pptx/.pdf` | v4 + 유저 요청(10-12): 저자에서 강민구 교수님 삭제(논문에는 담당교수라서 들어간 것) → 발표자 이형규만. 나머지는 v4와 같음 |
+| **v6 (최신, 제출용 PPTX)** | `poster_v6.pptx` (+ 미리보기 `.pdf`) | v5 + 유저 요청(10-12, PPTX로 제출): PowerPoint(맑은 고딕)에서 글이 넘치거나 겹치던 곳 수정 — 연구 배경 글머리(18pt, 상자 높이 자동), 범프/하이브리드 카드 설명(13pt 세 줄, 카드 높이 7.1 cm), 연구 공백 1번, 실무적 시사점(시사점 상자 높이를 내용에 맞춰 배분), 산업 맥락 제목줄·핵심 기술 설명·지표 라벨·카드 범례·분석 방법 표·승산비 라벨에 여유. 문구는 v5와 같음 |
+| v5 | `poster_v5.pptx/.pdf` | v4 + 유저 요청(10-12): 저자에서 강민구 교수님 삭제(논문에는 담당교수라서 들어간 것) → 발표자 이형규만. 나머지는 v4와 같음 |
 | v4 (논문 v64 기준) | `poster_v4.pptx/.pdf` | v3 + 유저 요청(10-12): 논문 최신판(v64) 기준으로 제목을 교수님 최종 영문 제목과 그 국문 표현으로 교체("반도체 하이브리드 본딩의 공정 단계 간 기술융합: 특허 기반 종단 분석" / "Cross-stage technology convergence in semiconductor hybrid bonding: A patent-based longitudinal analysis"), 저자 이형규 · 강민구(논문 공저자), 소속 한양대학교 기술경영전문대학원(논문 소속과 같게, 아래 Contact도), 연구 질문 RQ1–RQ3을 논문 문장 그대로, 주제어에서 "다항 로짓" 삭제(논문과 같게); 템플릿 오른쪽 위 "P" 상자 삭제, HBM 개념도를 머리 영역 세로 가운데로 옮겨 빈자리 정리 |
 | v3 (B안 다듬음) | `poster_v3.pptx/.pdf` | 유저가 고른 B안(문제·해결·평가형) 정리: 머리에 HBM 적층 개념도, 범프/하이브리드 그림 범례, 출원인 칩, 연구 공백 자동 높이, 분석 방법 표를 RQ 기준으로, 시기 축 두 줄, 승산비 그림에 "1 = 차이 없음", 결론부에 방법론적 기여·주제어 추가, 세 단 높이 맞춤 |
 | v2 (기본형) | `poster_v2.pptx/.pdf` | v1과 같은 디자인, 연락처 메일만 higgack@naver.com으로 변경 |
@@ -18,10 +20,11 @@
 - 한눈에 비교: `poster_v2_overview.png`.
 - 다시 만들기(`poster/build`에서):
   - 기본형: `python3 build_poster.py template_A1.pptx assets icons ../poster_vN.pptx`
-  - v5(최신): `python3 build_v5.py template_A1.pptx assets icons ../poster_v5.pptx`
+  - v6(최신, 제출용): `python3 build_v6.py template_A1.pptx assets icons ../poster_v6.pptx && python3 check_fit.py ../poster_v6.pptx 1.2`
+  - v5: `python3 build_v5.py template_A1.pptx assets icons ../poster_v5.pptx`
   - v4(논문 v64 기준, 저자 2명): `python3 build_v4.py template_A1.pptx assets icons ../poster_v4.pptx`
   - v3(B안): `python3 build_v3.py template_A1.pptx assets icons ../poster_v3.pptx`
   - v2 변형: `python3 build_B.py|build_C.py|build_D.py template_A1.pptx assets icons ../poster_v2_X.pptx` (공통 함수·논문 문구는 `common.py`)
   - 미리보기 PDF: `./render.sh ../poster_vN.pptx ..` (LibreOffice Impress 필요, 한글–영문 자동 띄어쓰기를 끄고 변환)
   - python-pptx 필요. 벤 다이어그램은 `make_venn.py`·`make_venn_dark.py`, 네트워크 그림은 `journal/figures/fig_core_network_v58_ko.png`에서 여백·범례를 잘라 냄, 그림 1(C형)은 논문 그림 2(`fig_framework_psp.png`).
-- 규칙: 포스터 문구를 고칠 때마다 새 버전 번호(다음은 v6). v4·v5의 문구는 `build_v4.py`·`build_v5.py` 머리에 있고(`common.py`의 문구는 v1–v3용 v59 기준 그대로). 저자는 발표자 이형규만(유저 지시: 강민구 교수님은 논문의 담당교수라서 논문에만).
+- 규칙: 포스터 문구를 고칠 때마다 새 버전 번호(다음은 v7). v4–v6의 문구는 `build_v4.py`–`build_v6.py` 머리에 있고(`common.py`의 문구는 v1–v3용 v59 기준 그대로). 저자는 발표자 이형규만(유저 지시: 강민구 교수님은 논문의 담당교수라서 논문에만).

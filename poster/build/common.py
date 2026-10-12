@@ -316,7 +316,7 @@ def or_plot(x, y, w, label_w=3.0, rs=0.95, dark=False, size=17, lab_size=14, ref
         if i == 0:
             text(xp(orv) - 3.4, yy - 0.95, 3.0, 0.6, [P((lab, lab_size, col, True), align=R)])
         else:
-            text(xp(h) + 0.2, yy - 0.32, 3.6, 0.6, [P((lab, lab_size, col, True))], anchor='m')
+            text(xp(h) + 0.2, yy - 0.32, 4.6, 0.6, [P((lab, lab_size, col, True))], anchor='m')   # 4.6 cm (v6): room for 맑은 고딕
     axy = y + 3 * rs + 0.1
     line(ax0, axy, ax1, axy, axis, w=1.25)
     for v in (0.25, 0.5, 1, 2, 4, 8, 16, 32):
@@ -422,8 +422,10 @@ def _cw(ch):
 from PIL import ImageFont as _IF
 _NOTO = _IF.truetype('/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc', 1000, index=1)
 
+WSCALE = 1.0   # width factor over the Noto preview font; v6+ builds set 1.2 for PowerPoint's 맑은 고딕 (6-13 % wider, see check_fit.py)
+
 def est_lines(txt, size, width, indent=0.0):
-    em = size * 0.03528
+    em = size * 0.03528 * WSCALE
     avail = width - indent
     lines, cur = 1, 0.0
     for word in txt.split(' '):
