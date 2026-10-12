@@ -6,7 +6,8 @@
 
 | 판 | 파일 | 성격 |
 |---|---|---|
-| **v4 (최신, 논문 v64 기준)** | `poster_v4.pptx/.pdf` | v3 + 유저 요청(10-12): 논문 최신판(v64) 기준으로 제목을 교수님 최종 영문 제목과 그 국문 표현으로 교체("반도체 하이브리드 본딩의 공정 단계 간 기술융합: 특허 기반 종단 분석" / "Cross-stage technology convergence in semiconductor hybrid bonding: A patent-based longitudinal analysis"), 저자 이형규 · 강민구(논문 공저자), 소속 한양대학교 기술경영전문대학원(논문 소속과 같게, 아래 Contact도), 연구 질문 RQ1–RQ3을 논문 문장 그대로, 주제어에서 "다항 로짓" 삭제(논문과 같게); 템플릿 오른쪽 위 "P" 상자 삭제, HBM 개념도를 머리 영역 세로 가운데로 옮겨 빈자리 정리 |
+| **v5 (최신)** | `poster_v5.pptx/.pdf` | v4 + 유저 요청(10-12): 저자에서 강민구 교수님 삭제(논문에는 담당교수라서 들어간 것) → 발표자 이형규만. 나머지는 v4와 같음 |
+| v4 (논문 v64 기준) | `poster_v4.pptx/.pdf` | v3 + 유저 요청(10-12): 논문 최신판(v64) 기준으로 제목을 교수님 최종 영문 제목과 그 국문 표현으로 교체("반도체 하이브리드 본딩의 공정 단계 간 기술융합: 특허 기반 종단 분석" / "Cross-stage technology convergence in semiconductor hybrid bonding: A patent-based longitudinal analysis"), 저자 이형규 · 강민구(논문 공저자), 소속 한양대학교 기술경영전문대학원(논문 소속과 같게, 아래 Contact도), 연구 질문 RQ1–RQ3을 논문 문장 그대로, 주제어에서 "다항 로짓" 삭제(논문과 같게); 템플릿 오른쪽 위 "P" 상자 삭제, HBM 개념도를 머리 영역 세로 가운데로 옮겨 빈자리 정리 |
 | v3 (B안 다듬음) | `poster_v3.pptx/.pdf` | 유저가 고른 B안(문제·해결·평가형) 정리: 머리에 HBM 적층 개념도, 범프/하이브리드 그림 범례, 출원인 칩, 연구 공백 자동 높이, 분석 방법 표를 RQ 기준으로, 시기 축 두 줄, 승산비 그림에 "1 = 차이 없음", 결론부에 방법론적 기여·주제어 추가, 세 단 높이 맞춤 |
 | v2 (기본형) | `poster_v2.pptx/.pdf` | v1과 같은 디자인, 연락처 메일만 higgack@naver.com으로 변경 |
 | v2-B 문제·해결·평가형 | `poster_v2_B_pse.pptx/.pdf` | 예시 포스터(KYC·Robot 등)처럼 Problem / Solution / Evaluation 3단, 남색 + 금색, KPI 숫자 칸, 분석 모형 표 |
@@ -17,9 +18,10 @@
 - 한눈에 비교: `poster_v2_overview.png`.
 - 다시 만들기(`poster/build`에서):
   - 기본형: `python3 build_poster.py template_A1.pptx assets icons ../poster_vN.pptx`
-  - v4(최신, 논문 v64 기준): `python3 build_v4.py template_A1.pptx assets icons ../poster_v4.pptx`
+  - v5(최신): `python3 build_v5.py template_A1.pptx assets icons ../poster_v5.pptx`
+  - v4(논문 v64 기준, 저자 2명): `python3 build_v4.py template_A1.pptx assets icons ../poster_v4.pptx`
   - v3(B안): `python3 build_v3.py template_A1.pptx assets icons ../poster_v3.pptx`
   - v2 변형: `python3 build_B.py|build_C.py|build_D.py template_A1.pptx assets icons ../poster_v2_X.pptx` (공통 함수·논문 문구는 `common.py`)
   - 미리보기 PDF: `./render.sh ../poster_vN.pptx ..` (LibreOffice Impress 필요, 한글–영문 자동 띄어쓰기를 끄고 변환)
   - python-pptx 필요. 벤 다이어그램은 `make_venn.py`·`make_venn_dark.py`, 네트워크 그림은 `journal/figures/fig_core_network_v58_ko.png`에서 여백·범례를 잘라 냄, 그림 1(C형)은 논문 그림 2(`fig_framework_psp.png`).
-- 규칙: 포스터 문구를 고칠 때마다 새 버전 번호(다음은 v5). v4의 문구는 `build_v4.py` 머리에 있고(`common.py`의 문구는 v1–v3용 v59 기준 그대로).
+- 규칙: 포스터 문구를 고칠 때마다 새 버전 번호(다음은 v6). v4·v5의 문구는 `build_v4.py`·`build_v5.py` 머리에 있고(`common.py`의 문구는 v1–v3용 v59 기준 그대로). 저자는 발표자 이형규만(유저 지시: 강민구 교수님은 논문의 담당교수라서 논문에만).
