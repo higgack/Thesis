@@ -29,6 +29,7 @@
 | 리서치데이 포스터 v3(A1, B안) | [poster_v3.pptx](../poster/poster_v3.pptx) · [.pdf](../poster/poster_v3.pdf) | 유저가 고른 B안(문제·해결·평가형)을 다듬은 판 |
 | 리서치데이 포스터 v2 세트(A1) | [poster_v2.pptx](../poster/poster_v2.pptx) · [B](../poster/poster_v2_B_pse.pptx) · [C](../poster/poster_v2_C_classic.pptx) · [D](../poster/poster_v2_D_dark.pptx) · [비교](../poster/poster_v2_overview.png) | v2 기본형(v1 + naver 메일)과 예시 참고 변형 3종(문제·해결·평가형, 학술 클래식형, 다크 임팩트형) |
 | 리서치데이 포스터 v1(A1) | [poster_v1.pptx](../poster/poster_v1.pptx) · [.pdf](../poster/poster_v1.pdf) | 2026 한양MOT 리서치데이(10-31) 포스터 초안, 학과 A1 템플릿 기반, 논문 v59 수치 |
+| **v64_en(영문 투고용 번역본)** | [manuscript_v64_en.md](../journal/manuscript_v64_en.md) · [.docx](../journal/manuscript_v64_en.docx) | v64 전체 영문 번역(영문 초록 1개 250단어, 미국식 철자, 영문 그림), 감사 FAILS 0, 국문–영문 독립 대조 검토 33건 반영 |
 | **v64_ko(저널 투고용 최종본, 노란색 없음)** | [manuscript_v64_ko.md](../journal/manuscript_v64_ko.md) · [.docx](../journal/manuscript_v64_ko.docx) | v63과 글자 동일, 노란색 표시만 모두 제거한 투고용 |
 | **v63_ko(노란색 유지판 — 고친 곳 표시)** | [manuscript_v63_ko.md](../journal/manuscript_v63_ko.md) · [.docx](../journal/manuscript_v63_ko.docx) | v62 + Applied Materials(2025) 참고문헌에 URL·접속일 추가, 회사 한글 이름 공식 표기(노란색) |
 | **v62_ko(저널 투고용 이전 최종본)** | [manuscript_v62_ko.md](../journal/manuscript_v62_ko.md) · [.docx](../journal/manuscript_v62_ko.docx) | v61 전체 최종 검토: RQ2·RQ3 "공정 단계 간"으로 용어 통일, 표 9 "출원 시기"; 노란색은 그대로(새로 고친 곳도 노란색) |
