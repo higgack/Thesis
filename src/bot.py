@@ -1909,6 +1909,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 🚨 <b>장애 / 큐</b>
   /failed(건별 [🔁]/[🗑]·drop=영구) · /failed_retry · /failed_clear · /unignore
+  /invite(내 채널 일회용 초대 링크)
   /queue · /queue_to_failed · /queue_panic · /queue_cancel_all
   /audit · /blocked_hosts · /reset_blocked_hosts
 
@@ -2077,6 +2078,10 @@ Gemini 2.5 Pro 강제 사용. 기본 답변은 Flash, /deep 만 Pro (비용 ~4�
 영구 무시 해제 — /failed_clear · [🗑] 의 역연산. 조각만 넣어도 부분일치로
 찾는다(예: 유튜브 video id 하나로 그 URL 전부). /unignore all 은 URL 전체
 해제. 메모리 목록까지 즉시 갱신돼 재시작 없이 바로 다시 학습 가능.
+
+<b>/invite</b>
+봇이 관리자인 내 채널(수집·포워딩 대상·학습노트)의 일회용 초대 링크(1명용,
+기존 링크 유지). 채널을 실수로 지웠을 때 휴대폰만으로 다시 들어가는 용도.
 
 <b>/queue</b>
 자동 재처리 대기/진행 중인 인입 항목. 처리 실패 시 자동 1회 후 /failed로 이동(거기서 🔁 수동 재시도, 3 cycle 초과 시 자동 폐기). 항목별 종류·제목·시도 횟수 표시.
@@ -4948,6 +4953,52 @@ async def cmd_unignore(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines.append("이제 다시 올리면 학습 시도함.")
     await update.message.reply_text(
         "\n".join(lines), disable_web_page_preview=True)
+
+
+async def cmd_invite(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/invite — 봇이 관리자인 내 채널(수집·포워딩 대상·학습노트)의
+    일회용 초대 링크를 만들어 보낸다. 채널을 실수로 지웠을 때 휴대폰만으로
+    다시 들어가기 위한 것(2026-10-12). member_limit=1 이고
+    createChatInviteLink 라 기존 링크는 그대로 둔다(export 는 기존 주
+    링크를 폐기한다). 소유자 전용 — 남에게 링크가 나가면 안 된다."""
+    if not _is_owner(update):
+        return
+    targets: list[tuple[str, str]] = []
+    for label, cid in (
+        ("수집 채널", config.TELEGRAM_CHANNEL_ID),
+        ("포워딩 대상", os.getenv("FORWARD_TARGET", "").strip()),
+        ("학습노트 채널", config.STUDY_CHANNEL_ID),
+    ):
+        if not cid or "+" in cid or "joinchat" in cid:
+            continue  # 비어 있음 · 초대 링크 형태는 Bot API chat_id 가 아님
+        if "t.me/" in cid:
+            cid = cid.split("t.me/", 1)[1].strip("/")
+        if not cid.lstrip("-").isdigit() and not cid.startswith("@"):
+            cid = "@" + cid
+        if all(cid != c for _, c in targets):
+            targets.append((label, cid))
+    if not targets:
+        await update.message.reply_text(
+            "설정된 채널이 없어 (TELEGRAM_CHANNEL_ID · FORWARD_TARGET · "
+            "STUDY_CHANNEL_ID 모두 비어 있음).")
+        return
+    lines = ["🔗 <b>일회용 초대 링크</b> (1명만 사용 가능 · 기존 링크 유지)"]
+    for label, cid in targets:
+        try:
+            chat = await ctx.bot.get_chat(cid)
+            title = html.escape(chat.title or str(cid))
+            link = await ctx.bot.create_chat_invite_link(
+                cid, member_limit=1, name="rejoin")
+            lines.append(f"\n• <b>{title}</b> ({label})\n  {link.invite_link}")
+        except Exception as e:
+            lines.append(
+                f"\n• {label} <code>{html.escape(str(cid))}</code>\n"
+                f"  ❌ {html.escape(str(e))[:200]}")
+    lines.append(
+        "\n'Chat not found' 면 채널이 삭제된 것 · 'not enough rights' 면 "
+        "봇에 초대 권한이 없는 것.")
+    await update.message.reply_text(
+        "\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
 
 
 async def cmd_kg_extract(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -14966,6 +15017,7 @@ def main():
     app.add_handler(CommandHandler("blocked_hosts", cmd_blocked_hosts))
     app.add_handler(CommandHandler("reset_blocked_hosts", cmd_reset_blocked_hosts))
     app.add_handler(CommandHandler("unignore", cmd_unignore))
+    app.add_handler(CommandHandler("invite", cmd_invite))
     app.add_handler(CommandHandler("kg_extract", cmd_kg_extract))
     app.add_handler(CommandHandler("notes_resync", cmd_notes_resync))
     app.add_handler(CommandHandler("kg", cmd_kg))
