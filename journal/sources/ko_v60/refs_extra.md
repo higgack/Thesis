@@ -19,3 +19,10 @@ Applied Materials, 2025. Kinex(키넥스) 다이 투 웨이퍼 하이브리드 �
 Song, C.H., Elvers, D., Leker, J., 2017. Anticipation of converging technology areas – A refined approach for the identification of attractive fields of innovation. Technological Forecasting and Social Change 116, 98–115. https://doi.org/10.1016/j.techfore.2016.11.001
 Freeman, L.C., 1977. A set of measures of centrality based on betweenness. Sociometry 40 (1), 35–41. https://doi.org/10.2307/3033543
 Jaccard, P., 1912. The distribution of the flora in the alpine zone. New Phytologist 11 (2), 37–50. https://doi.org/10.1111/j.1469-8137.1912.tb05611.x
+Choi, S., Afifuddin, M., Seo, W., 2022. A supervised learning-based approach to anticipating potential technology convergence. IEEE Access 10, 19284–19300. https://doi.org/10.1109/ACCESS.2022.3151870
+Lee, C., Kim, J., Noh, M., Woo, H., Gang, K., 2017. Patterns of technology life cycles: Stochastic analysis based on patent citations. Technology Analysis & Strategic Management 29 (1), 53–67. https://doi.org/10.1080/09537325.2016.1194974
+Lei, L., Qi, J., Zheng, K., 2019. Patent analytics based on feature vector space model: A case of IoT. IEEE Access 7, 45705–45715. https://doi.org/10.1109/ACCESS.2019.2909123
+Whang, Y.-K., 2018. Convergence processes in the mobile communication processor. Technology Analysis & Strategic Management 30 (11), 1338–1350. https://doi.org/10.1080/09537325.2018.1461206
+Yun, J., Geum, Y., 2019. Analysing the dynamics of technological convergence using a co-classification approach: A case of healthcare services. Technology Analysis & Strategic Management 31 (12), 1412–1429. https://doi.org/10.1080/09537325.2019.1616082
+Zhang, Z., Zhang, Q., 2025. Bridging the digital and green divide: Technology convergence and productivity in innovative manufacturing. Journal of Innovation & Knowledge 10 (6), 100848. https://doi.org/10.1016/j.jik.2025.100848
+Zhao, X., Guo, Y., Mi, J., 2023. Value creation and value capture from patents: Theory and implications for patent strategies. Journal of Innovation & Knowledge 8 (3), 100397. https://doi.org/10.1016/j.jik.2023.100397
