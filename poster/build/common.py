@@ -298,7 +298,7 @@ def chart_jaccard(x, y, w, h, size=13, dark=False, legend=True):
     ch.value_axis.tick_labels.number_format = '0.0'; ch.value_axis.tick_labels.number_format_is_linked = False
     return ch
 
-def or_plot(x, y, w, label_w=3.0, rs=0.95, dark=False, size=17, lab_size=14):
+def or_plot(x, y, w, label_w=3.0, rs=0.95, dark=False, size=17, lab_size=14, ref_note=None):
     """Odds ratios of core technology by period on a log2 axis (shapes). Returns bottom y."""
     fg = 'D6DEEB' if dark else MUTED
     axis = '5A6B88' if dark else '9AA3B2'
@@ -322,6 +322,9 @@ def or_plot(x, y, w, label_w=3.0, rs=0.95, dark=False, size=17, lab_size=14):
     for v in (0.25, 0.5, 1, 2, 4, 8, 16, 32):
         line(xp(v), axy, xp(v), axy + 0.18, axis, w=1.25)
         text(xp(v) - 0.8, axy + 0.18, 1.6, 0.6, [P((('%g' % v), 13, fg), align=C)])
+    if ref_note:
+        text(xp(1) - 3.0, axy + 0.75, 6.0, 0.6, [P((ref_note, 12, fg), align=C)])
+        return axy + 1.4
     return axy + 0.8
 
 def die_stack(x, y, w, hybrid, top='8A97AD', bot='5E6C85', bump='A9AFBA', oxide='BFE3E6'):

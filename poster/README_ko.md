@@ -6,7 +6,8 @@
 
 | 판 | 파일 | 성격 |
 |---|---|---|
-| **v2 (기본형)** | `poster_v2.pptx/.pdf` | v1과 같은 디자인, 연락처 메일만 higgack@naver.com으로 변경 |
+| **v3 (최종 후보, B안 다듬음)** | `poster_v3.pptx/.pdf` | 유저가 고른 B안(문제·해결·평가형) 정리: 머리에 HBM 적층 개념도, 범프/하이브리드 그림 범례, 출원인 칩, 연구 공백 자동 높이, 분석 방법 표를 RQ 기준으로, 시기 축 두 줄, 승산비 그림에 "1 = 차이 없음", 결론부에 방법론적 기여·주제어 추가, 세 단 높이 맞춤 |
+| v2 (기본형) | `poster_v2.pptx/.pdf` | v1과 같은 디자인, 연락처 메일만 higgack@naver.com으로 변경 |
 | v2-B 문제·해결·평가형 | `poster_v2_B_pse.pptx/.pdf` | 예시 포스터(KYC·Robot 등)처럼 Problem / Solution / Evaluation 3단, 남색 + 금색, KPI 숫자 칸, 분석 모형 표 |
 | v2-C 학술 클래식형 | `poster_v2_C_classic.pptx/.pdf` | 예시(공유 ESS)처럼 하늘색 그라데이션 머리, 교표, 알약 모양 절 제목, ■ 글머리, <그림>·<표> 번호 |
 | v2-D 다크 임팩트형 | `poster_v2_D_dark.pptx/.pdf` | 짙은 남색 바탕, 큰 영문 절 제목(PROBLEM / SOLUTION / EVALUATION / TAKEAWAY), 큰 숫자 3개 |
@@ -15,7 +16,8 @@
 - 한눈에 비교: `poster_v2_overview.png`.
 - 다시 만들기(`poster/build`에서):
   - 기본형: `python3 build_poster.py template_A1.pptx assets icons ../poster_vN.pptx`
-  - 변형: `python3 build_B.py|build_C.py|build_D.py template_A1.pptx assets icons ../poster_vN_X.pptx` (공통 함수·논문 문구는 `common.py`)
+  - v3(B안 최종 후보): `python3 build_v3.py template_A1.pptx assets icons ../poster_v3.pptx`
+  - v2 변형: `python3 build_B.py|build_C.py|build_D.py template_A1.pptx assets icons ../poster_v2_X.pptx` (공통 함수·논문 문구는 `common.py`)
   - 미리보기 PDF: `./render.sh ../poster_vN.pptx ..` (LibreOffice Impress 필요, 한글–영문 자동 띄어쓰기를 끄고 변환)
   - python-pptx 필요. 벤 다이어그램은 `make_venn.py`·`make_venn_dark.py`, 네트워크 그림은 `journal/figures/fig_core_network_v58_ko.png`에서 여백·범례를 잘라 냄, 그림 1(C형)은 논문 그림 2(`fig_framework_psp.png`).
-- 규칙: 포스터 문구를 고칠 때마다 새 버전 번호(v3 …).
+- 규칙: 포스터 문구를 고칠 때마다 새 버전 번호(다음은 v4).
