@@ -1,7 +1,8 @@
 """Assemble manuscript_v<N>_en.md, the English version of the Korean submission manuscript_v<N>_ko.md,
 from sources/en_v<N>/*.md (same version number: language variants keep the number, cf. v9_ko / v9_en_TASM).
 
-Usage: python3 tools/make_en.py 64
+Usage: python3 tools/make_en.py 64        (English v64 against Korean v64)
+       python3 tools/make_en.py 65 64     (English-only revision v65_en against Korean v64)
 
 References: the list of manuscript_v<N>_ko.md (same entries and order); an entry in sources/en_v<N>/refs_override.md
 replaces the entry with the same first author and year (the Korean-language web page, cited in English).
@@ -15,11 +16,12 @@ Audits (any failure -> exit 1):
 """
 import re, sys, pathlib, collections
 VER = sys.argv[1] if len(sys.argv) > 1 else '64'
+KO = sys.argv[2] if len(sys.argv) > 2 else VER   # Korean version the English follows (v65_en revises the English of v64 only)
 src = pathlib.Path(f'sources/en_v{VER}')
 order = ['00_front.md', '01_intro.md', '02_theory.md', '03_context.md', '04_data.md', '05_results.md', '06_discussion.md']
 body = '\n'.join((src / f).read_text(encoding='utf-8').rstrip() + '\n' for f in order)
 appendix = (src / '07_appendix.md').read_text(encoding='utf-8')
-ko = pathlib.Path(f'manuscript_v{VER}_ko.md').read_text(encoding='utf-8')
+ko = pathlib.Path(f'manuscript_v{KO}_ko.md').read_text(encoding='utf-8')
 ko_body, rest = ko.split('## 참고문헌 (References)')
 ko_refs_txt, ko_app = rest.split('\n## 부록\n')
 ko_app = '## 부록\n' + ko_app
