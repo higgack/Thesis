@@ -29,6 +29,7 @@
 | 리서치데이 포스터 v3(A1, B안) | [poster_v3.pptx](../poster/poster_v3.pptx) · [.pdf](../poster/poster_v3.pdf) | 유저가 고른 B안(문제·해결·평가형)을 다듬은 판 |
 | 리서치데이 포스터 v2 세트(A1) | [poster_v2.pptx](../poster/poster_v2.pptx) · [B](../poster/poster_v2_B_pse.pptx) · [C](../poster/poster_v2_C_classic.pptx) · [D](../poster/poster_v2_D_dark.pptx) · [비교](../poster/poster_v2_overview.png) | v2 기본형(v1 + naver 메일)과 예시 참고 변형 3종(문제·해결·평가형, 학술 클래식형, 다크 임팩트형) |
 | 리서치데이 포스터 v1(A1) | [poster_v1.pptx](../poster/poster_v1.pptx) · [.pdf](../poster/poster_v1.pdf) | 2026 한양MOT 리서치데이(10-31) 포스터 초안, 학과 A1 템플릿 기반, 논문 v59 수치 |
+| **v70_ko(학위논문 국문, 이론적 배경 → RQ·분석 방법 연결 강화; 노란색 = v67 대비 추가)** | [manuscript_v70_ko.md](../journal/manuscript_v70_ko.md) · [.docx](../journal/manuscript_v70_ko.docx) | 심사 교수 지적 반영: 2.1–2.4 이론 심화·적용, 2.5 신설(표 1), 표 번호 +1, 참고문헌 57편 |
 | v69_ko_changes(무시 — 유저 지시) | [manuscript_v69_ko_changes.md](../journal/manuscript_v69_ko_changes.md) · [.docx](../journal/manuscript_v69_ko_changes.docx) | 노란색 = 추가·변경 96곳, 빨간 취소선 = 삭제 45곳; `tools/diff_mark.py` |
 | **v69_ko_JIK(국문 JIK판, 지식 통합 전면화; 노란색 = v68+v69)** | [manuscript_v69_ko_JIK.md](../journal/manuscript_v69_ko_JIK.md) · [.docx](../journal/manuscript_v69_ko_JIK.docx) | 제목 '…기술융합과 지식 통합', RQ·절 제목·3–5장·결론까지 지식 통합 |
 | **v69_en_JIK(영문 JIK판, 지식 통합 전면화)** | [manuscript_v69_en_JIK.md](../journal/manuscript_v69_en_JIK.md) · [.docx](../journal/manuscript_v69_en_JIK.docx) · [표지](../journal/title_page_v69_en_JIK.docx) · [하이라이트](../journal/highlights_v69_en_JIK.docx) | 제목 'as knowledge integration', `make_jik.py 69` FAILS 0 |

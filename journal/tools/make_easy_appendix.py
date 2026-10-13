@@ -150,6 +150,10 @@ if int(VER) >= 60:  # v60: the professor asks for RQ labels only where they are 
     a = '본문의 핵심 기술 모형(RQ3)도 동일한 표본을 사용한다.'
     assert _txt.count(a) == 1, a
     _txt = _txt.replace(a, '본문의 [핵심 기술 모형도]{.mark} 동일한 표본을 사용한다.' if 61 <= int(VER) <= 63 else '본문의 핵심 기술 모형도 동일한 표본을 사용한다.')  # v61–v63: changes highlighted
+if int(VER) >= 70:  # v70: a framework table (Table 1) was added in section 2.5, so the re-estimation table is now Table 13
+    a = '본문 표 12에 제시한'
+    assert _txt.count(a) == 1, a
+    _txt = _txt.replace(a, '본문 표 13에 제시한')
 pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text(_txt, encoding='utf-8')
 if r16:
     # numbers used in the main text that come from results_v16 (rounded as printed)
