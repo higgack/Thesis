@@ -9,9 +9,11 @@
 - optional: point size for table/figure captions and table notes (the user set 10 pt in Word; v59+)
 - optional: front page as in the professor's file of 10-12 (v60+): English title in Times New Roman
   14 pt bold red, author line in Times New Roman bold, affiliation and e-mail lines in Times New Roman
-  with the same indents; --front-black is the same with the title in black (v61+, the user's request)
+  with the same indents; --front-black is the same with the title in black (v61+, the user's request);
+  an anonymized manuscript without the author lines (v66_en_JIK+) gets only the title format
+- optional: --line-numbers adds continuous line numbers and page numbers in the footer (review copy, v66_en_JIK+)
 
-Usage: python docx_polish.py in.docx out.docx [--ea-font "바탕"] [--body-pt 10.5] [--caption-pt 10] [--front | --front-black]
+Usage: python docx_polish.py in.docx out.docx [--ea-font "바탕"] [--body-pt 10.5] [--caption-pt 10] [--front | --front-black] [--line-numbers]
 """
 import sys
 import re
@@ -260,6 +262,10 @@ def front_page(doc, title_color='FF0000'):
     """Title / authors / affiliation / e-mail paragraphs as in the professor's file (v60+).
     v67_ko+: a Korean title may precede the English title; both get the title format (Hangul keeps the East Asian font)."""
     ps = [p for p in doc.paragraphs if p.text.strip()][:5]
+    if not any(p.text.startswith('HyungKyu') for p in ps):   # anonymized manuscript (double-anonymized review): title only
+        for r in ps[0].runs:
+            _tnr(r, 14, True, title_color)
+        return
     n_titles = 2 if re.search('[가-힣]', ps[0].text) and not ps[1].text.startswith('HyungKyu') else 1
     titles = ps[:n_titles]
     authors, affil, email = ps[n_titles:n_titles + 3]
@@ -275,10 +281,30 @@ def front_page(doc, title_color='FF0000'):
     _indent(email, 240)
 
 
-CAPTION_RE = re.compile(r'^(표 [A-Z]?\d+\.|그림 \d+\.|주:|Table [A-Z]?\d+\.|Figure \d+\.|Note:)')   # table/figure captions (incl. appendix tables) and table notes; English labels for v64_en
+CAPTION_RE = re.compile(r'^(표 [A-Z]?\d+\.|그림 \d+\.|주:|Table [A-Z]?\.?\d+\.|Figure \d+\.|Note:)')   # table/figure captions (incl. appendix tables, also Elsevier style Table A.1) and table notes; English labels for v64_en
 
 
-def polish(path_in, path_out, ea_font=None, body_pt=None, caption_pt=None, front=False):
+def line_and_page_numbers(doc):
+    """Continuous line numbers (every line) and a centered page number in the footer of every section."""
+    for s in doc.sections:
+        sectPr = s._sectPr
+        if sectPr.find(qn('w:lnNumType')) is None:
+            ln = OxmlElement('w:lnNumType')
+            ln.set(qn('w:countBy'), '1'); ln.set(qn('w:restart'), 'continuous'); ln.set(qn('w:distance'), '284')
+            after = [sectPr.find(qn(t)) for t in ('w:pgBorders', 'w:paperSrc', 'w:pgMar', 'w:pgSz')]
+            after = next((a for a in after if a is not None), None)
+            if after is not None: after.addnext(ln)
+            else: sectPr.append(ln)
+        p = s.footer.paragraphs[0]
+        if 'PAGE' not in p._p.xml:
+            p.alignment = 1
+            p._p.get_or_add_pPr().append(OxmlElement('w:suppressLineNumbers'))
+            fld = OxmlElement('w:fldSimple'); fld.set(qn('w:instr'), 'PAGE')
+            r = OxmlElement('w:r'); t = OxmlElement('w:t'); t.text = '1'; r.append(t); fld.append(r)
+            p._p.append(fld)
+
+
+def polish(path_in, path_out, ea_font=None, body_pt=None, caption_pt=None, front=False, line_numbers=False):
     doc = Document(path_in)
     if front:
         front_page(doc, '000000' if front == 'black' else 'FF0000')
@@ -297,7 +323,7 @@ def polish(path_in, path_out, ea_font=None, body_pt=None, caption_pt=None, front
             txt = ''.join(t.text or '' for t in el.iter(qn('w:t'))).strip()
             has_img = el.find('.//' + qn('w:drawing')) is not None
             nxt = children[i + 1] if i + 1 < len(children) else None
-            if (re.match(r'^(\*\*)?(표|Table|<표) ?\d+', txt) and nxt is not None and nxt.tag == qn('w:tbl')) or has_img:
+            if (re.match(r'^(\*\*)?(표|Table|<표) ?(?:[A-Z]\.?)?\d+', txt) and nxt is not None and nxt.tag == qn('w:tbl')) or has_img:
                 pPr = el.find(qn('w:pPr'))
                 if pPr is None:
                     pPr = OxmlElement('w:pPr'); el.insert(0, pPr)
@@ -324,6 +350,8 @@ def polish(path_in, path_out, ea_font=None, body_pt=None, caption_pt=None, front
                 rFonts.set(qn('w:eastAsia'), ea_font)
             if body_pt and name != 'Compact':
                 st.font.size = Pt(body_pt)
+    if line_numbers:
+        line_and_page_numbers(doc)
     doc.save(path_out)
 
 
@@ -341,5 +369,8 @@ if __name__ == '__main__':
         args.remove('--front'); fr = True
     if '--front-black' in args:
         args.remove('--front-black'); fr = 'black'
-    polish(args[0], args[1], ea, bp, cp, fr)
+    ln = '--line-numbers' in args
+    if ln:
+        args.remove('--line-numbers')
+    polish(args[0], args[1], ea, bp, cp, fr, ln)
     print('polished ->', args[1])

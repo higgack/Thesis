@@ -29,6 +29,8 @@
 | 리서치데이 포스터 v3(A1, B안) | [poster_v3.pptx](../poster/poster_v3.pptx) · [.pdf](../poster/poster_v3.pdf) | 유저가 고른 B안(문제·해결·평가형)을 다듬은 판 |
 | 리서치데이 포스터 v2 세트(A1) | [poster_v2.pptx](../poster/poster_v2.pptx) · [B](../poster/poster_v2_B_pse.pptx) · [C](../poster/poster_v2_C_classic.pptx) · [D](../poster/poster_v2_D_dark.pptx) · [비교](../poster/poster_v2_overview.png) | v2 기본형(v1 + naver 메일)과 예시 참고 변형 3종(문제·해결·평가형, 학술 클래식형, 다크 임팩트형) |
 | 리서치데이 포스터 v1(A1) | [poster_v1.pptx](../poster/poster_v1.pptx) · [.pdf](../poster/poster_v1.pdf) | 2026 한양MOT 리서치데이(10-31) 포스터 초안, 학과 A1 템플릿 기반, 논문 v59 수치 |
+| **v66_en_JIK(영문 JIK 투고 양식, 익명 원고)** | [manuscript_v66_en_JIK.md](../journal/manuscript_v66_en_JIK.md) · [.docx](../journal/manuscript_v66_en_JIK.docx) | v66_en을 JIK 양식으로: 저자 정보 삭제(이중 익명), APA 7 인용·참고문헌, JEL, 부록 표 A.1, 데이터 가용성·AI 선언, 줄번호; `tools/make_jik.py 66` FAILS 0 |
+| **v66_en_JIK 표지 · 하이라이트** | [title_page_v66_en_JIK.docx](../journal/title_page_v66_en_JIK.docx) · [highlights_v66_en_JIK.docx](../journal/highlights_v66_en_JIK.docx) | 표지(저자·소속·교신저자·감사의 글·연구비·이해상충·CRediT, 노란색은 저자 확인) · 하이라이트 5개 |
 | **v67_ko(국문 최종본, 제목 국문·영문)** | [manuscript_v67_ko.md](../journal/manuscript_v67_ko.md) · [.docx](../journal/manuscript_v67_ko.docx) | v66_ko 맨 위에 국문 제목 추가(영문 제목은 그 아래 그대로), 나머지 글자 동일, 감사 FAILS 0 |
 | **v67_ko_prof(교수님 확인용, 노란색 표시)** | [manuscript_v67_ko_prof.docx](../journal/manuscript_v67_ko_prof.docx) | v67_ko + 같은 노란색 29곳(국문 제목은 표시 안 함) |
 | v66_ko(국문 최종본) | [manuscript_v66_ko.md](../journal/manuscript_v66_ko.md) · [.docx](../journal/manuscript_v66_ko.docx) | v65_ko에서 "동시에" 두 곳 정리(4.4절 삭제, 6.3절 "함께"), 노란색 없음, 감사 FAILS 0 |
