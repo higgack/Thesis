@@ -6,6 +6,7 @@ Usage: python3 tools/make_en.py 64        (English v64 against Korean v64)
 
 References: the list of manuscript_v<N>_ko.md (same entries and order); an entry in sources/en_v<N>/refs_override.md
 replaces the entry with the same first author and year (the Korean-language web page, cited in English).
+A reference highlighted in the Korean list ([entry]{.mark}, v68+) stays highlighted in English.
 Audits (any failure -> exit 1):
   - citations in the English text <-> reference list, both directions, and the same (first author, year) set
     as the citations of the Korean text
@@ -28,6 +29,7 @@ ko_app = '## 부록\n' + ko_app
 refs = [l.strip() for l in ko_refs_txt.splitlines() if l.strip()]
 
 def key(ref):
+    ref = ref.lstrip('[')   # v68+: a new reference is highlighted as [entry]{.mark}
     first = re.match(r'^(European Patent Office|Applied Materials|[A-Z][A-Za-zÀ-ÿ\'’\-]+(?: [A-Z][a-z]+)?)', ref).group(1)
     yr = re.search(r'\b((?:19|20)\d\d[a-z]?)\.', ref).group(1)
     return (first, yr)

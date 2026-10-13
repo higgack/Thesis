@@ -281,7 +281,7 @@ def front_page(doc, title_color='FF0000'):
     _indent(email, 240)
 
 
-CAPTION_RE = re.compile(r'^(표 [A-Z]?\d+\.|그림 \d+\.|주:|Table [A-Z]?\.?\d+\.|Figure \d+\.|Note:)')   # table/figure captions (incl. appendix tables, also Elsevier style Table A.1) and table notes; English labels for v64_en
+CAPTION_RE = re.compile(r'^(표 [A-Z]?\.?\d+\.|그림 \d+\.|주:|Table [A-Z]?\.?\d+\.|Figure \d+\.|Note:)')   # table/figure captions (incl. appendix tables, also Elsevier style Table A.1) and table notes; English labels for v64_en
 
 
 def line_and_page_numbers(doc):
