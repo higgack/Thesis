@@ -1,0 +1,18 @@
+**Cross-stage technology convergence [as knowledge integration]{.mark} in semiconductor hybrid bonding: A patent-based longitudinal analysis**
+
+**HyungKyu Lee^a^, Mingu Kang^a,\*^**
+
+^a^ Graduate School of Technology and Innovation Management, Hanyang University,\
+Seoul, Korea
+
+Email: higgack@naver.com (Lee, H.); jiangmq@hanyang.ac.kr (Kang, M.)
+
+---
+
+## Abstract
+
+Front-end device fabrication and back-end assembly have long been separate [knowledge]{.mark} domains of semiconductor manufacturing. Hybrid bonding, a back-end technology, achieves its required performance only with front-end fabrication [knowledge]{.mark}, driving convergence[, or knowledge integration,]{.mark} across process stages. Using hybrid bonding patent applications from the European Patent Office's PATSTAT database, this study examines the level and types of cross-stage [knowledge integration]{.mark}, its change over time, and shifts in its [locus]{.mark}. Applications were classified by Cooperative Patent Classification symbols[, a trace of this integration,]{.mark} as bonding-only, process-only, or integrated and analyzed using multinomial and binary logit models and technology cluster and network analyses. First, integrated applications formed the largest group and remained substantial under a narrower definition excluding packaging-stage processes, so cross-stage convergence is not exceptional; [integrated applications also spanned more diverse technologies]{.mark}. Second, [integration]{.mark} evolved through three phases (formation, when process-only applications dominated; diffusion, when integrated applications peaked; and reconfiguration, when they declined and bonding-only applications increased) while the center of gravity of filings moved from fabrication processes toward bonding. Third, bonding applications containing the core technologies were far more likely than others to carry fabrication-process classifications in the formation phase, but this gap narrowed and became nonsignificant in the reconfiguration phase, and the center of fabrication processes combined with bonding shifted from wafer fabrication to processing apparatus and packaging-stage processes. Cross-stage convergence thus appears to be not a linear expansion but a dynamic process [in which, consistent with increasing entrenchment of the core design, knowledge integration relocates rather than disappears]{.mark}.
+
+**Keywords:** technology convergence; cross-stage convergence; hybrid bonding; advanced packaging; [knowledge integration]{.mark}; [knowledge boundaries]{.mark}
+
+---

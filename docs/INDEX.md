@@ -29,6 +29,9 @@
 | 리서치데이 포스터 v3(A1, B안) | [poster_v3.pptx](../poster/poster_v3.pptx) · [.pdf](../poster/poster_v3.pdf) | 유저가 고른 B안(문제·해결·평가형)을 다듬은 판 |
 | 리서치데이 포스터 v2 세트(A1) | [poster_v2.pptx](../poster/poster_v2.pptx) · [B](../poster/poster_v2_B_pse.pptx) · [C](../poster/poster_v2_C_classic.pptx) · [D](../poster/poster_v2_D_dark.pptx) · [비교](../poster/poster_v2_overview.png) | v2 기본형(v1 + naver 메일)과 예시 참고 변형 3종(문제·해결·평가형, 학술 클래식형, 다크 임팩트형) |
 | 리서치데이 포스터 v1(A1) | [poster_v1.pptx](../poster/poster_v1.pptx) · [.pdf](../poster/poster_v1.pdf) | 2026 한양MOT 리서치데이(10-31) 포스터 초안, 학과 A1 템플릿 기반, 논문 v59 수치 |
+| **v69_ko_JIK(국문 JIK판, 지식 통합 전면화; 노란색 = v68+v69)** | [manuscript_v69_ko_JIK.md](../journal/manuscript_v69_ko_JIK.md) · [.docx](../journal/manuscript_v69_ko_JIK.docx) | 제목 '…기술융합과 지식 통합', RQ·절 제목·3–5장·결론까지 지식 통합 |
+| **v69_en_JIK(영문 JIK판, 지식 통합 전면화)** | [manuscript_v69_en_JIK.md](../journal/manuscript_v69_en_JIK.md) · [.docx](../journal/manuscript_v69_en_JIK.docx) · [표지](../journal/title_page_v69_en_JIK.docx) · [하이라이트](../journal/highlights_v69_en_JIK.docx) | 제목 'as knowledge integration', `make_jik.py 69` FAILS 0 |
+| **JIK 가이드 검토서 v69** | [review_JIK_v69_ko.md](../journal/review_JIK_v69_ko.md) · [.docx](../journal/review_JIK_v69_ko.docx) | v68 검토 + v69 지식 강조 반영 내역 |
 | **v68_ko_JIK(국문 JIK판, 노란색 = 이번 수정)** | [manuscript_v68_ko_JIK.md](../journal/manuscript_v68_ko_JIK.md) · [.docx](../journal/manuscript_v68_ko_JIK.docx) | 표지 → 하이라이트 → 원고 한 파일; 지식 통합 재프레이밍(초록·주제어·서론·이론·논의·결론), 새 문헌 3편, APA 7·JEL·표 A.1 |
 | **v68_en_JIK(영문 JIK판, 노란색 = 이번 수정)** | [manuscript_v68_en_JIK.md](../journal/manuscript_v68_en_JIK.md) · [.docx](../journal/manuscript_v68_en_JIK.docx) · [표지](../journal/title_page_v68_en_JIK.docx) · [하이라이트](../journal/highlights_v68_en_JIK.docx) | 국문과 같은 위치 수정, 초록 250단어, `make_jik.py 68` FAILS 0 |
 | **JIK 가이드 검토서** | [review_JIK_v68_ko.md](../journal/review_JIK_v68_ko.md) · [.docx](../journal/review_JIK_v68_ko.docx) | 첨부 가이드 검증(JIK 요구·수치 20개), 반영/미반영과 이유, 남은 일 |
