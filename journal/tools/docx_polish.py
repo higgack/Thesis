@@ -257,12 +257,16 @@ def _indent(p, left, hanging=None):
 
 
 def front_page(doc, title_color='FF0000'):
-    """Title / authors / affiliation / e-mail paragraphs as in the professor's file (v60+)."""
-    ps = [p for p in doc.paragraphs if p.text.strip()][:4]
-    title, authors, affil, email = ps
+    """Title / authors / affiliation / e-mail paragraphs as in the professor's file (v60+).
+    v67_ko+: a Korean title may precede the English title; both get the title format (Hangul keeps the East Asian font)."""
+    ps = [p for p in doc.paragraphs if p.text.strip()][:5]
+    n_titles = 2 if re.search('[가-힣]', ps[0].text) and not ps[1].text.startswith('HyungKyu') else 1
+    titles = ps[:n_titles]
+    authors, affil, email = ps[n_titles:n_titles + 3]
     assert authors.text.startswith('HyungKyu Lee') and email.text.startswith('Email:'), [p.text[:20] for p in ps]
-    for r in title.runs:
-        _tnr(r, 14, True, title_color)
+    for title in titles:
+        for r in title.runs:
+            _tnr(r, 14, True, title_color)
     for r in authors.runs:
         _tnr(r, bold=True)
     for r in affil.runs + email.runs:

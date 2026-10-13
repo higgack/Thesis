@@ -29,8 +29,10 @@
 | 리서치데이 포스터 v3(A1, B안) | [poster_v3.pptx](../poster/poster_v3.pptx) · [.pdf](../poster/poster_v3.pdf) | 유저가 고른 B안(문제·해결·평가형)을 다듬은 판 |
 | 리서치데이 포스터 v2 세트(A1) | [poster_v2.pptx](../poster/poster_v2.pptx) · [B](../poster/poster_v2_B_pse.pptx) · [C](../poster/poster_v2_C_classic.pptx) · [D](../poster/poster_v2_D_dark.pptx) · [비교](../poster/poster_v2_overview.png) | v2 기본형(v1 + naver 메일)과 예시 참고 변형 3종(문제·해결·평가형, 학술 클래식형, 다크 임팩트형) |
 | 리서치데이 포스터 v1(A1) | [poster_v1.pptx](../poster/poster_v1.pptx) · [.pdf](../poster/poster_v1.pdf) | 2026 한양MOT 리서치데이(10-31) 포스터 초안, 학과 A1 템플릿 기반, 논문 v59 수치 |
-| **v66_ko(국문 최종본)** | [manuscript_v66_ko.md](../journal/manuscript_v66_ko.md) · [.docx](../journal/manuscript_v66_ko.docx) | v65_ko에서 "동시에" 두 곳 정리(4.4절 삭제, 6.3절 "함께"), 노란색 없음, 감사 FAILS 0 |
-| **v66_ko_prof(교수님 확인용, 노란색 표시)** | [manuscript_v66_ko_prof.docx](../journal/manuscript_v66_ko_prof.docx) | v66_ko + 유저 첨부 파일의 노란색 29곳(교수님 파일 대비 바뀐 곳)만 표시, 패밀리 식별자·"동시에" 수정은 표시 안 함 |
+| **v67_ko(국문 최종본, 제목 국문·영문)** | [manuscript_v67_ko.md](../journal/manuscript_v67_ko.md) · [.docx](../journal/manuscript_v67_ko.docx) | v66_ko 맨 위에 국문 제목 추가(영문 제목은 그 아래 그대로), 나머지 글자 동일, 감사 FAILS 0 |
+| **v67_ko_prof(교수님 확인용, 노란색 표시)** | [manuscript_v67_ko_prof.docx](../journal/manuscript_v67_ko_prof.docx) | v67_ko + 같은 노란색 29곳(국문 제목은 표시 안 함) |
+| v66_ko(국문 최종본) | [manuscript_v66_ko.md](../journal/manuscript_v66_ko.md) · [.docx](../journal/manuscript_v66_ko.docx) | v65_ko에서 "동시에" 두 곳 정리(4.4절 삭제, 6.3절 "함께"), 노란색 없음, 감사 FAILS 0 |
+| v66_ko_prof(교수님 확인용, 노란색 표시) | [manuscript_v66_ko_prof.docx](../journal/manuscript_v66_ko_prof.docx) | v66_ko + 유저 첨부 파일의 노란색 29곳(교수님 파일 대비 바뀐 곳)만 표시, 패밀리 식별자·"동시에" 수정은 표시 안 함 |
 | **v66_en(영문 최종본)** | [manuscript_v66_en.md](../journal/manuscript_v66_en.md) · [.docx](../journal/manuscript_v66_en.docx) | v65_en에서 6.3절 "determined simultaneously" → "determined jointly", 국문 v66과 짝, 감사 FAILS 0 |
 | v65_ko(국문 투고용 최종본) | [manuscript_v65_ko.md](../journal/manuscript_v65_ko.md) · [.docx](../journal/manuscript_v65_ko.docx) | v64_ko에서 패밀리 식별자 문장 2곳만 고침(4.1절, 6.3절; 영문 v65와 같은 내용), 서식·표·그림 동일, 감사 FAILS 0 |
 | v65_en(영문 교정판) | [manuscript_v65_en.md](../journal/manuscript_v65_en.md) · [.docx](../journal/manuscript_v65_en.docx) | v64_en의 영문 교정(국문 v65와 짝): 영문 교정 검토 70건 중 표현·정확성·일관성 항목 반영(초록 250단어 유지, 식 아래 첨자, 약어 풀이, 표 규칙 통일 등), 내용·구조 변경 제안은 반영하지 않고 정리, 감사 FAILS 0 |

@@ -4,13 +4,15 @@ Usage:
   python3 tools/mark_from_docx.py extract MARKED.docx MARKS.json     (highlighted spans -> json)
   python3 tools/mark_from_docx.py apply BASE.docx MARKS.json OUT.docx (BASE + yellow at those spans -> OUT)
 
-A span is (paragraph number, start, end, text), counting every w:p of the document body in order (table cells
-included). When BASE has changed a paragraph (e.g. a sentence before the span was edited), the span is moved to the
-occurrence of its text nearest the old position; a span whose text is no longer in the paragraph stops the run.
+A span is (paragraph number, start, end, text, paragraph text), counting every w:p of the document body in order
+(table cells included). The paragraph is found in BASE by its text (nearest to the old number, so an added paragraph
+such as a second title line shifts nothing); a paragraph that BASE has edited is matched to the most similar paragraph
+within 5 of the old number that still contains the span text, and the span is moved to the occurrence of its text
+nearest the old position. A span whose text cannot be found stops the run.
 Only the highlight is added: the text, runs and formatting of BASE are otherwise unchanged (runs are split at the
 span boundaries). Checks: the highlighted text of OUT equals the span texts, and the plain text of OUT equals BASE.
 """
-import sys, json, copy
+import sys, json, copy, difflib
 import docx
 from docx.oxml.ns import qn
 from docx.text.run import Run
@@ -50,7 +52,7 @@ def extract(marked):
                 else: spans.append({'para': i, 'start': pos, 'end': pos + n})
             pos += n
         for s in spans:
-            if s['para'] == i: s['text'] = t[s['start']:s['end']]
+            if s['para'] == i: s['text'] = t[s['start']:s['end']]; s['ptext'] = t
     return spans
 
 def split_run(r, k):
@@ -78,14 +80,24 @@ def mark(p, s, e):
         if b >= e: break
 
 def apply(base, marks, out):
+    orig = marks
     d = docx.Document(base); ps = paras(d); before = [ptext(p) for p in ps]
-    moved = []
+    moved = []; marks = [dict(m) for m in marks]
     for m in marks:
+        i0 = m['para']
+        if 'ptext' in m:
+            same = [i for i, x in enumerate(before) if x == m['ptext']]
+            if same: i = min(same, key=lambda k: abs(k - i0))
+            else:
+                near = [i for i in range(max(0, i0 - 5), min(len(before), i0 + 6)) if m['text'] in before[i]]
+                assert near, f"paragraph of span not found near {i0}: {m['text'][:60]}"
+                i = max(near, key=lambda k: difflib.SequenceMatcher(None, before[k], m['ptext']).ratio())
+            m['para'] = i
         p = ps[m['para']]; t = ptext(p); s = m['start']
         if t[s:m['end']] != m['text']:
             hits = [k for k in range(len(t)) if t.startswith(m['text'], k)]
             assert hits, f"span text not found in paragraph {m['para']}: {m['text'][:60]}"
-            s = min(hits, key=lambda k: abs(k - m['start'])); moved.append((m['para'], m['start'], s))
+            s = min(hits, key=lambda k: abs(k - m['start'])); moved.append((i0, m['start'], s))
         mark(p, s, s + len(m['text']))
     d.save(out)
     # checks
@@ -101,7 +113,8 @@ def apply(base, marks, out):
             elif run_text(r): cur = None
     want = [[m['para'], m['text']] for m in marks]
     assert got == want, ('highlight mismatch', got[:3], want[:3])
-    print('marked', len(marks), 'spans; moved', moved)
+    shift = sorted({m['para'] - n['para'] for m, n in zip(marks, orig)})
+    print('marked', len(marks), 'spans; paragraph shifts', shift, '; moved within paragraph', moved)
 
 if __name__ == '__main__':
     if sys.argv[1] == 'extract':
