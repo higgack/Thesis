@@ -1,0 +1,25 @@
+# Environment for the GitHub Copilot coding agent (runs before the agent starts).
+# Takes effect only when this file is on the default branch (main).
+name: "Copilot Setup Steps"
+
+on:
+  workflow_dispatch:
+  push:
+    paths: [.github/workflows/copilot-setup-steps.yml]
+  pull_request:
+    paths: [.github/workflows/copilot-setup-steps.yml]
+
+jobs:
+  copilot-setup-steps:            # the job must have exactly this name
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Python packages used by journal/tools
+        run: pip install pypandoc_binary python-docx pymupdf pillow numpy pandas scipy statsmodels scikit-learn networkx matplotlib koreanize-matplotlib
+      - name: LibreOffice (docx -> pdf check) and Korean fonts
+        run: sudo apt-get update && sudo apt-get install -y libreoffice-writer fonts-noto-cjk
