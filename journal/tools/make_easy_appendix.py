@@ -154,6 +154,15 @@ if int(VER) >= 70:  # v70: a framework table (Table 1) was added in section 2.5,
     a = '본문 표 12에 제시한'
     assert _txt.count(a) == 1, a
     _txt = _txt.replace(a, '본문 표 13에 제시한')
+if int(VER) >= 72:  # v72: sentences rewritten after the CopyKiller AI-writing check (the revised words are red in v72 only)
+    a = '**대안 제외 민감도 분석.** IIA 가정과 관련된 민감성을 간접적으로 검토하기 위해 공정 단독형을 제외한 표본(N = 763)에서 통합형 대 접합 단독형의 이항 로짓을 추정하였다. 기술범위의 승산비는 1.463, 출원연도는 0.987로, 주요 계수의 방향과 상대적 크기는 다항 로짓 통합형 방정식의 값(1.403, 0.993)과 유사하였다. 이는 공정 단독형을 제외하여도 통합형 관련 결과의 실질적 해석이 크게 달라지지 않음을 보여 주는 민감도 분석이며, 정식 IIA 검정(Hausman–McFadden, Small–Hsiao)을 대체하지는 않는다. 본문의 핵심 기술 모형도 동일한 표본을 사용한다.'
+    b = '**대안 제외 민감도 분석.** IIA 가정과 관련된 민감성을 간접적으로 검토하고자, 공정 단독형을 제외한 표본(N = 763)에서 통합형 대 접합 단독형의 이항 로짓을 추정하였다. 기술범위의 승산비는 1.463, 출원연도는 0.987로 나타나, 주요 계수의 방향과 상대적 크기가 다항 로짓 통합형 방정식의 값(1.403, 0.993)과 유사하였다. 공정 단독형을 제외하여도 통합형 관련 결과의 실질적 해석이 크게 달라지지 않는다는 것을 보여 주는 민감도 분석이지만, 정식 IIA 검정(Hausman–McFadden, Small–Hsiao)을 대체하지는 않는다. 본문의 핵심 기술 모형도 이 표본을 사용한다.'
+    assert _txt.count(a) == 1, a
+    if int(VER) == 72:
+        sys.path.insert(0, 'tools')
+        from red_mark import mark_paragraph
+        b = mark_paragraph(a, b)
+    _txt = _txt.replace(a, b)
 pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text(_txt, encoding='utf-8')
 if r16:
     # numbers used in the main text that come from results_v16 (rounded as printed)

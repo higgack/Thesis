@@ -19,7 +19,7 @@ import sys
 import re
 from copy import deepcopy
 from docx import Document
-from docx.shared import Pt, Mm, Emu
+from docx.shared import Pt, Mm, Emu, RGBColor
 from docx.enum.section import WD_ORIENT
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -350,6 +350,11 @@ def polish(path_in, path_out, ea_font=None, body_pt=None, caption_pt=None, front
                 rFonts.set(qn('w:eastAsia'), ea_font)
             if body_pt and name != 'Compact':
                 st.font.size = Pt(body_pt)
+    # v72+: text revised in this version carries the character style "Red" (from [..]{.red} in the sources)
+    try:
+        doc.styles['Red'].font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+    except KeyError:
+        pass
     if line_numbers:
         line_and_page_numbers(doc)
     doc.save(path_out)

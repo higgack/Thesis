@@ -13,16 +13,18 @@ src = pathlib.Path(f'sources/ko_v{VER}')
 order = ['00_front.md','01_intro.md','02_theory.md','03_context.md','04_data.md','05_results.md','06_discussion.md']
 body = '\n'.join((src/f).read_text(encoding='utf-8').rstrip()+'\n' for f in order)
 v9 = pathlib.Path('manuscript_v9_ko.md').read_text(encoding='utf-8')
+RED = re.compile(r'\[([^\[\]]*)\]\{\.red\}')   # v72+: red marks (text revised in this version) are ignored by the audits
+body_a = RED.sub(r'\1', body)
 refs_v9 = [l for l in v9.split('## 참고문헌')[1].splitlines() if l.strip() and not l.startswith('#') and l.strip() != '---' and not l.startswith(' (')]
 
 # citations in body: "Surname(2001)", "Surname and X, 2001", "Surname et al., 2001", "Surname과 X(2012)"
 cited = set()
-for m in re.finditer(r'([A-Z][A-Za-zÀ-ÿ\'’\-]+(?: [A-Z][a-z]+)?)(?: et al\.| and [A-Z][A-Za-zÀ-ÿ\'’\-]+|[과와] [A-Z][A-Za-zÀ-ÿ\'’\-]+)?,? ?\(?((?:19|20)\d\d[a-z]?)', body):
+for m in re.finditer(r'([A-Z][A-Za-zÀ-ÿ\'’\-]+(?: [A-Z][a-z]+)?)(?: et al\.| and [A-Z][A-Za-zÀ-ÿ\'’\-]+|[과와] [A-Z][A-Za-zÀ-ÿ\'’\-]+)?,? ?\(?((?:19|20)\d\d[a-z]?)', body_a):
     cited.add((m.group(1), m.group(2)))
-for m in re.finditer(r'(European Patent Office|Yole Group),? ?\(?((?:19|20)\d\d)', body):
+for m in re.finditer(r'(European Patent Office|Yole Group),? ?\(?((?:19|20)\d\d)', body_a):
     cited.add((m.group(1), m.group(2)))
 # years listed after one author, e.g. "Lau, 2021, 2022" / "Lau(2021, 2022)"
-for m in re.finditer(r'([A-Z][A-Za-z\-]+),? ?\(?((?:19|20)\d\d), ((?:19|20)\d\d)', body):
+for m in re.finditer(r'([A-Z][A-Za-z\-]+),? ?\(?((?:19|20)\d\d), ((?:19|20)\d\d)', body_a):
     cited.add((m.group(1), m.group(3)))
 cited = {c for c in cited if c[0] not in ('PATSTAT Global','Patent Office','CPC','H01L21','H01L24')}
 def key(ref):
@@ -56,7 +58,7 @@ print('cited', len(cited), 'kept refs', len(kept), 'dropped', len(dropped))
 print('cited but not in v9 list:', missing)
 fails = len(missing)
 # numbering
-main = body
+main = body_a
 for kind in ('표','그림'):
     first=[]
     for m in re.finditer(rf'{kind} (\d+)', main):
@@ -75,7 +77,7 @@ pool |= {'2.7'}   # derived: RRR 2.687 rounded in prose
 pool |= set(re.findall(r'^#+ (\d+\.\d+)', main, re.M))   # section numbers such as 4.4
 for extra_nums in sorted(src.glob('numbers_*.txt')):   # numbers_extra.txt (appendix) + numbers_v30.txt (convergence indicators) etc.
     pool |= set(extra_nums.read_text(encoding='utf-8').split())
-new = sorted(x for x in nums(main + appendix) if x not in pool and ('.' in x or ',' in x or len(x)>=3))
+new = sorted(x for x in nums(main + RED.sub(r'\1', appendix)) if x not in pool and ('.' in x or ',' in x or len(x)>=3))
 print('numbers not found in v9/S1/S2/extra:', new); fails += len(new)
 print('chars', len(main), 'FAILS', fails)
 sys.exit(1 if fails else 0)
