@@ -29,7 +29,8 @@
 | 리서치데이 포스터 v3(A1, B안) | [poster_v3.pptx](../poster/poster_v3.pptx) · [.pdf](../poster/poster_v3.pdf) | 유저가 고른 B안(문제·해결·평가형)을 다듬은 판 |
 | 리서치데이 포스터 v2 세트(A1) | [poster_v2.pptx](../poster/poster_v2.pptx) · [B](../poster/poster_v2_B_pse.pptx) · [C](../poster/poster_v2_C_classic.pptx) · [D](../poster/poster_v2_D_dark.pptx) · [비교](../poster/poster_v2_overview.png) | v2 기본형(v1 + naver 메일)과 예시 참고 변형 3종(문제·해결·평가형, 학술 클래식형, 다크 임팩트형) |
 | 리서치데이 포스터 v1(A1) | [poster_v1.pptx](../poster/poster_v1.pptx) · [.pdf](../poster/poster_v1.pdf) | 2026 한양MOT 리서치데이(10-31) 포스터 초안, 학과 A1 템플릿 기반, 논문 v59 수치 |
-| **v74_ko(학위논문 국문 최신, v73에서 빨간 글씨만 뺌; 노란색 = v67 대비 추가)** | [manuscript_v74_ko.md](../journal/manuscript_v74_ko.md) · [.docx](../journal/manuscript_v74_ko.docx) | 카피킬러 AI작성률 44% → 22%로 마무리한 본문(v73과 글자 동일) |
+| **v75_ko(학위논문 국문 최신; 노란색 = v67 대비 추가)** | [manuscript_v75_ko.md](../journal/manuscript_v75_ko.md) · [.docx](../journal/manuscript_v75_ko.docx) | v74 + 4.5 첫 문장 괄호의 노란색 문구(표 1 언급) 삭제 |
+| **v74_ko(학위논문 국문, v73에서 빨간 글씨만 뺌; 노란색 = v67 대비 추가)** | [manuscript_v74_ko.md](../journal/manuscript_v74_ko.md) · [.docx](../journal/manuscript_v74_ko.docx) | 카피킬러 AI작성률 44% → 22%로 마무리한 본문(v73과 글자 동일) |
 | **v73_ko(학위논문 국문, 카피킬러 2차 대응 + 문어체 다듬기; 빨간 글씨 = v71 대비 수정 누적, 노란색 = v67 대비 추가)** | [manuscript_v73_ko.md](../journal/manuscript_v73_ko.md) · [.docx](../journal/manuscript_v73_ko.docx) | v72 검사(28%, 26영역)에서 남은 영역을 매끄러운 문어체로 다시 쓰고 v72의 구어적 표현 정리 |
 | **v72_ko(학위논문 국문, 카피킬러 AI 검사 대응 문체 수정; 빨간 글씨 = v71 대비 수정, 노란색 = v67 대비 추가)** | [manuscript_v72_ko.md](../journal/manuscript_v72_ko.md) · [.docx](../journal/manuscript_v72_ko.docx) | v71에서 AI 의심 41영역(59문단)의 문장 구조·접속어·맺음만 수정, 숫자·인용·용어 동일 |
 | **v71_ko(학위논문 국문, 2장 RQ 표기 삭제; 노란색 = v67 대비 추가)** | [manuscript_v71_ko.md](../journal/manuscript_v71_ko.md) · [.docx](../journal/manuscript_v71_ko.docx) | v70 + 이론적 배경의 (RQ1) 등 표기를 문장으로 풀어 씀 |
