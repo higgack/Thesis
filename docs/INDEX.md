@@ -23,6 +23,7 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
+| **학위논문 심사 발표 v1(20분용 · 15분용)** | [20분용](../defense/defense_20min_v1.pptx) · [15분용](../defense/defense_15min_v1.pptx) · [예상 질문과 답변](../defense/defense_QA_v1.docx) · [발표 대본](../defense/defense_script_v1.docx) | 학위논문 v84 기준 디펜스 자료. 유저가 준 참고 발표의 구성(5장, 도입 질문, 장 요약, 핵심 한 줄)을 따름. 설명 `defense/README_ko.md` |
 | **리서치데이 포스터 v6(A1, 최신 — 제출용 PPTX)** | [poster_v6.pptx](../poster/poster_v6.pptx) · [.pdf](../poster/poster_v6.pdf) | v5를 PowerPoint(맑은 고딕) 기준으로 다시 배치해 글 넘침·겹침 제거(`check_fit.py`로 검사) |
 | 리서치데이 포스터 v5(A1) | [poster_v5.pptx](../poster/poster_v5.pptx) · [.pdf](../poster/poster_v5.pdf) | v4에서 저자를 발표자 이형규만으로(강민구 교수님 삭제, 유저 요청) |
 | 리서치데이 포스터 v4(A1, 논문 v64 기준) | [poster_v4.pptx](../poster/poster_v4.pptx) · [.pdf](../poster/poster_v4.pdf) | v3 + 새 논문 제목(국문 표현 + 교수님 영문 제목), 저자 이형규·강민구, 소속 기술경영전문대학원, RQ 문구·주제어를 논문과 같게, 템플릿 "P" 상자 삭제 |
