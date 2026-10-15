@@ -52,7 +52,8 @@ missing = sorted(c for c in cited if c not in {k for k,_ in keyed})
 dropped = sorted(k for k,_ in keyed if k not in cited)
 appendix = (src/'07_appendix.md').read_text(encoding='utf-8')
 sep = '\n\n' if int(VER) >= 42 else '\n\n---\n\n'  # v42+: no rule between references and appendix (user removed it)
-text = body + ('\n## 참고문헌\n\n' if int(VER) >= 77 else '\n## 참고문헌 (References)\n\n') + '\n\n'.join(kept) + sep + appendix   # v77 thesis form: heading without the English gloss
+THESIS_FORM = 77 <= int(VER) <= 84 or (src/'THESIS').exists()   # v77–v84: Hanyang thesis form; v85+ JIK journal track unless marked
+text = body + ('\n## 참고문헌\n\n' if THESIS_FORM else '\n## 참고문헌 (References)\n\n') + '\n\n'.join(kept) + sep + appendix   # thesis form: heading without the English gloss
 pathlib.Path(f'manuscript_v{VER}_ko.md').write_text(text, encoding='utf-8')
 print('cited', len(cited), 'kept refs', len(kept), 'dropped', len(dropped))
 print('cited but not in v9 list:', missing)
