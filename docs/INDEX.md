@@ -29,7 +29,8 @@
 | 리서치데이 포스터 v3(A1, B안) | [poster_v3.pptx](../poster/poster_v3.pptx) · [.pdf](../poster/poster_v3.pdf) | 유저가 고른 B안(문제·해결·평가형)을 다듬은 판 |
 | 리서치데이 포스터 v2 세트(A1) | [poster_v2.pptx](../poster/poster_v2.pptx) · [B](../poster/poster_v2_B_pse.pptx) · [C](../poster/poster_v2_C_classic.pptx) · [D](../poster/poster_v2_D_dark.pptx) · [비교](../poster/poster_v2_overview.png) | v2 기본형(v1 + naver 메일)과 예시 참고 변형 3종(문제·해결·평가형, 학술 클래식형, 다크 임팩트형) |
 | 리서치데이 포스터 v1(A1) | [poster_v1.pptx](../poster/poster_v1.pptx) · [.pdf](../poster/poster_v1.pdf) | 2026 한양MOT 리서치데이(10-31) 포스터 초안, 학과 A1 템플릿 기반, 논문 v59 수치 |
-| **v81_ko(학위논문 최종본)** | [manuscript_v81_ko.docx](../journal/manuscript_v81_ko.docx) · [노란색판](../journal/manuscript_v81_ko_yellow.docx) | 유저가 표시한 벌어진 줄 4곳: 긴 영문·숫자 덩어리 안에 줄바꿈 지점 추가(선택 하이픈, U+200B); 보이는 글자 그대로 |
+| **v82_ko(학위논문 최종본)** | [manuscript_v82_ko.docx](../journal/manuscript_v82_ko.docx) | 유저가 그림 목차를 고친 파일(그림 3·5 항목을 짧게) + 캡션 속 목차 필드 문구를 같게 맞춤(목차를 업데이트해도 유지) |
+| **v81_ko** | [manuscript_v81_ko.docx](../journal/manuscript_v81_ko.docx) · [노란색판](../journal/manuscript_v81_ko_yellow.docx) | 유저가 표시한 벌어진 줄 4곳: 긴 영문·숫자 덩어리 안에 줄바꿈 지점 추가(선택 하이픈, U+200B); 보이는 글자 그대로 |
 | **v80_ko** | [manuscript_v80_ko.docx](../journal/manuscript_v80_ko.docx) · [노란색판](../journal/manuscript_v80_ko_yellow.docx) | v79(유저 확정) + Word 양식의 영문·한글 글자 폭 맞춤 옵션 해제(띄어쓰기가 벌어져 보이던 원인); 글자·서식 그대로 |
 | **v79_ko(유저 확정 파일)** | [manuscript_v79_ko.docx](../journal/manuscript_v79_ko.docx) · [노란색판](../journal/manuscript_v79_ko_yellow.docx) | 유저가 확정한 학위논문(v78 + Word 필드 업데이트); 노란색판 = 최종본에 v76의 노란색(v70 추가분)을 다시 칠한 것 |
 | **v78_ko(학위논문 국문; 한양대 학위논문 양식)** | [manuscript_v78_ko.docx](../journal/manuscript_v78_ko.docx) · [원고 md](../journal/manuscript_v78_ko.md) · [배치 md](../journal/thesis_v78_ko.md) | v76의 노란 표시만 없애고 글자는 전부 유지(2.5절·표 1 포함) + 기술경영전문대학원 Word 양식; 표 번호 뒤 조사 4곳 수정; 석사·2027년 2월 |
