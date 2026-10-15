@@ -4,7 +4,7 @@
 부록 B: full re-estimation results (MNL both equations, NB) across the specifications used in 5.4
 부록 C: identification of irrelevant uses of the search terms (criteria and counts)
 """
-import json, pathlib, sys
+import json, pathlib, re, sys
 VER = sys.argv[1] if len(sys.argv) > 1 else '12'
 r = json.load(open('robustness/results_v9.json'))
 import os
@@ -165,6 +165,11 @@ if int(VER) >= 72:  # v72–v73: sentences rewritten after the CopyKiller AI-wri
         from red_mark import mark_paragraph
         b = mark_paragraph(a, b)
     _txt = _txt.replace(a, b)
+if int(VER) >= 77:  # v77 thesis: section 2.5 and its Table 1 deleted (tables renumbered); Hanyang thesis form 제N장 제M절
+    a = '본문 표 13에 제시한'
+    assert _txt.count(a) == 1, a
+    _txt = _txt.replace(a, '본문 표 12에 제시한')
+    _txt = re.sub(r'제(\d)\.(\d)절', r'제\1장 제\2절', _txt)
 pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text(_txt, encoding='utf-8')
 if r16:
     # numbers used in the main text that come from results_v16 (rounded as printed)
