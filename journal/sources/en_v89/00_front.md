@@ -1,0 +1,18 @@
+**Cross-stage technology convergence as knowledge integration in semiconductor hybrid bonding: A patent-based longitudinal analysis**
+
+**HyungKyu Lee^a^, Mingu Kang^a,\*^**
+
+^a^ Graduate School of Technology and Innovation Management, Hanyang University,\
+Seoul, Korea
+
+Email: higgack@naver.com (Lee, H.); jiangmq@hanyang.ac.kr (Kang, M.)
+
+---
+
+## Abstract
+
+Front-end fabrication and back-end assembly have long been separate knowledge domains in semiconductor manufacturing. Hybrid bonding, a back-end technology, depends on front-end fabrication knowledge, driving convergence, or knowledge integration, across process stages. Using hybrid bonding patent applications from the European Patent Office's PATSTAT, this study examines the level and forms of cross-stage knowledge integration, its change over time, and its shifting locus. Applications were classified by their Cooperative Patent Classification co-classification, a trace of this integration, as bonding-only, process-only, or integrated and analyzed with logit models and technology cluster and network analyses. First, integrated applications formed the largest group, remaining substantial under a narrower definition excluding packaging-stage processes, and included more diverse technical elements; cross-stage convergence was not exceptional. Second, integration evolved through three phases (formation, when process-only applications were most common; diffusion, when the integrated share peaked; and reconfiguration, when it fell as bonding-only applications increased) as the center of gravity of filings shifted from fabrication processes toward bonding. Third, bonding applications containing the core technologies were far more likely than others to carry fabrication-process classifications in the formation phase, but this gap became nonsignificant by the reconfiguration phase, and the locus of integration shifted from wafer fabrication toward processing apparatus and packaging-stage processes. Cross-stage convergence is not a linear expansion but a dynamic process whose content and locus shift across phases; as the core design became entrenched, knowledge integration appears to have relocated rather than disappeared, suggesting firms must track where, not only whether, adjacent-stage knowledge is integrated.
+
+**Keywords:** technology convergence; cross-stage convergence; hybrid bonding; advanced packaging; knowledge integration; knowledge boundaries
+
+---
