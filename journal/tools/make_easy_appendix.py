@@ -165,10 +165,11 @@ if int(VER) >= 72:  # v72–v73: sentences rewritten after the CopyKiller AI-wri
         from red_mark import mark_paragraph
         b = mark_paragraph(a, b)
     _txt = _txt.replace(a, b)
-if int(VER) >= 77:  # v77 thesis: section 2.5 and its Table 1 deleted (tables renumbered); Hanyang thesis form 제N장 제M절
-    a = '본문 표 13에 제시한'
-    assert _txt.count(a) == 1, a
-    _txt = _txt.replace(a, '본문 표 12에 제시한')
+if int(VER) >= 77:  # v77+ thesis: Hanyang thesis form 제N장 제M절
+    if int(VER) == 77:  # v77 only: section 2.5 and its Table 1 deleted (tables renumbered); v78 keeps them
+        a = '본문 표 13에 제시한'
+        assert _txt.count(a) == 1, a
+        _txt = _txt.replace(a, '본문 표 12에 제시한')
     _txt = re.sub(r'제(\d)\.(\d)절', r'제\1장 제\2절', _txt)
 pathlib.Path(f'sources/ko_v{VER}/07_appendix.md').write_text(_txt, encoding='utf-8')
 if r16:
