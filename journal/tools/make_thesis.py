@@ -767,6 +767,12 @@ def build(ko_title, en_title, pages):
     footers(doc, ['front', 'roman', 'arabic', 'pledge'])
     # Word: offer to update the fields (the lists) when the file is opened
     update_fields_on_open(doc)
+    # the form's compatibility option "balance SBCS and DBCS characters" sets Latin letters, digits and spaces on a
+    # half-width grid, which makes the spacing look uneven in Word (the user's remark on v79); v80+ switch it off
+    comp = doc.settings.element.find(qn('w:compat'))
+    if comp is not None:
+        for e in comp.findall(qn('w:balanceSingleByteDoubleByteWidth')):
+            comp.remove(e)
     fix_order(doc.element.body); fix_order(doc.styles.element)
     for sec in doc.sections:
         fix_order(sec.footer._element); fix_order(sec.header._element)
