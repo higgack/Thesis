@@ -24,8 +24,9 @@ body = '\n'.join((src / f).read_text(encoding='utf-8').rstrip() + '\n' for f in 
 appendix = (src / '07_appendix.md').read_text(encoding='utf-8')
 ko = pathlib.Path(f'manuscript_v{KO}_ko.md').read_text(encoding='utf-8')
 ko_body, rest = ko.split('## 참고문헌 (References)')
-ko_refs_txt, ko_app = rest.split('\n## 부록\n')
-ko_app = '## 부록\n' + ko_app
+_h = '\n## 보충자료\n' if '\n## 보충자료\n' in rest else '\n## 부록\n'   # v87+: the appendix became supplementary material
+ko_refs_txt, ko_app = rest.split(_h)
+ko_app = _h.lstrip('\n') + ko_app
 refs = [l.strip() for l in ko_refs_txt.splitlines() if l.strip()]
 
 def key(ref):

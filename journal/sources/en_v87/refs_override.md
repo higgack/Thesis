@@ -1,0 +1,1 @@
+Applied Materials, 2025. Kinex integrated die-to-wafer hybrid bonding system [Press release, in Korean; written by J. Kim]. Applied Materials website. https://www.appliedmaterials.com/kr/ko/newsroom/press-releases/251126-next-gen-semi-equipment-ko.html (accessed 12 October 2026).

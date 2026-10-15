@@ -15,6 +15,8 @@ JIK requirements applied (guide for authors; the journal uses double-anonymized 
     alphabetically, narrative citations keep "and" (Korean: 과/와)
   - appendix tables numbered Table A.1, A.2, B.1 / 표 A.1 (Elsevier style); reference list with a 0.5-inch hanging
     indent (APA)
+  - v87+: when the appendix file starts with "## Supplementary material" / "## 보충자료", it is written to a separate
+    supplementary_v<N>_<lang>_JIK file (Tables S1-S5 keep their numbers) instead of being appended to the manuscript
   - data availability and the generative-AI declaration as unnumbered sections before the references
   - highlights: 3-5 bullets of at most 85 characters including spaces (English), in a separate file
 Yellow ([...]{.mark} in the sources and in the manuscript) passes through unchanged, also on a highlighted reference.
@@ -36,6 +38,12 @@ base = pathlib.Path(f'manuscript_v{VER}_{LANG}.md').read_text(encoding='utf-8')
 OUT_MS, OUT_TP, OUT_HL = (f'manuscript_v{VER}_{LANG}_JIK', f'title_page_v{VER}_{LANG}_JIK', f'highlights_v{VER}_{LANG}_JIK')
 H_ABS, H_KW, H_REF, H_APP, TAB = (('## 국문 초록', '**주제어:**', '## 참고문헌 (References)', '\n## 부록', '표') if KO else
                                   ('## Abstract', '**Keywords:**', '## References', '\n## Appendix', 'Tables?'))
+# v87+: the appendix moved to a separate Supplementary material file (Tables S1-S5, Elsevier style without a dot)
+H_SUP = '\n## 보충자료' if KO else '\n## Supplementary material'
+SUPP = H_SUP in base
+if SUPP:
+    H_APP = H_SUP
+OUT_SM = f'supplementary_v{VER}_{LANG}_JIK'
 
 APA_MANUAL = {
  'Applied Materials, 2025.': 'Applied Materials. (2025). *Kinex integrated die-to-wafer hybrid bonding system* [Press release, in Korean; written by J. Kim]. Retrieved October 12, 2026, from https://www.appliedmaterials.com/kr/ko/newsroom/press-releases/251126-next-gen-semi-equipment-ko.html',
@@ -111,15 +119,18 @@ appendix_jik = PAREN.sub(apa_group, appendix)
 
 # --- appendix tables: Table A1 -> Table A.1 (also "Tables A1 and A2"; 표 A1 -> 표 A.1, "표 A1과 A2")
 def app_tables(t):
-    t = re.sub(rf'\b({TAB} )([A-Z])(\d+)(?!\d)', r'\1\2.\3', t)   # (?!\d), not \b: a Korean particle may follow (표 A1과)
-    return re.sub(r'((?:Tables|표) [A-Z]\.\d+(?: and |과 |와 ))([A-Z])(\d+)(?!\d)', r'\1\2.\3', t)
+    t = re.sub(rf'\b({TAB} )([A-RT-Z])(\d+)(?!\d)', r'\1\2.\3', t)   # (?!\d), not \b: a Korean particle may follow (표 A1과); S tables keep "S1"
+    return re.sub(r'((?:Tables|표) [A-Z]\.\d+(?: and |과 |와 ))([A-RT-Z])(\d+)(?!\d)', r'\1\2.\3', t)
 main_jik, appendix_jik = app_tables(main_jik), app_tables(appendix_jik)
 
 # --- assemble
 jel = (src / 'jel.md').read_text(encoding='utf-8').strip()
 back = (src / 'back_matter.md').read_text(encoding='utf-8').strip()
 ms = (title + '\n\n---\n\n' + H_ABS + abstract_part.rstrip() + '\n\n' + jel + '\n\n---\n' + main_jik.rstrip() + '\n\n'
-      + back + '\n\n' + H_REF + '\n\n' + '\n\n'.join(apa) + '\n\n' + appendix_jik)
+      + back + '\n\n' + H_REF + '\n\n' + '\n\n'.join(apa) + ('\n' if SUPP else '\n\n' + appendix_jik))
+ms_all = ms + '\n\n' + appendix_jik if SUPP else ms      # manuscript plus supplementary material, for the audits
+if SUPP:
+    pathlib.Path(OUT_SM + '.md').write_text(title + '\n\n---\n\n' + appendix_jik, encoding='utf-8')
 tp = (src / 'title_page.md').read_text(encoding='utf-8')
 hl = (src / 'highlights.md').read_text(encoding='utf-8')
 if KO:   # Korean review copy: title page, highlights and manuscript in one file, each starting on a new page
@@ -135,7 +146,7 @@ print('== audits', LANG)
 if '\n\n'.join([l for l in tp.strip().split('\n') if l.strip()][:2 if KO else 1]) != title:
     fail('title page title differs from the manuscript title')
 for pat in ('HyungKyu', 'Mingu', 'Kang', 'Hanyang', 'naver', 'higgack', 'jiangmq', '@'):
-    if pat in ms: fail(f'identifying text in the manuscript: {pat}')
+    if pat in ms_all: fail(f'identifying text in the manuscript: {pat}')
 ab = unmark(abstract_part.split(H_KW)[0]).strip()
 if KO:
     print('abstract characters', len(ab))
@@ -193,8 +204,8 @@ def norm(t):
     t = re.sub(rf'\b({TAB} [A-Z])\.?(\d+)', r'\1\2', t)
     return re.sub(r'((?:Tables|표) [A-Z]\d+(?: and |과 |와 )[A-Z])\.?(\d+)', r'\1\2', t)
 a_ = norm(abstract_part + '\n---\n' + main + appendix).split()
-b_ = norm(ms.split(H_ABS, 1)[1].replace(jel, '').replace(back, '').split(H_REF)[0]
-          + H_APP.strip() + ms.split(H_APP, 1)[1]).split()
+b_ = norm(ms_all.split(H_ABS, 1)[1].replace(jel, '').replace(back, '').split(H_REF)[0]
+          + H_APP.strip() + ms_all.split(H_APP, 1)[1]).split()
 diff = [d for d in difflib.ndiff(a_, b_) if d[:1] in '+-']
 print(f'word differences vs v{VER}_{LANG} (beyond citations/table numbers/JEL/back matter):', diff[:20])
 if diff: fail('unexpected text differences')
@@ -222,6 +233,9 @@ def build(stem, polish_args):
     cp.author = ''; cp.last_modified_by = ''; cp.title = ''; cp.comments = ''
     d.save(stem + '.docx')
 build(OUT_MS, ['--front-black', '--line-numbers'])
+if SUPP:
+    build(OUT_SM, ['--front-black'])
+    print('docx ->', OUT_SM + '.docx')
 if KO:
     print('docx ->', OUT_MS + '.docx')
 else:
