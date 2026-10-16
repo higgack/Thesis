@@ -8,8 +8,9 @@ Usage: python3 capstone/tools/make_capstone.py 1            (add --no-render to 
                                                 student fills in, red strike = text removed from the PDF
 
 The layout copies the two HWP files the user received (parsed record by record, see capstone/README_ko.md):
-  order      개요표 (19-row table + 결과물 사진 box) - 신규고용 창출 - 표지 - 인준지 - 목차 - 표 목차 - 그림 목차 - 제1-4장
-             - 참고문헌
+  order      개요표 (19-row table + 결과물 사진 box) - 신규고용 창출 - 표지 - 인준지 - 목차 - 표 목차 - 그림 목차 - 국문 초록
+             - Abstract - 제1-4장 - 참고문헌 (the two abstracts are not in the form; they come from the user's PDF, placed
+             where the PDF has them, after the lists and before 제1장, lower-roman pages listed in 목차)
   page       A4; left/right 15 mm; body from 27 mm (위쪽 2 + 머리말 25) to 30 mm above the bottom (아래쪽 25 + 꼬리말 5)
   header     "캡스톤 프로젝트 보고서" left, page number right, 9 pt, from 목차 on; front pages lower-roman counted from
              표지 (the form's 목차 lists 표 목차 iv, 그림 목차 vi), body arabic from 1 at 제1장 (the form's 새 번호)
@@ -18,6 +19,8 @@ The layout copies the two HWP files the user received (parsed record by record, 
   headings   제 N 장 16 pt bold, new page; N.M. 12 pt bold indented 10 pt; N.M.K. 11 pt bold; (1) 11 pt bold (not listed)
   captions   [표 N-k] above the table, 11 pt, centred; [그림 N-k] below the figure, 10 pt, centred; numbered by chapter
   references 10 pt, line 160 %, blank line between entries, Korean (가나다) then English (alphabetical)
+  abstracts  title 16 pt bold centred (listed in 목차 like 표 목차), the report title 13 pt bold below it, then body
+             paragraphs (11 pt, 200 %) with the PDF's bold lead labels (연구 배경 및 목적: ...), 주제어 / Keywords last
   표지        rule above the 25 pt bold Korean and English titles; 한양대학교 기술경영전문대학원 / 석사학위 캡스톤 프로젝트
              보고서 / date, 13 pt; signature block (student, 지도교수) on the right
   인준지       the separate HWP 인준지: titles, "이 보고서를 …의 석사학위 보고서로 인준함.", date, 지도교수 / 학과장 / 원장
@@ -96,10 +99,19 @@ def parse():
     if t.count('{+') != t.count('+}') or t.count('{-') != t.count('-}'): fail('unbalanced marks')
     blocks, chap = [], 0
     counters = {}
+    front = False
     for raw in re.split(r'\n\s*\n', t.strip()):
         s = raw.strip()
         if not s: continue
         if '\n' in s: fail('line break inside a paragraph: ' + s[:60])
+        m = re.match(r'^#! (.+)$', s)
+        if m:
+            if chap: fail('front title after the body: ' + s)
+            blocks.append(('front', segments(m.group(1)))); front = True; continue
+        if front and not s.startswith('# '):
+            m = re.match(r'^\*\*(.+?)\*\*\s*(.*)$', s)
+            blocks.append(('fp', m.group(1) if m else None, segments(m.group(2) if m else s))); continue
+        front = False
         m = re.match(r'^(#{1,4}) (.+)$', s)
         if m:
             lv = len(m.group(1)); txt = m.group(2)
@@ -119,7 +131,7 @@ def parse():
         blocks.append(('p', segments(s)))
     # audits: every cross-reference names an existing table or figure; style words of the user's rules
     labels = {b[3] for b in blocks if b[0] in ('fig', 'tab')}
-    body = '\n'.join(plain(b[-1]) if b[0] in ('p', 'bullet') else '' for b in blocks)
+    body = '\n'.join(plain(b[-1]) if b[0] in ('p', 'bullet', 'fp') else '' for b in blocks)
     for ref in re.findall(r'\[(?:그림|표) \d-\d+\]', body):
         if ref not in labels: fail('reference to a missing ' + ref)
     for word in ('동시에', '예컨대', '요컨대'):
@@ -147,7 +159,7 @@ class Builder:
     def __init__(self, marked):
         self.marked = marked
         self.doc = Document()
-        self.heads, self.caps = [], []
+        self.heads, self.caps, self.fronts = [], [], []
 
     # ---------------------------------------------------------------- runs and paragraphs
     def run(self, p, text, size=BODY_PT, bold=False, font=SERIF, mark=None, scale=None, spacing=None, color=None,
@@ -524,6 +536,26 @@ class Builder:
         rr = el('w:r'); rr.append(it); p._p.append(rr)
         rr = el('w:r'); rr.append(el('w:fldChar', **{'w:fldCharType': 'end'})); p._p.append(rr)
 
+    # ---------------------------------------------------------------- 국문 초록, Abstract
+    def front(self, blocks):
+        for b in blocks:
+            if b[0] == 'front':
+                title = plain(b[1]); en = not re.search('[가-힣]', title)
+                p = self.doc.add_paragraph(style='목록 제목')
+                self.pfmt(p, align=WD_ALIGN_PARAGRAPH.CENTER, line=25.6, after=18, page_break=True, keep=True)
+                self.runs(p, b[1], size=16, bold=True, spacing=None if en else 6)
+                self.fronts.append(title)
+                q = self.para(align=WD_ALIGN_PARAGRAPH.CENTER, line=20.8, after=16, keep=True)
+                self.runs(q, TITLE_EN if en else TITLE_KO, size=13, bold=True)
+            else:
+                _, label, segs = b
+                last = label in ('주제어:', 'Keywords:')
+                p = self.para(align=WD_ALIGN_PARAGRAPH.LEFT if last else WD_ALIGN_PARAGRAPH.JUSTIFY, line=LINE_PT,
+                              before=10 if last else 0, first_chars=0 if last else 1)
+                if label:
+                    self.run(p, label + ' ', bold=True)
+                self.runs(p, segs, bold=last)
+
     # ---------------------------------------------------------------- body
     def body(self, blocks):
         first = True
@@ -591,11 +623,12 @@ class Builder:
         doc.add_section(WD_SECTION.NEW_PAGE)
         # lists are written after the body (they need its headings and captions); keep a marker paragraph here
         marker = self.para(line=1); self.run(marker, '', size=1)
+        self.front([b for b in blocks if b[0] in ('front', 'fp')])
         doc.add_section(WD_SECTION.NEW_PAGE)
-        self.body(blocks)
+        self.body([b for b in blocks if b[0] not in ('front', 'fp')])
         # 목차 / 표 목차 / 그림 목차 before the marker
         n_before = len(doc.element.body) - 1        # new paragraphs go in before the body-level sectPr
-        toc = [('toc 1', '표 목차', pages.get('h:표 목차', '?')), ('toc 1', '그림 목차', pages.get('h:그림 목차', '?'))]
+        toc = [('toc 1', t, pages.get('h:' + t, '?')) for t in ['표 목차', '그림 목차'] + self.fronts]
         toc += [('toc %d' % lv, t, pages.get('h:' + t, '?')) for lv, t, p in self.heads]
         self.toc_block('목  차', 'TOC \\o "1-3" \\h \\z \\u', toc)
         self.toc_block('표 목차', 'TOC \\h \\z \\f t', [('toc 4', t, pages.get('c:' + t, '?')) for k, t, p in self.caps
@@ -693,7 +726,7 @@ def render(docx_path, outdir):
     return outdir / (docx_path.stem + '.pdf')
 
 
-def page_map(pdf, heads, caps):
+def page_map(pdf, heads, caps, fronts):
     import pymupdf
     d = pymupdf.open(str(pdf))
     norm = lambda s: re.sub(r'\s+', '', s)
@@ -705,7 +738,7 @@ def page_map(pdf, heads, caps):
             label = top[-1]
         pages.append((label, norm(pg.get_text())))
     out = {}
-    for name in ('표 목차', '그림 목차'):
+    for name in ['표 목차', '그림 목차'] + fronts:
         hit = [i for i, (lab, flat) in enumerate(pages) if lab and flat.startswith('캡스톤프로젝트보고서' + lab + norm(name))]
         if not hit: fail('list page not found: ' + name)
         out['h:' + name] = pages[hit[0]][0]
@@ -741,7 +774,7 @@ def main():
     for it in range(4):
         b, path = build_one(False, pages)
         pdf = render(path, work)
-        new, n, labels = page_map(pdf, b.heads, b.caps)
+        new, n, labels = page_map(pdf, b.heads, b.caps, b.fronts)
         print(f'pass {it + 1}: {n} pages; labels', labels)
         if new == pages:
             break
