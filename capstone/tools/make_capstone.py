@@ -576,7 +576,7 @@ class Builder:
             elif kind == 'bullet':
                 self.para(b[1], align=WD_ALIGN_PARAGRAPH.JUSTIFY, line=LINE_PT, left=10, hanging=10)
             elif in_refs:
-                self.para(b[1], align=WD_ALIGN_PARAGRAPH.JUSTIFY, line=16, after=10, size=10)
+                self.para(b[1], align=WD_ALIGN_PARAGRAPH.LEFT, line=16, after=10, size=10)   # URLs would stretch justified lines
             else:
                 self.para(b[1], align=WD_ALIGN_PARAGRAPH.JUSTIFY, line=LINE_PT, first_chars=1)
 

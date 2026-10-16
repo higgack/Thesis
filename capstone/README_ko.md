@@ -6,12 +6,13 @@
 
 | 버전 | 파일 | 내용 |
 |---|---|---|
-| **v3** | [capstone_report_v3.docx](capstone_report_v3.docx) · [표시본](capstone_report_v3_marked.docx) | v2 + 참고문헌에 없던 인용 정리(유저 확인): (김현정, 2022) → (김현경, 2022), (Jeffe, 1996) → (Jaffe & Trajtenberg, 1996) + 참고문헌 추가(PNAS 93, 12671–12677; 웹 검색으로 저자·제목·권·쪽 확인, DOI·호수는 확인 못 해 넣지 않음), (서울경제, 2025) → (강해령, 2025). 본문 인용 36개가 모두 참고문헌 25편과 맞음 |
+| **v4** | [capstone_report_v4.docx](capstone_report_v4.docx) · [표시본](capstone_report_v4_marked.docx) | v3 + (1) 본문 인용 (ZDNET Korea → 장경윤, 어플라이드머티리얼즈 → 김지혜, 2025), (2) 인용 표기를 양식대로(국문 공저자 " · ", 영문 "&", Schaller), (3) 참고문헌 30편을 양식 견본 형식("저자(연도), 제목, 학술지, 제N권 N호, pp.")으로 다시 쓰고 빠진 권·호·쪽·URL 보완, (4) 그림 출처 6건을 찾아 참고문헌에 추가(Yole Group 2024, Davis & Olson 2023, BCG & SIA 2024, AMD n.d., Applied Materials 2021, D2W 그림은 김지혜 2025), (5) 3.1 자료 수를 학위논문 자료 기준으로(출원–CPC 레코드 5,277건, 출원 928건, HBM 약 2,330 레코드; PDF의 5278은 머리글 포함 줄 수). 본문·캡션 인용 44개 모두 참고문헌과 일치(TechSearch 1건만 원문 못 찾음) |
+| v3 | [capstone_report_v3.docx](capstone_report_v3.docx) · [표시본](capstone_report_v3_marked.docx) | v2 + 참고문헌에 없던 인용 정리(유저 확인): (김현정, 2022) → (김현경, 2022), (Jeffe, 1996) → (Jaffe & Trajtenberg, 1996) + 참고문헌 추가(PNAS 93, 12671–12677; 웹 검색으로 저자·제목·권·쪽 확인, DOI·호수는 확인 못 해 넣지 않음), (서울경제, 2025) → (강해령, 2025). 본문 인용 36개가 모두 참고문헌 25편과 맞음 |
 | v2 | [capstone_report_v2.docx](capstone_report_v2.docx) · [표시본](capstone_report_v2_marked.docx) | v1 + 본문 인용 연도 6곳을 참고문헌 기준으로 통일(Clancy 2020, Furman 외 2000, 오유진 2025, 김현경 2022, 지일용 2025, 우징원·남은영 2023; 유저 지시). 표시본은 PDF 대비 누적 표시 |
 | v1 | [capstone_report_v1.docx](capstone_report_v1.docx) · [표시본](capstone_report_v1_marked.docx) | PDF 본문 전체를 양식의 4장 체계로 재배치, 개요표·신규고용·표지·인준지·목차 3종 추가. 표시본: 노란색 = 바꾸거나 넣은 글자와 직접 채울 칸, 빨간 취소선 = 뺀 글자 |
 
-빌드: `python3 capstone/tools/make_capstone.py 3` (LibreOffice로 쪽번호를 잡아 목차에 넣음, 미리보기 PDF는 `capstone/preview/`, 커밋 안 함)
-원고: `capstone/sources/capstone_v3.md` · 그림/표 이미지: `capstone/figures/` (PDF에 들어 있던 원본 해상도 그대로)
+빌드: `python3 capstone/tools/make_capstone.py 4` (LibreOffice로 쪽번호를 잡아 목차에 넣음, 미리보기 PDF는 `capstone/preview/`, 커밋 안 함)
+원고: `capstone/sources/capstone_v4.md` · 그림/표 이미지: `capstone/figures/` (PDF에 들어 있던 원본 해상도 그대로)
 
 ## HWP 양식에서 읽어 낸 서식 (레코드 단위로 파싱)
 - 쪽 순서: 산학 프로젝트 개요표(+ 결과물 사진 칸) → 신규고용 창출 → 표지 → (인준지, 별도 파일) → 목차 → 표 목차 → 그림 목차 → 제1~4장 → 참고문헌
@@ -57,3 +58,10 @@
 - 참고문헌 형식이 항목마다 다름(쪽수·권호 누락 등), 양식 견본의 형식("저자(연도), 제목, 학술지, 권호, 쪽.")으로는 바꾸지 않음
 - 3.1 "하이브리드 본딩 5278개": 출원국가 표 합계는 999건이므로 5,278은 특허 수가 아니라 추출 행(출원–CPC 쌍) 수일 가능성이 있음(학위논문 자료는 928건, 출원–CPC 쌍 5,277건)
 - 직접 채울 칸: 개요표의 기업 정보·연락처·실무담당자·참석자·구분(직접/간접)·투입비용·총수행기간·결과물 사진, 신규고용 표, 인준지의 학과장·원장 이름. 학번(파일명의 2025155651), 책임교수(강민구), 날짜(2027년 2월)는 확인 필요
+
+## v4 참고문헌 확인 결과 (웹 검색 색인 기준; KCI·RISS·DBpia 등은 이 환경에서 직접 열리지 않음)
+- 확인됨: 강해령(한국경제신문 2025.12.8), 김기윤 · 이성주, 김민규 외(제목 띄어쓰기 "기술 동향분석"), 오철, 우징원 · 남은영, 이제환, 이종호 · 오철(한국혁신학회지 17(3), pp.113-133 보완), 이찬우(중국학연구 제93집 보완), 장경윤(지디넷코리아 2025.2.24), Jaffe & Trajtenberg(93(23)), Schaller(34(6), pp.52-59), Yoon & Park, Furman 외(NBER WP 7876, 2000), Clancy(2020 원글 = What's New Under the Sun, 2020.6.11)
+- 일부만 확인: 금연욱 · 김의석(쪽수), 김지혜(어플라이드 머티어리얼즈 2025.11.26 보도자료; 작성자 이름은 검색에서 안 보임), 김현경(연도가 2023으로 인용된 곳 있음)
+- 확인 못 함(유저 원문 그대로): 권성호, 김영준(같은 주제로 임진식 · 김영준(2022) 학술지 논문이 있어 저자 확인 필요), 민성기, 박지민, 오유진, 이승환, 지일용
+- 그림 출처: Yole·Davis & Olson·Applied Materials는 내용·연도가 맞는 자료(가능성 높음), BCG & SIA는 같은 제목의 도표 확인, AMD 그림은 AMD 발표자료(Hot Chips 33, 2021)에서 나온 것일 수 있음, TechSearch(2024)는 원문을 못 찾아 캡션만 둠
+- 참고: Tidd & Bessant 7판은 2020년 말 출간, 판권 연도는 2021; Furman 외 NBER 페이지는 저자 순서를 Stern–Porter–Furman으로 표기

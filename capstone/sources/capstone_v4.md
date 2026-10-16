@@ -19,7 +19,7 @@
 
 이에 대한 기술적 해법으로 부상한 것이 바로 반도체 후공정의 혁신을 통한 이종 집적(Heterogeneous Integration)이다. 이는 거대한 단일 칩을 기능별(CPU, GPU, Memory, I/O)로 최적화된 공정에서 생산된 작은 칩(Chiplet)들로 분할한 후, 패키징 단계에서 수직·수평으로 재조립하여 하나의 시스템으로 통합하는 방식이다. 오유진(2025)의 특허 데이터 기반 텍스트 마이닝을 이용한 반도체 패키징 기술동향 연구는 이러한 칩렛 아키텍처가 수율 극대화, 설계 유연성 확보, 개발 기간 단축이라는 이점을 제공하며, 반도체 산업의 기술 패러다임을 집적도 경쟁에서 연결성(Connectivity) 경쟁으로 전환시키고 있음을 실증적으로 보여준다.
 
-!fig[f1-1_adv_pkg_revenue.png|144] Advanced PKG 산업 수익예측 (Yole, 2024)
+!fig[f1-1_adv_pkg_revenue.png|144] Advanced PKG 산업 수익예측 ({-Yole-}{+Yole Group+}, 2024)
 
 ### 1.1.2. 칩렛 생태계의 확산과 첨단 패키징 기술의 전략적 중요성
 
@@ -27,7 +27,7 @@
 
 특히, 김영준(2023)의 기업의 기술 융복합 활동 및 시장 다변화 노력이 특허의 피인용에 미치는 영향 연구는 기술 융복합 활동이 기업의 혁신 성과와 특허 가치를 높이는 핵심 동인임을 규명하였다. 이는 하이브리드 본딩과 같은 첨단 패키징 기술이 단순한 조립 공정을 넘어, 반도체의 부가가치를 창출하는 핵심 원천으로 격상되었음을 의미한다. HBM(고대역폭 메모리)의 적층 단수가 증가하고 고성능 로직 반도체의 3D 적층이 보편화됨에 따라, 후공정 기술력은 반도체 기업의 생존을 결정짓는 핵심 변수가 되었다.
 
-!fig[f1-2_multichip.png|138] 멀티칩(Multichip)의 구조변화 (Deca, IMAPS 19th Conference, 2023)
+!fig[f1-2_multichip.png|138] 멀티칩(Multichip)의 구조변화 ({-Deca, IMAPS 19th Conference-}{+Davis & Olson+}, 2023)
 
 ### 1.1.3. 글로벌 기술 패권 경쟁의 심화와 국가 혁신 역량
 
@@ -37,7 +37,7 @@
 
 이러한 지정학적 위기 상황에서 한국 반도체 산업은 메모리 분야의 초격차를 유지하{-는 동시에-}{+면서+}, 취약점으로 지적되어 온 시스템 반도체와 소부장(소재·부품·장비) 분야로 경쟁력을 확장해야 하는 이중 과제를 안고 있다. 이승환(2025)의 글로벌 선도기업 기술경쟁력에 관한 연구와 권성호(2022)의 특허 빅데이터 분석을 통한 소재부품 산업 경쟁력 우위확보 전략연구는 핵심 공정 기술의 내재화가 외부 충격에 대한 회복탄력성(Resilience)을 확보하는 유일한 길임을 역설한다. 따라서 하이브리드 본딩을 중심으로 재편되는 차세대 패키징 생태계{-에-}{+에 대한+} 분석은 단순한 기술 트렌드 파악을 넘어, 한국 반도체 산업의 생존과 미래 성장 동력 확보를 위한 국가 전략 수립 차원에서 요구된다.
 
-!fig[f1-3_capex_by_country.png|144] HQ기준 국가별 Capex 계획 (미국반도체산업협회 & BCG, 2024)
+!fig[f1-3_capex_by_country.png|144] HQ기준 국가별 Capex 계획 ({-미국반도체산업협회 & BCG-}{+BCG & SIA+}, 2024)
 
 ## 1.2. 대상 산업분야 소개: 하이브리드 본딩의 적용제품 및 산업
 
@@ -49,11 +49,11 @@
 
 이러한 물리적·경제적 한계를 극복하기 위해, AMD와 Intel, NVIDIA 등 글로벌 팹리스 기업들은 거대한 프로세서를 기능 단위로 쪼개는 칩렛전략을 채택하고 있다. 박지민(2019)의 특허 데이터를 활용한 인공지능 반도체 트랜드 및 글로벌 기업 활동 분석 연구는 칩렛이 고성능 로직(Logic) 부분만 최선단 공정(3nm)을 사용하고, I/O 및 캐시 메모리(SRAM)는 성숙 공정(6nm~14nm)을 활용함으로써 제조 원가를 40% 이상 절감할 수 있음을 시사한다. 하지만 물리적으로 분리된 칩렛들이 마치 하나의 칩(SoC)처럼 작동하기 위해서는 칩 간 데이터 전송 속도(Bandwidth)와 지연 시간(Latency)을 최소화해야 한다. 김현경(2022)의 연구에서 분석된 바와 같이, 기존의 마이크로 범프기술(약 40㎛ 피치)로는 칩렛이 요구하는 초당 수 테라바이트(TB/s) 급의 대역폭을 감당할 수 없다.
 
-!fig[f1-4_chiplet_standard.png|150] 칩렛표준 (Deca, IMAPS 19th Conference, 2023)
+!fig[f1-4_chiplet_standard.png|150] 칩렛표준 ({-Deca, IMAPS 19th Conference-}{+Davis & Olson+}, 2023)
 
 이에 따라 구리(Cu) 전극을 직접 맞붙여 연결 길이를 수직으로 극단적으로 단축시키는 하이브리드 본딩이 AI 가속기의 핵심 기술로 부상했다. AMD의 3D V-Cache 기술은 CPU 로직 다이 바로 위에 대용량 캐시 메모리를 하이브리드 본딩으로 적층하여, 기존 2D 구조 대비 게임 성능을 15% 이상 향상시키는 결과를 보여주었다.
 
-!fig[f1-5_amd_3d_vcache.png|146] AMD 3D V-Cache (AMD homepage)
+!fig[f1-5_amd_3d_vcache.png|146] AMD 3D V-Cache ({-AMD homepage-}{+AMD, n.d.+})
 
 ### 1.2.2. 메모리 반도체
 
@@ -167,13 +167,13 @@ CPU(Central Processing Unit): 시스템을 제어하는 두뇌로서, 캐시 메
 
 지난 50년간 반도체 산업을 지배해 온 집적도 향상은 주로 회로 선폭을 줄이는 전공정 리소그래피(Lithography) 기술에 의존해 왔다. 그러나 이종호{-,-}{+ ·+} 오철(2022)이 지적한 바와 같이, 7nm 이하 공정부터는 터널링 효과(Tunneling Effect)와 같은 물리적 한계와 노광 장비(EUV) 비용의 기하급수적 상승으로 인해, 비용대비 성능의 개선 속도가 현저히 둔화되었다. 이러한 무어의 벽을 넘기 위해 등장한 것이 바로 첨단 패키징이다. 이는 단일 칩의 성능을 {-쥐어짜는-}{+한계까지 끌어올리는+} 대신, 여러 개의 칩을 하나의 패키지 안에서 최단 거리로 연결하여 시스템 전체의 대역폭(Bandwidth)과 전송 속도를 혁신하는 접근법이다. 김현경({-2024-}{+2022+})의 BERTopic을 활용한 텍스트마이닝 기반 인공지능 반도체 기술 및 연구동향 분석은 이러한 후공정 기술의 혁신이 AI 연산에 필요한 고대역폭 메모리(HBM)와 고성능 가속기 구현의 전제 조건임을 강조한다.{- S-}
 
-!fig[f2-3_scaling_limits.png|148] 전공정 미세화 한계 및 비용증가 (Deca, IMAPS 19th Conference, 2023)
+!fig[f2-3_scaling_limits.png|148] 전공정 미세화 한계 및 비용증가 ({-Deca, IMAPS 19th Conference-}{+Davis & Olson+}, 2023)
 
 ### 2.3.3. 2.5D/3D 적층 기술과 TSV(Through-Silicon Via)의 진화
 
 첨단 패키징의 핵심은 칩을 평면(2D)이 아닌 수직(3D)으로 쌓아 올리는 적층 기술에 있다. 이를 가능케 하는 핵심 인프라가 바로 실리콘 관통 전극(TSV, Through-Silicon Via)이다. TSV는 칩 내부에 미세한 구멍을 뚫고 전도성 물질(구리 등)을 채워 칩들을 전기적으로 직결하는 기술로, 기존의 와이어 본딩(Wire Bonding) 대비 신호 전송 경로를 획기적으로 단축시킨다. 김기윤{-,-}{+ ·+} 이성주(2024)의 한국 반도체 기술 네트워크 연구에 따르면, TSV 기술은 HBM과 같은 3D 메모리 적층뿐만 아니라, 로직 칩과 메모리를 인터포저(Interposer) 위에서 연결하는 2.5D 패키징(CoWoS)의 핵심 요소로 자리 잡았다. 그러나 칩 간 연결 밀도(I/O Density) 요구치가 계속 높아짐에 따라, TSV와 칩을 연결하는 접합부인 마이크로 범프(Micro Bump)의 피치(Pitch)를 줄이는 것이 새로운 기술적 병목(Bottleneck)으로 대두되었다. 일반적인 마이크로 범프는 약 10~20㎛ 피치 이하로 줄일 경우, 접합 시 쇼트(Short) 발생 위험과 저항 증가 문제가 발생하기 때문이다.
 
-!fig[f2-4_2p5d_pkg.png|142] 2.5D PKG (Applied materials, IR book, 2021)
+!fig[f2-4_2p5d_pkg.png|142] 2.5D PKG ({-Applied materials, IR book-}{+Applied Materials+}, 2021)
 
 ### 2.3.4. 차세대 패키징의 게임 체인저
 
@@ -183,7 +183,7 @@ CPU(Central Processing Unit): 시스템을 제어하는 두뇌로서, 캐시 메
 
 기술의 발전 단계는 크게 두 가지로 구분된다. 초기 단계인 W2W(Wafer-to-Wafer) 방식은 이미지 센서(CIS)나 3D 낸드와 같이 동일한 크기의 웨이퍼를 적층하는 데 성공적으로 적용되었다. 현재는 서로 다른 크기와 기능의 칩을 연결해야 하는 HBM4 및 고성능 로직 패키징을 위해, 칩을 개별적으로 잘라내어 웨이퍼에 붙이는 D2W(Die-to-Wafer) 방식으로 기술의 중심축이 이동하고 있다. 금연욱{-,-}{+ ·+} 김의석(2023)의 반도체 장비 기업의 유형별 혁신 속성 연구는 이러한 D2W 공정의 성공을 위해 플라즈마 다이싱(Plasma Dicing), 초정밀 CMP, 하이브리드 본더(Bonder) 등 전용 장비 및 소재 기술의 동반 성장이 필수적임을 시사한다.
 
-!fig[f2-5_d2w_flow.png|140] D2W 하이브리드 본딩{- 공정-} 공정 (Applied materials homepage)
+!fig[f2-5_d2w_flow.png|140] D2W 하이브리드 본딩{- 공정-} 공정 ({-Applied materials homepage-}{+김지혜, 2025+})
 
 # 제 3 장 주요 수행 내용
 
@@ -359,52 +359,62 @@ YMTC: 경쟁사 대비 높은 과학 연계성(48.5%)과 2년이라는 짧은 �
 
 # 참고문헌
 
-강해령. (2025). SK하이닉스, 내년 300단대 'V10 낸드' 낸다. 한국경제신문. 12.08.2025
+{+강해령(2025), “SK하이닉스, 내년 300단대 'V10 낸드' 낸다,” 한국경제신문, 2025. 12. 8., https://www.hankyung.com/article/202512088973i+}
 
-권성호. (2022). 특허 빅데이터 분석을 통한 소재부품 산업 경쟁력 우위확보 전략연구. 특허청 국외훈련 결과보고서
+{+권성호(2022), 특허 빅데이터 분석을 통한 소재부품 산업 경쟁력 우위확보 전략연구, 특허청 국외훈련 결과보고서.+}
 
-금연욱, 김의석. (2023). 반도체 장비 기업의 유형별 혁신 속성 및 기술지식 영향력 요인 연구. 한국산학기술학회논문지, 제24권 7호, 176–188
+{+금연욱 · 김의석(2023), 반도체 장비 기업의 유형별 혁신 속성 및 기술지식 영향력 요인 연구, 한국산학기술학회논문지, 제24권 7호, pp.176-188.+}
 
-김기윤, 이성주. (2024). 한국 반도체 기술 네트워크 연구: 데이터 기반 접근법. 정부학연구제30권 제1호(2024): 89~116
+{+김기윤 · 이성주(2024), 한국 반도체 기술 네트워크 연구: 데이터 기반 접근법, 정부학연구, 제30권 1호, pp.89-116.+}
 
-김민규, 설영진, 이승현, 윤장혁. (2025). 특허의 Problem-Solution 분석을 활용한 반도체 기술동향분석. 지식재산연구 20권 1호 145-175
+{+김민규 · 설영진 · 이승현 · 윤장혁(2025), 특허의 Problem-Solution 분석을 활용한 반도체 기술 동향분석, 지식재산연구, 제20권 1호, pp.145-175.+}
 
-김영준. (2023). 기업의 기술 융복합 활동 및 시장 다변화 노력이 특허의 피인용에 미치는 영향: 미국 반도체 특허를 중심으로. 고려대학교 기술경영전문대학원 박사학위논문
+{+김영준(2023), 기업의 기술 융복합 활동 및 시장 다변화 노력이 특허의 피인용에 미치는 영향: 미국 반도체 특허를 중심으로, 고려대학교 기술경영전문대학원 박사학위논문.+}
 
-김지혜. (2025). Kinex(키넥스) 다이 투 웨이퍼 하이브리드 본딩 통합 시스템. 어플라이드머티리얼즈 홈페이지
+{+김지혜(2025), “Kinex(키넥스) 다이 투 웨이퍼 하이브리드 본딩 통합 시스템,” 어플라이드 머티어리얼즈 홈페이지(보도자료, 2025. 11. 26.), https://www.appliedmaterials.com/kr/ko/newsroom/press-releases/251126-next-gen-semi-equipment-ko.html+}
 
-김현경. (2022). BERTopic을 활용한 텍스트마이닝 기반 인공지능 반도체 기술 및 연구동향 분석: 특허와 논문 빅데이터를 중심으로. 연세대학교 정보대학원 석사학위논문
+{+김현경(2022), BERTopic을 활용한 텍스트마이닝 기반 인공지능 반도체 기술 및 연구동향 분석: 특허와 논문 빅데이터를 중심으로, 연세대학교 정보대학원 석사학위논문.+}
 
-민성기. (2023). 미중 디커플링과 AI 산업 기술공급망 분리: AI 반도체와 AI 소프트웨어를 중심으로. 중국과 중국학 제48호 51~75
+{+민성기(2023), 미중 디커플링과 AI 산업 기술공급망 분리: AI 반도체와 AI 소프트웨어를 중심으로, 중국과 중국학, 제48호, pp.51-75.+}
 
-박지민. (2019). 특허 데이터를 활용한 인공지능 반도체 트랜드 및 글로벌 기업 활동 분석. 연세대학교 기술경영학협동과정 기술경영학전공 석사학위논문
+{+박지민(2019), 특허 데이터를 활용한 인공지능 반도체 트랜드 및 글로벌 기업 활동 분석, 연세대학교 기술경영학협동과정 석사학위논문.+}
 
-오유진. (2025). 특허 데이터 기반 텍스트 마이닝을 이용한 반도체 패키징 기술동향 연구. 고려대학교 기술경영전문대학원 석사학위논문
+{+오유진(2025), 특허 데이터 기반 텍스트 마이닝을 이용한 반도체 패키징 기술동향 연구, 고려대학교 기술경영전문대학원 석사학위논문.+}
 
-오철. (2024). 시스템 반도체 산업에서 미 · 중 경쟁과 한국의 AI 반도체 산업정책에 대한 시사점: 특허 데이터를 이용한 분석을 중심으로. 중국과 중국학 제51호 1~24
+{+오철(2024), 시스템 반도체 산업에서 미 · 중 경쟁과 한국의 AI 반도체 산업정책에 대한 시사점: 특허 데이터를 이용한 분석을 중심으로, 중국과 중국학, 제51호, pp.1-24.+}
 
-우징원, 남은영. (2023). 중국 3세대 반도체 산업 발전이 한국에 주는 시사점. 한중사회과학연구 제21권 제4호 81–109
+{+우징원 · 남은영(2023), 중국 3세대 반도체 산업 발전이 한국에 주는 시사점, 한중사회과학연구, 제21권 4호, pp.81-109.+}
 
-이승환. (2025). 글로벌 선도기업 기술경쟁력에 관한 연구: 원자층 증착 기술 특허분석을 바탕으로. 성균관대학교 기술경영전문대학원 박사학위논문
+{+이승환(2025), 글로벌 선도기업 기술경쟁력에 관한 연구: 원자층 증착 기술 특허분석을 바탕으로, 성균관대학교 기술경영전문대학원 박사학위논문.+}
 
-이제환. (2019). 특허 빅데이터 정량 분석을 이용한 기술 분석 연구. 고려대학교 공학대학원 지식재산학과 석사학위논문
+{+이제환(2019), 특허 빅데이터 정량 분석을 이용한 기술 분석 연구, 고려대학교 공학대학원 지식재산학과 석사학위논문.+}
 
-이종호, 오철. (2022). AI 반도체 산업의 기술발전 방향과 후발자의 추격 가능성에 대한 고찰: 미국 특허를 이용한 기술수명주기 분석을 중심으로. 한국혁신학회 제17권 제3호
+{+이종호 · 오철(2022), AI 반도체 산업의 기술발전 방향과 후발자의 추격 가능성에 대한 고찰: 미국 특허를 이용한 기술수명주기 분석을 중심으로, 한국혁신학회지, 제17권 3호, pp.113-133.+}
 
-이찬우. (2020). 중국 반도체 산업의 기술혁신 성과 분석: 파운드리 기업 SMIC의 특허 분석을 중심으로. 중국학연구 175~208
+{+이찬우(2020), 중국 반도체 산업의 기술혁신 성과 분석: 파운드리 기업 SMIC의 특허 분석을 중심으로, 중국학연구, 제93집, pp.175-208.+}
 
-장경윤. (2025). 삼성전자, V10 낸드부터 中 YMTC 특허 쓴다. ZDNET Korea. 02.24.2025
+{+장경윤(2025), “삼성전자, V10 낸드부터 中 YMTC 특허 쓴다,” 지디넷코리아, 2025. 2. 24., https://zdnet.co.kr/view/?no=20250213202429+}
 
-지일용. (2025). 특허 자료를 활용한 한국과 대만의 대표 파운드리 기업 간 반도체 공정기술 분야 기술경쟁력 및 차별성 비교 분석. 한국산학기술학회논문지 제26권 제6호 841–851
+{+지일용(2025), 특허 자료를 활용한 한국과 대만의 대표 파운드리 기업 간 반도체 공정기술 분야 기술경쟁력 및 차별성 비교 분석, 한국산학기술학회논문지, 제26권 6호, pp.841-851.+}
 
-Matt Clancy. (2020). Are ideas getting harder to find because of the burden of knowledge? New things under the sun
+{+AMD(n.d.), “AMD 3D V-Cache™ Technology,” AMD 홈페이지, https://www.amd.com/en/products/processors/technologies/3d-v-cache.html+}
 
-Furman, Porter, & Stern. (2000). The determinants of national innovative capacity. NBER working paper no. 7876
+{+Applied Materials(2021), 2021 ICAPS and Packaging Master Class, Applied Materials 투자자 설명회 발표자료, 2021. 9. 8., https://ir.appliedmaterials.com/events/event-details/2021-icaps-and-packaging-master-class+}
 
-{+Jaffe, A. B. and Trajtenberg, M. (1996). Flows of knowledge from universities and federal laboratories: Modeling the flow of patent citations over time and across institutional and geographic boundaries. Proceedings of the National Academy of Sciences of the United States of America, 93, 12671-12677+}
+{+BCG & SIA(2024), Emerging Resilience in the Semiconductor Supply Chain, Boston Consulting Group · Semiconductor Industry Association, 2024. 5., https://www.semiconductors.org/wp-content/uploads/2024/05/Report_Emerging-Resilience-in-the-Semiconductor-Supply-Chain.pdf+}
 
-R. Schaller, Moore’s law: past, present, and future, IEEE spectrum 34 (1997) 6.52.
+{+Clancy, M.(2020), “Are Ideas Getting Harder to Find Because of the Burden of Knowledge?,” What's New Under the Sun, 2020. 6. 11., https://mattsclancy.substack.com/p/are-ideas-getting-harder-to-find+}
 
-Tidd, Bessant. (2020). Managing Innovation: Integrating Technological, Market and Organizational Change 7th
+{+Davis, R. & Olson, T.(2023), “Scaling Interconnect Densities: Meeting the Growing Demand for Chiplet Integration,” IMAPS 19th International Conference on Device Packaging(DPC 2023), Fountain Hills, AZ, IMAPSource Proceedings, https://doi.org/10.4071/001c.90161+}
 
-Yoon, B. and Park, Y. (2004). A text-mining-based patent network: Analytical tool for high-technology trend. The Journal of High Technology Management Research, 15(1), 37-50
+{+Furman, J. L., Porter, M. E., & Stern, S.(2000), “The Determinants of National Innovative Capacity,” NBER Working Paper, No.7876.+}
+
+{+Jaffe, A. B. & Trajtenberg, M.(1996), “Flows of Knowledge from Universities and Federal Laboratories: Modeling the Flow of Patent Citations over Time and across Institutional and Geographic Boundaries,” Proceedings of the National Academy of Sciences of the United States of America, Vol.93(23), pp.12671-12677.+}
+
+{+Schaller, R. R.(1997), “Moore's Law: Past, Present and Future,” IEEE Spectrum, Vol.34(6), pp.52-59.+}
+
+{+Tidd, J. & Bessant, J.(2020), Managing Innovation: Integrating Technological, Market and Organizational Change, 7th ed., Hoboken, NJ : Wiley.+}
+
+{+Yole Group(2024), Status of the Advanced Packaging Industry 2024, Yole Group, https://www.yolegroup.com/product/report/status-of-the-advanced-packaging-industry-2024/+}
+
+{+Yoon, B. & Park, Y.(2004), “A Text-Mining-Based Patent Network: Analytical Tool for High-Technology Trend,” The Journal of High Technology Management Research, Vol.15(1), pp.37-50.+}
