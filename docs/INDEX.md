@@ -23,7 +23,8 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **캡스톤 프로젝트 보고서 v1(기술경영전문대학원 HWP 양식 → Word)** | [제출본](../capstone/capstone_report_v1.docx) · [표시본](../capstone/capstone_report_v1_marked.docx) | 유저 PDF(특허 데이터 기반 하이브리드 본딩 기술 생태계 연구, 2026-04)를 양식의 4장 체계로 재배치 + 개요표·신규고용·표지·인준지·목차 3종; 노란색 = 바꾼 글자·채울 칸. 설명 `capstone/README_ko.md`, 빌드 `capstone/tools/make_capstone.py 1` |
+| **캡스톤 프로젝트 보고서 v2(최신)** | [제출본](../capstone/capstone_report_v2.docx) · [표시본](../capstone/capstone_report_v2_marked.docx) | v1 + 본문 인용 연도 6곳을 참고문헌 기준으로 통일. 설명 `capstone/README_ko.md` |
+| 캡스톤 프로젝트 보고서 v1(기술경영전문대학원 HWP 양식 → Word)** | [제출본](../capstone/capstone_report_v1.docx) · [표시본](../capstone/capstone_report_v1_marked.docx) | 유저 PDF(특허 데이터 기반 하이브리드 본딩 기술 생태계 연구, 2026-04)를 양식의 4장 체계로 재배치 + 개요표·신규고용·표지·인준지·목차 3종; 노란색 = 바꾼 글자·채울 칸.  |
 | **학위논문 심사 발표 v1(20분용 · 15분용)** | [20분용](../defense/defense_20min_v1.pptx) · [15분용](../defense/defense_15min_v1.pptx) · [예상 질문과 답변](../defense/defense_QA_v1.docx) · [발표 대본](../defense/defense_script_v1.docx) | 학위논문 v84 기준 디펜스 자료. 유저가 준 참고 발표의 구성(5장, 도입 질문, 장 요약, 핵심 한 줄)을 따름. 설명 `defense/README_ko.md` |
 | **리서치데이 포스터 v6(A1, 최신 — 제출용 PPTX)** | [poster_v6.pptx](../poster/poster_v6.pptx) · [.pdf](../poster/poster_v6.pdf) | v5를 PowerPoint(맑은 고딕) 기준으로 다시 배치해 글 넘침·겹침 제거(`check_fit.py`로 검사) |
 | 리서치데이 포스터 v5(A1) | [poster_v5.pptx](../poster/poster_v5.pptx) · [.pdf](../poster/poster_v5.pdf) | v4에서 저자를 발표자 이형규만으로(강민구 교수님 삭제, 유저 요청) |
