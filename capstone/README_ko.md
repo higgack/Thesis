@@ -6,11 +6,12 @@
 
 | 버전 | 파일 | 내용 |
 |---|---|---|
-| **v2** | [capstone_report_v2.docx](capstone_report_v2.docx) · [표시본](capstone_report_v2_marked.docx) | v1 + 본문 인용 연도 6곳을 참고문헌 기준으로 통일(Clancy 2020, Furman 외 2000, 오유진 2025, 김현경 2022, 지일용 2025, 우징원·남은영 2023; 유저 지시). 표시본은 PDF 대비 누적 표시 |
+| **v3** | [capstone_report_v3.docx](capstone_report_v3.docx) · [표시본](capstone_report_v3_marked.docx) | v2 + 참고문헌에 없던 인용 정리(유저 확인): (김현정, 2022) → (김현경, 2022), (Jeffe, 1996) → (Jaffe & Trajtenberg, 1996) + 참고문헌 추가(PNAS 93, 12671–12677; 웹 검색으로 저자·제목·권·쪽 확인, DOI·호수는 확인 못 해 넣지 않음), (서울경제, 2025) → (강해령, 2025). 본문 인용 36개가 모두 참고문헌 25편과 맞음 |
+| v2 | [capstone_report_v2.docx](capstone_report_v2.docx) · [표시본](capstone_report_v2_marked.docx) | v1 + 본문 인용 연도 6곳을 참고문헌 기준으로 통일(Clancy 2020, Furman 외 2000, 오유진 2025, 김현경 2022, 지일용 2025, 우징원·남은영 2023; 유저 지시). 표시본은 PDF 대비 누적 표시 |
 | v1 | [capstone_report_v1.docx](capstone_report_v1.docx) · [표시본](capstone_report_v1_marked.docx) | PDF 본문 전체를 양식의 4장 체계로 재배치, 개요표·신규고용·표지·인준지·목차 3종 추가. 표시본: 노란색 = 바꾸거나 넣은 글자와 직접 채울 칸, 빨간 취소선 = 뺀 글자 |
 
-빌드: `python3 capstone/tools/make_capstone.py 2` (LibreOffice로 쪽번호를 잡아 목차에 넣음, 미리보기 PDF는 `capstone/preview/`, 커밋 안 함)
-원고: `capstone/sources/capstone_v2.md` · 그림/표 이미지: `capstone/figures/` (PDF에 들어 있던 원본 해상도 그대로)
+빌드: `python3 capstone/tools/make_capstone.py 3` (LibreOffice로 쪽번호를 잡아 목차에 넣음, 미리보기 PDF는 `capstone/preview/`, 커밋 안 함)
+원고: `capstone/sources/capstone_v3.md` · 그림/표 이미지: `capstone/figures/` (PDF에 들어 있던 원본 해상도 그대로)
 
 ## HWP 양식에서 읽어 낸 서식 (레코드 단위로 파싱)
 - 쪽 순서: 산학 프로젝트 개요표(+ 결과물 사진 칸) → 신규고용 창출 → 표지 → (인준지, 별도 파일) → 목차 → 표 목차 → 그림 목차 → 제1~4장 → 참고문헌
@@ -52,7 +53,7 @@
 
 ## 고치지 않고 남긴 확인 사항
 - (v2에서 해결) 본문 인용 연도를 참고문헌 기준으로 통일: Clancy 2021→2020, Furman, Porter, & Stern 2002→2000, 오유진 2024→2025, 김현경 2024→2022, 지일용 2023→2025, 우징원·남은영 2024→2023
-- 참고문헌에 없는 인용: (김현정, 2022) — 김현경(2022)의 오타로 보임, (Jeffe, 1996) — Jaffe의 오타로 보이며 참고문헌 항목 없음, (서울경제, 2025) — 참고문헌은 강해령(2025) 한국경제신문, 그림 출처(Yole, Deca, SIA·BCG, TechSearch, Applied Materials, AMD)
+- (v3에서 해결) 김현정 → 김현경, Jeffe → Jaffe & Trajtenberg(참고문헌 추가), 서울경제 → 강해령. 남은 것: 그림 출처(Yole, Deca, SIA·BCG, TechSearch, Applied Materials, AMD)
 - 참고문헌 형식이 항목마다 다름(쪽수·권호 누락 등), 양식 견본의 형식("저자(연도), 제목, 학술지, 권호, 쪽.")으로는 바꾸지 않음
 - 3.1 "하이브리드 본딩 5278개": 출원국가 표 합계는 999건이므로 5,278은 특허 수가 아니라 추출 행(출원–CPC 쌍) 수일 가능성이 있음(학위논문 자료는 928건, 출원–CPC 쌍 5,277건)
 - 직접 채울 칸: 개요표의 기업 정보·연락처·실무담당자·참석자·구분(직접/간접)·투입비용·총수행기간·결과물 사진, 신규고용 표, 인준지의 학과장·원장 이름. 학번(파일명의 2025155651), 책임교수(강민구), 날짜(2027년 2월)는 확인 필요
