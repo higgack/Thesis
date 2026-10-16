@@ -6,7 +6,8 @@
 
 | 버전 | 파일 | 내용 |
 |---|---|---|
-| **v6** | [capstone_report_v6.docx](capstone_report_v6.docx) · [표시본](capstone_report_v6_marked.docx) | v5 + 유저 PDF의 국문 초록·Abstract를 그림 목차 뒤, 제1장 앞에 복원(vii–x쪽, 목차에 등재). 문장은 PDF 그대로이고, 보고서 제목만 표지와 같게 고친 제목(를, 본딩 기술)을 씀. PDF의 "논 문 제 목"/"Title" 머리말은 보고서라서 넣지 않음. 전체 42쪽 |
+| **v7** | [capstone_report_v7.docx](capstone_report_v7.docx) · [표시본](capstone_report_v7_marked.docx) | v6 + 2.1 프로젝트 목표의 첫 두 문단(국문 초록의 목적·문제 제기와 같은 문장)을 다시 씀: 목표(하이브리드 본딩 공정을 사례로 후공정 중심 기술 전환을 특허로 확인)와 분석 출발점(국가·산업이 아닌 개별 공정 → 구조 → 제품). 셋째 문단부터(이제환 2019, 지표)는 그대로. 초록과 12자 이상 겹치는 구절 없음. 42쪽 |
+| v6 | [capstone_report_v6.docx](capstone_report_v6.docx) · [표시본](capstone_report_v6_marked.docx) | v5 + 유저 PDF의 국문 초록·Abstract를 그림 목차 뒤, 제1장 앞에 복원(vii–x쪽, 목차에 등재). 문장은 PDF 그대로이고, 보고서 제목만 표지와 같게 고친 제목(를, 본딩 기술)을 씀. PDF의 "논 문 제 목"/"Title" 머리말은 보고서라서 넣지 않음. 전체 42쪽 |
 | v5 | [capstone_report_v5.docx](capstone_report_v5.docx) · [표시본](capstone_report_v5_marked.docx) | v4 + TechSearch 그림(패키징 기술변화) 삭제로 2장 그림 번호 당김(2-2 미세화 한계, 2-3 2.5D PKG, 2-4 D2W 공정), Tidd & Bessant 2020 → 2021(본문 2곳, 참고문헌; 판권 연도), 김현경은 본문·참고문헌 모두 이미 2022로 통일되어 있음(유저 지시) |
 | v4 | [capstone_report_v4.docx](capstone_report_v4.docx) · [표시본](capstone_report_v4_marked.docx) | v3 + (1) 본문 인용 (ZDNET Korea → 장경윤, 어플라이드머티리얼즈 → 김지혜, 2025), (2) 인용 표기를 양식대로(국문 공저자 " · ", 영문 "&", Schaller), (3) 참고문헌 30편을 양식 견본 형식("저자(연도), 제목, 학술지, 제N권 N호, pp.")으로 다시 쓰고 빠진 권·호·쪽·URL 보완, (4) 그림 출처 6건을 찾아 참고문헌에 추가(Yole Group 2024, Davis & Olson 2023, BCG & SIA 2024, AMD n.d., Applied Materials 2021, D2W 그림은 김지혜 2025), (5) 3.1 자료 수를 학위논문 자료 기준으로(출원–CPC 레코드 5,277건, 출원 928건, HBM 약 2,330 레코드; PDF의 5278은 머리글 포함 줄 수). 본문·캡션 인용 44개 모두 참고문헌과 일치(TechSearch 1건만 원문 못 찾음) |
 | v3 | [capstone_report_v3.docx](capstone_report_v3.docx) · [표시본](capstone_report_v3_marked.docx) | v2 + 참고문헌에 없던 인용 정리(유저 확인): (김현정, 2022) → (김현경, 2022), (Jeffe, 1996) → (Jaffe & Trajtenberg, 1996) + 참고문헌 추가(PNAS 93, 12671–12677; 웹 검색으로 저자·제목·권·쪽 확인, DOI·호수는 확인 못 해 넣지 않음), (서울경제, 2025) → (강해령, 2025). 본문 인용 36개가 모두 참고문헌 25편과 맞음 |
@@ -14,7 +15,7 @@
 | v1 | [capstone_report_v1.docx](capstone_report_v1.docx) · [표시본](capstone_report_v1_marked.docx) | PDF 본문 전체를 양식의 4장 체계로 재배치, 개요표·신규고용·표지·인준지·목차 3종 추가. 표시본: 노란색 = 바꾸거나 넣은 글자와 직접 채울 칸, 빨간 취소선 = 뺀 글자 |
 
 빌드: `python3 capstone/tools/make_capstone.py 5` (LibreOffice로 쪽번호를 잡아 목차에 넣음, 미리보기 PDF는 `capstone/preview/`, 커밋 안 함)
-원고: `capstone/sources/capstone_v6.md` · 그림/표 이미지: `capstone/figures/` (PDF에 들어 있던 원본 해상도 그대로)
+원고: `capstone/sources/capstone_v7.md` · 그림/표 이미지: `capstone/figures/` (PDF에 들어 있던 원본 해상도 그대로)
 
 ## HWP 양식에서 읽어 낸 서식 (레코드 단위로 파싱)
 - 쪽 순서: 산학 프로젝트 개요표(+ 결과물 사진 칸) → 신규고용 창출 → 표지 → (인준지, 별도 파일) → 목차 → 표 목차 → 그림 목차 → 제1~4장 → 참고문헌

@@ -23,7 +23,8 @@
 | **v1_ko** | [manuscript_v1_ko.md](../journal/manuscript_v1_ko.md) · [.docx](../journal/manuscript_v1_ko.docx) | v1의 국문 번역(구조·수치·참고문헌 동일) |
 | **Rev1_ko** | [manuscript_rev1_ko.md](../journal/manuscript_rev1_ko.md) · [.docx](../journal/manuscript_rev1_ko.docx) | 국문 KCI 체재. 7단계 논리(무어의 법칙 종언→접합 후공정→산업 내 융합→특허 관점 공백→GPT 후보→RQ1 수렴·RQ2 결정요인·RQ3 국가·기업 전략). 김민구 외(2022) 참조 |
 | v2_ko | [manuscript_v2_ko.md](../journal/manuscript_v2_ko.md) · [.docx](../journal/manuscript_v2_ko.docx) | v1_ko에서 §3.2 생태계 절·표 1 삭제, 부록 본문 편입, 그림·표 재번호 |
-| **캡스톤 프로젝트 보고서 v6(최신)** | [제출본](../capstone/capstone_report_v6.docx) · [표시본](../capstone/capstone_report_v6_marked.docx) | v5 + 국문 초록·Abstract 복원(그림 목차 뒤, 제1장 앞; 목차 등재), 전체 42쪽 |
+| **캡스톤 프로젝트 보고서 v7(최신)** | [제출본](../capstone/capstone_report_v7.docx) · [표시본](../capstone/capstone_report_v7_marked.docx) | v6 + 2.1 프로젝트 목표 첫 두 문단을 초록과 겹치지 않게 다시 씀 |
+| 캡스톤 프로젝트 보고서 v6 | [제출본](../capstone/capstone_report_v6.docx) · [표시본](../capstone/capstone_report_v6_marked.docx) | v5 + 국문 초록·Abstract 복원(그림 목차 뒤, 제1장 앞; 목차 등재), 전체 42쪽 |
 | 캡스톤 프로젝트 보고서 v5 | [제출본](../capstone/capstone_report_v5.docx) · [표시본](../capstone/capstone_report_v5_marked.docx) | v4 + TechSearch 그림 삭제(2장 그림 번호 당김), Tidd & Bessant 2021, 김현경 2022 통일 확인 |
 | 캡스톤 프로젝트 보고서 v4 | [제출본](../capstone/capstone_report_v4.docx) · [표시본](../capstone/capstone_report_v4_marked.docx) | v3 + 장경윤·김지혜 인용, 참고문헌 30편 양식 형식으로 정리·보완, 그림 출처 참고문헌 추가, 3.1 자료 수 학위논문 기준(5,277 레코드·928건) |
 | 캡스톤 프로젝트 보고서 v3 | [제출본](../capstone/capstone_report_v3.docx) · [표시본](../capstone/capstone_report_v3_marked.docx) | v2 + 김현정→김현경, Jeffe→Jaffe & Trajtenberg(1996, 참고문헌 추가), 서울경제→강해령; 본문 인용 36개 모두 참고문헌과 일치 |
