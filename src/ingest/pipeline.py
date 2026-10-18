@@ -8,7 +8,7 @@ from typing import Callable, Optional
 from .. import config
 from ..store import meta, vector, obsidian, wiki
 from .chunker import split
-from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async, load_xlsx_async, ocr_image_async, transcribe_audio_async, transcribe_video_async
+from .loaders import load_url, load_pdf_async, load_arxiv, load_pptx_async, load_docx_async, load_xlsx_async, load_hwp_async, ocr_image_async, transcribe_audio_async, transcribe_video_async
 from .summarize import summarize, summarize_and_extract
 
 log = logging.getLogger(__name__)
@@ -380,6 +380,29 @@ async def ingest_xlsx(path: Path, source_label: str,
     if not body:
         return {"status": "empty", "title": title}
     return await _ingest("xlsx", source_label, title, body, hint,
+                         file_hash=file_hash, on_stage=on_stage)
+
+
+async def ingest_hwp(path: Path, source_label: str,
+                     on_stage: StageCb = None) -> dict:
+    """.hwp (5.x) and .hwpx — load_hwp sniffs the real format. Unsupported
+    variants (password, distribution, HWP 3.x) raise ValueError with a
+    user-facing Korean reason, reported as a normal ingest error."""
+    _emit(on_stage, "dedup")
+    if existing := await asyncio.to_thread(meta.find_by_source, source_label):
+        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    file_hash = await asyncio.to_thread(_hash_file, path)
+    if file_hash and (
+            existing := await asyncio.to_thread(meta.find_by_file_hash, file_hash)):
+        return {"status": "duplicate", "doc_id": existing["id"], "title": existing["title"]}
+    _emit(on_stage, "HWP 로드")
+    try:
+        title, body, hint = await load_hwp_async(path)
+    except ValueError as e:
+        return {"status": "error", "title": path.name, "error": f"{path.name} — {e}"}
+    if not body:
+        return {"status": "empty", "title": title}
+    return await _ingest("hwp", source_label, title, body, hint,
                          file_hash=file_hash, on_stage=on_stage)
 
 

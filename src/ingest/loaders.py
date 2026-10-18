@@ -2,7 +2,10 @@ import asyncio
 import logging
 import os
 import re
+import struct
 import threading
+import zipfile
+import zlib
 from pathlib import Path
 import httpx
 import trafilatura
@@ -1730,3 +1733,281 @@ def load_xlsx(path: Path) -> tuple[str, str, str | None]:
 
 async def load_xlsx_async(path: Path) -> tuple[str, str, str | None]:
     return await asyncio.to_thread(load_xlsx, path)
+
+
+# ── HWP / HWPX (Hancom Office) ───────────────────────────────────────────
+# Korean government and corporate documents. HWPX is a zip of XML (stdlib
+# only); HWP 5.x is an OLE2 compound file read with `olefile`. Both are
+# pure-Python CPU work that holds the GIL, so they share _PDF_EXTRACT_SEM
+# with the PDF path rather than adding a second unbounded pool.
+# Before 2026-10-18 neither suffix was recognised: an attached .hwp fell
+# through bot.py's read_text(errors="ignore") fallback and the binary was
+# ingested as garbage text.
+_HWP_MAX_UNPACKED = 200 * 1024 * 1024   # zip-bomb / inflate guard
+_HWP_EXT_CTRL = frozenset({1, 2, 3, 11, 12, 14, 15, 16, 17, 18, 21, 22, 23})
+_HWP_INLINE_CTRL = frozenset({4, 5, 6, 7, 8, 9, 19, 20})
+_HWP_TAG_PARA_TEXT = 67
+_HWP_TAG_CTRL_HEADER = 71
+_HWP_TAG_LIST_HEADER = 72
+_HWP_TAG_TABLE = 77
+
+
+def _hwpx_local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _hwpx_t_text(t) -> str:
+    out = [t.text or ""]
+    for ch in t:
+        ln = _hwpx_local(ch.tag)
+        if ln == "lineBreak":
+            out.append("\n")
+        elif ln in ("tab", "fwSpace", "nbSpace"):
+            out.append(" ")
+        else:
+            out.append(_hwpx_t_text(ch))
+        out.append(ch.tail or "")
+    return "".join(out)
+
+
+def _hwpx_para_text(p) -> str:
+    """A paragraph's OWN text — tables and sub-lists (cells, text boxes,
+    footnotes) nested inside it are emitted separately by the walkers."""
+    parts: list[str] = []
+
+    def rec(e) -> None:
+        for c in e:
+            ln = _hwpx_local(c.tag)
+            if ln == "t":
+                parts.append(_hwpx_t_text(c))
+            elif ln not in ("tbl", "subList"):
+                rec(c)
+
+    rec(p)
+    return "".join(parts).strip()
+
+
+def _hwpx_table(tbl) -> list[str]:
+    rows: list[str] = []
+    for tr in tbl:
+        if _hwpx_local(tr.tag) != "tr":
+            continue
+        cells: list[str] = []
+        for tc in tr:
+            if _hwpx_local(tc.tag) != "tc":
+                continue
+            texts = (_hwpx_para_text(p) for p in tc.iter()
+                     if _hwpx_local(p.tag) == "p")
+            cell = " ".join(t.replace("\n", " ") for t in texts if t)
+            if cell:
+                cells.append(cell)
+        if cells:
+            rows.append(" | ".join(cells))
+    return rows
+
+
+def _hwpx_nested(p, out: list[str]) -> None:
+    for c in p:
+        ln = _hwpx_local(c.tag)
+        if ln == "t":
+            continue
+        if ln == "tbl":
+            out.extend(_hwpx_table(c))
+        elif ln == "subList":
+            _hwpx_blocks(c, out)
+        else:
+            _hwpx_nested(c, out)
+
+
+def _hwpx_blocks(el, out: list[str]) -> None:
+    for c in el:
+        ln = _hwpx_local(c.tag)
+        if ln == "p":
+            txt = _hwpx_para_text(c)
+            if txt:
+                out.append(txt)
+            _hwpx_nested(c, out)
+        elif ln == "tbl":
+            out.extend(_hwpx_table(c))
+        else:
+            _hwpx_blocks(c, out)
+
+
+def _load_hwpx(path: Path) -> list[str]:
+    import xml.etree.ElementTree as ET
+    with zipfile.ZipFile(path) as zf:
+        secs = sorted(
+            (n for n in zf.namelist()
+             if re.fullmatch(r"Contents/section\d+\.xml", n)),
+            key=lambda n: int(re.search(r"(\d+)\.xml$", n).group(1)))
+        if not secs:
+            raise ValueError("HWPX 본문(Contents/section*.xml)을 찾지 못함")
+        if sum(zf.getinfo(n).file_size for n in secs) > _HWP_MAX_UNPACKED:
+            raise ValueError("HWPX 본문이 비정상적으로 큼 — 건너뜀")
+        blocks: list[str] = []
+        for n in secs:
+            try:
+                root = ET.fromstring(zf.read(n))
+            except (ET.ParseError, RuntimeError) as e:
+                raise ValueError(
+                    "HWPX 본문을 읽을 수 없음 — 암호가 걸린 문서일 수 있음") from e
+            _hwpx_blocks(root, blocks)
+    return blocks
+
+
+def _hwp_para_text(data: bytes) -> str:
+    """Decode one PARA_TEXT record (UTF-16LE). Control codes <32 are either
+    one WCHAR or a 16-byte inline/extended block that must be skipped whole
+    (table/picture anchors live inside it)."""
+    buf = bytearray()
+    i, n = 0, len(data)
+    while i + 1 < n:
+        c = data[i] | (data[i + 1] << 8)
+        if c >= 32:
+            buf += data[i:i + 2]
+            i += 2
+        elif c in _HWP_EXT_CTRL or c in _HWP_INLINE_CTRL:
+            if c == 9:
+                buf += b" \x00"
+            i += 16
+        else:
+            if c == 10 or c == 30 or c == 31:
+                buf += b" \x00" if c != 10 else b"\n\x00"
+            elif c == 24:
+                buf += b"-\x00"
+            i += 2
+    return buf.decode("utf-16-le", "ignore").strip()
+
+
+def _hwp_records(data: bytes):
+    i, n = 0, len(data)
+    while i + 4 <= n:
+        h = struct.unpack_from("<I", data, i)[0]
+        i += 4
+        tag, level, size = h & 0x3FF, (h >> 10) & 0x3FF, h >> 20
+        if size == 0xFFF:
+            if i + 4 > n:
+                break
+            size = struct.unpack_from("<I", data, i)[0]
+            i += 4
+        yield tag, level, data[i:i + size]
+        i += size
+
+
+def _hwp_table_lines(tbl: dict) -> list[str]:
+    cells = [" ".join(c) for c in tbl["cells"] if c]
+    sizes = tbl["rows"]
+    raw = tbl["cells"]
+    if sizes and sum(sizes) == len(raw):
+        lines, k = [], 0
+        for r in sizes:
+            row = [" ".join(c) for c in raw[k:k + r] if c]
+            k += r
+            if row:
+                lines.append(" | ".join(row))
+        return lines
+    return [" | ".join(cells)] if cells else []
+
+
+def _hwp_section_blocks(data: bytes) -> list[str]:
+    """Walk BodyText records, folding table cells into 'a | b' rows. A table
+    opens at a 'tbl ' CTRL_HEADER, its cells are the LIST_HEADERs after the
+    TABLE record, and it closes at the first record whose level is not
+    deeper than the CTRL_HEADER."""
+    out: list[str] = []
+    stack: list[dict] = []
+
+    def close(tbl: dict) -> None:
+        lines = _hwp_table_lines(tbl)
+        if stack and stack[-1]["cells"]:
+            stack[-1]["cells"][-1].extend(lines)
+        else:
+            out.extend(lines)
+
+    for tag, level, rec in _hwp_records(data):
+        while stack and level <= stack[-1]["level"]:
+            close(stack.pop())
+        if tag == _HWP_TAG_CTRL_HEADER and rec[:4] == b" lbt":
+            stack.append({"level": level, "rows": [], "cells": [],
+                          "seen_table": False})
+        elif tag == _HWP_TAG_TABLE and stack and not stack[-1]["seen_table"]:
+            t = stack[-1]
+            t["seen_table"] = True
+            if len(rec) >= 18:
+                nrows = struct.unpack_from("<H", rec, 4)[0]
+                if len(rec) >= 18 + 2 * nrows:
+                    t["rows"] = list(struct.unpack_from(f"<{nrows}H", rec, 18))
+        elif (tag == _HWP_TAG_LIST_HEADER and stack
+              and stack[-1]["seen_table"] and level == stack[-1]["level"] + 1):
+            stack[-1]["cells"].append([])
+        elif tag == _HWP_TAG_PARA_TEXT:
+            txt = _hwp_para_text(rec)
+            if not txt:
+                continue
+            if stack and stack[-1]["seen_table"] and stack[-1]["cells"]:
+                stack[-1]["cells"][-1].append(txt.replace("\n", " "))
+            else:
+                out.append(txt)
+    while stack:
+        close(stack.pop())
+    return out
+
+
+def _load_hwp5(path: Path) -> list[str]:
+    try:
+        import olefile
+    except ImportError as e:  # optional dep must not break the bot's import
+        raise ValueError("HWP 5.x 읽기에 필요한 olefile 이 설치되지 않음") from e
+    ole = olefile.OleFileIO(str(path))
+    try:
+        header = ole.openstream("FileHeader").read(40)
+        if not header.startswith(b"HWP Document File") or len(header) < 40:
+            raise ValueError("HWP 5.x 헤더가 아님")
+        flags = struct.unpack_from("<I", header, 36)[0]
+        if flags & 0x2:
+            raise ValueError("암호가 걸린 HWP — 암호 해제 후 다시 보내주세요")
+        if flags & 0x4 or ole.exists("ViewText"):
+            raise ValueError("배포용(읽기 전용) HWP — 지원 안 됨. 일반 저장본을 보내주세요")
+        secs = sorted(
+            (e[1] for e in ole.listdir()
+             if len(e) == 2 and e[0] == "BodyText" and e[1].startswith("Section")),
+            key=lambda n: int(re.sub(r"\D", "", n) or 0))
+        if not secs:
+            raise ValueError("HWP 본문(BodyText)을 찾지 못함")
+        blocks: list[str] = []
+        for name in secs:
+            data = ole.openstream(f"BodyText/{name}").read()
+            if flags & 0x1:
+                d = zlib.decompressobj(-15)
+                data = d.decompress(data, _HWP_MAX_UNPACKED)
+                if d.unconsumed_tail:
+                    raise ValueError("HWP 본문이 비정상적으로 큼 — 건너뜀")
+            blocks.extend(_hwp_section_blocks(data))
+        return blocks
+    finally:
+        ole.close()
+
+
+def load_hwp(path: Path) -> tuple[str, str, str | None]:
+    """HWPX (zip+XML) or HWP 5.x (OLE2) → (title, body, None). Sniffs the
+    content rather than trusting the suffix — people rename files."""
+    with open(path, "rb") as f:
+        magic = f.read(8)
+    with _PDF_EXTRACT_SEM:
+        if magic[:2] == b"PK":
+            blocks = _load_hwpx(path)
+        elif magic == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+            blocks = _load_hwp5(path)
+        elif magic.startswith(b"HWP Doc"):
+            raise ValueError("HWP 3.x 구버전 포맷 — 지원 안 됨. 한글에서 HWPX로 저장해 다시 보내주세요")
+        else:
+            raise ValueError("HWP/HWPX 형식이 아님")
+    title_guess = path.stem
+    if blocks and 3 <= len(blocks[0]) <= 120:
+        title_guess = blocks[0]
+    body = "\n\n".join(blocks).strip()
+    return title_guess[:200], body, None
+
+
+async def load_hwp_async(path: Path) -> tuple[str, str, str | None]:
+    return await asyncio.to_thread(load_hwp, path)

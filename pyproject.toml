@@ -13,6 +13,8 @@ dependencies = [
     "python-pptx>=1.0.2",
     "python-docx>=1.1.2",
     "openpyxl>=3.1.5",
+    # HWP 5.x (OLE2) reader; HWPX needs only stdlib zipfile/ElementTree.
+    "olefile>=0.47",
     "youtube-transcript-api>=0.6.2",
     # yt-dlp fallback for YouTube captions when youtube-transcript-api
     # is blocked (GCP server IPs are routinely blocked). yt-dlp uses a

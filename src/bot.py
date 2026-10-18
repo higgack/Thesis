@@ -1951,7 +1951,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 <b>【4. 자연어 트리거】</b>
 🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 📑 disclosures "[회사] 공시" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL" · 회사+실적 질문→📌 실적 표(YoY·QoQ)+가이던스+차트(누락시 표에서 자동 보강·이상치 경고)
 
-<b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·이미지·음성·영상·YouTube·텍스트 전송
+<b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·HWP/HWPX·이미지·음성·영상·YouTube·텍스트 전송
 • PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · [OCR] 강제 · 음성=Gemini STT · 영상=Gemini 네이티브 이해(20MB 한도) · YouTube=자막→Jina · <b>.txt/.md/.csv 학습 제외</b>
 차단: LinkedIn/FB/IG · Reuters/Bloomberg/WSJ/FT/NYT/WaPo
 
@@ -3844,7 +3844,7 @@ async def cmd_show(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"매칭 없음: '{query[:60]}'")
                 return
             _TYPE_RANK = {
-                "url": 0, "pdf": 0, "pptx": 0, "docx": 0, "xlsx": 0,
+                "url": 0, "pdf": 0, "pptx": 0, "docx": 0, "xlsx": 0, "hwp": 0,
                 "audio": 1, "youtube": 0,
                 "image": 2,
                 "text": 3,
@@ -4282,7 +4282,7 @@ def _ignore_from_entry(entry: dict) -> tuple[int, int]:
                     break
     if not fname and title and not title.startswith(("http://", "https://")):
         if any(title.lower().endswith(ext) for ext in
-               (".pdf", ".pptx", ".docx", ".xlsx", ".mp3", ".m4a",
+               (".pdf", ".pptx", ".docx", ".xlsx", ".hwp", ".hwpx", ".mp3", ".m4a",
                 ".png", ".jpg", ".jpeg", ".mp4", ".gif")):
             fname = title
     if fname and fname not in _IGNORED_FILENAMES:
@@ -6210,7 +6210,7 @@ async def cmd_fix_placeholder_titles(update: Update, ctx: ContextTypes.DEFAULT_T
             no_filename.append(r)
             continue
         # Strip extension for a cleaner title; keep the rest verbatim.
-        new_title = re.sub(r"\.(pdf|pptx?|docx?|xlsx?)$", "", fname,
+        new_title = re.sub(r"\.(pdf|pptx?|docx?|xlsx?|hwpx?)$", "", fname,
                            flags=re.IGNORECASE).strip()
         if not new_title:
             no_filename.append(r)
@@ -11369,6 +11369,8 @@ async def _ingest_doc_attachment(msg, ctx: ContextTypes.DEFAULT_TYPE,
         return await pipeline.ingest_docx(dest, label, on_stage=on_stage)
     if suffix == ".xlsx":
         return await pipeline.ingest_xlsx(dest, label, on_stage=on_stage)
+    if suffix in {".hwp", ".hwpx"}:
+        return await pipeline.ingest_hwp(dest, label, on_stage=on_stage)
     if suffix in _AUDIO_SUFFIX_MIME:
         # already on disk — gate by stat before pulling it into RAM
         if blocked := _audio_too_big(dest.stat().st_size):
@@ -11430,7 +11432,7 @@ _IMAGE_SUFFIX_MIME = {
 # learned via /ingest_url. Existing .txt files on disk simply stop
 # matching the orphan scan and get ignored.
 _SUPPORTED_INGEST_SUFFIXES: frozenset[str] = frozenset({
-    ".pdf", ".pptx", ".docx", ".xlsx",
+    ".pdf", ".pptx", ".docx", ".xlsx", ".hwp", ".hwpx",
     *_AUDIO_SUFFIX_MIME.keys(),
     *_IMAGE_SUFFIX_MIME.keys(),
 })
@@ -12894,6 +12896,11 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE,
                         pipeline.ingest_xlsx(dest, label, on_stage=_retry_stage_cb),
                         timeout=_INGEST_TIMEOUT_SEC,
                     )
+                elif suffix in {".hwp", ".hwpx"}:
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_hwp(dest, label, on_stage=_retry_stage_cb),
+                        timeout=_INGEST_TIMEOUT_SEC,
+                    )
                 elif suffix in _AUDIO_SUFFIX_MIME:
                     r = await asyncio.wait_for(
                         pipeline.ingest_audio(
@@ -13016,6 +13023,11 @@ async def _retry_pending_ingest(ctx: ContextTypes.DEFAULT_TYPE,
                 elif suffix == ".xlsx":
                     r = await asyncio.wait_for(
                         pipeline.ingest_xlsx(dest, label, on_stage=_retry_stage_cb),
+                        timeout=_INGEST_TIMEOUT_SEC,
+                    )
+                elif suffix in {".hwp", ".hwpx"}:
+                    r = await asyncio.wait_for(
+                        pipeline.ingest_hwp(dest, label, on_stage=_retry_stage_cb),
                         timeout=_INGEST_TIMEOUT_SEC,
                     )
                 elif suffix in _AUDIO_SUFFIX_MIME:
