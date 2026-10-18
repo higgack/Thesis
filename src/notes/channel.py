@@ -301,9 +301,19 @@ async def ingest_file(path: str | Path, source_type: str | None = None,
             title, body, _ = await loaders.load_docx_async(p)
         elif ext in ("xlsx", "xls"):
             title, body, _ = await loaders.load_xlsx_async(p)
+        elif ext in ("hwp", "hwpx"):
+            title, body, _ = await loaders.load_hwp_async(p)
         else:
             log.info("study ingest_file: unsupported ext '%s'", ext)
             return None
+    except ValueError as e:
+        if ext in ("hwp", "hwpx"):
+            # load_hwp's ValueError text is a user-facing reason (password,
+            # distribution copy, HWP 3.x); re-raise so the handler shows it
+            # instead of the generic "추출 실패" message.
+            raise
+        log.warning("study ingest_file load failed (%s): %s", p.name, str(e)[:160])
+        return None
     except Exception as e:
         log.warning("study ingest_file load failed (%s): %s", p.name, str(e)[:160])
         return None

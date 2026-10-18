@@ -79,7 +79,7 @@ _TYPE_BUCKETS = {
 # Uploaded files carry their bare extension as source_type; every one of
 # these genuinely belongs in 문서, so they are catch-all hits BY DESIGN and
 # must not be reported as unknown.
-_DOC_EXT_TYPES = frozenset({"pdf", "pptx", "docx", "xlsx", "xls"})
+_DOC_EXT_TYPES = frozenset({"pdf", "pptx", "docx", "xlsx", "xls", "hwp", "hwpx"})
 
 
 # A YouTube source always belongs to 유튜브, whatever source_type says.

@@ -198,7 +198,7 @@ def _msg_from_payload(payload: dict):
         text=payload.get("text") or None, caption=None, document=doc,
         voice=None, audio=None, video=None, photo=None,
         chat_id=config.TELEGRAM_OWNER_ID)
-_DOC_EXTS = ("pdf", "pptx", "docx", "xlsx", "xls")
+_DOC_EXTS = ("pdf", "pptx", "docx", "xlsx", "xls", "hwp", "hwpx")
 # 파일 첨부로 온 오디오(msg.document)도 음성 경로로 재라우팅하기 위한 확장자.
 _AUDIO_EXTS = ("mp3", "m4a", "wav", "ogg", "oga", "flac", "aac", "opus",
                "wma")
@@ -209,7 +209,7 @@ _NOTES_GUIDE_TEXT = """📒 <b>학습 노트 사용법</b>
 
 <b>1. 자료 넣기</b>
 전용 학습 채널에 그냥 올리면 자동 노트화 (두뇌 학습과 동일 타입):
-• URL · 유튜브 · PDF · PPTX · DOCX · XLSX · 텍스트
+• URL · 유튜브 · PDF · PPTX · DOCX · XLSX · HWP/HWPX(한글) · 텍스트
 • 🎙 <b>음성/오디오</b> (mp3·m4a·wav 등, 파일 첨부도 OK) — Gemini STT
   전사 → 노트. 캡션을 달면 전사문 앞에 붙음.
 • 🎬 <b>영상</b> (최대 20MB) — Gemini가 화면(텍스트/차트)+음성을 통째로
