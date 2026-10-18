@@ -2,7 +2,8 @@
 
 Single source of truth for any AI coding agent here — Claude Code,
 GitHub Copilot, anything else. `CLAUDE.md` and
-`.github/copilot-instructions.md` are thin pointers to this file;
+`.github/copilot-instructions.md` point to this file (the latter also
+carries a short core-rules summary — see `## Branch / push policy`);
 `AGENT_GUIDE.md` holds the Korean communication-style rules and stays a
 separate file — **READ IT TOO, every session, not only when auditing.**
 `CLAUDE.md` imports it and `.github/copilot-instructions.md` points at
@@ -66,7 +67,7 @@ open across a split. This paragraph said "every guide constant" until
 2026-09-06, which is what made the gap invisible. Also: handler↔help
 cross-check (scans **all of `src/`**, not just `bot.py` — `notes/
 telegram.py` registers `/notes` + `/notes_guide`, and they were being
-skipped while the check then reported "all 112 traceable"; 114 today).
+skipped while the check then reported "all 112 traceable"; section 4 prints the live count).
 Exit 1 =
 BLOCKING (syntax/help cap/guide-send), don't push. F821 + handler
 warnings = human glance (lazy-import / forward-ref `"ET.Element"`
@@ -120,7 +121,7 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
 3. stdlib·기존 의존성으로 되나? (새 패키지 추가는 최후)
 4. 한 줄/최소 diff로 되나?
 5. 그제서야 최소 구현
-- 부분 수정(Edit) > 통짜 파일 재생성. bot.py(~15.4k줄, 2026-09-13) 통독
+- 부분 수정(Edit) > 통짜 파일 재생성. bot.py(~15.7k줄, 2026-10-18) 통독
   금지 — Grep/Explore(quick)로 필요한 함수만. 이 숫자는 이제
   `preflight.sh` 섹션 9가 실제 줄 수와 대조한다(문서만 낡는 걸 막으려고).
 - 설명은 결론 먼저, 필요한 만큼만; 안 갈 선택지 나열 금지.
@@ -379,6 +380,13 @@ fine). Hit 2026-09-18: a session read `main`'s stub for a whole turn.
 account `Noah_Lee@amat.com`) on this SAME deploy branch** — confirmed
 by user 2026-07-29 ("지켜봐, 나중엔 그쪽으로 넘어갈 것" — expect
 ongoing/increasing Copilot commits here; don't intervene unless asked).
+- **`.github/copilot-instructions.md` carries a core-rules summary (2026-10-18)
+  — keep it in sync with the Commit/push gate + Pre-push sections.**
+  Copilot *code review* reads only the first 4,000 characters of an
+  instruction file ([GitHub Docs](https://docs.github.com/en/copilot/how-tos/copilot-on-github/use-copilot-agents/copilot-code-review));
+  the old pointer-only file therefore showed the reviewer none of the
+  rules. Chat and the cloud agent are not limited that way. Keep the
+  whole file under ~3,800 chars.
 - **force-push to the deploy branch is forbidden, unconditionally.** Not
   "confirm then proceed", and not something a passing 응/해 authorises —
   if you think history must be rewritten, stop and explain why instead of
@@ -1046,6 +1054,10 @@ Account `01A847-50A403-149C08` ("결제계정-2"), $300 / 90 days. Projects
 
 - Hard limit: $300 OR 90 days, whichever first; at ~₩10만/mo the 90-day
   clock (~mid-Sept 2026) wins. Then pay-as-you-go or services stop.
+- **STALE (2026-10-18): that expected expiry has passed, and nothing in
+  this repo records what happened after** (trial ended / converted to
+  paid / credit left). Do not assume it is still free; ask the owner or
+  have them check the Console before reasoning about cost.
 - Balance/₩0-net proof is Console-only (billing → 보고서/크레딧). Budget
   alert recommended, not yet set.
 - Don't chase another new account for fresh credits (dup card/phone
