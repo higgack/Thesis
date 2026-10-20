@@ -20,6 +20,13 @@
 - v1에서 본 발표에서 빠진 슬라이드(Chapter 2 Summary, RQ별 근거 3장, RQ3 승산비 표 · Jaccard 그래프, RQ2 무게중심, 실제 출원 세 건, 범프 비교)는 백업에 그대로 있음
 - 다시 만들기: `python3 build_defense.py 20 ../defense_20min_v2.pptx`, `python3 build_defense.py 15 ../defense_15min_v2.pptx`, `python3 make_docs.py 2` (v1 슬라이드 번호 → v2 변환은 make_docs.py 안의 표)
 
+## v3: 30분용 추가 (10-20)
+- 심사 전체 1시간에 맞춘 30분용 `defense_30min_v3.pptx`: 본 발표 41장(대본 기준 약 29분) + 백업 8장. 20분용·15분용은 v2 그대로
+- 20분용 v2의 흐름에 v1에서 합치거나 백업으로 옮긴 슬라이드를 본 발표로 되돌림: 범프 비교(1장), 기술융합 개념과 단계 모형을 두 장으로, Chapter 2 Summary, RQ별 근거 3장, RQ1 수준·형태 두 장, RQ2 무게중심, RQ3 승산비 표(재편기 역설 다음), RQ3 결합 강도와 매개 중심성(네트워크 다음)
+- 슬라이드가 새로 이어지는 곳의 대본은 `S30`(딜레마, 연구 질문 정리, RQ2 무게중심, 재편기, RQ3 승산비, 네트워크, 결합 강도)
+- `defense_script_v3.docx`(30·20·15분 대본), `defense_QA_v3.docx`(질문별 슬라이드 번호와 백업 표에 30분용 추가)
+- 다시 만들기: `python3 build_defense.py 30 ../defense_30min_v3.pptx`, `python3 make_docs.py 3`
+
 ## 구성 (v1, 참고 발표의 흐름)
 - 5개 장: 01 서론 · 02 이론적 배경 · 03 연구 질문 및 연구 방법 · 04 연구 결과 · 05 결론
 - 질문으로 여는 도입(생성형 AI · AI 가속기 · HBM의 공통 과제), 비유(접착제 vs. 거울처럼 평평한 면, 도로의 규격), 장 요약(Chapter 2 · 4 Summary), 근거 슬라이드 뒤에 연구 질문을 밝힘, 슬라이드마다 아래쪽 핵심 한 줄, Q&A 마무리
@@ -39,4 +46,4 @@ python3 make_docs.py 1                         # Q&A·대본 Word (노트 JSON�
 ```
 - 슬라이드 구성·대본: `build_defense.py`(20분용 다듬은 대본 `S20`, 15분용 `S15`), 공통 함수 `kit.py`, Q&A 내용 `qa_content.py`.
 - 차트 자료: `assets/data_v84.json`(논문 그림 3·5의 값: 연도별 출원 수, 예측확률; `journal/data/app.pkl`·`robustness/results_v16.json`에서 추출).
-- 규칙: 발표 자료나 문서를 고칠 때마다 새 번호(다음은 v2). 논문·저널 번호와는 별도.
+- 규칙: 발표 자료나 문서를 고칠 때마다 새 번호(다음은 v4). 논문·저널 번호와는 별도.

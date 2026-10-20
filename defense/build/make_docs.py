@@ -16,7 +16,7 @@ import qa_content as QC
 VER = sys.argv[1] if len(sys.argv) > 1 else '1'
 
 # v2 (10-20): the decks were reordered after the reference deck; qa_content.py keeps v1 slide numbers, remapped here
-if VER == '2':
+if VER in ('2', '3'):
     M20 = {1: 1, 2: 2, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10, 10: 32, 11: 11, 12: 11, 13: 11, 14: 12, 15: 13, 16: 14, 17: 15, 18: 16,
            19: 17, 20: 18, 21: 35, 22: (19, 20, 21, 33), 23: 23, 24: 24, 25: 25, 26: 26, 27: 28, 28: 29, 29: 31, **{k: k + 8 for k in range(30, 37)}}
     M15 = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, 11: 11, 12: 12, 13: 13, 14: 14, 15: 16, 16: 17, 17: 18, 18: 19,
@@ -81,6 +81,37 @@ if VER == '2':
         ('다항 로짓 재추정(표 13)', '부록 12 (43)', '부록 20 (41)'),
         ('핵심 기술 모형 재추정(표 14)', '부록 13 (44)', '부록 21 (42)')]
     QC.CHECKLIST = [t.replace('20분용은 18–19분, 15분용은 12–13분', '20분용은 19분, 15분용은 13분') for t in QC.CHECKLIST]
+# v3 (10-20): 30-minute deck added; its slide numbers are mapped from the v2 20-minute deck (file numbers)
+N30 = 41
+if VER == '3':
+    M30 = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: (6, 7), 7: 8, 8: (9, 10), 9: 11, 10: 12, 11: (14, 15, 16, 17), 12: 18, 13: 19, 14: 20, 15: 21,
+           16: 22, 17: (23, 24), 18: 25, 19: 27, 20: 28, 21: 29, 22: 31, 23: (32, 33), 24: 34, 25: 35, 26: 36, 27: 37, 28: 38, 29: 39, 30: 40,
+           31: 41, 32: 13, 33: 30, 34: 33, 35: 26, 36: 42, 37: 6, **{k: k + 5 for k in range(38, 45)}}
+
+    def _m30(ns):
+        return sorted({m for n in ns for m in (M30[n] if isinstance(M30[n], tuple) else (M30[n],))})
+
+    for q in QC.Q:
+        segs = [g.strip() for g in q['slides'].split('·')] if q['slides'] else []
+        s20 = [g for g in segs if g.startswith('S20')]
+        if s20:
+            ns = [int(a) + k for t in re.split(r',\s*', s20[0][3:].strip()) for a, _, z in [t.partition('–')] for k in range(int(z or a) - int(a) + 1)]
+            q['slides'] = ' · '.join(['S30 ' + _fmt(_m30(ns))] + segs)
+
+    def _where30(cell20):
+        ns = [int(x) for x in re.findall(r'\((\d+)\)', cell20)] or \
+             [n for a, _, z in [re.sub(r'[^\d–]', '', cell20).partition('–')] for n in range(int(a), int(z or a) + 1)]
+        ms = _m30(ns)
+        main = [m for m in ms if m <= N30]; app = [m for m in ms if m > N30]
+        out = []
+        if main: out.append('본문 ' + _fmt(main))
+        if app: out.append('부록 ' + _fmt([m - N30 for m in app]) + f' ({_fmt(app)})')
+        return ' · '.join(out)
+
+    QC.BACKUP = [(c, _where30(a), a, b) for c, a, b in QC.BACKUP]
+    QC.CHECKLIST = [t.replace('발표 시간 연습: 20분용은 19분', '발표 시간 연습: 30분용은 29분, 20분용은 19분')
+                     .replace('defense_20min_v1.pptx 또는 defense_15min_v1.pptx', 'defense_30min_v3.pptx, defense_20min_v2.pptx 또는 defense_15min_v2.pptx')
+                    for t in QC.CHECKLIST]
 FONT = '맑은 고딕'
 NAVY, MUTED, RED = RGBColor(0x13, 0x29, 0x4B), RGBColor(0x5B, 0x64, 0x75), RGBColor(0x9B, 0x2C, 0x1F)
 
@@ -278,7 +309,10 @@ def make_qa(out):
     table(d, [['문헌', '논문에서의 역할']] + [[a, b] for a, b in QC.REFS], [4.6, 12.0], size=9)
     d.add_heading('7. 질문별로 넘길 슬라이드', 1)
     para(d, '질문에 답하면서 보여 줄 슬라이드 번호입니다. 괄호 안은 파일의 슬라이드 번호이며, 발표 모드에서 번호를 입력하고 Enter를 누르면 바로 이동합니다.', color=MUTED)
-    table(d, [['내용', '20분용', '15분용']] + [list(r) for r in QC.BACKUP], [9.6, 3.5, 3.5], size=9.5)
+    if VER == '3':
+        table(d, [['내용', '30분용', '20분용', '15분용']] + [list(r) for r in QC.BACKUP], [7.4, 3.6, 2.9, 2.9], size=9)
+    else:
+        table(d, [['내용', '20분용', '15분용']] + [list(r) for r in QC.BACKUP], [9.6, 3.5, 3.5], size=9.5)
     d.add_heading('8. 심사 당일 체크리스트', 1)
     for t in QC.CHECKLIST: bullet(d, t)
     d.save(out); print('saved', out, len(QC.Q), 'questions')
@@ -297,12 +331,13 @@ def make_script(out):
     for t in ['참고하신 발표 대본처럼 슬라이드마다 시작 시각(분\'초)을 붙였습니다. 시각은 대본 길이로 추정한 값(초당 약 5.3자, 화면 전환 1.5초)이며, 실제 연습에서 맞춰 보십시오.',
               '같은 대본이 발표 파일의 슬라이드 노트에도 들어 있습니다. PowerPoint 발표자 보기에서 노트를 보면서 연습할 수 있습니다.',
               '굵은 글씨는 강조할 핵심 수치입니다. 수치를 말할 때는 반 박자 쉬고 천천히 말하십시오.',
-              ('20분용은 약 19분, 15분용은 약 13분으로 맞추었습니다.' if VER == '2' else '20분용은 약 18–19분, 15분용은 약 12–13분으로 맞추어 질문 전에 여유를 두었습니다.')]:
+              ('30분용은 약 29분, 20분용은 약 19분, 15분용은 약 13분으로 맞추었습니다.' if VER == '3' else
+               '20분용은 약 19분, 15분용은 약 13분으로 맞추었습니다.' if VER == '2' else '20분용은 약 18–19분, 15분용은 약 12–13분으로 맞추어 질문 전에 여유를 두었습니다.')]:
         bullet(d, t)
-    for v in ('20', '15'):
-        nd = json.load(open(f'../defense_{v}min_v{VER}_notes.json'))
+    for v in (('30', '20', '15') if VER == '3' else ('20', '15')):
+        nd = json.load(open(f'../defense_{v}min_v{VER if v == "30" or VER != "3" else "2"}_notes.json'))
         n_main = nd['n_main']; notes = nd['notes']
-        d.add_page_break() if v == '15' else None
+        d.add_page_break() if v != ('30' if VER == '3' else '20') else None
         d.add_heading(f'{v}분 발표 대본 (본 발표 {n_main}장)', 1)
         t = 0.0; rows = [['슬라이드', '제목', '시작', '길이']]; plan = []
         for (no, sec, hdr, sc) in notes[:n_main]:
