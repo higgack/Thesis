@@ -27,6 +27,14 @@
 - `defense_script_v3.docx`(30·20·15분 대본), `defense_QA_v3.docx`(질문별 슬라이드 번호와 백업 표에 30분용 추가)
 - 다시 만들기: `python3 build_defense.py 30 ../defense_30min_v3.pptx`, `python3 make_docs.py 3`
 
+## v4: 30분용 수정 (10-20)
+- `defense_30min_v4.pptx`: 본 발표 42장(대본 기준 약 29.5분) + 백업 6장. 20분용·15분용은 v2 그대로
+- v3의 6·7번(범프 비교와 딜레마)을 딜레마 한 장으로 통합: 가운데 그림을 솔더 범프 대 하이브리드 본딩 비교로 바꾸고 대본도 하나로 합침
+- v3 백업의 측정 예시(실제 출원 세 건)는 3.3 공동분류 다음, 검색 전략과 자료의 특성은 3.2 분석 데이터 다음의 본 발표로 옮김. 벤 그림에서는 겹치는 예시 카드를 뺌
+- 검색 전략 슬라이드의 재추정 부록 번호는 덱마다 자동 계산
+- `defense_script_v4.docx`, `defense_QA_v4.docx`(v3 번호 → v4 번호 변환은 make_docs.py의 `M34`)
+- 다시 만들기: `python3 build_defense.py 30 ../defense_30min_v4.pptx`, `python3 make_docs.py 4`
+
 ## 구성 (v1, 참고 발표의 흐름)
 - 5개 장: 01 서론 · 02 이론적 배경 · 03 연구 질문 및 연구 방법 · 04 연구 결과 · 05 결론
 - 질문으로 여는 도입(생성형 AI · AI 가속기 · HBM의 공통 과제), 비유(접착제 vs. 거울처럼 평평한 면, 도로의 규격), 장 요약(Chapter 2 · 4 Summary), 근거 슬라이드 뒤에 연구 질문을 밝힘, 슬라이드마다 아래쪽 핵심 한 줄, Q&A 마무리
@@ -46,4 +54,4 @@ python3 make_docs.py 1                         # Q&A·대본 Word (노트 JSON�
 ```
 - 슬라이드 구성·대본: `build_defense.py`(20분용 다듬은 대본 `S20`, 15분용 `S15`), 공통 함수 `kit.py`, Q&A 내용 `qa_content.py`.
 - 차트 자료: `assets/data_v84.json`(논문 그림 3·5의 값: 연도별 출원 수, 예측확률; `journal/data/app.pkl`·`robustness/results_v16.json`에서 추출).
-- 규칙: 발표 자료나 문서를 고칠 때마다 새 번호(다음은 v4). 논문·저널 번호와는 별도.
+- 규칙: 발표 자료나 문서를 고칠 때마다 새 번호(다음은 v5). 논문·저널 번호와는 별도.

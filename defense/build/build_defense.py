@@ -29,6 +29,7 @@ CH = {1: ('서론', 'Introduction'), 2: ('이론적 배경', 'Theoretical Backgr
 
 SCRIPT = None      # script override for the slide being built (15-minute version)
 APPX = None        # when set, the slide is built as backup slide number APPX
+ROBUST_APPX = None # backup number of the re-estimation slide, cited on the search-strategy slide
 
 
 def CS(num, title, section, script=None, take=None, **kw):
@@ -652,8 +653,8 @@ def s_data():
     chip(X1 - 5.4, 3.0, 4.4, 0.85, '2023–24: 공개 시차', fill=PANEL2, color=MUTED, size=11, bold=False)
 
 
-def s_measure():
-    CS('3.3', '측정: 공동분류 유형', CH[3][0], take='H01L21과 H01L24를 함께 가진 출원 = 공정 단계의 경계를 넘는 "통합형"', script=(
+def s_measure(title='측정: 공동분류 유형', take='H01L21과 H01L24를 함께 가진 출원 = 공정 단계의 경계를 넘는 "통합형"'):
+    CS('3.3', title, CH[3][0], take=take, script=(
         '그렇다면 융합은 어떻게 측정했을까요? 특허에는 기술 내용에 따라 CPC 분류 기호가 부여됩니다. 한 특허에 서로 다른 영역의 기호가 함께 붙어 있다면 '
         '두 영역의 지식이 하나의 발명 안에서 결합되었다는 흔적으로 볼 수 있습니다. 실제 출원 세 건을 보시면, 왼쪽은 제조공정 기호만 가진 공정 단독형, '
         '가운데는 제조공정 기호와 접합 기호를 함께 가진 통합형, 오른쪽은 접합 기호만 가진 접합 단독형입니다. 가운데의 통합형이 공정 단계의 경계를 넘는 '
@@ -1180,8 +1181,10 @@ def appendix_head(n, title, script):
     return CS(f'부록 {n}', title, '부록', script=script, title_size=20)
 
 
-def s_app_data():
-    appendix_head(1, '검색 전략과 자료의 특성', '검색 전략과 표본의 특성을 묻는 질문에 쓰는 슬라이드입니다. 1차로 CPC 두 클래스, 2차로 제목 키워드를 적용했고, '
+def s_app_data(main=False):
+    head = (lambda t, sc: CS('3.2', t, CH[3][0], take='두 단계 검색으로 표본을 구성하고, 표본의 특성은 강건성 검증에 활용', script=SCRIPT or sc)) if main else \
+           (lambda t, sc: appendix_head(1, t, sc))
+    head('검색 전략과 자료의 특성', '검색 전략과 표본의 특성을 묻는 질문에 쓰는 슬라이드입니다. 1차로 CPC 두 클래스, 2차로 제목 키워드를 적용했고, '
                   'hybrid bonding 표본 467건, 무관 용법 68건, 동일 제목 473개를 강건성 검증에 사용했습니다.')
     rows = [['단계', '조건', '내용'],
             ['1차: CPC', 'H01L21', '반도체 제조공정. 웨이퍼 직접 접합(21/18, 21/20), 소자 분리·배선·TSV(21/76), 기판·절연층 처리(21/02), CMP(21/30–21/32);\n패키징 단계 제조공정(21/48, 21/50–21/58, 21/60, 21/78)과 공정 장치(21/67–21/68) 포함'],
@@ -1189,7 +1192,7 @@ def s_app_data():
             ['2차: 키워드', '제목', 'hybrid bonding · direct bonding · Cu–Cu · copper to copper · metal-oxide bond 가운데 하나 이상']]
     table(X0, 2.65, [3.4, 2.6, CW - 6.0], rows, [0.9, 2.0, 1.15, 1.15], size=12, head_size=12, aligns=[C, C, L], bold_cols=(0, 1))
     facts = [('표본', '출원 928건 (1968–2024) · 출원–CPC 쌍 5,277건 · 서브그룹 기호 262개 (H01L21 202개, H01L24 60개)'),
-             ('hybrid bonding 표본', '제목에 hybrid bonding이 포함된 467건 → 재추정 (부록 6)'),
+             ('hybrid bonding 표본', '제목에 hybrid bonding이 포함된 467건 → 재추정 (' + (f'부록 {ROBUST_APPX}' if ROBUST_APPX else '강건성 검증') + ')'),
              ('무관 용법', '68건 (direct bonding 63건 · hybrid bonding 5건): DBC 기판, 구리 합금, 전력 모듈 등'),
              ('동일 제목', '고유 제목 473개 · 이 중 149개는 둘 이상의 출원청에 출원 → 제목당 1건 표본, 군집 표준오차'),
              ('H01L21 기호 1,636건', '웨이퍼 제조공정 905 (55.3%) · 공정 장치 328 (20.0%) · 패키징 단계 공정 403 (24.6%)'),
@@ -1580,22 +1583,44 @@ def s_exec_summary():
                                                  P(('공정 장치가 연결의 중심으로', 12, MUTED))], anchor='m')
 
 
-def s_dilemma():
+def s_dilemma(compare=False):
     CS('1', '서론', CH[1][0], take='후공정의 목표를 위해 전공정의 역량이 필요해졌다: 두 공정 단계의 경계가 흔들린다', script=SCRIPT or S20['hb'])
-    # centre: hybrid-bonded cross-section
     cx, cw_ = 11.1, 11.7
     card(cx - 0.5, 2.6, cw_ + 1.0, 10.3, fill=PANEL)
-    text(cx - 0.5, 2.75, cw_ + 1.0, 0.85, [P(('하이브리드 본딩 단면 (개념도)', 14, NAVY, True), align=C)], anchor='m')
-    bot = die_stack(cx, 4.2, cw_, True, die_h=2.1)
-    iy = 4.2 + 2.1 + 0.05          # bonded interface
-    items = [('BFE3E6', '산화막'), (BOND, '구리 패드'), (INTEG, '접합 계면')]
-    lx = cx + 1.2
-    for col, lab in items:
-        shape(MSO_SHAPE.RECTANGLE, lx, bot + 0.45, 0.42, 0.42, fill=col)
-        text(lx + 0.55, bot + 0.31, 2.4, 0.7, [P((lab, 11.5, MUTED))], anchor='m')
-        lx += 3.3
-    text(cx - 0.3, bot + 1.1, cw_ + 0.6, 1.8, [P(('솔더 범프 없이 구리–구리, 산화막–산화막을 직접 접합', 13, TEXT, True), align=C),
-                                               P(('비유: 접착제(솔더)로 붙이기 → 거울처럼 평평한 두 면을 그대로 맞붙이기', 11.5, MUTED), align=C)], anchor='m')
+    if compare:
+        # centre: solder bumps beside hybrid bonding (the bump-comparison slide folded in)
+        text(cx - 0.5, 2.75, cw_ + 1.0, 0.85, [P(('솔더 범프 접합과 하이브리드 본딩 (개념도)', 14, NAVY, True), align=C)], anchor='m')
+        hw = (cw_ - 1.4) / 2
+        for k, hyb in enumerate((False, True)):
+            x = cx + k * (hw + 1.4)
+            text(x, 3.75, hw, 0.75, [P((('하이브리드 본딩' if hyb else '기존: 솔더 범프'), 13, (INTEG if hyb else MUTED), True), align=C)], anchor='m')
+            bot = die_stack(x, 4.7, hw, hyb, die_h=1.5)
+            text(x, bot + 0.2, hw, 0.75, [P((('10 µm 이하 연결 간격' if hyb else '연결 간격 축소에 한계'), 12, (INTEG if hyb else MUTED), True), align=C)], anchor='m')
+        arrow(cx + hw + 0.25, 6.4, cx + hw + 1.15, 6.4, INTEG, 2.5)
+        iy = 4.7 + 1.5 + 0.05
+        items = [('A9AFBA', '솔더 범프'), ('BFE3E6', '산화막'), (BOND, '구리 패드'), (INTEG, '접합 계면')]
+        lx = cx + 0.4
+        for col, lab in items:
+            shape(MSO_SHAPE.RECTANGLE, lx, 9.55, 0.42, 0.42, fill=col)
+            text(lx + 0.55, 9.41, 2.2, 0.7, [P((lab, 11, MUTED))], anchor='m')
+            lx += 2.85
+        text(cx - 0.3, 10.35, cw_ + 0.6, 2.3, [P(('솔더 범프 없이 구리–구리, 산화막–산화막을 직접 접합', 13, TEXT, True), align=C, after=4),
+                                                P(('비유: 접착제(솔더)로 붙이기 → 거울처럼 평평한 두 면을 그대로 맞붙이기', 11.5, MUTED), align=C)], anchor='m')
+        lp, rp = (cx + 0.2, iy + 0.6), (cx + cw_ - 0.2, iy - 0.6)
+    else:
+        # centre: hybrid-bonded cross-section
+        text(cx - 0.5, 2.75, cw_ + 1.0, 0.85, [P(('하이브리드 본딩 단면 (개념도)', 14, NAVY, True), align=C)], anchor='m')
+        bot = die_stack(cx, 4.2, cw_, True, die_h=2.1)
+        iy = 4.2 + 2.1 + 0.05          # bonded interface
+        items = [('BFE3E6', '산화막'), (BOND, '구리 패드'), (INTEG, '접합 계면')]
+        lx = cx + 1.2
+        for col, lab in items:
+            shape(MSO_SHAPE.RECTANGLE, lx, bot + 0.45, 0.42, 0.42, fill=col)
+            text(lx + 0.55, bot + 0.31, 2.4, 0.7, [P((lab, 11.5, MUTED))], anchor='m')
+            lx += 3.3
+        text(cx - 0.3, bot + 1.1, cw_ + 0.6, 1.8, [P(('솔더 범프 없이 구리–구리, 산화막–산화막을 직접 접합', 13, TEXT, True), align=C),
+                                                   P(('비유: 접착제(솔더)로 붙이기 → 거울처럼 평평한 두 면을 그대로 맞붙이기', 11.5, MUTED), align=C)], anchor='m')
+        lp, rp = (cx - 0.1, iy), (cx + cw_ - 1.0, iy - 0.6)
     # left: required capability (front end)
     lw_ = 8.3
     shape_text(shape(MSO_SHAPE.ROUNDED_RECTANGLE, X0, 2.6, lw_, 1.15, fill=PROC, radius=0.25), P(('필수 역량 · 전공정', 15, WHITE, True), align=C))
@@ -1603,7 +1628,8 @@ def s_dilemma():
     for k, (t1, t2) in enumerate(procs):
         obox(X0, 4.15 + k * 2.05, lw_, 1.75, t1, t2, size=15, sub_size=11, color=PROC, fill=PROC_L)
     text(X0, 12.4, lw_, 0.6, [P(('CPC H01L21 (제조공정)', 11, MUTED), align=C)], anchor='m')
-    line(X0 + lw_ + 0.1, 7.2, cx - 0.1, iy, PROC, 2, tail='oval')
+    if not compare:
+        line(X0 + lw_ + 0.1, 7.2, *lp, PROC, 2, tail='oval')
     # right: target (back end)
     rx = cx + cw_ + 0.9
     rw = X1 - rx
@@ -1612,20 +1638,21 @@ def s_dilemma():
     for k, (t1, t2) in enumerate(goals):
         obox(rx, 4.15 + k * 2.75, rw, 2.4, t1, t2, size=15, sub_size=11, color=BOND, fill=BOND_L)
     text(rx, 12.4, rw, 0.6, [P(('CPC H01L24 (접합 · 인터커넥트)', 11, MUTED), align=C)], anchor='m')
-    line(rx - 0.1, 5.35, cx + cw_ - 1.0, iy - 0.6, BOND, 2, tail='oval')
+    if not compare:
+        line(rx - 0.1, 5.35, *rp, BOND, 2, tail='oval')
     card(X0, 13.4, CW, 2.75, fill=NAVY)
     text(X0 + 0.8, 13.4, CW - 1.6, 2.75, [P(('반세기의 분업은 두 단계 사이의 인터페이스가 안정적이라는 전제 위에 있었다.', 15, WHITE, True), align=C, after=4),
                                          P(('하이브리드 본딩은 후공정 기술의 성패를 전공정의 제조공정 역량에 의존하게 만든다.', 15, 'D4A72C', True), align=C)], anchor='m')
     source('Lau (2021, 2022); KnowMade (2024)', y=16.35, align=R)
 
 
-def s_measure_venn():
+def s_measure_venn(examples=True):
     CS('3.3', '측정: 두 CPC 클래스의 공동분류', CH[3][0], take='H01L21과 H01L24를 함께 가진 출원 = 공정 단계의 경계를 넘는 "통합형"', script=SCRIPT or (
         '그렇다면 융합은 어떻게 측정했을까요? 특허에는 심사관이 기술 내용에 따라 CPC 분류 기호를 부여합니다. 왼쪽 원은 제조공정 클래스인 H01L21, '
         '오른쪽 원은 접합·인터커넥트 클래스인 H01L24입니다. 한 출원이 두 클래스의 기호를 함께 가지면, 두 영역의 지식이 하나의 발명 안에서 결합되었다는 '
         '흔적으로 보고 통합형이라 불렀습니다. 한쪽만 가지면 공정 단독형 또는 접합 단독형입니다. 아래는 실제 출원의 예입니다. 다만 이것은 대리측정치이며, '
         '법적 청구범위를 측정한 것은 아닙니다.'))
-    d, cy = 9.6, 2.55
+    d, cy = (9.6, 2.55) if examples else (10.6, 2.6)
     c1 = SW / 2 - d + 1.9
     c2 = SW / 2 - 1.9
     shape(MSO_SHAPE.OVAL, c1, cy, d, d, fill=PROC, alpha=0.16, line=PROC, lw=2)
@@ -1639,6 +1666,10 @@ def s_measure_venn():
     ox = (c1 + d + c2) / 2
     chip(ox - 1.75, cy + d / 2 - 1.05, 3.5, 1.2, '통합형', fill=INTEG, color=WHITE, size=15)
     text(ox - 1.9, cy + d / 2 + 0.25, 3.8, 1.3, [P(('두 클래스를', 11.5, NAVY, True), align=C), P(('함께 보유', 11.5, NAVY, True), align=C)], anchor='m')
+    if not examples:      # the real-filing examples and the concept ladder follow on their own slide
+        text(X0, 13.75, CW, 1.3, [P(('한 출원에 두 클래스의 기호가 함께 부여 = 두 영역의 지식이 하나의 발명 안에서 결합된 흔적', 13, NAVY, True), align=C),
+                                  P(('CPC 기호는 심사관이 기술 내용에 따라 부여: 대리측정치이며 법적 청구범위의 측정이 아님 (Curran & Leker, 2011; Fleming, 2001)', 11, MUTED), align=C)], anchor='m')
+        return
     ex = [('공정 단독형 예 · TW 2019', 'DIRECT BONDING OF HETEROGENEOUS SUBSTRATES', PROC), ('통합형 예 · US 2017', 'Metal-metal direct bonding method', INTEG),
           ('접합 단독형 예 · US 2017', 'Hybrid bond pad structure', BOND)]
     w3 = (CW - 2 * 0.5) / 3
@@ -2070,11 +2101,24 @@ S15.update({
     'message': ('한 문장으로 정리하면, 공정 단계 간 기술융합은 한 번 결합하고 멈추는 사건이 아니라 핵심 설계의 고착화와 함께 그 중심이 핵심에서 '
                 '주변으로 옮겨 가는 과정입니다. 다음 경쟁은 핵심 원리보다 주변 공정과의 결합에서 일어날 수 있습니다.')})
 
-S30 = {    # 30-minute version (10-20): scripts for the slides that meet in a new order
-    'dilemma': ('이 상황을 한 장으로 정리하면 이렇습니다. 오른쪽은 후공정이 달성하려는 목표입니다. 10마이크로미터 이하의 연결 간격, 그리고 웨이퍼와 '
-                '웨이퍼, 다이와 웨이퍼를 직접 맞붙이는 적층입니다. 왼쪽은 그 목표를 위해 필요한 역량입니다. 화학적 기계연마로 표면을 평탄하게 만들고, '
-                '표면을 활성화하고, 파티클을 제어하고, 패드의 위치를 정밀하게 맞추는 일은 모두 전공정의 팹에서 다루어 온 일입니다. 후공정의 목표를 위해 전공정의 역량이 필요해진 '
-                '것입니다. 반세기 동안 안정적이던 두 공정 단계의 경계가 흔들리고 있다는 뜻입니다.'),
+S30 = {    # 30-minute version (10-20, v4 10-20): scripts for the slides that meet in a new order
+    'dilemma': ('하이브리드 본딩은 솔더 범프 없이 구리 패드와 주변 산화막을 직접 맞붙이는 기술입니다. 가운데 그림처럼 기존의 범프 접합이 두 다이를 '
+                '솔더라는 접착제로 붙이는 방식이라면, 하이브리드 본딩은 두 표면을 거울처럼 평평하게 갈아 그대로 맞붙이는 방식입니다. 덕분에 오른쪽의 '
+                '후공정 목표, 즉 10마이크로미터 이하의 연결 간격과 웨이퍼와 다이의 직접 적층을 구현합니다. 그런데 이 목표를 위해 필요한 왼쪽의 역량, '
+                '화학적 기계연마를 이용한 평탄화, 표면 활성화, 파티클 제어, 정밀 정렬은 후공정이 쌓아 온 역량이 아니라 전공정의 팹에서 다루어 온 '
+                '제조공정 역량입니다. 후공정 기술의 성패를 전공정 역량이 좌우하게 된 것입니다. 반세기 동안 안정적이던 두 공정 단계의 경계가 흔들리고 '
+                '있다는 뜻입니다.'),
+    'search': ('검색 조건과 표본의 특성을 조금 더 자세히 보겠습니다. 위의 표처럼 1차로 제조공정 분류 H01L21과 접합 분류 H01L24를, 2차로 제목 '
+               '키워드를 적용했습니다. 표본에는 서브그룹 기호 262개가 나타나며, 그중 제조공정 기호가 202개, 접합 기호가 60개입니다. 제목에 hybrid '
+               'bonding이 들어간 467건, 관련 없는 용법으로 쓰인 68건, 같은 제목으로 여러 출원청에 출원된 경우는 강건성 검증에서 따로 다루었습니다. '
+               '출원청별로는 미국이 382건으로 가장 많고, 중국 175건, PCT 국제출원 113건 순입니다.'),
+    'venn': ('그렇다면 융합은 어떻게 측정했을까요? 특허에는 심사관이 기술 내용에 따라 CPC 분류 기호를 부여합니다. 왼쪽 원은 제조공정 클래스인 H01L21, '
+             '오른쪽 원은 접합·인터커넥트 클래스인 H01L24입니다. 한 출원이 두 클래스의 기호를 함께 가지면, 두 영역의 지식이 하나의 발명 안에서 '
+             '결합되었다는 흔적으로 보고 통합형이라 불렀습니다. 한쪽만 가지면 공정 단독형 또는 접합 단독형입니다.'),
+    'measure': ('실제 출원 세 건으로 보면 이렇습니다. 왼쪽 대만 출원은 제조공정 기호만 가진 공정 단독형, 가운데 미국 출원은 제조공정 기호와 접합 기호를 '
+                '함께 가진 통합형, 오른쪽 미국 출원은 접합 기호만 가진 접합 단독형입니다. 가운데의 통합형이 공정 단계의 경계를 넘는 특허입니다. 아래처럼 '
+                '공정 단계 간 기술융합이라는 이론적 개념을, 두 기술이 한 출원에 함께 포함되는 현상으로 관찰하고, 이를 공동분류라는 지표로 측정했습니다. '
+                '다만 이것은 대리측정치이며, 법적 청구범위를 측정한 것은 아닙니다.'),
     'rqs': ('세 질문과 각 질문의 이론적 기대를 한 장으로 정리하면 이렇습니다. 오른쪽의 이론적 기대는 통계적 가설로 검정하는 것이 아니라, 결과를 '
             '해석하는 기준으로 사용했습니다. 이 세 질문에 답하기 위해 분석 대상과 자료를 선정하였습니다.'),
     'rq2b': ('회귀분석에서도 같은 흐름이 확인되었습니다. 출원연도가 1년 늦어질 때마다 접합 단독형 대비 공정 단독형의 상대위험은 약 8.7%씩 '
@@ -2102,10 +2146,13 @@ S30 = {    # 30-minute version (10-20): scripts for the slides that meet in a ne
 if VER == '30':
     # the 20-minute v2 flow with the v1 slides it had merged or moved to backup brought back into the talk
     seq = [(s_cover, {}), (s_contents, {}), (s_exec_summary, {}),
-           (s_intro_hook, {}), (s_intro_division, {}), (s_intro_hb, {}), (s_dilemma, {'script': S30['dilemma']}), (s_intro_gap, {}),
+           (s_intro_hook, {}), (s_intro_division, {}), (s_dilemma, {'script': S30['dilemma'], 'compare': True}), (s_intro_gap, {}),
            (s_th_convergence, {}), (s_th_stage, {}), (s_th_boundary, {}), (s_th_cycle, {}), (s_th_summary, {}),
            (s_rq1_why, {}), (s_rq2_why, {}), (s_rq3_why, {'script': S20['rq3why']}), (s_rqs_15, {'script': S30['rqs']}),
-           (s_object, {}), (s_data, {}), (s_measure_venn, {}), (s_core, {}), (s_method, {}),
+           (s_object, {}), (s_data, {}), (s_app_data, {'main': True, 'script': S30['search']}),
+           (s_measure_venn, {'examples': False, 'script': S30['venn']}),
+           (s_measure, {'script': S30['measure'], 'title': '측정: 실제 출원의 CPC 기호', 'take': '실제 출원에 부여된 CPC 기호의 조합으로 세 유형을 구분한다'}),
+           (s_core, {}), (s_method, {}),
            (s_res_rq1a, {}), (s_res_rq1b, {}), (s_res_rq2a, {'reg': True}), (s_res_rq2b, {'script': S30['rq2b']}),
            (s_phase1, {}), (s_phase2, {}), (s_paradox, {'script': S30['ph3']}), (s_res_rq3a, {'script': S30['rq3a']}),
            (s_mechanism, {'question': True}), (s_network_shift, {'script': S30['net']}),
@@ -2113,7 +2160,8 @@ if VER == '30':
            (s_robust, {'num': '4.6'}), (s_res_summary, {}),
            (s_conclusion, {}), (s_industry, {}), (s_practice3, {}), (s_limits, {}),
            (s_message, {}), (s_close, {})]
-    backup = [s_measure]
+    backup = []
+    APP_SKIP = [s_app_data]          # shown in the talk
 elif VER == '20':
     seq = [(s_cover, {}), (s_contents, {}), (s_exec_summary, {}),
            (s_intro_hook, {}), (s_intro_division, {'script': S20['division']}), (s_dilemma, {}), (s_intro_gap, {'script': S20['gap']}),
@@ -2140,6 +2188,9 @@ else:
     # slides of the 20-minute talk that the 15-minute talk leaves for questions
     backup = [s_intro_division, s_th_boundary, s_th_cycle, s_object, s_core, s_phase1, s_phase2, s_paradox, s_res_rq3b, s_res_rq2b,
               s_robust, s_industry, s_practice3, s_limits]
+APP = [s_app_data, s_app_vars, s_app_cluster, s_app_logit, s_app_core, s_app_robust1, s_app_robust2]
+APP = [f for f in APP if f not in globals().get('APP_SKIP', [])]
+ROBUST_APPX = len(backup) + APP.index(s_app_robust1) + 1
 for fn, kw in seq:
     sc = kw.pop('script', None)
     run(fn, script=sc, **kw)
@@ -2148,7 +2199,6 @@ n = 0
 for fn in backup:
     n += 1
     run(fn, appx=n)          # keeps the 20-minute notes, useful when answering
-APP = [s_app_data, s_app_vars, s_app_cluster, s_app_logit, s_app_core, s_app_robust1, s_app_robust2]
 for fn in APP:
     n += 1
     run(fn, appx=n)
