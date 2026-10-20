@@ -14,6 +14,73 @@ from docx.oxml import OxmlElement
 import qa_content as QC
 
 VER = sys.argv[1] if len(sys.argv) > 1 else '1'
+
+# v2 (10-20): the decks were reordered after the reference deck; qa_content.py keeps v1 slide numbers, remapped here
+if VER == '2':
+    M20 = {1: 1, 2: 2, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10, 10: 32, 11: 11, 12: 11, 13: 11, 14: 12, 15: 13, 16: 14, 17: 15, 18: 16,
+           19: 17, 20: 18, 21: 35, 22: (19, 20, 21, 33), 23: 23, 24: 24, 25: 25, 26: 26, 27: 28, 28: 29, 29: 31, **{k: k + 8 for k in range(30, 37)}}
+    M15 = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, 11: 11, 12: 12, 13: 13, 14: 14, 15: 16, 16: 17, 17: 18, 18: 19,
+           19: 21, 20: 22, 21: 23, 22: 24, 23: 25, 24: 26, 25: 31, 26: 32, 27: 34, **{k: k + 8 for k in range(28, 35)}}
+
+    def _nums(part, app_base):
+        out = []; app = False      # 'S15 부록 7, 14' = backup slides 7 and 14
+        for tok in re.split(r',\s*', part.strip()):
+            tok = tok.strip()
+            if not tok: continue
+            app = app or tok.startswith('부록')
+            tok = tok.replace('부록', '').strip()
+            a, _, z = tok.partition('–')
+            rng = range(int(a), int(z or a) + 1)
+            out += [int(n) + (app_base if app else 0) for n in rng]
+        return out
+
+    def _fmt(ns):
+        ns = sorted(set(ns)); res = []; k = 0
+        while k < len(ns):
+            j = k
+            while j + 1 < len(ns) and ns[j + 1] == ns[j] + 1: j += 1
+            res.append(str(ns[k]) if j == k else f'{ns[k]}–{ns[j]}'); k = j + 1
+        return ', '.join(res)
+
+    def remap(s):
+        if not s: return s
+        out = []
+        for seg in s.split('·'):
+            seg = seg.strip()
+            if seg.startswith('S20'):
+                out.append('S20 ' + _fmt(m for n in _nums(seg[3:], 29) for m in (M20[n] if isinstance(M20[n], tuple) else (M20[n],))))
+            elif seg.startswith('S15'):
+                out.append('S15 ' + _fmt(M15[n] for n in _nums(seg[3:], 19)))
+            else:
+                out.append(seg)
+        return ' · '.join(out)
+
+    for q in QC.Q: q['slides'] = remap(q['slides'])
+    QC.BACKUP = [
+        ('반도체 분업 구조와 첨단 패키징', '본문 5', '부록 1 (22)'),
+        ('수직 전문화와 지식 경계', '본문 9', '부록 2 (23)'),
+        ('기술 순환 모형과 핵심–주변 구조', '본문 10', '부록 3 (24)'),
+        ('이론 종합(Chapter 2 Summary)', '부록 1 (32)', '본문 7'),
+        ('분석 대상: 하이브리드 본딩 기술과 산업(그림 2)', '본문 12', '부록 4 (25)'),
+        ('측정: 실제 출원 세 건의 CPC 기호', '부록 5 (36)', '—'),
+        ('핵심 기술의 식별(클러스터 · 네트워크)', '본문 15', '부록 5 (26)'),
+        ('국면별 심층: 형성기 · 확산기 · 재편기의 역설', '본문 19–21', '부록 6–8 (27–29)'),
+        ('RQ3 핵심 기술의 승산비(표 11 · 신뢰구간)', '부록 2 (33)', '본문 14'),
+        ('RQ3 결합 중심(Jaccard 그래프 · 매개 중심성 표)', '부록 3 (34)', '부록 9 (30)'),
+        ('RQ2 출원의 무게중심 이동(연도별 예측확률)', '부록 4 (35)', '부록 10 (31)'),
+        ('강건성 검증 요약(표 13 · 14 종합)', '본문 24', '부록 11 (32)'),
+        ('산업적 함의: 흔들리는 분업의 인터페이스', '본문 27', '부록 12 (33)'),
+        ('실무적 시사점(세 가지)', '본문 28', '부록 13 (34)'),
+        ('한계점과 향후 연구 방향', '본문 29', '부록 14 (35)'),
+        ('솔더 범프와 하이브리드 본딩 비교', '부록 6 (37)', '—'),
+        ('검색 전략과 자료의 특성(표 2)', '부록 7 (38)', '부록 15 (36)'),
+        ('변수 정의와 기술통계(표 4)', '부록 8 (39)', '부록 16 (37)'),
+        ('기술 클러스터와 네트워크(표 5 · 6)', '부록 9 (40)', '부록 17 (38)'),
+        ('이항 · 다항 로짓 결과(표 8 · 9)', '부록 10 (41)', '부록 18 (39)'),
+        ('핵심 기술 모형 세부(표 11)', '부록 11 (42)', '부록 19 (40)'),
+        ('다항 로짓 재추정(표 13)', '부록 12 (43)', '부록 20 (41)'),
+        ('핵심 기술 모형 재추정(표 14)', '부록 13 (44)', '부록 21 (42)')]
+    QC.CHECKLIST = [t.replace('20분용은 18–19분, 15분용은 12–13분', '20분용은 19분, 15분용은 13분') for t in QC.CHECKLIST]
 FONT = '맑은 고딕'
 NAVY, MUTED, RED = RGBColor(0x13, 0x29, 0x4B), RGBColor(0x5B, 0x64, 0x75), RGBColor(0x9B, 0x2C, 0x1F)
 
@@ -230,7 +297,7 @@ def make_script(out):
     for t in ['참고하신 발표 대본처럼 슬라이드마다 시작 시각(분\'초)을 붙였습니다. 시각은 대본 길이로 추정한 값(초당 약 5.3자, 화면 전환 1.5초)이며, 실제 연습에서 맞춰 보십시오.',
               '같은 대본이 발표 파일의 슬라이드 노트에도 들어 있습니다. PowerPoint 발표자 보기에서 노트를 보면서 연습할 수 있습니다.',
               '굵은 글씨는 강조할 핵심 수치입니다. 수치를 말할 때는 반 박자 쉬고 천천히 말하십시오.',
-              '20분용은 약 18–19분, 15분용은 약 12–13분으로 맞추어 질문 전에 여유를 두었습니다.']:
+              ('20분용은 약 19분, 15분용은 약 13분으로 맞추었습니다.' if VER == '2' else '20분용은 약 18–19분, 15분용은 약 12–13분으로 맞추어 질문 전에 여유를 두었습니다.')]:
         bullet(d, t)
     for v in ('20', '15'):
         nd = json.load(open(f'../defense_{v}min_v{VER}_notes.json'))

@@ -4,6 +4,7 @@
 talk, the research question stated after its rationale, summary slides, one take-away line per slide).
 Two versions (user, 10-15): 20-minute (29 slides) and 15-minute (19 slides), each followed by backup slides.
 All numbers are taken from manuscript_v84_ko (audit_numbers.py). Speaker script in the notes.
+v2 (10-20): flow of the reference deck the user shared (see the v2 block below the merged slides).
 Usage: python3 build_defense.py 20|15 OUT.pptx"""
 import sys, json, math
 import kit as K
@@ -1028,8 +1029,8 @@ def s_res_rq3b():
     rq_panel(rx, 12.2, rw, 3, [P(('융합의 중심: 웨이퍼 제조공정 → 공정 장치 · 패키징 단계 공정', 13, NAVY, True))], h=4.1)
 
 
-def s_robust():
-    CS('4.4', '강건성 검증', CH[4][0], take='RQ1 · RQ3는 모든 재추정에서, RQ2는 hybrid bonding 표본을 제외한 모든 재추정에서 유지되었다', script=(
+def s_robust(num='4.4'):
+    CS(num, '강건성 검증', CH[4][0], take='RQ1 · RQ3는 모든 재추정에서, RQ2는 hybrid bonding 표본을 제외한 모든 재추정에서 유지되었다', script=(
         '결과가 표본이나 정의에 따라 달라지는지도 확인했습니다. 같은 제목의 출원을 군집으로 본 표준오차, 같은 제목의 중복을 제거한 표본, 패키징 단계 공정을 '
         '제외한 좁은 정의, 검색어가 다른 뜻으로 쓰인 68건을 제외한 표본, 제목에 hybrid bonding이 들어간 467건 표본 등으로 다시 추정했습니다. 첫 번째와 '
         '세 번째 연구 질문의 핵심 결과는 모든 재추정에서 유지되었고, 두 번째 질문의 시간 추세는 2014년 이전 출원이 30건뿐인 hybrid bonding 표본을 제외하고 '
@@ -1132,7 +1133,7 @@ def s_practice():
 
 
 def s_limits():
-    CS('5.3', '한계점과 향후 연구 방향', CH[5][0], take='다른 공정기술 사례와 비교하여 형성–확산–재편의 일반성을 검증하는 것이 다음 과제이다', script=(
+    CS('5.4', '한계점과 향후 연구 방향', CH[5][0], take='다른 공정기술 사례와 비교하여 형성–확산–재편의 일반성을 검증하는 것이 다음 과제이다', script=(
         '이 연구에는 한계도 있습니다. 첫째, 공동분류는 융합의 대리측정치이고, CPC가 과거 출원까지 소급해 재분류될 수 있어 시간적 변화의 일부는 분류 체계의 '
         '변화를 반영했을 수 있습니다. 둘째, 제목 키워드로 검색했기 때문에 제목에 관련어가 없는 출원은 빠졌습니다. 셋째, 특허 패밀리 정보가 없어 같은 제목으로 '
         '중복을 근사했습니다. 넷째, 출원인이나 응용처 같은 변수가 없고, 결과는 인과관계가 아니라 조건부 연관입니다. 향후에는 출원인과 패밀리 정보를 결합하고, '
@@ -1534,6 +1535,396 @@ def s_impl_limits_15():
 
 
 # ================================================================ build
+# ================================================================ v2 (10-20): flow borrowed from the reference deck the user shared
+# (executive summary up front, the front-end/back-end dilemma, a Venn of the two CPC classes, one slide per phase,
+# the phase-3 paradox posed as a question and answered by the dominant-design mechanism, the coupling centre drawn as
+# a network, a phase-by-dimension matrix, industry implications, a closing message). Numbers stay those of thesis v84.
+def s_exec_summary():
+    CS('', '핵심 요약', '핵심 요약', take='경계를 넘는 발명은 예외가 아니었고, 한 방향으로 쌓이지 않았으며, 그 중심은 핵심에서 주변으로 옮겨 갔다', script=(
+        '결론부터 말씀드리겠습니다. 하이브리드 본딩 특허 928건에서 세 가지를 확인했습니다. 첫째, 제조공정과 접합 기술을 함께 담은 '
+        '통합형이 45.8%였고, 패키징 단계 공정을 뺀 좁은 정의에서도 37.2%였습니다. 경계를 넘는 발명은 예외가 아니었습니다. 둘째, 융합은 '
+        '계속 늘지 않고 형성기, 확산기, 재편기의 세 국면을 거쳤습니다. 셋째, 핵심 설계가 고착화되면서 융합의 중심이 웨이퍼 제조공정에서 공정 장치와 '
+        '패키징 단계 공정 같은 주변으로 옮겨 갔습니다. 그 과정을 말씀드리겠습니다.'))
+    items = [('RQ1', '경계를 넘는 발명은 예외가 아니다', [('통합형 45.8%', NAVY, True), (' (좁은 정의 37.2%)', MUTED, False)],
+              '세부 기술을 다양하게 포함한 출원일수록 통합형일 가능성이 높음', INTEG),
+             ('RQ2', '융합은 세 국면을 거쳤다', [('공정 단독형 43.6% → 통합형 62.2% → 접합 단독형 45.4%', NAVY, True)],
+              '형성기(–2014) → 확산기(2015–2019) → 재편기(2020–2024)', PROC),
+             ('RQ3', '융합의 중심이 주변으로 옮겨 갔다', [('핵심 기술의 승산비 11.1 → 2.5 → 비유의', NAVY, True)],
+              '결합 중심: 웨이퍼 제조공정 → 공정 장치 · 패키징 단계 공정', BOND)]
+    lw_ = 18.4
+    for k, (tag, head, runs, sub, col) in enumerate(items):
+        y = 2.65 + k * 4.65
+        card(X0, y, lw_, 4.25, fill=PANEL)
+        chip(X0 + 0.5, y + 0.45, 1.9, 0.95, tag, fill=col, color=WHITE, size=13)
+        text(X0 + 2.75, y + 0.4, lw_ - 3.2, 1.05, [P((head, 18, NAVY, True))], anchor='m')
+        text(X0 + 0.6, y + 1.7, lw_ - 1.2, 1.1, [P(*[(t, 15.5, c, b) for t, c, b in runs])], anchor='m')
+        text(X0 + 0.6, y + 2.8, lw_ - 1.2, 1.0, [P((sub, 12.5, MUTED))], anchor='m')
+    # right: the two stages, their overlap and the move to the periphery
+    rx = X0 + lw_ + 0.8
+    rw = X1 - rx
+    card(rx, 2.65, rw, 13.55, fill=WHITE, line_=RULE)
+    d = 6.2
+    cx1, cx2, cy = rx + 0.9, rx + 0.9 + 3.9, 4.6
+    shape(MSO_SHAPE.OVAL, cx1, cy, d, d, fill=PROC, alpha=0.22, line=PROC, lw=1.5)
+    shape(MSO_SHAPE.OVAL, cx2, cy, d, d, fill=BOND, alpha=0.22, line=BOND, lw=1.5)
+    text(cx1 + 0.3, cy + 1.9, 3.3, 2.4, [P(('전공정', 16, PROC, True), align=C), P(('제조공정', 11.5, MUTED), align=C), P(('H01L21', 11, MUTED), align=C)], anchor='m')
+    text(cx2 + d - 3.6, cy + 1.9, 3.3, 2.4, [P(('후공정', 16, BOND, True), align=C), P(('접합', 11.5, MUTED), align=C), P(('H01L24', 11, MUTED), align=C)], anchor='m')
+    ox = cx2 + (cx1 + d - cx2) / 2
+    chip(ox - 1.55, cy + d / 2 - 0.55, 3.1, 1.1, '통합형', fill=INTEG, color=WHITE, size=14)
+    # periphery
+    px, py = rx + rw - 3.5, cy + d + 1.3
+    shape(MSO_SHAPE.OVAL, px, py, 2.6, 2.6, fill=TEAL, alpha=0.85)
+    text(px - 0.4, py + 0.4, 3.4, 1.8, [P(('주변', 15, WHITE, True), align=C), P(('공정', 15, WHITE, True), align=C)], anchor='m')
+    arrow(ox + 0.8, cy + d - 0.2, px + 0.2, py + 1.0, TEAL, 3)
+    text(rx + 0.6, py - 0.2, px - rx - 1.2, 3.2, [P(('재편기', 13, TEAL, True), after=3), P(('다이 지지 · 봉지 공정', 12.5, TEXT, True), after=2),
+                                                 P(('공정 장치가 연결의 중심으로', 12, MUTED))], anchor='m')
+
+
+def s_dilemma():
+    CS('1', '서론', CH[1][0], take='후공정의 목표를 위해 전공정의 역량이 필요해졌다: 두 공정 단계의 경계가 흔들린다', script=SCRIPT or S20['hb'])
+    # centre: hybrid-bonded cross-section
+    cx, cw_ = 11.1, 11.7
+    card(cx - 0.5, 2.6, cw_ + 1.0, 10.3, fill=PANEL)
+    text(cx - 0.5, 2.75, cw_ + 1.0, 0.85, [P(('하이브리드 본딩 단면 (개념도)', 14, NAVY, True), align=C)], anchor='m')
+    bot = die_stack(cx, 4.2, cw_, True, die_h=2.1)
+    iy = 4.2 + 2.1 + 0.05          # bonded interface
+    items = [('BFE3E6', '산화막'), (BOND, '구리 패드'), (INTEG, '접합 계면')]
+    lx = cx + 1.2
+    for col, lab in items:
+        shape(MSO_SHAPE.RECTANGLE, lx, bot + 0.45, 0.42, 0.42, fill=col)
+        text(lx + 0.55, bot + 0.31, 2.4, 0.7, [P((lab, 11.5, MUTED))], anchor='m')
+        lx += 3.3
+    text(cx - 0.3, bot + 1.1, cw_ + 0.6, 1.8, [P(('솔더 범프 없이 구리–구리, 산화막–산화막을 직접 접합', 13, TEXT, True), align=C),
+                                               P(('비유: 접착제(솔더)로 붙이기 → 거울처럼 평평한 두 면을 그대로 맞붙이기', 11.5, MUTED), align=C)], anchor='m')
+    # left: required capability (front end)
+    lw_ = 8.3
+    shape_text(shape(MSO_SHAPE.ROUNDED_RECTANGLE, X0, 2.6, lw_, 1.15, fill=PROC, radius=0.25), P(('필수 역량 · 전공정', 15, WHITE, True), align=C))
+    procs = [('CMP 평탄화', '나노미터 수준의 표면'), ('표면 활성화', '플라즈마 처리'), ('파티클 제어', '세정 · 오염 관리'), ('정밀 정렬', '패드 간 위치 정합')]
+    for k, (t1, t2) in enumerate(procs):
+        obox(X0, 4.15 + k * 2.05, lw_, 1.75, t1, t2, size=15, sub_size=11, color=PROC, fill=PROC_L)
+    text(X0, 12.4, lw_, 0.6, [P(('CPC H01L21 (제조공정)', 11, MUTED), align=C)], anchor='m')
+    line(X0 + lw_ + 0.1, 7.2, cx - 0.1, iy, PROC, 2, tail='oval')
+    # right: target (back end)
+    rx = cx + cw_ + 0.9
+    rw = X1 - rx
+    shape_text(shape(MSO_SHAPE.ROUNDED_RECTANGLE, rx, 2.6, rw, 1.15, fill=BOND, radius=0.25), P(('목표 · 후공정', 15, WHITE, True), align=C))
+    goals = [('10 µm 이하 연결 간격', '연구 단계에서는 1 µm 이하'), ('다이 · 웨이퍼의 직접 적층', 'W2W · D2W'), ('HBM · 칩렛 · 3D 로직', 'CMOS 이미지센서 · 3D NAND에서 먼저 상용화')]
+    for k, (t1, t2) in enumerate(goals):
+        obox(rx, 4.15 + k * 2.75, rw, 2.4, t1, t2, size=15, sub_size=11, color=BOND, fill=BOND_L)
+    text(rx, 12.4, rw, 0.6, [P(('CPC H01L24 (접합 · 인터커넥트)', 11, MUTED), align=C)], anchor='m')
+    line(rx - 0.1, 5.35, cx + cw_ - 1.0, iy - 0.6, BOND, 2, tail='oval')
+    card(X0, 13.4, CW, 2.75, fill=NAVY)
+    text(X0 + 0.8, 13.4, CW - 1.6, 2.75, [P(('반세기의 분업은 두 단계 사이의 인터페이스가 안정적이라는 전제 위에 있었다.', 15, WHITE, True), align=C, after=4),
+                                         P(('하이브리드 본딩은 후공정 기술의 성패를 전공정의 제조공정 역량에 의존하게 만든다.', 15, 'D4A72C', True), align=C)], anchor='m')
+    source('Lau (2021, 2022); KnowMade (2024)', y=16.35, align=R)
+
+
+def s_measure_venn():
+    CS('3.3', '측정: 두 CPC 클래스의 공동분류', CH[3][0], take='H01L21과 H01L24를 함께 가진 출원 = 공정 단계의 경계를 넘는 "통합형"', script=SCRIPT or (
+        '그렇다면 융합은 어떻게 측정했을까요? 특허에는 심사관이 기술 내용에 따라 CPC 분류 기호를 부여합니다. 왼쪽 원은 제조공정 클래스인 H01L21, '
+        '오른쪽 원은 접합·인터커넥트 클래스인 H01L24입니다. 한 출원이 두 클래스의 기호를 함께 가지면, 두 영역의 지식이 하나의 발명 안에서 결합되었다는 '
+        '흔적으로 보고 통합형이라 불렀습니다. 한쪽만 가지면 공정 단독형 또는 접합 단독형입니다. 아래는 실제 출원의 예입니다. 다만 이것은 대리측정치이며, '
+        '법적 청구범위를 측정한 것은 아닙니다.'))
+    d, cy = 9.6, 2.55
+    c1 = SW / 2 - d + 1.9
+    c2 = SW / 2 - 1.9
+    shape(MSO_SHAPE.OVAL, c1, cy, d, d, fill=PROC, alpha=0.16, line=PROC, lw=2)
+    shape(MSO_SHAPE.OVAL, c2, cy, d, d, fill=BOND, alpha=0.16, line=BOND, lw=2)
+    text(c1 + 0.5, cy + 1.5, 4.9, 3.6, [P(('H01L21', 24, PROC, True), align=C), P(('반도체 제조공정', 14, NAVY, True), align=C),
+                                       P(('웨이퍼 접합 · CMP', 11, MUTED), align=C), P(('절연층 처리', 11, MUTED), align=C)], anchor='m')
+    text(c2 + d - 5.4, cy + 1.5, 4.9, 3.6, [P(('H01L24', 24, BOND, True), align=C), P(('접합 · 인터커넥트', 14, NAVY, True), align=C),
+                                           P(('범프 · 와이어', 11, MUTED), align=C), P(('접합 패드 구조', 11, MUTED), align=C)], anchor='m')
+    chip(c1 + 0.65, cy + 5.6, 4.6, 1.1, '공정 단독형', fill=PROC, color=WHITE, size=14)
+    chip(c2 + d - 5.25, cy + 5.6, 4.6, 1.1, '접합 단독형', fill=BOND, color=WHITE, size=14)
+    ox = (c1 + d + c2) / 2
+    chip(ox - 1.75, cy + d / 2 - 1.05, 3.5, 1.2, '통합형', fill=INTEG, color=WHITE, size=15)
+    text(ox - 1.9, cy + d / 2 + 0.25, 3.8, 1.3, [P(('두 클래스를', 11.5, NAVY, True), align=C), P(('함께 보유', 11.5, NAVY, True), align=C)], anchor='m')
+    ex = [('공정 단독형 예 · TW 2019', 'DIRECT BONDING OF HETEROGENEOUS SUBSTRATES', PROC), ('통합형 예 · US 2017', 'Metal-metal direct bonding method', INTEG),
+          ('접합 단독형 예 · US 2017', 'Hybrid bond pad structure', BOND)]
+    w3 = (CW - 2 * 0.5) / 3
+    for k, (h, t, col) in enumerate(ex):
+        x = X0 + k * (w3 + 0.5)
+        card(x, 12.55, w3, 2.0, fill=PANEL)
+        text(x + 0.4, 12.6, w3 - 0.8, 0.8, [P((h, 11.5, col, True), align=C)], anchor='m')
+        text(x + 0.4, 13.35, w3 - 0.8, 1.1, [P((t, 12.5, NAVY, True), align=C)], anchor='m')
+    text(X0, 14.75, CW, 1.3, [P(('이론적 개념(공정 단계 간 기술융합) → 관찰 현상(두 기술이 한 출원에 함께 포함) → 조작적 지표(H01L21–H01L24 공동분류)', 12, NAVY, True), align=C),
+                              P(('CPC 기호는 심사관이 기술 내용에 따라 부여: 대리측정치이며 법적 청구범위의 측정이 아님 (Curran & Leker, 2011; Fleming, 2001)', 11, MUTED), align=C)], anchor='m')
+
+
+PHASES = [('형성기', '–2014', PROC, PROC_L), ('확산기', '2015–2019', INTEG, INTEG_L), ('재편기', '2020–2024', BOND, BOND_L)]
+
+
+def phase_bar(cur):
+    """three chevrons across the top; the current phase in its colour"""
+    w = (CW - 2 * 0.15) / 3
+    for k, (nm, yr, col, colL) in enumerate(PHASES):
+        x = X0 + k * (w + 0.15)
+        on = k == cur
+        sh = shape(MSO_SHAPE.CHEVRON if k else MSO_SHAPE.PENTAGON, x, 2.5, w + 0.3, 1.2, fill=col if on else 'E4E8EF')
+        shape_text(sh, [P((f'국면 {k + 1}  {nm}', 15, WHITE if on else MUTED, True), (f'   {yr}', 12, WHITE if on else MUTED), align=C)])
+
+
+def type_bar(x, y, w, shares, n):
+    text(x, y, w, 0.7, [P(('유형 구성', 12.5, MUTED, True), (f'   N = {n}', 11.5, MUTED))], anchor='m')
+    xx = x
+    for (lab, v, col) in shares:
+        ww = w * v / 100
+        sh = shape(MSO_SHAPE.RECTANGLE, xx, y + 0.8, ww, 1.25, fill=col)
+        shape_text(sh, P((f'{v:.1f}%', 13, WHITE, True), align=C), margin=0.02)
+        xx += ww
+    lx = x
+    for (lab, v, col) in shares:
+        shape(MSO_SHAPE.RECTANGLE, lx, y + 2.35, 0.38, 0.38, fill=col)
+        text(lx + 0.5, y + 2.2, 3.3, 0.7, [P((lab, 11, MUTED))], anchor='m')
+        lx += 3.6
+
+
+def phase_slide(key, cur, title, take, feats, big, big_lab, ci, big_txt, centre, stage, note, shares, n):
+    nm, yr, col, colL = PHASES[cur]
+    CS('4.3', title, CH[4][0], take=take, script=S20[key])
+    phase_bar(cur)
+    lw_ = 17.6
+    type_bar(X0, 4.2, lw_, shares, n)
+    fw = (lw_ - 0.5) / 2
+    for k, (h, b) in enumerate(feats):
+        x = X0 + k * (fw + 0.5)
+        card(x, 7.45, fw, 4.6, fill=colL)
+        text(x + 0.45, 7.6, fw - 0.9, 0.7, [P((f'특징 {k + 1}', 12, col, True))], anchor='m')
+        text(x + 0.45, 8.3, fw - 0.9, 1.6, [P((h, 15.5, NAVY, True), line=1.05)], anchor='m')
+        text(x + 0.45, 9.95, fw - 0.9, 1.95, [P((b, 12.5, TEXT), line=1.1)], anchor='t')
+    card(X0, 12.4, lw_, 3.85, fill=PANEL)
+    text(X0 + 0.5, 12.5, lw_ - 1.0, 3.65, [P(('결합 중심  ', 12.5, MUTED, True), (centre, 13.5, NAVY, True), after=6),
+                                          P(('단계 모형  ', 12.5, MUTED, True), (stage, 13.5, col, True), after=6),
+                                          P((note, 11, MUTED), line=1.05)], anchor='m')
+    rx = X0 + lw_ + 0.8
+    rw = X1 - rx
+    shape(MSO_SHAPE.RECTANGLE, rx, 4.2, rw, 12.05, fill=WHITE, line=col, lw=3)
+    text(rx + 0.7, 4.6, rw - 1.4, 1.0, [P(('핵심 기술의 승산비', 17, NAVY, True))], anchor='m')
+    text(rx + 0.7, 5.55, rw - 1.4, 0.7, [P(('접합 출원 중 통합형일 승산 · 핵심 기술 보유 vs 없음', 11, MUTED))], anchor='m')
+    text(rx + 0.7, 6.4, rw - 1.4, 2.9, [P((big, 60, col, True), (big_lab, 26, col, True))], anchor='m')
+    text(rx + 0.7, 9.3, rw - 1.4, 0.7, [P((ci, 12, MUTED))], anchor='m')
+    line(rx + 0.7, 10.3, rx + rw - 0.7, 10.3, RULE, 1.0)
+    text(rx + 0.7, 10.6, rw - 1.4, 5.4, [P((t_, 14, TEXT, i == 0), line=1.15, after=8) for i, t_ in enumerate(big_txt)], anchor='t')
+
+
+def s_phase1():
+    phase_slide('ph1', 0, '형성기: 전공정 지식의 축적', '형성기: 핵심 기술을 발명하려면 제조공정 지식을 함께 다루어야 했다',
+                [('공정 단독형 43.6%로 최다', '직접 접합을 가능하게 하는 제조공정 발명이 단독으로 출원'),
+                 ('핵심 기술 보유 접합 출원의 79.6%가 통합형', '핵심 기술이 없는 접합 출원은 27.7%')],
+                '11.07', '배', '95% CI 4.211–29.107 · p < 0.01 · 출원청 통제',
+                ['인터페이스가 확정되기 전', '직접 접합 패드를 발명하려면 평탄화 · 웨이퍼 접합 같은 제조공정 지식을 함께 다루어야 했던 시기'],
+                '웨이퍼 제조공정 (매개 중심성 53.6%)', '지식 융합', '47년간 179건: 이후 5년간 209건보다 적어 하나의 시기로 묶음',
+                [('공정 단독형', 43.6, PROC), ('통합형', 31.3, INTEG), ('접합 단독형', 25.1, BOND)], 179)
+
+
+def s_phase2():
+    phase_slide('ph2', 1, '확산기: 두 지식의 결합', '확산기: 두 공정의 지식이 하나의 발명 안에서 가장 활발히 결합되었다',
+                [('통합형 62.2%로 정점', '두 공정의 기술을 하나의 발명에 함께 담은 출원이 가장 많음'),
+                 ('웨이퍼 제조공정과의 결합 최고', '접합 기호와의 Jaccard 계수 0.598 · 함께 부여: 21/187 반도체 몸체끼리의 접합')],
+                '2.45', '배', '95% CI 1.158–5.194 · p < 0.05 · 출원청 통제',
+                ['우위는 줄었지만 유지', '접합 출원 중 핵심 기술 비중 53.5% → 78.7%: 핵심 설계로 수렴하는 중'],
+                '웨이퍼 제조공정 (매개 중심성 42.5%)', '기술 융합', '확산기의 승산비는 군집 표준오차 · 무관 용법 제외 표본에서 유의성을 잃음',
+                [('공정 단독형', 14.8, PROC), ('통합형', 62.2, INTEG), ('접합 단독형', 23.0, BOND)], 209)
+
+
+def s_paradox():
+    CS('4.3', '재편기: 융합이 줄어든 역설', CH[4][0], script=SCRIPT or S20['ph3'])
+    phase_bar(2)
+    cd = CategoryChartData()
+    cd.categories = ['형성기', '확산기', '재편기']
+    cd.add_series('통합형', (31.3, 62.2, 44.3)); cd.add_series('접합 단독형', (25.1, 23.0, 45.4)); cd.add_series('공정 단독형', (43.6, 14.8, 10.4))
+    gf = K.s.shapes.add_chart(XL_CHART_TYPE.LINE_MARKERS, cm(X0), cm(4.0), cm(17.6), cm(9.0), cd)
+    ch = gf.chart
+    style_chart(ch, legend=True, size=12)
+    for ser, col, wd in zip(ch.plots[0].series, (INTEG, BOND, PROC), (4.5, 4.5, 2.0)):
+        ser.format.line.color.rgb = rgb(col); ser.format.line.width = Pt(wd); ser.smooth = False
+        ser.marker.style = XL_MARKER_STYLE.CIRCLE; ser.marker.size = 10 if wd > 3 else 7
+        ser.marker.format.fill.solid(); ser.marker.format.fill.fore_color.rgb = rgb(col); ser.marker.format.line.color.rgb = rgb(col)
+        dl = ser.data_labels; dl.show_value = True; dl.number_format = '0.0"%"'; dl.number_format_is_linked = False
+        dl.position = XL_LABEL_POSITION.ABOVE if col != BOND else XL_LABEL_POSITION.BELOW
+        dl.font.size = Pt(11.5); dl.font.bold = True; dl.font.color.rgb = rgb(col); dl.font.name = FONT
+    A, B = XL_LABEL_POSITION.ABOVE, XL_LABEL_POSITION.BELOW
+    for ser, poss in zip(ch.plots[0].series, ((A, A, A), (B, A, B), (A, B, B))):
+        for i, ps in enumerate(poss): ser.points[i].data_label.position = ps
+    ch.value_axis.maximum_scale = 70; ch.value_axis.minimum_scale = 0; ch.value_axis.major_unit = 20
+    ch.value_axis.tick_labels.number_format = '0"%"'; ch.value_axis.tick_labels.number_format_is_linked = False
+    rx = X0 + 18.4
+    rw = X1 - rx
+    calls = [('접합 단독형 45.4% ≈ 통합형 44.3%', '통합형은 정점에서 내려오고 접합 단독형이 늘어남', BOND, BOND_L),
+             ('핵심 기술의 승산비 0.66 (비유의)', '95% CI 0.374–1.160: 핵심 기술의 "경계 넘기" 우위가 확인되지 않음', INTEG, INTEG_L),
+             ('접합 출원 중 핵심 기술 비중 88.0%', '출원 540건으로 가장 많은 시기 · 발명이 하나의 핵심 설계로 수렴', NAVY, PANEL2)]
+    for k, (h, b, col, colL) in enumerate(calls):
+        yy = 4.1 + k * 3.0
+        card(rx, yy, rw, 2.7, fill=colL)
+        text(rx + 0.5, yy + 0.15, rw - 1.0, 1.1, [P((h, 15, col, True))], anchor='m')
+        text(rx + 0.5, yy + 1.25, rw - 1.0, 1.3, [P((b, 12, TEXT), line=1.05)], anchor='m')
+    card(X0, 13.45, CW, 3.0, fill=NAVY)
+    text(X0 + 1.0, 13.45, CW - 2.0, 3.0, [P(('출원이 가장 많아진 시기에, 왜 경계를 넘는 발명의 비중은 줄고', 22, WHITE, True), align=C),
+                                         P(('접합 발명은 다시 단독으로 출원되기 시작했을까?', 22, 'D4A72C', True), align=C)], anchor='m')
+
+
+def _curve(pts, col, w):
+    fb = K.s.shapes.build_freeform(cm(pts[0][0]), cm(pts[0][1]))
+    fb.add_line_segments([(cm(x), cm(y)) for x, y in pts[1:]], close=False)
+    sh = fb.convert_to_shape(); K._nostyle(sh)
+    sh.fill.background(); sh.line.color.rgb = rgb(col); sh.line.width = Pt(w)
+    return sh
+
+
+def _blocks(x, y, w, tangled, bw=3.0, bh=3.6):
+    """two dies (back-end orange, front-end blue) and the links between them"""
+    shape(MSO_SHAPE.RECTANGLE, x, y, bw, bh, fill=BOND)
+    shape(MSO_SHAPE.RECTANGLE, x + w - bw, y, bw, bh, fill=PROC)
+    text(x, y, bw, bh, [P(('접합', 13, WHITE, True), align=C)], anchor='m')
+    text(x + w - bw, y, bw, bh, [P(('제조공정', 13, WHITE, True), align=C)], anchor='m')
+    n = 5
+    for k in range(n):
+        yy = y + 0.5 + k * (bh - 1.0) / (n - 1)
+        if tangled:
+            y2 = y + 0.5 + ((k * 3 + 2) % n) * (bh - 1.0) / (n - 1)
+            line(x + bw, yy, x + w - bw, y2, ['7C3AED', '5B6475', 'EA7A28', '2563C9', '9AA6B8'][k], 2)
+        else:
+            line(x + bw, yy, x + w - bw, yy, INTEG, 3)
+
+
+def s_mechanism(question=False):
+    CS('4.4', '해석: 지배적 설계의 고착화와 인터페이스 안정화', CH[4][0],
+       take='핵심 설계가 고착화되자, 발명은 경계 반대편의 지식을 매번 함께 다룰 필요가 줄었다', script=SCRIPT or S20['mech'])
+    top = 2.6
+    if question:
+        card(X0, top, CW, 1.4, fill=NAVY)
+        text(X0 + 0.8, top, CW - 1.6, 1.4, [P(('재편기: 출원이 가장 많아진 시기에 왜 통합형의 비중은 줄고 접합 단독형이 늘었을까?', 16, WHITE, True), align=C)], anchor='m')
+        top += 1.7
+    ph = 13.3 - top - 1.5
+    pw = (CW - 2.2) / 2
+    for k, (h, sub, pts, tangled, col, colL) in enumerate([
+            ('인터페이스 불안정기', '형성기 · 확산기  (격동기)', ['핵심 접합 패드를 발명할 때마다', '평탄화 · 표면 화학 · 웨이퍼 접합', '지식을 함께 다룸', '→ 통합형 · 핵심 기술의 우위'], True, PROC, PROC_L),
+            ('지배적 설계의 고착화', '재편기  (점진적 변화)', ['직접 접합의 원리가', '"주어진 조건"이 됨', '→ 핵심 기술의 우위 소멸', '→ 새로운 결합은 주변 공정에서'], False, BOND, BOND_L)]):
+        px = X0 + k * (pw + 2.2)
+        card(px, top, pw, ph, fill=colL)
+        text(px + 0.6, top + 0.25, pw - 1.2, 0.95, [P((h, 18, col, True))], anchor='m')
+        text(px + 0.6, top + 1.15, pw - 1.2, 0.6, [P((sub, 12, MUTED))], anchor='m')
+        bh = min(4.6, ph - 2.6)
+        _blocks(px + 0.6, top + 2.1, 5.6, tangled, bw=2.4, bh=bh)
+        text(px + 6.6, top + 1.8, pw - 7.0, bh + 0.6, [P((t_, 13.5, NAVY if t_.startswith('→') else TEXT, t_.startswith('→')), line=1.08) for t_ in pts], anchor='m')
+    shape(MSO_SHAPE.RIGHT_ARROW, X0 + pw + 0.35, top + ph / 2 - 0.75, 1.5, 1.5, fill=NAVY)
+    # time axis
+    ay = top + ph + 0.55
+    arrow(X0, ay, X1, ay, '9AA3B2', 2)
+    for k, t_ in enumerate(['격동기', '지배적 설계', '점진적 변화']):
+        xx = X0 + (k * 2 + 1) * CW / 6
+        shape(MSO_SHAPE.OVAL, xx - 0.17, ay - 0.17, 0.34, 0.34, fill=NAVY)
+        text(xx - 3.0, ay + 0.2, 6.0, 0.6, [P((t_, 11.5, MUTED, True), align=C)], anchor='m')
+    text(X0, ay + 1.0, CW, 2.1, [
+        P(('핵심 요소가 다른 요소와 안정된 인터페이스가 되면, 이후의 변화는 주변 요소에서 일어난다 (Anderson & Tushman, 1990; Murmann & Frenken, 2006)', 13, NAVY, True), align=C, after=3),
+        P(('해석: 출원 시기는 지배적 설계의 근사이며, 인과를 검정한 것은 아님', 11.5, MUTED), align=C)], anchor='m')
+
+
+def s_network_shift():
+    CS('4.5', 'RQ3) 결합 중심의 이동', CH[4][0],
+       take='핵심 기술은 허브로 남고, 접합과 제조공정을 잇는 연결은 공정 장치 · 패키징 단계 공정으로 옮겨 갔다', script=SCRIPT or S20['net'])
+    jac = {'웨이퍼 제조공정': (0.306, 0.598, 0.159), '공정 장치': (0.046, 0.059, 0.176), '패키징 단계 공정': (0.194, 0.234, 0.268)}
+    btw = {'웨이퍼 제조공정': (53.6, 42.5, 9.0), '공정 장치': (0.0, 1.8, 26.1), '패키징 단계 공정': (0.3, 0.6, 7.3)}
+    cols = {'웨이퍼 제조공정': PROC, '공정 장치': TEAL, '패키징 단계 공정': GOLD}
+    w, g = (CW - 2 * 0.45) / 3, 0.45
+    py, ph = 2.6, 9.6
+    for k, (nm, yr, col, colL) in enumerate(PHASES):
+        x = X0 + k * (w + g)
+        card(x, py, w, ph, fill=PANEL)
+        text(x + 0.4, py + 0.15, w - 0.8, 0.9, [P((nm, 16, col, True), (f'  {yr}', 11.5, MUTED), align=C)], anchor='m')
+        cx, cy = x + w / 2, py + 5.95
+        pos = {'웨이퍼 제조공정': (x + 1.95, py + 3.35), '공정 장치': (x + w - 1.95, py + 3.35), '패키징 단계 공정': (cx, py + 8.55)}
+        for nm2, (nx, ny) in pos.items():
+            line(cx, cy, nx, ny, cols[nm2], max(1.0, jac[nm2][k] * 26))
+        for nm2, (nx, ny) in pos.items():
+            b_ = btw[nm2][k]
+            dd = 1.15 + b_ / 100 * 3.2
+            shape(MSO_SHAPE.OVAL, nx - dd / 2, ny - dd / 2, dd, dd, fill=cols[nm2], line=WHITE, lw=1.5)
+            if nm2 != '패키징 단계 공정':
+                lx_, ly_, al = nx - 2.0, ny - dd / 2 - 0.68, C
+            else:
+                lx_, ly_, al = nx + dd / 2 + 0.15, ny - 0.35, L
+            text(lx_, ly_, 4.0, 0.7, [P((f'매개 {b_:.1f}%', 11, cols[nm2], True), align=al)], anchor='m')
+        for nm2, (nx, ny) in pos.items():
+            j = jac[nm2][k]
+            mx, my = cx + (nx - cx) * 0.52, cy + (ny - cy) * 0.52
+            chip(mx - 0.8, my - 0.3, 1.6, 0.6, f'{j:.3f}', fill=WHITE, color=cols[nm2], size=10.5, line_=cols[nm2], radius=0.3)
+        shape(MSO_SHAPE.OVAL, cx - 1.05, cy - 1.05, 2.1, 2.1, fill=CORE, line=WHITE, lw=1.5)
+        text(cx - 1.05, cy - 1.05, 2.1, 2.1, [P(('핵심', 12, WHITE, True), align=C), P(('기술', 12, WHITE, True), align=C)], anchor='m')
+    leg = []
+    for nm2, col_ in (('웨이퍼 제조공정', PROC), ('공정 장치', TEAL), ('패키징 단계 공정', GOLD), ('핵심 기술(접합 패드 기호 4개)', CORE)):
+        leg += [('●', 13, col_, True), (f' {nm2}    ', 11, TEXT, True)]
+    leg += [('선 굵기 · 숫자 = Jaccard 계수,  원 크기 = 매개 중심성', 10.5, MUTED)]
+    text(X0, py + ph + 0.05, CW, 0.7, [P(*leg, align=C)], anchor='m')
+    card(X0, 13.0, CW, 3.4, fill=WHITE, line_=RULE)
+    text(X0 + 0.6, 13.1, 14.0, 1.0, [P(('핵심 기술과 함께 부여된 제조공정 기호', 13.5, NAVY, True))], anchor='m')
+    for k, (ph_, syms, col) in enumerate([('확산기', [('21/187', '반도체 몸체끼리의 접합'), ('21/76898', '기판 관통 배선')], INTEG),
+                                         ('재편기', [('21/6835', '임시 기판을 이용한 지지'), ('21/568', '봉지 공정용 임시 기판')], BOND)]):
+        x = X0 + 0.6 + k * 15.6
+        chip(x, 14.3, 2.4, 1.05, ph_, fill=col, color=WHITE, size=12.5)
+        for j, (sy, lab) in enumerate(syms):
+            text(x + 2.8 + j * 6.0, 14.0, 5.9, 0.75, [P((sy, 13, col, True))], anchor='m')
+            text(x + 2.8 + j * 6.0, 14.7, 5.9, 0.75, [P((lab, 11.5, TEXT))], anchor='m')
+        if k == 0:
+            arrow(X0 + 15.2, 14.82, X0 + 16.0, 14.82, NAVY, 2.5)
+
+
+def s_industry():
+    CS('5.2', '산업적 함의: 흔들리는 분업의 인터페이스', CH[5][0], take='생산의 경계와 지식의 경계는 다르다: 인터페이스가 흔들리면 지식 경계가 먼저 넓어진다', script=SCRIPT or S20['industry'])
+    y, h = 2.8, 5.2
+    boxes = [('설계', '팹리스', 'FFFFFF', NAVY), ('제조 · 전공정', '종합반도체기업(IDM) · 파운드리', PROC, WHITE), ('조립 · 테스트 · 후공정', '조립 · 테스트 전문업체(OSAT)', BOND, WHITE)]
+    xs = [X0, X0 + 9.4, X0 + 21.6]
+    ws = [7.4, 9.0, 9.27]
+    for (t1, t2, fill, tc), x, w in zip(boxes, xs, ws):
+        sh = shape(MSO_SHAPE.RECTANGLE, x, y, w, h, fill=fill, line=NAVY if fill == 'FFFFFF' else None, lw=1.75, shadow=True)
+        shape_text(sh, [P((t1, 18, tc, True), align=C), P((t2, 12, tc if fill != 'FFFFFF' else MUTED), align=C)])
+    arrow(xs[0] + ws[0] + 0.2, y + h / 2, xs[1] - 0.2, y + h / 2, NAVY, 2.5)
+    # the interface between the two stages: a broken wall
+    wx = xs[1] + ws[1] + 0.7
+    shape(MSO_SHAPE.RECTANGLE, wx, y - 0.4, 1.6, h + 0.8, fill='C9CED6', line='9AA3B2', lw=1.0)
+    for k in range(4):
+        yy = y + 0.6 + k * 1.2
+        line(wx + 0.2, yy, wx + 1.0, yy + 0.5, '7D8594', 1.5); line(wx + 1.0, yy + 0.5, wx + 0.5, yy + 1.0, '7D8594', 1.5)
+    arrow(xs[1] + ws[1] + 0.1, y + h / 2, xs[2] - 0.1, y + h / 2, INTEG, 3.5)
+    text(wx - 1.6, y + h + 0.5, 4.8, 0.9, [P(('인터페이스', 13, NAVY, True), align=C)], anchor='m')
+    cols = [('흔들리는 인터페이스', '반세기의 분업은 두 단계 사이의 안정적 인터페이스를 전제로 했다. 하이브리드 본딩은 후공정 기술의 성패를 전공정 역량에 의존하게 한다.', PROC),
+            ('생산의 경계 ≠ 지식의 경계', '직접 생산하는 범위보다 넓은 지식을 보유한 기업이 기술 전환에서 성과 우위를 얻었다 (Kapoor & Adner, 2012).', INTEG),
+            ('발명이 먼저 보여 준 징후', '인터페이스가 흔들린 징후는 조직이나 산업 구조보다 먼저, 두 단계의 지식을 함께 담은 발명(통합형 45.8%)으로 나타났다.', BOND)]
+    w3 = (CW - 2 * 0.6) / 3
+    for k, (hd, body, col) in enumerate(cols):
+        x = X0 + k * (w3 + 0.6)
+        card(x, 9.6, w3, 6.65, fill=PANEL)
+        shape(MSO_SHAPE.OVAL, x + 0.5, 10.05, 0.55, 0.55, fill=col)
+        text(x + 1.3, 9.85, w3 - 1.7, 0.95, [P((hd, 16, NAVY, True))], anchor='m')
+        text(x + 0.5, 11.1, w3 - 1.0, 5.0, [P((body, 15, TEXT), line=1.25)], anchor='t')
+
+
+def s_practice3():
+    CS('5.3', '실무적 시사점: 차세대 패키징을 준비하는 기업에', CH[5][0], take='패키징 경쟁력은 접합 원리 하나에 좌우되지 않을 수 있다', script=S20['practice3'])
+    recs = [('FaLayerGroup', '접합 기술만으로는 부족할 수 있다', 'RQ1 융합의 수준', '상당수 출원이 제조공정과 접합 기술을 함께 담음 → 평탄화 · 오염 제어 · 표면 화학 · 정렬을 아우르는 인접 공정 지식이 중요', PROC),
+            ('FaMemory', '주변 공정에 주목하라', 'RQ3 결합 중심', '재편기의 결합은 다이 지지 · 봉지 공정으로 → 차세대 HBM에는 얇은 다이를 다루고 적층하는 공정 역량까지 필요할 수 있음', BOND),
+            ('FaGears', '장비를 통한 지식의 흐름', 'RQ3 연결 기호', '재편기에 접합과 제조공정을 잇는 기호가 공정 장치로 바뀜 → 장비를 매개로 공정 지식이 확산되는 경로(Rosenberg, 1963)에 주목', TEAL)]
+    w3 = (CW - 2 * 0.6) / 3
+    for k, (ic, hd, tag, body, col) in enumerate(recs):
+        x = X0 + k * (w3 + 0.6)
+        card(x, 2.7, w3, 13.75, fill=PANEL)
+        icon_circle(ic, x + w3 / 2 - 1.5, 3.4, 3.0, col)
+        text(x + 0.4, 6.75, w3 - 0.8, 1.5, [P((hd, 17, NAVY, True), align=C)], anchor='m')
+        chip(x + w3 / 2 - 2.9, 8.45, 5.8, 0.85, f'근거: {tag}', fill=WHITE, color=col, size=11.5, line_=col)
+        text(x + 0.7, 9.7, w3 - 1.4, 6.5, [P((body, 15.5, TEXT), line=1.3)], anchor='t')
+
+
+def s_message():
+    image_slide('circuit.png', CH[5][0], '맺음말', script=SCRIPT or S20['message'])
+    dark_overlay(0.82)
+    shape(MSO_SHAPE.RECTANGLE, 4.4, 4.2, SW - 8.8, 7.6, line=WHITE, lw=1.5)
+    text(5.4, 4.5, SW - 10.8, 7.0, [P(('“공정 단계 간 기술융합은 한 번 결합하고 멈추는 사건이 아니라,', 24, WHITE, True), align=C, after=4),
+                                    P(('핵심 설계의 고착화와 함께 그 중심이', 24, WHITE, True), align=C, after=4),
+                                    P(('핵심에서 주변으로 옮겨 가는 과정이다.”', 24, 'D4A72C', True), align=C)], anchor='m')
+    text(4.4, 12.5, SW - 8.8, 2.0, [P(('하이브리드 본딩 특허 928건(1968–2024)의 종단 분석', 14, DIM), align=C, after=4),
+                                    P(('다음 경쟁은 핵심 원리보다 주변 공정과의 결합에서 일어날 수 있다', 15, WHITE, True), align=C)], anchor='m')
+
+
 S20 = {
     'division': '반도체 제조는 웨이퍼 위에 트랜지스터를 만드는 전공정과, 웨이퍼를 잘라 조립하고 패키징하는 후공정으로 나뉩니다. 전공정은 종합반도체기업과 '
                 '파운드리가, 후공정은 조립·테스트 전문업체가 맡는 분업이 반세기 넘게 이어졌고, 이는 두 단계 사이의 인터페이스가 안정적이었기에 가능했습니다. '
@@ -1546,8 +1937,7 @@ S20 = {
            '공정 단계를 가로지르는 융합은 드물었습니다. 둘째, 융합을 분야 수준의 지수로 측정해 어떤 발명이 융합을 담는지는 설명하기 어려웠습니다. 셋째, 이론은 '
            '융합을 단계적 과정으로 보지만 실증 연구는 융합이 늘었는지를 확인하는 데 머물렀습니다. 그래서 저는 공정 단계 사이의 융합을 개별 특허 수준에서, '
            '시간의 흐름에 따라 분석했습니다.',
-    'conv': '먼저 기술융합의 개념입니다. Rosenberg는 총기와 재봉틀을 위해 개발된 가공 기술이 공통의 생산공정을 통해 다른 산업으로 퍼지고 공작기계 산업이 '
-            '등장한 과정을 기술적 수렴이라 불렀고, Kodama는 분리된 기술 분야가 결합해 새로운 역량을 만드는 과정을 기술융합으로 정의했습니다. Hacklin 등은 '
+    'conv': '먼저 기술융합의 개념입니다. Rosenberg는 공통의 생산공정을 통해 기술이 산업의 경계를 넘어 퍼지는 현상을 기술적 수렴이라 불렀고, Kodama는 분리된 기술 분야가 결합해 새로운 역량을 만드는 과정을 기술융합으로 정의했습니다. Hacklin 등은 '
             '융합이 지식, 기술, 응용, 산업의 네 단계로 진행된다고 보았습니다. 하이브리드 본딩에 대입하면, 제조공정 지식이 칩 연결 문제에 쓰이기 시작하는 것이 '
             '지식 융합, 그 지식이 접합 구조와 하나의 발명 안에서 결합되는 것이 기술 융합, HBM 같은 제품으로 구현되는 것이 응용 융합, 분업 구조가 바뀌는 것이 '
             '산업 융합입니다. 이 가운데 특허 공동분류로 직접 관찰할 수 있는 것은 기술 융합 단계입니다.',
@@ -1567,9 +1957,8 @@ S20 = {
               '핵심 기술을 발명하려면 평탄화나 웨이퍼 접합 같은 제조공정 지식을 함께 다루어야 합니다. 그러나 설계가 고착화되면 그 지식은 주어진 조건이 되고, '
               '새로운 결합은 다이를 다루고 패키지로 완성하는 주변 공정에서 일어날 것입니다. 그래서 세 번째 연구 질문은 "공정 단계 간 기술융합의 중심이 핵심 '
               '기술과 주변 기술 사이에서 시기에 따라 어떻게 재편되는가"입니다.',
-    'object': '분석 대상인 하이브리드 본딩은 기반 공정, 접합 형태, 소자 구조, 적용 제품의 네 층위로 정리할 수 있습니다. 기반 공정은 CPC의 제조공정 클래스인 '
-              'H01L21에, 접합 형태는 접합·인터커넥트 클래스인 H01L24에 주로 대응합니다. 오른쪽의 실제 공정 흐름을 보면, 다이를 자르기 전까지 증착, 식각, 도금, '
-              '연마가 이어지는데 모두 전공정의 공정과 장비입니다. 주요 출원인에도 TSMC, Intel, Samsung처럼 파운드리와 메모리 기업이 함께 들어 있습니다.',
+    'object': '분석 대상인 하이브리드 본딩은 기반 공정, 접합 형태, 소자 구조, 적용 제품의 네 층위로 정리할 수 있습니다. 기반 공정은 제조공정 클래스인 '
+              'H01L21에, 접합 형태는 접합 클래스인 H01L24에 주로 대응합니다. 오른쪽 공정 흐름의 증착, 식각, 도금, 연마는 모두 전공정의 공정과 장비입니다.',
     'method': '분석 방법은 세 가지 회귀모형입니다. 주모형은 다항 로짓으로, 출원이 세 유형 중 어디에 속하는지를 기술범위와 출원연도로 설명합니다. 기술범위는 '
               '두 클래스 안에서 출원이 가진 세부 분류 기호의 수입니다. 보완분석으로 제조공정 분류 보유 여부의 이항 로짓을, 세 번째 질문을 위해 접합 출원 '
               '763건에서 핵심 기술과 출원 시기의 상호작용을 보는 이항 로짓을 사용했습니다. 여기에 Jaccard 계수와 매개 중심성을 보조 지표로 썼습니다.',
@@ -1634,27 +2023,79 @@ S15 = {
             '통계적 가설이 아니라 결과를 해석하는 기준으로 사용했습니다.'),
     'close': '이상으로 발표를 마치겠습니다. 경청해 주셔서 감사합니다. 질문 주시면 성실히 답변드리겠습니다.'}
 
+S20.update({
+    'rq2': S15['rq2'].split(' 회귀분석에서도')[0] + ' 공정 단독형의 상대위험도 매년 8.7%씩 줄었습니다. 이제 각 국면을 하나씩 들여다보겠습니다.',
+    'ph1': ('먼저 형성기입니다. 이 시기에는 공정 단독형이 43.6%로 가장 많았습니다. 직접 접합을 가능하게 하는 제조공정 발명이 먼저 단독으로 쌓인 '
+            '시기입니다. 주목할 점은 핵심 기술, 즉 접합 패드 기호를 포함한 접합 출원의 79.6%가 통합형이었다는 것입니다. 핵심 기술이 없는 출원은 '
+            '27.7%에 그쳤고, 출원청을 통제한 승산비는 11.07이었습니다. 인터페이스가 확정되기 전이라, 핵심 기술을 발명하려면 평탄화나 웨이퍼 접합 같은 '
+            '제조공정 지식을 함께 다루어야 했던 것으로 해석됩니다. 단계 모형으로는 지식 융합에 해당합니다.'),
+    'ph2': ('확산기에는 통합형이 62.2%로 정점에 이르렀습니다. 웨이퍼 제조공정이 접합 기호와 함께 부여되는 정도를 나타내는 Jaccard 계수도 0.598로 '
+            '가장 높았고, 핵심 기술과 함께 부여된 대표 기호는 반도체 몸체끼리의 접합이었습니다. 핵심 기술의 승산비는 2.45로 줄었지만 유지되었고, 핵심 '
+            '기술을 포함한 접합 출원의 비중은 78.7%로 커졌습니다. 두 영역의 지식이 하나의 발명 안에서 가장 활발히 결합된, 단계 모형의 기술 융합 '
+            '국면입니다.'),
+    'ph3': ('그런데 재편기에는 예상과 다른 모습이 나타났습니다. 출원이 540건으로 가장 많았던 이 시기에 통합형은 44.3%로 내려왔고, 접합 단독형이 '
+            '45.4%로 늘어 두 유형이 비슷해졌습니다. 핵심 기술의 승산비는 0.66으로 유의한 차이가 확인되지 않았고, 접합 출원의 88.0%가 핵심 기술을 '
+            '포함하게 되었습니다. 기술이 가장 활발히 발명된 시기에, 왜 경계를 넘는 발명의 비중은 오히려 줄었을까요?'),
+    'mech': ('저는 이를 기술 순환 모형의 지배적 설계로 해석했습니다. 인터페이스가 불안정한 격동기에는 접합 패드를 발명할 때마다 평탄화와 표면 화학, '
+             '웨이퍼 접합 지식을 함께 다루어야 했습니다. 그러나 직접 접합의 원리가 지배적 설계로 고착화되면, 그 원리는 발명이 매번 새로 다룰 대상이 '
+             '아니라 주어진 조건이 됩니다. 그래서 핵심 기술의 우위는 사라지고, '
+             '새로운 결합은 주변 공정에서 일어나게 됩니다. 다만 출원 시기는 지배적 설계의 근사이고, 이것은 인과를 검정한 결과가 아니라 해석입니다. '
+             '그렇다면 융합은 어디로 옮겨 갔을까요?'),
+    'net': ('선의 굵기는 접합 기호와 함께 부여되는 정도, 원의 크기는 매개 '
+            '중심성입니다. 웨이퍼 제조공정은 확산기까지 굵은 선으로 연결되었지만, 재편기에는 Jaccard 계수가 '
+            '0.159, 매개 중심성이 9.0%로 크게 줄었습니다. 그 자리를 공정 장치와 패키징 단계 공정이 채웠고, 공정 장치의 매개 중심성은 26.1%가 '
+            '되었습니다. 핵심 기술은 세 시기 내내 허브로 남았지만, 핵심 기술과 함께 부여된 공정은 반도체 몸체끼리의 접합에서 임시 기판을 이용한 다이 '
+            '지지와 봉지 공정으로 바뀌었습니다.'),
+    'industry': ('이 결과는 산업 구조에도 시사점을 줍니다. 반도체 산업은 설계, 제조, 조립·테스트가 분리되며 발전했고, 이 분업은 두 단계 사이의 '
+                 '인터페이스가 안정적이라는 전제 위에 있었습니다. 하이브리드 본딩은 이 전제를 흔듭니다. Kapoor와 Adner가 보였듯이 생산의 '
+                 '경계와 지식의 경계는 다르고, 인터페이스가 흔들린 징후는 조직이나 산업 구조보다 먼저 두 단계의 지식을 함께 담은 발명으로 나타났습니다. '
+                 '통합형 45.8%라는 결과가 그것입니다.'),
+    'practice3': ('기업에 주는 시사점은 세 가지입니다. 첫째, 상당수의 출원이 제조공정과 접합 기술을 함께 담고 있다는 것은 접합 기술 역량만으로는 '
+                  '충분하지 않을 수 있다는 뜻입니다. 둘째, 재편기의 결합은 다이 지지와 봉지 공정으로 옮겨 갔습니다. 차세대 HBM에 하이브리드 본딩을 '
+                  '도입하려는 한국 메모리 산업에는 얇은 다이를 다루고 적층하는 공정 역량까지 필요할 수 있습니다. 셋째, 재편기에 접합과 제조공정을 잇는 '
+                  '기호가 공정 장치로 바뀐 것은 장비를 매개로 공정 지식이 확산된다는 Rosenberg의 관찰과 맥을 같이합니다. 장비를 통한 지식의 흐름에 '
+                  '주목할 필요가 있습니다.'),
+    'message': ('마지막으로 한 문장으로 정리하겠습니다. 공정 단계 간 기술융합은 한 번 결합하고 멈추는 사건이 아니라, 핵심 설계의 고착화와 함께 그 '
+                '중심이 핵심에서 주변으로 옮겨 가는 과정입니다. 그렇다면 다음 경쟁은 핵심 원리보다 주변 공정과의 결합에서 일어날 수 있습니다.')})
+S15.update({
+    'exec': ('결론부터 말씀드리겠습니다. 하이브리드 본딩 특허 928건에서 세 가지를 확인했습니다. 첫째, 제조공정과 접합 기술을 함께 담은 통합형이 45.8%, '
+             '좁은 정의에서도 37.2%로, 경계를 넘는 발명은 예외가 아니었습니다. 둘째, 융합은 형성기, 확산기, 재편기의 세 국면을 거쳤습니다. 셋째, 핵심 '
+             '설계가 고착화되면서 융합의 중심이 주변 공정으로 옮겨 갔습니다. 그 과정을 말씀드리겠습니다.'),
+    'mech': ('재편기에 통합형은 44.3%로 줄고 접합 단독형은 45.4%로 늘었습니다. 출원이 가장 많아진 시기에 왜 경계를 넘는 발명의 비중이 줄었을까요? '
+             '저는 이를 지배적 설계로 해석했습니다. 인터페이스가 불안정한 시기에는 접합 패드를 발명할 때마다 제조공정 지식을 함께 다루어야 했지만, 직접 '
+             '접합의 원리가 고착화되면 그 지식은 주어진 조건이 되고 새로운 결합은 주변 공정에서 일어납니다. 다만 이는 인과를 검정한 결과가 아닌 해석입니다.'),
+    'net': ('그렇다면 융합은 어디로 옮겨 갔을까요? 선의 굵기는 접합 기호와 함께 부여되는 정도, 원의 크기는 매개 중심성입니다. 웨이퍼 제조공정의 결합 '
+            '강도는 확산기 0.598에서 재편기 0.159로 낮아졌고, 공정 장치와 패키징 단계 공정은 높아졌습니다. 핵심 기술은 허브로 남았지만, 함께 부여된 '
+            '공정은 반도체 몸체끼리의 접합에서 다이 지지와 봉지 공정으로 바뀌었습니다.'),
+    'message': ('한 문장으로 정리하면, 공정 단계 간 기술융합은 한 번 결합하고 멈추는 사건이 아니라 핵심 설계의 고착화와 함께 그 중심이 핵심에서 '
+                '주변으로 옮겨 가는 과정입니다. 다음 경쟁은 핵심 원리보다 주변 공정과의 결합에서 일어날 수 있습니다.')})
+
 if VER == '20':
-    seq = [(s_cover, {}), (s_contents, {}),
-           (s_intro_hook, {}), (s_intro_division, {'script': S20['division']}), (s_intro_hb, {'script': S20['hb']}), (s_intro_gap, {'script': S20['gap']}),
-           (s_th_conv_stage, {'script': S20['conv']}), (s_th_boundary, {'script': S20['boundary']}), (s_th_cycle, {'script': S20['cycle']}), (s_th_summary, {}),
-           (s_rq1_why, {}), (s_rq2_why, {'script': S20['rq2why']}), (s_rq3_why, {'script': S20['rq3why']}),
-           (s_object, {'script': S20['object']}), (s_data, {}), (s_measure, {}), (s_core, {}), (s_method, {'script': S20['method']}),
-           (s_res_rq1, {'script': S20['rq1']}), (s_res_rq2a, {}), (s_res_rq2b, {}), (s_res_rq3a, {}), (s_res_rq3b, {}), (s_robust, {}), (s_res_summary, {}),
-           (s_conclusion, {}), (s_practice, {'script': S20['practice']}), (s_limits, {'script': S20['limits']}), (s_close, {})]
-    backup = []
+    seq = [(s_cover, {}), (s_contents, {}), (s_exec_summary, {}),
+           (s_intro_hook, {}), (s_intro_division, {'script': S20['division']}), (s_dilemma, {}), (s_intro_gap, {'script': S20['gap']}),
+           (s_th_conv_stage, {'script': S20['conv']}), (s_th_boundary, {'script': S20['boundary']}), (s_th_cycle, {'script': S20['cycle']}),
+           (s_rqs_15, {}),
+           (s_object, {'script': S20['object']}), (s_data, {}), (s_measure_venn, {}), (s_core, {}), (s_method, {'script': S20['method']}),
+           (s_res_rq1, {'script': S20['rq1']}), (s_res_rq2a, {'script': S20['rq2'], 'reg': True}),
+           (s_phase1, {}), (s_phase2, {}), (s_paradox, {}), (s_mechanism, {'question': True}), (s_network_shift, {}),
+           (s_robust, {'num': '4.6'}), (s_res_summary, {}),
+           (s_conclusion, {}), (s_industry, {}), (s_practice3, {'script': S20['practice3']}), (s_limits, {'script': S20['limits']}),
+           (s_message, {}), (s_close, {})]
+    # slides of v1 that the v2 flow replaced, kept for questions
+    backup = [s_th_summary, s_res_rq3a, s_res_rq3b, s_res_rq2b, s_measure, s_intro_hb]
 else:
-    seq = [(s_cover, {}), (s_contents, {'script': S15['contents']}),
-           (s_intro_hook, {}), (s_intro_hb, {'script': S15['hb']}), (s_intro_gap, {'script': S20['gap']}),
+    seq = [(s_cover, {}), (s_exec_summary, {'script': S15['exec']}),
+           (s_intro_hook, {}), (s_dilemma, {'script': S15['hb']}), (s_intro_gap, {'script': S20['gap']}),
            (s_th_conv_stage, {'script': S20['conv']}), (s_th_summary, {'script': S15['frame'], 'num': '2.2', 'title': '지식 경계와 기술 순환: 이론적 틀'}),
            (s_rqs_15, {'script': S15['rqs']}),
-           (s_data, {}), (s_measure, {}), (s_method, {'script': S15['method'], 'core': True}),
+           (s_data, {}), (s_measure_venn, {'script': S15['measure']}), (s_method, {'script': S15['method'], 'core': True}),
            (s_res_rq1, {'script': S20['rq1']}), (s_res_rq2a, {'script': S15['rq2'], 'reg': True}),
-           (s_res_rq3a, {}), (s_res_rq3b, {}),
-           (s_res_summary, {'script': S15['summary'], 'num': '4.4', 'title': '결과 종합', 'robust': True}),
-           (s_conclusion, {}), (s_impl_limits_15, {}), (s_close, {})]
+           (s_res_rq3a, {'script': S15['rq3a']}), (s_mechanism, {'script': S15['mech'], 'question': True}), (s_network_shift, {'script': S15['net']}),
+           (s_res_summary, {'script': S15['summary'], 'num': '4.6', 'title': '결과 종합', 'robust': True}),
+           (s_conclusion, {}), (s_impl_limits_15, {}), (s_message, {'script': S15['message']}), (s_close, {})]
     # slides of the 20-minute talk that the 15-minute talk leaves for questions
-    backup = [s_intro_division, s_th_boundary, s_th_cycle, s_object, s_core, s_res_rq2b, s_robust, s_practice]
+    backup = [s_intro_division, s_th_boundary, s_th_cycle, s_object, s_core, s_phase1, s_phase2, s_paradox, s_res_rq3b, s_res_rq2b,
+              s_robust, s_industry, s_practice3, s_limits]
 for fn, kw in seq:
     sc = kw.pop('script', None)
     run(fn, script=sc, **kw)
