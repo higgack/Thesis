@@ -1221,8 +1221,10 @@ def s_app_vars():
         P(('유형: 통합형 425 (45.8%) · 접합 단독형 338 (36.4%) · 공정 단독형 165 (17.8%) · 제조공정 기호 보유 590 (63.6%)', 13, TEXT), bullet=('■', NAVY, 70), indent=0.5)])
 
 
-def s_app_cluster():
-    appendix_head(3, '기술 클러스터와 기술 네트워크', '핵심 기술의 근거를 묻는 질문에 쓰는 슬라이드입니다. 클러스터 상위 기호와 네트워크의 가장 강한 기호 쌍이 모두 '
+def s_app_cluster(main=False):
+    head = (lambda t, sc: CS('3.3', '측정: ' + t, CH[3][0], take='출원 빈도와 연결 강도가 모두 접합 패드와 직접 접합 기호에 집중된다', script=SCRIPT or sc)) if main else \
+           (lambda t, sc: appendix_head(3, t, sc))
+    head('기술 클러스터와 기술 네트워크', '핵심 기술의 근거를 묻는 질문에 쓰는 슬라이드입니다. 클러스터 상위 기호와 네트워크의 가장 강한 기호 쌍이 모두 '
                   '접합 패드와 직접 접합 기호로 이루어져 있습니다. 인덱싱 코드는 회귀 자료에 없으므로 핵심 기술은 회귀 자료의 H01L24 기호 네 개로 정의했습니다.')
     rows = [['순위', 'CPC 기호', '공식 정의(요약)', '출원 수', '비중'],
             ['1', '24/80', '접합 패드를 이용한 연결 방법', '529', '57.0%'],
@@ -2112,6 +2114,13 @@ S30 = {    # 30-minute version (10-20, v4 10-20): scripts for the slides that me
                '키워드를 적용했습니다. 표본에는 서브그룹 기호 262개가 나타나며, 그중 제조공정 기호가 202개, 접합 기호가 60개입니다. 제목에 hybrid '
                'bonding이 들어간 467건, 관련 없는 용법으로 쓰인 68건, 같은 제목으로 여러 출원청에 출원된 경우는 강건성 검증에서 따로 다루었습니다. '
                '출원청별로는 미국이 382건으로 가장 많고, 중국 175건, PCT 국제출원 113건 순입니다.'),
+    'cluster': ('세 번째 연구 질문을 분석하려면 무엇이 핵심 기술인지 먼저 정해야 합니다. 먼저 기술 클러스터 분석으로 출원에 자주 부여된 기호를 '
+                '찾았습니다. 왼쪽 표처럼 접합 패드를 이용한 연결 방법인 24/80이 529건, 연결 후 접합 패드의 구조인 24/08이 513건으로 가장 많고, 구리끼리와 '
+                '산화막끼리의 직접 접합 기호가 뒤를 잇습니다. 다음으로 기술 네트워크 분석으로 기호 사이의 연결 구조를 확인했습니다. 오른쪽 표처럼 가장 '
+                '강하게 연결된 기호 쌍도 직접 접합과 접합 패드 기호로 이루어져 있습니다.'),
+    'core': ('두 분석의 결과를 종합하여 핵심 기술을 정의했습니다. 2224로 시작하는 인덱싱 코드는 회귀 자료에 없으므로, 회귀 자료의 접합 기호 가운데 '
+             '200건 이상의 출원에 부여되면서 서로 가장 강하게 연결된 접합 패드 기호 네 개, 즉 24/03, 24/05, 24/08, 24/80을 핵심 기술로 정의했습니다. '
+             '왼쪽 네트워크 그림에서도 이 네 기호가 중심에 놓여 있습니다. 접합 기호를 가진 출원 763건 가운데 81.3%가 핵심 기술을 포함하고 있었습니다.'),
     'venn': ('그렇다면 융합은 어떻게 측정했을까요? 특허에는 심사관이 기술 내용에 따라 CPC 분류 기호를 부여합니다. 왼쪽 원은 제조공정 클래스인 H01L21, '
              '오른쪽 원은 접합·인터커넥트 클래스인 H01L24입니다. 한 출원이 두 클래스의 기호를 함께 가지면, 두 영역의 지식이 하나의 발명 안에서 '
              '결합되었다는 흔적으로 보고 통합형이라 불렀습니다. 한쪽만 가지면 공정 단독형 또는 접합 단독형입니다.'),
@@ -2152,7 +2161,7 @@ if VER == '30':
            (s_object, {}), (s_data, {}), (s_app_data, {'main': True, 'script': S30['search']}),
            (s_measure_venn, {'examples': False, 'script': S30['venn']}),
            (s_measure, {'script': S30['measure'], 'title': '측정: 실제 출원의 CPC 기호', 'take': '실제 출원에 부여된 CPC 기호의 조합으로 세 유형을 구분한다'}),
-           (s_core, {}), (s_method, {}),
+           (s_app_cluster, {'main': True, 'script': S30['cluster']}), (s_core, {'script': S30['core']}), (s_method, {}),
            (s_res_rq1a, {}), (s_res_rq1b, {}), (s_res_rq2a, {'reg': True}), (s_res_rq2b, {'script': S30['rq2b']}),
            (s_phase1, {}), (s_phase2, {}), (s_paradox, {'script': S30['ph3']}), (s_res_rq3a, {'script': S30['rq3a']}),
            (s_mechanism, {'question': True}), (s_network_shift, {'script': S30['net']}),
@@ -2161,7 +2170,7 @@ if VER == '30':
            (s_conclusion, {}), (s_industry, {}), (s_practice3, {}), (s_limits, {}),
            (s_message, {}), (s_close, {})]
     backup = []
-    APP_SKIP = [s_app_data]          # shown in the talk
+    APP_SKIP = [s_app_data, s_app_cluster]          # shown in the talk
 elif VER == '20':
     seq = [(s_cover, {}), (s_contents, {}), (s_exec_summary, {}),
            (s_intro_hook, {}), (s_intro_division, {'script': S20['division']}), (s_dilemma, {}), (s_intro_gap, {'script': S20['gap']}),
