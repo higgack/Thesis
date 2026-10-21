@@ -10906,6 +10906,16 @@ async def on_ocr_extend_callback(update: Update,
     pdf_path = state.get("pdf_path") or ""
     start_page = int(state.get("applied_pages") or 0) + 1
     end_page = int(state.get("total_pages") or 0)
+    # Memory gate BEFORE editing the prompt: edit_message_text drops the
+    # inline keyboard, so refusing after the edit left a permanent
+    # "OCR 진행 중..." with no button to retry (the row stays pending).
+    pressure = _mem_pressure()
+    if pressure >= _MEM_REFUSE_THRESHOLD:
+        await q.message.reply_text(
+            f"⚠️ 메모리 부족 — {pressure*100:.0f}% 사용 중. OCR은 시작하지 "
+            "않았어. 잠시 후 위 버튼을 다시 누르거나 /pending 에서 재시도."
+        )
+        return
     try:
         await q.edit_message_text(
             orig_text +
@@ -10913,12 +10923,6 @@ async def on_ocr_extend_callback(update: Update,
         )
     except Exception:
         pass
-    pressure = _mem_pressure()
-    if pressure >= _MEM_REFUSE_THRESHOLD:
-        await q.message.reply_text(
-            f"⚠️ 메모리 부족 — {pressure*100:.0f}% 사용 중. 잠시 후 다시 시도."
-        )
-        return
     if pressure >= _MEM_CLEANUP_THRESHOLD:
         try:
             _run_memory_cleanup(f"pre-ocr {pressure*100:.0f}%")
