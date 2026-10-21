@@ -30,14 +30,19 @@ COLLECTION_NAME = (
     "knowledge_bge_m3" if _EMBED_BACKEND == "bge-m3" else "knowledge"
 )
 
+# 1536-dim store once chroma_migrate has finished (2026-10-21, halves the
+# HNSW RAM); the old 3072-dim data/chroma until then, or when forced via
+# .env VECTOR_INDEX=legacy. embed.py asks the same function for its dim.
+from . import chroma_migrate as _cm
 _client = chromadb.PersistentClient(
-    path=str(config.DATA_DIR / "chroma"),
+    path=str(_cm.active_dir()),
     settings=Settings(anonymized_telemetry=False),
 )
 _collection = _client.get_or_create_collection(
     name=COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
 )
-log.info("vector collection=%s (backend=%s)", COLLECTION_NAME, _EMBED_BACKEND)
+log.info("vector collection=%s (backend=%s, dim=%d, dir=%s)", COLLECTION_NAME,
+         _EMBED_BACKEND, _cm.active_dim(), _cm.active_dir().name)
 
 # Chroma calls now run via asyncio.to_thread to keep the event loop
 # free (so the typing indicator + concurrent Q&A never stall behind a

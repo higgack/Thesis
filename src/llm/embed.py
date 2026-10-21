@@ -1,6 +1,7 @@
 """Embedding wrapper with two backends.
 
-Default backend = `gemini` (gemini-embedding-001, 3072-dim).
+Default backend = `gemini` (gemini-embedding-001; 1536-dim since the
+2026-10-21 store migration, 3072 before it — see store/chroma_migrate.py).
 Set EMBED_BACKEND=bge-m3 in .env to switch to the local
 sentence-transformers BAAI/bge-m3 model (1024-dim, free).
 
@@ -37,6 +38,22 @@ def _is_overloaded(exc: BaseException) -> bool:
     return any(m in s for m in _OVERLOAD_MARKERS)
 
 
+_OUT_DIM: list = []
+
+
+def _out_dim() -> int | None:
+    """1536 once the vector store has been migrated (chroma_migrate) —
+    the returned vectors are truncated to it; None = keep the model's
+    full 3072, matching the old store. Must agree with
+    the store vector.py opened, or Chroma rejects the dimension. Read
+    once per process — the migration finishes before the first embed."""
+    if not _OUT_DIM:
+        from ..store import chroma_migrate
+        d = chroma_migrate.active_dim()
+        _OUT_DIM.append(d if d != chroma_migrate.OLD_DIM else None)
+    return _OUT_DIM[0]
+
+
 _BATCH_LIMIT = 100  # Gemini embed_content hard cap per request
 # Concurrent embed requests for one document's batches. 4 keeps a
 # 350-chunk PDF's four round-trips overlapping without turning a
@@ -67,7 +84,20 @@ async def _embed_gemini_batch(texts: list[str], task_type: str) -> list[list[flo
                 approx_tokens = sum(len(t) for t in texts) // 4
                 cost.record(config.EMBED_MODEL, approx_tokens, 0,
                             purpose=purpose)
-            return [e.values for e in resp.embeddings]
+            dim = _out_dim()
+            if dim is None:
+                return [e.values for e in resp.embeddings]
+            # Truncate the full 3072 vector HERE rather than asking the
+            # API for output_dimensionality: it is byte-for-byte the same
+            # operation chroma_migrate applied to the stored vectors, and
+            # it cannot fail on a backend that rejects the option. A
+            # truncated Matryoshka vector must be renormalised.
+            out = []
+            for e in resp.embeddings:
+                v = e.values[:dim]
+                n = sum(x * x for x in v) ** 0.5 or 1.0
+                out.append([x / n for x in v])
+            return out
         except Exception as e:
             last_err = e
             if not _is_overloaded(e) and attempt >= 2:

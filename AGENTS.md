@@ -767,6 +767,28 @@ other project modules into it beyond `config` and lazy `kg_ignore`.
 
 ## Retrieval (`src/agent/retrieve.py`)
 
+- **벡터는 1536차원이다** (2026-10-21, 사용자 결정). 3072차원 HNSW가
+  10.68GiB로 봇 메모리 11g의 95%+를 차지해 Q&A·OCR이 거절됐고, 호스트에
+  한도를 올릴 RAM도 없었다(`free` available 1.6Gi, 스왑 2/2Gi). Matryoshka
+  절단 품질은 라이브 92만 벡터로 먼저 쟀다 (`scripts/embed_dim_check.py`:
+  1536 recall@10 0.975, 원래 top-3 100% 유지; 768은 0.918).
+  - 전환은 `src/store/chroma_migrate.py`가 **부팅 때 한 번** 한다(₩0,
+    API 재호출 없음): 옛 `data/chroma`를 열지 않고 HNSW 파일을 `pread`로
+    읽어 앞 1536개만 잘라 `data/chroma_1536`에 쓴다. `bot.py`가
+    `store.vector`보다 먼저 호출해야 한다 — 순서를 바꾸면 옛 11GB가 RAM에
+    올라온다. 자식 프로세스를 1코어에 묶고 SIGSTOP/SIGCONT로 2/3만 돌려
+    `auto_pull.sh` CPU 워치독(90%×5분)을 피한다.
+  - **실패 = 오늘 상태**: 어떤 오류든 새 폴더를 지우고 3072로 계속 돈다.
+    2회 실패하면 `gave_up`으로 멈춘다. 상태는 `data/chroma_1536_state.json`.
+    `.env VECTOR_INDEX=legacy` → 옛 인덱스 강제(롤백 스위치).
+  - `embed.py`는 **3072로 받아 직접 잘라 정규화**한다 — API의
+    `output_dimensionality`가 아니라. 저장된 벡터와 똑같은 연산이어야 하고,
+    그 옵션을 거부하는 백엔드에서도 깨지지 않는다. 차원은
+    `chroma_migrate.active_dim()` 하나가 정한다; 두 곳이 어긋나면 Chroma가
+    모든 add/query를 거부한다.
+  - 옛 `data/chroma`(21GB)는 **지우지 않고 보존 중** — 삭제는 되돌릴 수
+    없으니 사용자 확인 후에만.
+
 - **로컬 리랭커는 꺼져 있다** (`LOCAL_RERANKER_ENABLED=0`, VM `.env`,
   2026-08-31). 코드 기본값은 여전히 `1`이라 `.env`가 이긴다. 켠 근거가
   **메모리뿐이었고 CPU를 아무도 안 쟀다** — 2 vCPU에서 CrossEncoder
@@ -961,7 +983,8 @@ logs/rm/exec/inspect <CONTAINER>` uses full name:
 ## Cost defaults (don't change without asking)
 
 `SUMMARY_MODEL=gemini-2.5-flash-lite` · `ANSWER_MODEL=gemini-2.5-flash` ·
-`DEEP_MODEL=gemini-2.5-pro` · `EMBED_MODEL=gemini-embedding-001` ·
+`DEEP_MODEL=gemini-2.5-pro` · `EMBED_MODEL=gemini-embedding-001` (1536-dim
+truncation since 2026-10-21, see Retrieval) ·
 `EMBED_BACKEND=gemini` (BGE-M3 path disabled — CPU bottleneck caused
 flood-bans) · `CHUNK_TOKENS=1000` `CHUNK_OVERLAP=150` · `TOP_K=10` ·
 OCR `DPI=100` `AUTO_CAP=7` `SPARSE_THRESHOLD=800` `PROBE_PAGES=3`

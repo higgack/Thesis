@@ -21,6 +21,10 @@ from telegram.ext import (
 from telegram.request import HTTPXRequest
 
 from . import config
+# Must run before `store.vector` is imported: it may rebuild the vector
+# store at 1536 dims, reading the old one without loading it into RAM.
+from .store import chroma_migrate as _chroma_migrate
+_chroma_migrate.run_at_boot()
 from .store import meta, vector, obsidian, cost, qna, wiki, pending as pending_store
 from .store import pending_url_decisions
 from .store import dash_queries
