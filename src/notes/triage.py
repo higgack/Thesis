@@ -134,7 +134,12 @@ def extract_signals(page) -> PageSignals:
     sig.image_coverage = min(img_area / page_area, 1.0)
 
     try:
-        tabs = page.find_tables()
+        # use_layout=False — see loaders._extract_pdf_tables (PyMuPDF 2.0's
+        # layout model segfaulted the bot, 2026-10-22).
+        try:
+            tabs = page.find_tables(use_layout=False)
+        except TypeError:
+            tabs = page.find_tables()
         sig.has_tables = len(getattr(tabs, "tables", tabs) or []) > 0
     except Exception:
         sig.has_tables = False

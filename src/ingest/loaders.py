@@ -1219,7 +1219,17 @@ def _extract_pdf_tables(page) -> str:
     find_tables() sometimes flags as tables, which would otherwise
     pollute the body with noise."""
     try:
-        finder = page.find_tables()
+        # use_layout=False: PyMuPDF 2.0 (2026-10-16, arrived unpinned in the
+        # 10-18 image rebuild) gates find_tables() by an ONNX layout model
+        # that is one shared object across threads, and two PDFs extracting
+        # at once segfaulted the bot in it — 2026-10-22, 14 restarts in 2h,
+        # every faulthandler dump in pymupdf/layout under find_tables. False
+        # is the line-based detection every earlier version used. Before
+        # 1.28 the keyword doesn't exist, hence the TypeError fallback.
+        try:
+            finder = page.find_tables(use_layout=False)
+        except TypeError:
+            finder = page.find_tables()
     except Exception:
         return ""
     rows_all: list[str] = []
