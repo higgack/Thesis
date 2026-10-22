@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import faulthandler
 import html
 import logging
 import os
@@ -11,6 +12,12 @@ from datetime import datetime, timedelta, timezone
 
 _KST = timezone(timedelta(hours=9))
 from pathlib import Path
+
+# A crash in native code (PyMuPDF, hnswlib, sqlite) kills the process with
+# SIGSEGV and no Python traceback — 2026-10-22 the bot died six times in
+# 75 min with exitCode=139 and an empty log. This prints every thread's
+# stack to stderr (docker logs) on SIGSEGV/SIGABRT/SIGBUS/SIGFPE/SIGILL.
+faulthandler.enable(all_threads=True)
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
