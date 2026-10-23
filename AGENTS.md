@@ -780,14 +780,16 @@ other project modules into it beyond `config` and lazy `kg_ignore`.
     `auto_pull.sh` CPU 워치독(90%×5분)을 피한다.
   - **실패 = 오늘 상태**: 어떤 오류든 새 폴더를 지우고 3072로 계속 돈다.
     2회 실패하면 `gave_up`으로 멈춘다. 상태는 `data/chroma_1536_state.json`.
-    `.env VECTOR_INDEX=legacy` → 옛 인덱스 강제(롤백 스위치).
+    `.env VECTOR_INDEX=legacy` → 옛 인덱스 강제(롤백 스위치) — **2026-10-23
+    옛 인덱스를 지운 뒤로는 쓰면 안 된다**: 켜면 3072 빈 인덱스로 시작한다.
   - `embed.py`는 **3072로 받아 직접 잘라 정규화**한다 — API의
     `output_dimensionality`가 아니라. 저장된 벡터와 똑같은 연산이어야 하고,
     그 옵션을 거부하는 백엔드에서도 깨지지 않는다. 차원은
     `chroma_migrate.active_dim()` 하나가 정한다; 두 곳이 어긋나면 Chroma가
     모든 add/query를 거부한다.
-  - 옛 `data/chroma`(21GB)는 **지우지 않고 보존 중** — 삭제는 되돌릴 수
-    없으니 사용자 확인 후에만.
+  - 옛 `data/chroma`(21GB)는 **2026-10-23 사용자 동의로 삭제됐다**(컨테이너가
+    root로 만든 파일이라 `sudo rm -rf`로 지움, 여유 30G). 롤백 경로 없음 —
+    문제가 생기면 `chroma_1536`을 쓰거나 재임베딩이 유일한 복구다.
 
 - **로컬 리랭커는 꺼져 있다** (`LOCAL_RERANKER_ENABLED=0`, VM `.env`,
   2026-08-31). 코드 기본값은 여전히 `1`이라 `.env`가 이긴다. 켠 근거가
