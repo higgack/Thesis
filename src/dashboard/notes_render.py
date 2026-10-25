@@ -463,12 +463,25 @@ _NOTE_JS = r"""
     // marked then falls back to the built-in, so strikethrough stays.)
     // Robust fix: escape every tilde to \~ in PROSE only — code fences,
     // inline code, and $math$ are protected so their tildes survive.
+    // $math$ is also swapped for a placeholder while marked runs, so
+    // `_`/`*`/`|`/`\\` inside a formula aren't eaten as emphasis, table
+    // cells or escapes before KaTeX ever sees them.
+    var maths = [];
     function escTildes(md){
       var parts = md.split(/(```[\s\S]*?```|`[^`]*`|\$\$[\s\S]*?\$\$|\$[^$\n]*\$)/);
-      for(var i=0;i<parts.length;i+=2){ parts[i]=parts[i].replace(/~/g,'\\~'); }
+      for(var i=0;i<parts.length;i++){
+        if(i%2===0){ parts[i]=parts[i].replace(/~/g,'\\~'); }
+        else if(parts[i].charAt(0)==='$'){
+          maths.push(parts[i]); parts[i]='KXMATH'+(maths.length-1)+'X';
+        }
+      }
       return parts.join('');
     }
-    el.innerHTML = window.marked.parse(escTildes(el.textContent));
+    var html = window.marked.parse(escTildes(el.textContent));
+    el.innerHTML = html.replace(/KXMATH(\d+)X/g, function(_, n){
+      return maths[+n].replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                      .replace(/>/g,'&gt;');
+    });
     // ```mermaid code blocks → <div class="mermaid"> for diagram render
     el.querySelectorAll('pre code.language-mermaid').forEach(function(c){
       var d = document.createElement('div');
@@ -510,12 +523,19 @@ _NOTE_JS = r"""
         document.head.appendChild(s);
       }
     }
-    if(window.renderMathInElement){
-      window.renderMathInElement(el,{delimiters:[
-        {left:'$$',right:'$$',display:true},
-        {left:'$',right:'$',display:false}]});
-    }
+    window._noteMath();
   }
+  // Called here AND from auto-render's onload (_CDN): KaTeX is `defer`, so
+  // it usually arrives after renderMD. Both paths must pass the `$`
+  // delimiter — KaTeX's defaults omit single `$`, which left every inline
+  // formula as raw `$\text{..}$` text (only `$$` blocks ever rendered).
+  window._noteMath = function(){
+    var el = document.getElementById('md');
+    if(!el || !window.renderMathInElement) return;
+    window.renderMathInElement(el,{throwOnError:false, delimiters:[
+      {left:'$$',right:'$$',display:true},
+      {left:'$',right:'$',display:false}]});
+  };
   if(window.marked){renderMD();}
   document.querySelectorAll('.q-card .q').forEach(function(q){
     q.addEventListener('click',function(){q.closest('.q-card').classList.toggle('open');});
@@ -554,9 +574,8 @@ _CDN = (
     # mermaid(~2.8MB)는 다이어그램이 실제로 있을 때만 renderMD가 동적 로드한다.
     "<script defer src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js'></script>"
     "<script defer src='https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/"
-    "auto-render.min.js' onload='window.renderMathInElement&&"
-    "document.getElementById(\"md\")&&renderMathInElement("
-    "document.getElementById(\"md\"))'></script>"
+    "auto-render.min.js' onload='window._noteMath&&window._noteMath()'>"
+    "</script>"
 )
 
 
