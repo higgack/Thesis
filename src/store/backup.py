@@ -15,8 +15,9 @@ RAM-frugal or it OOM-kills the bot:
   • sqlite → online .backup to a temp FILE on disk (page-by-page, RAM-flat)
     — NOT serialize()/raw-cp (serialize holds the whole db in RAM; raw cp
     mid-WAL-write can corrupt).
-  • upload via httpx (already loaded) + the metadata-server ADC token —
-    NOT google-cloud-storage (its grpc/protobuf import alone is ~150MB+).
+  • upload via httpx (already loaded), streamed from disk, + the
+    metadata-server ADC token — NOT google-cloud-storage (its
+    grpc/protobuf import alone is ~150MB+).
 JSON/wiki files are atomically written elsewhere, so a plain copy is safe.
 
 Inert until BACKUP_BUCKET is set (see docs/backup.md). Auths via the same
@@ -192,18 +193,19 @@ def _build_archive(out_path: str, workdir: str) -> int:
 
 
 def _upload(path: str, bucket: str, object_name: str, token: str) -> tuple[bool, str]:
-    """Simple media upload to GCS via the JSON API + bearer token. Reads
-    the (tens-of-MB) gzip into memory once for the POST — fine vs the
-    ~150MB google-cloud-storage import it replaces."""
+    """Simple media upload to GCS via the JSON API + bearer token. Streams
+    the file (httpx reads an open file 64KB at a time and sets
+    Content-Length from fstat) — the archive was 254MB on 2026-10-28
+    (kg.db alone 506MB raw), so reading it whole would spike the bot's
+    cgroup by that much."""
     url = (f"https://storage.googleapis.com/upload/storage/v1/b/{bucket}/o"
            f"?uploadType=media&name={quote(object_name, safe='')}")
     try:
         with open(path, "rb") as f:
-            body = f.read()
-        r = httpx.post(url, content=body, timeout=180, headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/gzip",
-        })
+            r = httpx.post(url, content=f, timeout=180, headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/gzip",
+            })
         if r.status_code in (200, 201):
             return True, ""
         return False, f"HTTP {r.status_code}: {r.text[:160]}"
@@ -217,9 +219,6 @@ def run_backup() -> dict:
     bucket = (config.BACKUP_BUCKET or "").strip()
     if not bucket:
         return {"status": "skip", "detail": "BACKUP_BUCKET 미설정"}
-    token = _access_token()
-    if not token:
-        return {"status": "error", "detail": "ADC 토큰 획득 실패(metadata)"}
     workdir = tempfile.mkdtemp(prefix="bk_")
     tar_path = os.path.join(workdir, "backup.tar.gz")
     try:
@@ -229,7 +228,19 @@ def run_backup() -> dict:
             log.exception("backup build failed")
             return {"status": "error", "detail": f"빌드 실패: {str(e)[:160]}"}
         name = "thesis/" + datetime.now(_KST).strftime("%Y-%m-%d") + ".tar.gz"
-        ok, err = _upload(tar_path, bucket, name, token)
+        # Token fetched only now, not before the build: the metadata server
+        # hands out its cached token, which may have only minutes left, and
+        # the VACUUM INTO build can outlast that → 401 Invalid Credentials.
+        # One retry with a fresh token covers expiry at the boundary.
+        ok, err = False, "ADC 토큰 획득 실패(metadata)"
+        for _ in range(2):
+            token = _access_token()
+            if not token:
+                ok, err = False, "ADC 토큰 획득 실패(metadata)"
+                break
+            ok, err = _upload(tar_path, bucket, name, token)
+            if ok or not err.startswith("HTTP 401"):
+                break
         if not ok:
             log.warning("backup upload failed: %s", err)
             return {"status": "error", "detail": f"업로드 실패: {err}"}
