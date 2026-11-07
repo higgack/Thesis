@@ -321,8 +321,36 @@ compose_up() {
         "$@" >>"$LOG" 2>&1
 }
 
+# Slow-build notice (2026-11-08). The build has no time limit on purpose:
+# that day one took 51 min while still progressing (unpacking ~570 MB/min
+# on a CPU shared with ~/stock), so a timeout would have killed a healthy
+# build — and `timeout` only signals compose, not its buildx child, which
+# would keep holding the deploy lock anyway. The real harm was SILENCE:
+# the lock made every later minute exit quietly and the user saw no
+# notice for ~50 min. So: ONE "⏳ 빌드 진행 중" per deploy once the build
+# passes BUILD_SLOW_SEC, never a kill. The watcher closes fd 9 first so it
+# can never hold the lock, and is stopped on every exit path (trap EXIT);
+# a sleep it leaves orphaned just expires without sending anything.
+BUILD_SLOW_SEC=600             # 10 min (owner's choice)
+SLOW_PID=""
+start_slow_build_notice() {
+    (
+        exec 9>&-
+        sleep "$BUILD_SLOW_SEC"
+        notify "⏳ 빌드 진행 중 — $((BUILD_SLOW_SEC / 60))분 경과: ${SUBJECT}${NL}멈춘 게 아니라 아직 진행 중일 수 있어요. 끝나면 ✅/❌ 알림이 따로 옵니다."
+    ) &
+    SLOW_PID=$!
+}
+stop_slow_build_notice() {
+    [ -n "$SLOW_PID" ] && kill "$SLOW_PID" 2>/dev/null
+    SLOW_PID=""
+    return 0
+}
+trap stop_slow_build_notice EXIT
+
 if git pull --ff-only origin "$BRANCH" >>"$LOG" 2>&1; then
     rm -f "$FAIL_LATCH"
+    start_slow_build_notice
     free_disk_if_needed
     if ! compose_up; then
         echo "compose up failed, removing stale containers and retrying" >>"$LOG"
@@ -330,11 +358,13 @@ if git pull --ff-only origin "$BRANCH" >>"$LOG" 2>&1; then
             thesis-telegram-bot-api-1 thesis-dashboard-1 \
             >>"$LOG" 2>&1 || true
         compose_up || {
+            stop_slow_build_notice
             TAIL=$(tail -15 "$LOG")
             notify "❌ 배포 실패: ${SUBJECT}${NL}${TAIL:0:600}"
             exit 1
         }
     fi
+    stop_slow_build_notice
     # Each --build retags the image and leaves the PREVIOUS one dangling
     # (untagged). Reap it now so old bot/dashboard images don't accumulate
     # and refill the disk over successive deploys. Dangling-only (-f, no -a)

@@ -451,6 +451,11 @@ fetch branch → `LOCAL==REMOTE` silent exit → else send "🚀 배포 시작" 
 `git pull --ff-only` + `docker compose --profile local-api up -d --build
 --remove-orphans` (force-remove + retry once on failure) → inspect
 `thesis-bot-1`: running → "✅ 배포 완료 <sha>", else "❌ …" + logs.
+A build still running at 10 min (`BUILD_SLOW_SEC`) sends ONE "⏳ 빌드
+진행 중" — a notice, never a kill: the build has no timeout on purpose
+(2026-11-08 one took 51 min while healthy, and `flock` silenced every
+later minute meanwhile). Don't add `timeout` to `compose_up` — it can't
+reach the buildx child that keeps holding the lock.
 
 - **`scheduler_watchdog.sh` is NOT this project** (it monitors an unrelated
   legacy host-process system) — don't touch it or assume it covers
