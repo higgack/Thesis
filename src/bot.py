@@ -2030,7 +2030,7 @@ doc_id 4자 이상 또는 키워드로 매치되는 문서의 본문 dump.
 누적 Q&amp;A 횟수 + 비용 추정.
 
 <b>/cost</b>
-일별/월별 비용 (.usage_log 기반) — 모델별 분해.
+일별/월별 비용 (cost.db 기반) — 용도별 전 항목(ingest·wiki·KG·노트·번역…) 비싼 순 분해.
 
 <b>/eval</b>
 답변 품질 회귀 테스트. <code>data/eval_golden.json</code>에 정의된 골든셋을
@@ -3115,6 +3115,34 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(out)
 
 
+# cost.db purpose tag → display label for /usage and /cost. Both commands
+# list EVERY purpose present (unlisted tags show raw), most expensive first.
+# They used to print a fixed four (ingest/query/wiki/unknown), which hid
+# kg_extract, note_synth etc.: on 2026-11-07 ₩5,362 of a ₩16,526 week
+# (32%) sat in no displayed row.
+_COST_PURPOSE_LABELS = {
+    "ingest": "ingest 학습", "query": "query 답변",
+    "wiki": "wiki 합성", "wiki_fix": "wiki 재통합",
+    "kg_extract": "KG 추출", "note_synth": "노트 합성",
+    "note_classify": "노트 분류", "notes": "노트 입력",
+    "translate": "번역", "yt_transcribe": "유튜브 STT",
+    "patent_keywords": "특허 키워드",
+    "paper_keywords": "논문 키워드", "unknown": "기타",
+}
+
+
+def _purpose_rows(by_purpose: dict) -> list[tuple[str, float, int]]:
+    """(label, ₩, calls) for every non-empty purpose, costliest first."""
+    rows = []
+    for key, info in (by_purpose or {}).items():
+        krw = (info or {}).get("cost") or 0.0
+        calls = (info or {}).get("calls") or 0
+        if krw or calls:
+            rows.append((_COST_PURPOSE_LABELS.get(key, key), krw, calls))
+    rows.sort(key=lambda r: -r[1])
+    return rows
+
+
 async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Ingest velocity, type breakdown, rough cost band so the user
     can spot anomalies (sudden surge, drop) at a glance."""
@@ -3157,15 +3185,10 @@ async def cmd_usage(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 )
         cost_breakdown = ("\n" + "\n".join(cost_lines)) if cost_lines else ""
 
-        by_purpose = today.get("by_purpose", {})
-        purpose_lines = []
-        for tag, label in (("ingest", "📥 ingest"), ("query", "💬 query"),
-                           ("wiki", "📚 wiki"), ("unknown", "❓ unknown")):
-            if tag in by_purpose:
-                d = by_purpose[tag]
-                purpose_lines.append(
-                    f"    {label}  ₩{d['cost']:,.1f}  ({d['calls']}콜)"
-                )
+        purpose_lines = [
+            f"    {label}  ₩{krw:,.1f}  ({calls}콜)"
+            for label, krw, calls in _purpose_rows(today.get("by_purpose", {}))
+        ]
         purpose_breakdown = ("\n" + "\n".join(purpose_lines)) if purpose_lines else ""
 
         # Context-cache hit rate (Gemini implicit caching, 75% off the
@@ -3277,19 +3300,12 @@ async def cmd_cost(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         projected_monthly = avg_7d * 30
         today_pace_monthly = today["total_krw"] * 30  # if today's pace held all month
 
-        # Per-purpose split for the 7-day window so the user can see which
-        # bucket (ingest / query / unknown) is driving the bill.
-        by_purpose = (week.get("by_purpose") or {})
-        purpose_lines = []
-        for label, key in (("ingest 학습", "ingest"),
-                           ("query 답변", "query"),
-                           ("wiki 합성", "wiki"),
-                           ("기타", "unknown")):
-            info = by_purpose.get(key) or {}
-            krw = info.get("cost") or 0.0
-            calls = info.get("calls") or 0
-            if krw or calls:
-                purpose_lines.append(f"  {label}: ₩{krw:,.0f}  ({calls}콜)")
+        # Per-purpose split for the 7-day window (all purposes, see
+        # _COST_PURPOSE_LABELS) so the user can see what drives the bill.
+        purpose_lines = [
+            f"  {label}: ₩{krw:,.0f}  ({calls}콜)"
+            for label, krw, calls in _purpose_rows(week.get("by_purpose") or {})
+        ]
         purpose_block = "\n".join(purpose_lines) or "  (데이터 없음)"
 
         max_cost = max((d["cost"] for d in daily), default=0.0)
