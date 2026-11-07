@@ -824,6 +824,10 @@ truncated mid-sentence/mid-table.
 
 ## OCR backend (local worker pre-built, dormant)
 
+**Owner tried the local OCR and found the quality poor (2026-11-07)** —
+don't propose `local`/`hybrid` as a cost lever again unless the OCR
+engine itself changes (e.g. a PaddleOCR v3.x upgrade); `gemini` stays.
+
 `src/ingest/ocr_client.py` routes via `OCR_BACKEND` (default `gemini`).
 `local` = every page through PaddleOCR `ocr-worker` (₩0/page, −10-20% on
 charts); `hybrid` = PaddleOCR then Gemini Vision fallback if confidence
