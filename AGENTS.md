@@ -1001,6 +1001,14 @@ flood-bans) · `CHUNK_TOKENS=1000` `CHUNK_OVERLAP=150` · `TOP_K=10` ·
 OCR `DPI=100` `AUTO_CAP=7` `SPARSE_THRESHOLD=800` `PROBE_PAGES=3`
 `PROBE_MIN_TEXT=300`.
 
+**Reviewed 2026-11-08, owner kept everything as is.** 7-day `/cost` (first
+run listing every purpose): ₩16,604 = ingest ₩7,001 (₩1/doc) · wiki
+₩4,240 (flash, ₩23/call) · notes ₩3,645 (flash, ₩36/note) · KG ₩1,598
+(₩228/day of a ₩2,000 cap) · rest ₩120; ~₩7.1만/month. Offered wiki
+and/or notes → flash-lite (`WIKI_MERGE_MODEL` via `.env`, est. −₩1.4만 /
+−₩1.2만 a month); owner declined both. Don't re-propose unless the
+monthly total or that split moves materially.
+
 ## Backlog (not active until the user asks)
 
 - **Wiki 팩트 테이블 (Phase 2)**: extract atomic facts to a `wiki_facts`
