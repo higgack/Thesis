@@ -62,10 +62,14 @@ _SRC_CAP = 30      # source docs listed per topic panel
 _NOTE_CAP = 8      # related notes per topic panel
 _REL_CAP = 12      # KG relations per topic panel
 _DEG_CAP = 8       # keep at most this many links per node (hairball guard)
-# Global link cap. Raised 600 → 1500 with the sample below: at 2,124 nodes
-# that is still an average degree near 1.4, and _DEG_CAP keeps any single
-# hub from eating the budget, so this buys density without a hairball.
+# Global link budget. Raised 600 → 1500 at 2,124 nodes to reach an average
+# degree near 1.4; _DEG_CAP keeps any single hub from eating the budget,
+# so this buys density without a hairball. A FIXED 1500 then decayed as
+# topics grew (2,991 nodes on 2026-11-10 → ~1.0, most new topics drawn as
+# an unlinked outer ring, and the footer's link count could never move),
+# so the budget now scales with the node count; 1500 stays as the floor.
 _LINK_CAP = 1500
+_LINKS_PER_NODE = 1.4
 _DOC_FANOUT_MAX = 6  # a doc in more topics than this is too generic to link
 # Topic<->topic links are derived from a SAMPLE of the KG, not all of it:
 # at 705k edges a full pass would be far too slow for a 15s render tick.
@@ -356,8 +360,9 @@ def _build_payload() -> dict | None:
     cand.sort(key=lambda l: l["w"], reverse=True)
     deg: dict[str, int] = defaultdict(int)
     links = []
+    link_cap = max(_LINK_CAP, round(_LINKS_PER_NODE * len(nodes)))
     for l in cand:
-        if len(links) >= _LINK_CAP:
+        if len(links) >= link_cap:
             break
         if deg[l["s"]] >= _DEG_CAP and deg[l["t"]] >= _DEG_CAP:
             continue
@@ -394,7 +399,15 @@ def _build_payload() -> dict | None:
         k = norm2key.get(_norm(word))
         if k and k in node_keys:
             vtopic[str(i)] = k
+    # Whole-archive document count, shown next to total_docs so the footer
+    # can't be read as "the archive stopped growing": total_docs only
+    # counts docs the hourly wiki batch has already folded into a topic.
+    try:
+        archive_docs = int(meta_store.count())
+    except Exception:
+        archive_docs = 0
     return {"nodes": nodes, "links": links, "total_docs": len(all_doc_ids),
+            "n_cand": len(cand), "archive_docs": archive_docs,
             "vocab": vocab, "vtopic": vtopic,
             "kg_sampled": len(edges), "kg_total": kg_total}
 
@@ -409,6 +422,8 @@ def _render_html(payload: dict, token: str) -> str:
     n_topics = len(payload["nodes"])
     n_links = len(payload["links"])
     n_docs = payload["total_docs"]
+    n_cand = payload.get("n_cand", n_links)
+    n_arch = payload.get("archive_docs", 0)
     return """<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -538,9 +553,10 @@ g.sel .lk.hot{opacity:.95}
   <div id="panel"><button id="pclose">×</button>
     <div class="ph"><h2 class="ptitle" id="ptitle"></h2><div class="pmeta" id="pmeta"></div></div>
     <div class="plist" id="plist"></div></div>
-  <div id="foot"><b>%(n_topics)s</b>개 토픽 · <b>%(n_links)s</b>개 연결 · 문서 <b>%(n_docs)s</b>편<br>
+  <div id="foot"><b>%(n_topics)s</b>개 토픽 · 연결 <b>%(n_links)s</b>개 (후보 %(n_cand)s쌍 중 강한 순)<br>
+    위키 반영 문서 <b>%(n_docs)s</b>편 / 아카이브 전체 %(n_arch)s편<br>
     ● 크기=문서 수 · <span class="sw"></span>KG 관계 · <span class="sw dash"></span>공유 문서<br>
-    <span style="opacity:.72">연결선은 KG 관계 %(kg_total)s개 전수 기준</span></div>
+    <span style="opacity:.72">연결선은 KG 관계 %(kg_total)s개 전수 기준 · 토픽 수에 비례해 늘어남</span></div>
   <div id="ctrls"><button id="dice" title="랜덤">🎲</button><button id="zin">+</button>
     <button id="zout">−</button><button id="zfit">⤢</button></div>
   <div id="tip"></div>
@@ -792,7 +808,9 @@ addEventListener('resize',()=>{W=stage.clientWidth;H=stage.clientHeight;
 %(reload_js)s
 </body></html>""" % {
         "C_NODE": _C_NODE, "C_ACCENT": _C_ACCENT, "tok": tok,
-        "n_topics": n_topics, "n_links": n_links, "n_docs": n_docs,
+        "n_topics": f"{n_topics:,}", "n_links": f"{n_links:,}",
+        "n_docs": f"{n_docs:,}", "n_cand": f"{n_cand:,}",
+        "n_arch": f"{n_arch:,}" if n_arch else "?",
         "kg_total": f'{payload.get("kg_total", 0):,}',
         "data": data, "reload_js": _widgets.live_reload_js("universe"),
         "theme_js": _THEME_JS,
