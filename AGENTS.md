@@ -131,6 +131,35 @@ Preflight covers Python mechanics only — trace shell/cron/Telegram by hand:
 - 절약 대상 아님(non-negotiable): 검증·에러처리·보안·preflight·
   단계별 VM 안내(위 VM ops 규칙) — 여기서 줄이면 버그로 더 비쌈.
 
+## 🧭 Claude 모델 고르기 (owner 지시 2026-11-10)
+
+출처: claude.dev 블로그 "Which Claude model should you build with?"
+(Addy Osmani, 2026-11-09). 이 저장소 봇의 LLM은 Gemini라서 이 규칙은
+**에이전트(Claude Code)의 작업 방식에만** 적용되고, `## Cost defaults`는
+건드리지 않는다.
+- **메인 세션은 Opus 5.5 medium이 기본이다.** 코드 편집과 판단은 메인
+  모델이 한다. 메인 모델과 effort는 owner가 `/model`·`/effort`로 바꾸고,
+  에이전트는 바꿀 수 없다. "하이쿠/소넷/오퍼스/페이블 + low~max"를 어떻게
+  적어도 같은 지정으로 읽는다.
+- **서브에이전트는 작은 모델을 쓴다.** 파일 찾기, 로그·테스트 출력
+  읽기, 웹 페이지 읽기·요약처럼 틀려도 바로 티가 나는 일은 Agent 호출에
+  `model: haiku`를 쓰고, 조금 더 판단이 필요하면 `sonnet`을 쓴다. 기본
+  Explore는 세션 모델(Opus)로 돈다. 그래서 탐색을 싸게 하려면 모델을 직접
+  지정한다. 코드 수정이나 커밋 판단은 서브에이전트에 넘기지 않는다.
+  owner가 모델을 지정하면 그 지정을 따른다. effort는 owner가 말했을
+  때만 지정한다.
+- **메인 컨텍스트는 가볍게 유지한다.** bot.py처럼 장황한 읽기는
+  서브에이전트에 맡기고, 메인에는 결론만 받는다. 매 턴 다시 보내는
+  컨텍스트가 비용이다.
+- **모델이 부족할 때는 순서를 지킨다.** ① 자기 검증 수단(preflight,
+  테스트, 재현 스크립트)이 있는지 확인한다. ② owner에게 effort를 한 단계
+  올리자고 제안한다. ③ 상위 모델을 낮은 effort로 써 보자고 제안한다.
+  high를 넘기기 전에는 상위 모델부터 시험한다.
+- **모델은 자연스러운 경계에서 바꾼다.** 프롬프트 캐시는 모델마다 따로라
+  전환 첫 턴에 전체 캐시 쓰기 비용이 든다. 그래서 `/compact` 뒤에 바꾸거나
+  짧은 계획을 들고 새 세션을 연다. 하위 모델로 내려가면 이전 사고
+  과정(thinking)이 버려진다.
+
 ## Standing rules
 
 - **Read the code you're about to change, before changing it** — no
