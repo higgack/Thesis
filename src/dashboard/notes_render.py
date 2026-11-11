@@ -487,6 +487,11 @@ _NOTE_JS = r"""
       var d = document.createElement('div');
       d.className = 'mermaid';
       d.textContent = c.textContent;
+      // 원문을 따로 들고 간다 (2026-11-11). <pre><code>에서 <div>로 바뀌는
+      // 순간 KaTeX auto-render의 기본 제외(pre·code)에서 빠져서, 노드 글자의
+      // `$5.83B ... $3.30`이 수식으로 바뀌고 `%` 뒤는 TeX 주석으로 먹혔다
+      // (셀레스티카 노트: "5.83B(+83B-->D[..." 로 뭉개져 파싱 실패).
+      d.dataset.src = c.textContent;
       var pre = c.closest('pre');
       if(pre) pre.replaceWith(d);
     });
@@ -500,7 +505,7 @@ _NOTE_JS = r"""
         window.mermaid.initialize({startOnLoad:false, securityLevel:'loose',
           theme: dark ? 'dark' : 'default'});
         diagrams.forEach(function(node, i){
-          var src = node.textContent;
+          var src = node.dataset.src || node.textContent;
           window.mermaid.render('mmd'+Date.now()+'_'+i, src).then(function(res){
             node.innerHTML = res.svg;
             node.title = '클릭하면 크게 보기';
@@ -532,7 +537,9 @@ _NOTE_JS = r"""
   window._noteMath = function(){
     var el = document.getElementById('md');
     if(!el || !window.renderMathInElement) return;
-    window.renderMathInElement(el,{throwOnError:false, delimiters:[
+    // ignoredClasses: mermaid 블록의 `$`(달러 금액)는 수식이 아니다.
+    window.renderMathInElement(el,{throwOnError:false,
+      ignoredClasses:['mermaid'], delimiters:[
       {left:'$$',right:'$$',display:true},
       {left:'$',right:'$',display:false}]});
   };
