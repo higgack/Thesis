@@ -327,10 +327,14 @@ fp = d.styles['First Paragraph']
 for p in d.paragraphs:
     if p.style.name == 'First Paragraph':
         p.style = d.styles['본문1']
-body_style = d.styles['본문1']
-body_style.paragraph_format.line_spacing = Pt(22)   # 11pt 본문의 200% (기존 17.6pt)
-from docx.enum.text import WD_LINE_SPACING
-body_style.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+# 학과 배포 양식(3-2 학위논문 word 양식)의 본문 문단 설정을 그대로 적용:
+# 줄간격 '배수 1.08'(w:line=259, auto), 문단 뒤 8pt(w:after=160). 기존 v84는 '고정 17.6pt'·문단 뒤 0.
+sp_el = d.styles['본문1'].element.get_or_add_pPr()
+spacing = sp_el.find(W('spacing'))
+if spacing is None:
+    spacing = OxmlElement('w:spacing'); sp_el.insert(0, spacing)
+for k in list(spacing.attrib): del spacing.attrib[k]
+spacing.set(W('after'), '160'); spacing.set(W('line'), '259'); spacing.set(W('lineRule'), 'auto')
 
 # update fields (TOC) on open
 st = d.settings.element
