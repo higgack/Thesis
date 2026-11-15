@@ -616,10 +616,13 @@ async def _process_study_post_inner(msg, ctx: ContextTypes.DEFAULT_TYPE,
     elif urls:
         # A link was given but its content couldn't be extracted — say so
         # honestly rather than fabricating a note from the link preview.
-        out = (f"⚠️ 링크 본문을 못 가져왔어 ({src_label})\n"
+        from ..ingest.loaders import login_only_hint
+        hint = next((h for u in urls if (h := login_only_hint(u))), None)
+        out = (f"⚠️ 링크 본문을 못 가져왔어 ({src_label})\n" + (
+               f"{hint}." if hint else
                "JS 렌더링/로그인 전용/차단 페이지일 수 있어. 잠시 후 다시 "
                "시도하거나, 원문 본문을 복사해서 텍스트로 붙여넣어줘. "
-               "(미리보기 요약으로 가짜 노트를 만들지 않으려고 일부러 중단함)")
+               "(미리보기 요약으로 가짜 노트를 만들지 않으려고 일부러 중단함)"))
     elif voice or audio or video:
         out = (f"⚠️ 노트를 못 만들었어 ({src_label})\n"
                "음성 전사(STT)/영상 분석이 비었어 — 무음/음악 위주거나 "

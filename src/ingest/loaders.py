@@ -115,9 +115,36 @@ _BLOCKED_HOSTS = (
     #     already strips these via _PLAIN_URL_STRIP_PATTERNS so
     #     blocking here has no downside.
     "finance.naver.com", "n.stock.naver.com", "stock.naver.com",
+    # Claude 아티팩트/공유 페이지 (2026-11-15): 껍데기 HTML만 오고 본문은
+    # 로그인 쿠키가 있어야 열리는 /api/frame/…에서 JS로 받는다. 비로그인
+    # 요청은 Cloudflare 챌린지(403)라 trafilatura·curl_cffi·Jina 어느 경로도
+    # 본문을 못 본다 — 재시도 2회 × 폴백 4단을 헛돌던 걸 바로 끊는다.
+    "claude.ai", "claudeusercontent.com",
     # dart.fss.or.kr는 더 이상 하드블록하지 않음 — load_url이 OpenDART
     # 원문 API(load_dart)로 라우팅하고, 키 없으면 일반 fetch로 폴백.
 )
+
+
+# Blocked hosts whose content the user CAN still hand over another way —
+# the skip message says how instead of a bare "차단 호스트".
+_LOGIN_ONLY_HINTS = (
+    (("claude.ai", "claudeusercontent.com"),
+     # bot._format_results cuts detail at 80 chars — keep it under that.
+     "로그인 전용 페이지 — 브라우저 인쇄(Ctrl+P)→PDF 저장 후 파일로 보내줘"),
+)
+
+
+def login_only_hint(url: str) -> str | None:
+    """How to hand over a login-only page's content, or None."""
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc.lower()
+    except Exception:
+        return None
+    for hosts, hint in _LOGIN_ONLY_HINTS:
+        if any(host == h or host.endswith("." + h) for h in hosts):
+            return hint
+    return None
 
 
 def _is_blocked_host(url: str) -> bool:

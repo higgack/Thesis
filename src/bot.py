@@ -1964,7 +1964,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 
 <b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·HWP/HWPX·이미지·음성·영상·YouTube·텍스트 전송
 • PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · [OCR] 강제 · 음성=Gemini STT · 영상=Gemini 네이티브 이해(20MB 한도) · YouTube=자막→Jina · <b>.txt/.md/.csv 학습 제외</b>
-차단: LinkedIn/FB/IG · Reuters/Bloomberg/WSJ/FT/NYT/WaPo
+차단: LinkedIn/FB/IG · Reuters/Bloomberg/WSJ/FT/NYT/WaPo · claude.ai(→PDF 인쇄해 파일로)
 
 <b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
 [Noah 디지스트] 📋 TG 원문 fetch / 📰 Substack URL relay / 그 외 drop
@@ -2250,6 +2250,7 @@ Gemini Grounding 라이브 구글 검색. 한국어 3-7 bullet + [도메인] 출
 <b>/ingest_url &lt;URL&gt;</b>
 URL 영구 학습 — fetch → 청크 → 요약 → 임베딩 → Obsidian. 일반 웹 ·
 arXiv · YouTube 자막 · Jina readability. 차단: LinkedIn/FB/IG/주요 paywall.
+claude.ai 아티팩트·대화는 로그인 전용 → 브라우저 인쇄(Ctrl+P)→PDF로 보내기.
 네이버 블로그는 PostView 엔드포인트로 본문 추출(차단 면제).
 글 본문에 다른 링크가 있으면 학습 직후 각 링크의 제목·요약 미리보기와
 함께 버튼으로 떠서, 원하는 것만 골라 추가 학습 가능 (글 속 링크까지만 —

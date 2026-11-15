@@ -182,9 +182,12 @@ async def ingest_url(url: str, on_stage: StageCb = None) -> dict:
     # boards return nothing useful and previously piled up in the
     # failed log on every digest cite. Return a 'blocked' status that
     # the caller treats as a silent skip (no retry, no failed entry).
-    from .loaders import _is_blocked_host
+    from .loaders import _is_blocked_host, login_only_hint
     if _is_blocked_host(canonical):
-        return {"status": "blocked", "title": canonical, "source": canonical}
+        r = {"status": "blocked", "title": canonical, "source": canonical}
+        if hint := login_only_hint(canonical):
+            r["detail"] = hint
+        return r
     # Auto-learned blocklist: hosts that have failed body extraction
     # N times in a row. Saves ~₩0 (no LLM call here either) but skips
     # the wasted trafilatura + Jina fallback + empty-body failed log
