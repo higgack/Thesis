@@ -327,6 +327,63 @@ for r in newp._p.iter(W('r')):
 set_toc_title(P[38], '표 1. 선행연구와 본 연구의 비교')
 clone_toc(P[52], '표 18. 주요 결과와 실무적 시사점의 연결', '43', P[53]._p)
 
+# ---------- 10b. 괄호 안의 장·절 표시 삭제 (저자 요청, 2026-11-23) ----------
+# "(제2장 제5절)"처럼 괄호 안에 장·절만 있으면 괄호째 지우고, "(표 10, 제5장 제4절)"처럼 다른 내용과
+# 함께 있으면 장·절 항목만 지운다. 본문 밖의 장·절 언급("…은 제2장 제5절에서 정리한다")은 그대로 둔다.
+SEC = re.compile(r'제\s*\d+\s*장')
+def delete_spans(p_el, spans):
+    """문단의 w:t 텍스트를 이어 붙인 위치 기준으로 spans[(start, end)]를 지운다(런 경계를 넘어도 된다)."""
+    ts = list(p_el.iter(W('t')))
+    pos = 0; bounds = []
+    for t in ts:
+        n = len(t.text or ''); bounds.append((pos, pos + n)); pos += n
+    for s, e in sorted(spans, reverse=True):
+        for t, (a, b) in zip(ts, bounds):
+            lo, hi = max(s, a), min(e, b)
+            if lo < hi:
+                txt = t.text
+                t.text = txt[:lo - a] + txt[hi - a:]
+                t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+def paren_sec_spans(text):
+    spans = []
+    for m in re.finditer(r'\(([^()]*)\)', text):
+        inner = m.group(1)
+        if not SEC.search(inner):
+            continue
+        parts = [(x.start(), x.end()) for x in re.finditer(r'[^,;]+', inner)]
+        keep = [(a, b) for a, b in parts if not SEC.search(inner[a:b])]
+        base = m.start() + 1
+        if not keep:                              # 괄호 전체 삭제(앞 공백 포함)
+            s = m.start() - 1 if m.start() > 0 and text[m.start() - 1] == ' ' else m.start()
+            spans.append((s, m.end()))
+            continue
+        for a, b in parts:
+            if SEC.search(inner[a:b]):
+                if a > 0:                         # 앞의 구분자부터 지움: ", 제5장 제4절"
+                    spans.append((base + a - 1, base + b))
+                else:                             # 첫 항목이면 뒤 구분자까지: "제4장 제1절, "
+                    nb = b + 1
+                    while nb < len(inner) and inner[nb] == ' ': nb += 1
+                    spans.append((base + a, base + nb))
+    return spans
+n_paren = 0
+for p_el in d.element.body.iter(W('p')):
+    text = ''.join(t.text or '' for t in p_el.iter(W('t')))
+    sp_ = paren_sec_spans(text)
+    if sp_:
+        delete_spans(p_el, sp_); n_paren += len(sp_)
+# 제2장 제1절 끝 문장: 제5절·제6절 안내 구절 삭제
+for p_el in d.element.body.iter(W('p')):
+    text = ''.join(t.text or '' for t in p_el.iter(W('t')))
+    k = text.find('제2장 제5절에서 선행연구와 대비한 본 연구의 차별성과 학술적 공헌을 정리한 뒤, 제2장 제6절에서 ')
+    if k >= 0:
+        delete_spans(p_el, [(k, k + len('제2장 제5절에서 선행연구와 대비한 본 연구의 차별성과 학술적 공헌을 정리한 뒤, 제2장 제6절에서 '))])
+        n_paren += 1
+for p_el in d.element.body.iter(W('p')):
+    text = ''.join(t.text or '' for t in p_el.iter(W('t')))
+    assert not any(SEC.search(m.group(1)) for m in re.finditer(r'\(([^()]*)\)', text)), text[:60]
+print('section refs removed:', n_paren)
+
 # ---------- 11. 서식: 본문 스타일 통일·줄간격 확대 ----------
 fp = d.styles['First Paragraph']
 for p in d.paragraphs:
