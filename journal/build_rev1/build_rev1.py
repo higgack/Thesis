@@ -340,14 +340,9 @@ def set_style_spacing(style_name, **kw):
     for k in list(sp.attrib): del sp.attrib[k]
     for k, v in kw.items(): sp.set(W(k), str(v))
 
-# 본문 줄간격. 양식 파일(3-2 학위논문 word 양식)의 본문은 Word 기본값 '배수 1.08'·문단 뒤 8pt인데,
-# '배수'는 글꼴 자체의 줄 높이에 곱하는 방식이라 HY신명조의 글꼴 정보와 PC에 따라 실제 간격이 달라진다.
-# 심사에서 '매우 좁다'는 지적을 받은 이전 원고(고정 17.6pt, 문단 뒤 0)보다 확실히 넓고 어느 PC에서나
-# 같도록 '고정 20pt'(11pt의 약 1.8배)로 두고, 문단 뒤 8pt는 양식대로 둔다.
-set_style_spacing('본문1', after=160, line=400, lineRule='exact')
-# 목차·표 목차·그림 목차 항목도 같은 이유로 고정 20pt
-for sn, before in (('toc 1', 120), ('toc 2', 0), ('toc 3', 0)):
-    set_style_spacing(sn, before=before, after=0, line=400, lineRule='exact')
+# 본문 줄간격: 양식 파일(3-2 학위논문 word 양식)의 본문 문단과 같게 '배수 1.08'(w:line=259, auto),
+# 문단 뒤 8pt(w:after=160). 기존 v84는 '고정 17.6pt'·문단 뒤 0. 목차는 양식에 없으므로 그대로 둔다.
+set_style_spacing('본문1', after=160, line=259, lineRule='auto')
 
 # 양식 파일의 호환성 설정 '한글과 영문 문자 폭 맞춤'(balanceSingleByteDoubleByteWidth)을 그대로 둔다.
 # 이 설정이 없으면 영문·숫자의 글자 간격이 양식으로 쓴 문서와 다르게 보인다.
