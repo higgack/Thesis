@@ -1963,7 +1963,7 @@ _HELP_TEXT = """<b>🧠 SECOND BRAIN 봇</b>
 🧠 brain "삼성전기 MLCC" · 🧠 compare "정리/리뷰" · 📄 papers "논문" · ⚖️ patents "특허" (글로벌) · 🇰🇷 company_patents "[KR회사] 특허" · 📑 disclosures "[회사] 공시" · 🌐 <b>web "웹/구글/인터넷"만</b> · 📥 ingest "URL" · 회사+실적 질문→📌 실적 표(YoY·QoQ)+가이던스+차트(누락시 표에서 자동 보강·이상치 경고)
 
 <b>【5. 자료 인입】</b> URL·PDF·PPTX·DOCX·XLSX·HWP/HWPX·이미지·음성·영상·YouTube·텍스트 전송
-• PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · [OCR] 강제 · 음성=Gemini STT · 영상=Gemini 네이티브 이해(20MB 한도) · YouTube=자막→Jina · <b>.txt/.md/.csv 학습 제외</b>
+• PDF 텍스트 자동(PyMuPDF). sparse PDF는 <b>자동 OCR 0p</b> + 학습 직후 3-버튼 [📄 OCR / 📝 텍스트만 / 🚫]. image-only 3p · [OCR] 강제 · 음성=Gemini STT · 영상=Gemini 네이티브 이해(20MB 한도) · YouTube=자막→음성→Gemini URL(유료) · <b>.txt/.md/.csv 학습 제외</b>
 차단: LinkedIn/FB/IG · Reuters/Bloomberg/WSJ/FT/NYT/WaPo · claude.ai(→PDF 인쇄해 파일로)
 
 <b>【6. 자동 포워딩】</b> .env LISTEN_CHANNELS·LISTEN_PLAIN_CHANNELS
@@ -2249,7 +2249,7 @@ Gemini Grounding 라이브 구글 검색. 한국어 3-7 bullet + [도메인] 출
 
 <b>/ingest_url &lt;URL&gt;</b>
 URL 영구 학습 — fetch → 청크 → 요약 → 임베딩 → Obsidian. 일반 웹 ·
-arXiv · YouTube 자막 · Jina readability. 차단: LinkedIn/FB/IG/주요 paywall.
+arXiv · YouTube 자막(IP 차단 시 Gemini가 URL로 직접 받아쓰기, 유료) · Jina readability. 차단: LinkedIn/FB/IG/주요 paywall.
 claude.ai 아티팩트·대화는 로그인 전용 → 브라우저 인쇄(Ctrl+P)→PDF로 보내기.
 네이버 블로그는 PostView 엔드포인트로 본문 추출(차단 면제).
 글 본문에 다른 링크가 있으면 학습 직후 각 링크의 제목·요약 미리보기와

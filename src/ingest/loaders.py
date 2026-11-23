@@ -941,6 +941,22 @@ async def load_youtube(video_id: str, url: str) -> tuple[str, str, str | None]:
         log.info("youtube audio transcription fallback failed for %s: %s",
                  video_id, str(e)[:160])
 
+    # Last resort: hand the URL itself to Gemini. Every step above reaches
+    # YouTube from THIS VM's IP, so one datacenter-IP bot wall ("Sign in to
+    # confirm you're not a bot") fails all three at once — 2026-11-22 it
+    # held for 10h+ across 9 videos. Here Google fetches the video, so that
+    # wall doesn't apply. Public videos only (Vertex docs). Paid, so it runs
+    # only after every free path missed; failure → same empty-body path.
+    try:
+        tx = await transcribe_youtube_url_async(video_id)
+        if tx:
+            log.info("youtube: Gemini URL transcription ok for %s (%d chars)",
+                     video_id, len(tx))
+            return title, tx, description
+    except Exception as e:
+        log.info("youtube Gemini URL fallback failed for %s: %s",
+                 video_id, str(e)[:160])
+
     # Both transcript fetchers failed. Previously we returned a stub
     # body with manual-paste instructions, but the pipeline ingested it
     # as if it were real content — so find_by_source dedup later blocked
@@ -1583,6 +1599,57 @@ async def transcribe_audio_async(audio_bytes: bytes, mime_type: str = "audio/ogg
                                  purpose: str = "ingest") -> str:
     return await asyncio.to_thread(
         _transcribe_audio, audio_bytes, mime_type, model, max_tokens, purpose)
+
+
+def _transcribe_youtube_url(video_id: str) -> str:
+    """Gemini reads a public YouTube video by URL (Vertex `fileData`), so
+    the VM never contacts YouTube — the bypass for the datacenter-IP bot
+    wall. LOW media resolution: the frames are only context for a speech
+    transcript, and it keeps a ~1h video well inside the context window
+    (an over-long video simply errors → ''). Thinking off: transcription
+    gains nothing from it and thinking tokens bill at the output rate."""
+    try:
+        from google.genai import types
+        from .. import config
+        from ..store import cost as _cost
+    except Exception:
+        return ""
+    client = config.make_genai_client()
+    model = config.ANSWER_MODEL
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    prompt = (
+        "이 영상의 음성을 그대로 받아쓰기 하세요. 화자가 여럿이면 단락으로 "
+        "구분하고, 들리는 언어 그대로(한국어/영어 등) 출력하세요. 화면에만 "
+        "나오는 중요한 텍스트/수치는 [화면: ...]으로 덧붙이세요. "
+        "설명/코멘트 없이 받아쓰기 텍스트만 출력하세요."
+    )
+    contents = [
+        types.Part(file_data=types.FileData(file_uri=url,
+                                            mime_type="video/mp4")),
+        types.Part.from_text(text=prompt),
+    ]
+    base = dict(temperature=0.0, max_output_tokens=32768)
+    try:
+        extra = {"media_resolution":
+                 types.MediaResolution.MEDIA_RESOLUTION_LOW}
+        if "pro" not in model:  # pro can't disable thinking (min 128)
+            extra["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+        cfg = types.GenerateContentConfig(**base, **extra)
+    except Exception:
+        cfg = types.GenerateContentConfig(**base)
+    try:
+        resp = client.models.generate_content(
+            model=model, contents=contents, config=cfg)
+        _cost.record_resp(model, resp, purpose="yt_transcribe")
+        return (resp.text or "").strip()
+    except Exception as e:
+        log.info("youtube Gemini URL call failed (%s): %s",
+                 video_id, str(e)[:200])
+        return ""
+
+
+async def transcribe_youtube_url_async(video_id: str) -> str:
+    return await asyncio.to_thread(_transcribe_youtube_url, video_id)
 
 
 def _transcribe_video(video_bytes: bytes, mime_type: str = "video/mp4") -> str:
