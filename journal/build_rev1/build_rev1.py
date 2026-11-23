@@ -1,6 +1,9 @@
 """Build the post-defense revision (2026-11-13) of the thesis from manuscript_v84_ko.docx.
 usage: python3 build_rev1.py IN.docx OUT.docx red|clean
-Every added or rewritten passage is coloured red in 'red' mode."""
+Every added or rewritten passage is coloured red in 'red' mode.
+After building, convert the clean file to PDF (soffice --headless --convert-to pdf), make a page map
+(쪽마다 인쇄 쪽번호와 줄 목록을 담은 JSON), and run update_toc_pages.py on both files so the stored
+TOC page numbers match the new pagination."""
 import sys, re, copy
 import docx
 from docx.shared import RGBColor, Pt
@@ -329,14 +332,121 @@ fp = d.styles['First Paragraph']
 for p in d.paragraphs:
     if p.style.name == 'First Paragraph':
         p.style = d.styles['본문1']
-# 학과 배포 양식(3-2 학위논문 word 양식)의 본문 문단 설정을 그대로 적용:
-# 줄간격 '배수 1.08'(w:line=259, auto), 문단 뒤 8pt(w:after=160). 기존 v84는 '고정 17.6pt'·문단 뒤 0.
-sp_el = d.styles['본문1'].element.get_or_add_pPr()
-spacing = sp_el.find(W('spacing'))
-if spacing is None:
-    spacing = OxmlElement('w:spacing'); sp_el.insert(0, spacing)
-for k in list(spacing.attrib): del spacing.attrib[k]
-spacing.set(W('after'), '160'); spacing.set(W('line'), '259'); spacing.set(W('lineRule'), 'auto')
+def set_style_spacing(style_name, **kw):
+    pPr = d.styles[style_name].element.get_or_add_pPr()
+    sp = pPr.find(W('spacing'))
+    if sp is None:
+        sp = OxmlElement('w:spacing'); pPr.insert(0, sp)
+    for k in list(sp.attrib): del sp.attrib[k]
+    for k, v in kw.items(): sp.set(W(k), str(v))
+
+# 본문 줄간격. 양식 파일(3-2 학위논문 word 양식)의 본문은 Word 기본값 '배수 1.08'·문단 뒤 8pt인데,
+# '배수'는 글꼴 자체의 줄 높이에 곱하는 방식이라 HY신명조의 글꼴 정보와 PC에 따라 실제 간격이 달라진다.
+# 심사에서 '매우 좁다'는 지적을 받은 이전 원고(고정 17.6pt, 문단 뒤 0)보다 확실히 넓고 어느 PC에서나
+# 같도록 '고정 20pt'(11pt의 약 1.8배)로 두고, 문단 뒤 8pt는 양식대로 둔다.
+set_style_spacing('본문1', after=160, line=400, lineRule='exact')
+# 목차·표 목차·그림 목차 항목도 같은 이유로 고정 20pt
+for sn, before in (('toc 1', 120), ('toc 2', 0), ('toc 3', 0)):
+    set_style_spacing(sn, before=before, after=0, line=400, lineRule='exact')
+
+# 양식 파일의 호환성 설정 '한글과 영문 문자 폭 맞춤'(balanceSingleByteDoubleByteWidth)을 그대로 둔다.
+# 이 설정이 없으면 영문·숫자의 글자 간격이 양식으로 쓴 문서와 다르게 보인다.
+compat = d.settings.element.find(W('compat'))
+if compat.find(W('balanceSingleByteDoubleByteWidth')) is None:
+    bal = OxmlElement('w:balanceSingleByteDoubleByteWidth')
+    sfu = compat.find(W('spaceForUL'))
+    if sfu is not None: sfu.addnext(bal)
+    else: compat.insert(0, bal)
+
+# 여백: 양식 값 그대로(좌우 1985, 상하 2268, 머리말·꼬리말 851 twip). 표지 구역과 서약서 구역은 따로 둔다.
+for sp in d.element.body.iter(W('sectPr')):
+    pm = sp.find(W('pgMar'))
+    if pm is not None and pm.get(W('top')) == '2268':
+        pm.set(W('left'), '1985'); pm.set(W('right'), '1985')
+        pm.set(W('header'), '851'); pm.set(W('footer'), '851')
+
+# 절 제목: 양식처럼 '제1절' 뒤 두 칸("제1절  연구의 필요성"). 목차의 해당 항목도 같게.
+for p in d.paragraphs:
+    if p.style.name in ('제목 21', 'toc 2') and re.match(r'^제\d+절 \S', p.text):
+        for t in p._p.iter(W('t')):            # '제N절' 바로 뒤 공백이 든 텍스트 조각에 한 칸 더한다
+            if re.match(r'^제\d+절 ', t.text or ''):
+                t.text = re.sub(r'^(제\d+절) ', r'\1  ', t.text); break
+            if re.match(r'^제\d+절$', t.text or ''):
+                nxt = t.getparent().getnext()
+                nt = nxt.find(W('t')) if nxt is not None else None
+                if nt is not None and (nt.text or '').startswith(' '):
+                    nt.text = ' ' + nt.text
+                break
+        assert re.match(r'^제\d+절  \S', p.text), p.text
+
+# 참고문헌: 첫 줄 내어쓰기(둘째 줄부터 20pt 들여쓰기), 10pt, 고정 15pt.
+# 본문 스타일의 '첫 줄 2글자' 들여쓰기가 섞이지 않도록 표준 스타일을 바탕으로 한 별도 스타일을 쓴다.
+from docx.enum.style import WD_STYLE_TYPE
+ref_st = d.styles.add_style('참고문헌 목록', WD_STYLE_TYPE.PARAGRAPH)
+ref_st.base_style = d.styles['Normal']
+rp = ref_st.element.get_or_add_pPr()
+sp = OxmlElement('w:spacing'); sp.set(W('after'), '60'); sp.set(W('line'), '300'); sp.set(W('lineRule'), 'exact'); rp.append(sp)
+ind = OxmlElement('w:ind'); ind.set(W('left'), '400'); ind.set(W('hanging'), '400'); rp.append(ind)
+jc = OxmlElement('w:jc'); jc.set(W('val'), 'left'); rp.append(jc)
+ref_st.font.size = Pt(10)
+ref_head = next(i for i, p in enumerate(d.paragraphs) if p.text.strip() == '참고문헌' and p.style.name == '제목 11')
+n_ref = 0
+for p in d.paragraphs[ref_head + 1:]:
+    if p.style.name == '제목 11': break
+    if not p.text.strip(): continue
+    p.style = ref_st
+    pPr = p._p.find(W('pPr'))
+    for tag in ('ind', 'spacing', 'jc'):
+        e = pPr.find(W(tag))
+        if e is not None: pPr.remove(e)
+    n_ref += 1
+assert n_ref == 60, n_ref
+
+# 표지·제출서: 날짜와 지도교수 이름의 글자 서식을 양식의 해당 칸과 같게.
+# 양식: 숫자·이름 칸은 바탕체 장평 120%·자간 1pt, '년'·'월'은 HY신명조(표지·인준서는 자간 1pt).
+def cover_run(text, batang, spacing):
+    r = OxmlElement('w:r'); rPr = OxmlElement('w:rPr')
+    if batang:
+        f = OxmlElement('w:rFonts')
+        for k in ('ascii', 'eastAsia', 'hAnsi'): f.set(W(k), '바탕체')
+        f.set(W('hint'), 'eastAsia'); rPr.append(f)
+    else:
+        f = OxmlElement('w:rFonts'); f.set(W('hint'), 'eastAsia'); rPr.append(f)
+    rPr.append(OxmlElement('w:b'))
+    if spacing:
+        s = OxmlElement('w:spacing'); s.set(W('val'), str(spacing)); rPr.append(s)
+    if batang:
+        w_ = OxmlElement('w:w'); w_.set(W('val'), '120'); rPr.append(w_)
+    for tag in ('sz', 'szCs'):
+        e = OxmlElement('w:' + tag); e.set(W('val'), '32'); rPr.append(e)
+    r.append(rPr)
+    t = OxmlElement('w:t'); t.text = text
+    t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve'); r.append(t)
+    return r
+def replace_runs(p_el, runs):
+    for r in list(p_el.findall(W('r'))): p_el.remove(r)
+    for r in runs: p_el.append(r)
+cover_ps = []
+for tbl in d.element.body.findall(W('tbl'))[:3]:
+    cover_ps += list(tbl.iter(W('p')))
+dates = [p for p in cover_ps if re.fullmatch(r'\d{4}년\s+\d{1,2}월', ''.join(t.text or '' for t in p.iter(W('t'))))]
+assert len(dates) == 3, len(dates)
+for k, p in enumerate(dates):
+    y, m = re.findall(r'\d+', ''.join(t.text for t in p.iter(W('t'))))
+    ym_sp = 0 if k == 1 else 20          # 양식: 제출서의 '년'·'월'만 자간 0
+    replace_runs(p, [cover_run(y, True, 20), cover_run('년 ', False, ym_sp),
+                     cover_run(m, True, 20), cover_run('월', False, ym_sp)])
+adv = [p for p in cover_ps if ''.join(t.text or '' for t in p.iter(W('t'))).startswith('지도교수 ')]
+assert len(adv) == 1
+name = ''.join(t.text for t in adv[0].iter(W('t')))[len('지도교수 '):]
+replace_runs(adv[0], [cover_run('지도교수 ', False, 24), cover_run(name, True, 20)])
+
+# 그림 목차 항목의 문단 기호에 남은 테마 글꼴(맑은 고딕) 지정 제거
+for p in d.paragraphs:
+    rpr = p._p.find(W('pPr') + '/' + W('rPr'))
+    f = rpr.find(W('rFonts')) if rpr is not None else None
+    if f is not None and f.get(W('asciiTheme')):
+        rpr.remove(f)
 
 # update fields (TOC) on open
 st = d.settings.element
