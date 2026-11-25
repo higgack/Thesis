@@ -523,6 +523,12 @@ LINEFIT = [
     ('end of Moore’s law', "end of Moore's law"),
     ('Don’t fence me in', "Don't fence me in"),
     ('“More-than-Moore”', '"More-than-Moore"'),
+    # --- 저자가 Word에서 직접 고친 띄어쓰기(2026-11-25 18:29 파일): 영문 용어와 조사 사이를 띄운다(제4장 제1절) ---
+    ('hybrid bonding은 비교적', 'hybrid bonding 은 비교적'),
+    ('direct bonding은 의미하는', 'direct bonding 은 의미하는'),
+    ('제목에 hybrid bonding이 포함된 출원은 467건', '제목에 hybrid bonding 이 포함된 출원은 467건'),
+    ('전력 모듈과 같이 direct bonding이 다른 의미로 사용된 경우이며', '전력 모듈과 같이 direct bonding 이 다른 의미로 사용된 경우이며'),
+    ('hybrid bonding도 일부', 'hybrid bonding 도 일부'),
 ]
 def fit_edit(p_el, old, new):
     """문단에서 old를 new로 바꾼다. 달라지는 최소 구간만 고쳐 주변 런의 서식(빨간 표시 포함)을 그대로 둔다."""
