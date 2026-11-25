@@ -401,14 +401,9 @@ def set_style_spacing(style_name, **kw):
 # 문단 뒤 8pt(w:after=160). 기존 v84는 '고정 17.6pt'·문단 뒤 0. 목차는 양식에 없으므로 그대로 둔다.
 set_style_spacing('본문1', after=160, line=259, lineRule='auto')
 
-# 본문 양쪽 정렬에서 띄어쓰기가 크게 벌어지는 줄을 없앤다(저자 요청, 2026-11-25).
-# 양식의 Normal은 '한글 단어 잘림 허용'이 꺼져 있어(w:wordWrap 0) 긴 어절이 통째로 다음 줄로 넘어가고,
-# 앞 줄은 남은 폭만큼 띄어쓰기가 늘어난다. 본문1에서만 이 옵션을 켠다. 글꼴·크기·자간·줄간격은 그대로다.
-# 표 안 문단(왼쪽 정렬)과 참고문헌(왼쪽 정렬)은 바꾸지 않는다.
-b1 = d.styles['본문1'].element.get_or_add_pPr()
-if b1.find(W('wordWrap')) is None:
-    wwrap = OxmlElement('w:wordWrap'); wwrap.set(W('val'), '1')
-    b1.find(W('spacing')).addprevious(wwrap)
+# 줄바꿈 설정(w:wordWrap)은 양식의 Normal 값(0)을 그대로 쓴다. Word에서 0이 '한글 단어 잘림 허용'이
+# 켜진 상태이다. 2026-11-25에 본문1에 1을 넣었더니 저자의 Word에서 어절이 통째로 넘어가며 벌어진 줄이
+# 늘어났다(저자 화면 캡처로 확인). 그래서 되돌렸다.
 
 # 양식 파일의 호환성 설정 '한글과 영문 문자 폭 맞춤'(balanceSingleByteDoubleByteWidth)을 그대로 둔다.
 # 이 설정이 없으면 영문·숫자의 글자 간격이 양식으로 쓴 문서와 다르게 보인다.
