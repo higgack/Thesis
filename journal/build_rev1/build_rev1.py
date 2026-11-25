@@ -384,6 +384,155 @@ for p_el in d.element.body.iter(W('p')):
     assert not any(SEC.search(m.group(1)) for m in re.finditer(r'\(([^()]*)\)', text)), text[:60]
 print('section refs removed:', n_paren)
 
+# ---------- 10c. 줄 맞춤을 위한 문구 다듬기 (저자 요청, 2026-11-25) ----------
+# 저자의 Word에서 PDF로 저장한 본(2026-11-25)으로 줄마다 띄어쓰기 폭을 재어, 양쪽 정렬 때문에 띄어쓰기가
+# 크게 벌어지는 줄(보통의 약 1.5배 이상, 영문 요지는 약 2.2배 이상)을 없애도록 단어 한두 개씩 고쳤다.
+# 뜻은 바꾸지 않으며, 서식(글꼴·크기·자간·줄간격·여백·정렬)은 양식 그대로 둔다. 빨간 표시는 하지 않는다(저자 선택).
+# 줄바꿈 계산 도구와 근거: build_rev1/linefit/ (lay2.py는 저자 PDF로 보정한 줄바꿈 모형).
+LINEFIT = [
+    ('유럽특허청 PATSTAT에서 추출한',
+     '유럽특허청의 PATSTAT에서 추출한'),
+    ('공진화적 순환을 이룬다고 보았다',
+     '공진화적 순환 구조를 이룬다고 보았다'),
+    ('실증 연구도 축적되기',
+     '실증 연구도 점차 축적되기'),
+    ('쉬운 기술 분야의 특성을,',
+     '쉬운 기술 분야가 지닌 특성을,'),
+    ('이 가운데 Caviggioli(2016)는',
+     '이 가운데 특히 Caviggioli(2016)는'),
+    ('지식 기반이 서로 중첩되기',
+     '지식 기반이 서로 점차 중첩되기'),
+    ('Curran et al.(2010)의 단계도 이와',
+     'Curran et al.(2010)의 단계 구분도 이와'),
+    ('이를 살펴보기에 적절한 사례이다',
+     '이를 살펴보기에 적절한 사례가 된다'),
+    ('추적하였고, Macher와',
+     '추적하였으며, Macher와'),
+    ('재편되어 온 과정을 기술하였다',
+     '재편된 과정을 기술하였다'),
+    ('규정하는 틀이며(Jacobides',
+     '규정하는 하나의 틀이며(Jacobides'),
+    ('분업 구조 자체가 재편되는 단계로',
+     '분업 구조가 재편되는 단계로'),
+    ('언급하였듯이 Hacklin et',
+     '언급한 바와 같이 Hacklin et'),
+    ('함께 변경되어야 한다(Murmann',
+     '함께 변경될 필요가 있다(Murmann'),
+    ('나노미터 이하의 거칠기로',
+     '나노미터 이하 수준의 거칠기로'),
+    ('최종 표본은 출원–CPC',
+     '최종 분석 표본은 출원–CPC'),
+    ('표는 동일한 928건에',
+     '표는 동일한 출원 928건에'),
+    ('기호(접합의 인덱싱 코드',
+     '기호(접합 관련 인덱싱 코드'),
+    ('bonding은 의미의 범위가 넓다',
+     'bonding은 의미하는 범위가 넓다'),
+    ('구와 늘 일치하지는',
+     '구와 항상 일치하지는'),
+    ('분류 기호의 수로 특허의 범위를',
+     '부여된 분류 기호의 수로 특허의 범위를'),
+    ('함께 부여된 통합형이다. 제조공정',
+     '함께 부여된 통합형 출원이다. 제조공정'),
+    ('차이를 보인다. 출원청별로는',
+     '차이를 나타낸다. 출원청별로는'),
+    ('구리를 주성분으로 한 접합 패드',
+     '구리를 주성분으로 하는 접합 패드'),
+    ('표면과 같은 높이로 형성하고',
+     '절연막 표면과 같은 높이로 형성하고'),
+    ('함께 직접 접합하여(24/08',
+     '함께 직접 접합함으로써(24/08'),
+    ('이 기호들을 조합하면',
+     '이 기호들을 함께 조합하면'),
+    ('패드끼리 연결한 후의 구조와',
+     '패드끼리 직접 연결한 후의 구조와'),
+    ('H01L24 기호를 보유한 출원(이하 접합 출원)',
+     'H01L24 계열의 기호를 보유한 출원(이하 접합 출원)'),
+    ('로짓(보완분석). has_process는',
+     '로짓(보완분석). 종속변수 has_process는'),
+    ('가 결과에 미치는 영향은 제4장',
+     '가 분석 결과에 미치는 영향은 제4장'),
+    ('한 출원에 함께 부여되는 정도, 즉 결합',
+     '한 출원 안에 함께 부여되는 정도, 즉 결합'),
+    ('10.4%로 계속 낮아졌다',
+     '10.4%로 계속하여 낮아졌다'),
+    ('보유 클래스마다 최소 1개 기호를 차감한 유형',
+     '보유 클래스마다 최소 1개 기호를 각각 차감한 유형'),
+    ('계수도 모두 유지되었다. hybrid',
+     '계수도 모두 유지되었다. 한편 hybrid'),
+    ('불과하여 연도 계수는 유의하지',
+     '불과하여 출원연도 계수는 유의하지'),
+    ('재분류하므로 표본 수는 같고',
+     '재분류하므로 전체 표본 수는 같고'),
+    ('제2장 제2절에서 제시한 기대와 부합한다',
+     '제2장 제2절에서 제시한 이론적 기대와 부합한다'),
+    ('넓은 포트폴리오가 유리하다는',
+     '넓은 특허 포트폴리오가 유리하다는'),
+    ('공작기계라는 장비를 매개로',
+     '공작기계라는 생산 장비를 매개로'),
+    ('Adner(2012)의 지식 경계 논리와',
+     'Adner(2012)의 지식 경계에 관한 논리와'),
+    ('혁신의 중심은 핵심 원리에서',
+     '혁신의 중심은 점차 핵심 원리에서'),
+    ('H01L21–H01L24 공동분류는 공정',
+     'H01L21–H01L24 공동분류 지표는 공정'),
+    ('아닌지를, 핵심 기술을 24/08',
+     '아닌지를, 그리고 핵심 기술을 24/08'),
+    ('승산비는 1.463, 출원연도의',
+     '승산비는 1.463이고, 출원연도의'),
+    ('이 분석이 정식 IIA 검정(Hausman–McFadden, Small–Hsiao)을',
+     '이 분석이 정식 IIA 검정 방법(Hausman–McFadden, Small–Hsiao)을'),
+    ('포함된 출원을 무관한 용법으로',
+     '포함된 출원을 모두 무관한 용법으로'),
+    ('의미). 해당 출원은 68건',
+     '의미). 이에 해당하는 출원은 68건'),
+    ('performance only with front-end fabrication',
+     'performance only with the front-end fabrication'),
+    ('database, this study examines',
+     'database, the present study examines'),
+    ('or integrated and analyzed using',
+     'or integrated and were analyzed using'),
+    ('remained substantial under a narrower',
+     'remained substantial even under a narrower'),
+    ('when process-only applications dominated',
+     'when process-only applications predominated'),
+    ('diffusion, when integrated applications',
+     'diffusion, when the integrated applications'),
+    ('bonding shifted from wafer fabrication',
+     'bonding shifted away from wafer fabrication'),
+    ('principle than in peripheral processes and',
+     'principle than in the peripheral processes and'),
+]
+def fit_edit(p_el, old, new):
+    """문단에서 old를 new로 바꾼다. 달라지는 최소 구간만 고쳐 주변 런의 서식(빨간 표시 포함)을 그대로 둔다."""
+    ts = list(p_el.iter(W('t')))
+    text = ''.join(t.text or '' for t in ts)
+    i = text.find(old)
+    pre = 0
+    while pre < min(len(old), len(new)) and old[pre] == new[pre]: pre += 1
+    suf = 0
+    while suf < min(len(old), len(new)) - pre and old[-1 - suf] == new[-1 - suf]: suf += 1
+    a, b, ins = i + pre, i + len(old) - suf, new[pre:len(new) - suf]
+    if b > a: delete_spans(p_el, [(a, b)])
+    if ins:
+        pos = 0
+        for t in ts:
+            n = len(t.text or '')
+            if pos < a <= pos + n:
+                k = a - pos; t.text = t.text[:k] + ins + t.text[k:]
+                t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve'); break
+            pos += n
+        else:
+            raise AssertionError('insert position not found: ' + old)
+n_fit = 0
+for old, new in LINEFIT:
+    hits = [p for p in d.element.body.iter(W('p')) if old in ''.join(t.text or '' for t in p.iter(W('t')))]
+    assert len(hits) == 1, (len(hits), old)
+    fit_edit(hits[0], old, new)
+    assert new in ''.join(t.text or '' for t in hits[0].iter(W('t'))), new
+    n_fit += 1
+print('line-fit edits:', n_fit)
+
 # ---------- 11. 서식: 본문 스타일 통일·줄간격 확대 ----------
 fp = d.styles['First Paragraph']
 for p in d.paragraphs:

@@ -1,13 +1,20 @@
-# Line-fit work in progress (2026-11-25)
+# Line fit for justified body text (2026-11-25)
 
-Goal: remove justified lines whose word spaces stretch to about twice normal or more in the author's Word,
-by small wording edits (no red marking, author's choice).
+Purpose: remove justified lines whose word spaces stretch noticeably, using small wording edits only.
+Fonts, sizes, character spacing, line spacing, margins and alignment stay as in the department template.
 
-- `lay.py`: line-break model. HY신명조 11pt, ASCII/Latin-1 half width, 72 units per line (79 at 10pt),
-  first-line indent 4 units, Korean words split only with >= 2 syllables on each side.
-  Validated on the author's screenshots, but the split rule and the width of the en dash are not certain.
-- `edits.py`: candidate wording edits found so far (not yet applied to the build).
-- `cands.py` / `opt.py`: per-paragraph candidate edits and a subset search.
+How it was done
+1. The author exported the thesis to PDF from their own Word (Microsoft 365). That PDF is not in the repo.
+2. `pdflines.py` / `pdfwide.py` read word positions from that PDF and measure the space width on each line.
+3. `pdffontw.py` reads glyph widths from the fonts embedded in the PDF (`fontw.json`).
+4. `lay2.py` is a line-break model of the author's Word, calibrated against the PDF with `align.py` + `calib.py`
+   (132 of 142 body paragraphs break exactly as in the PDF; the rest differ by one or two characters):
+   Hangul 1 em, Latin from the HY신명조 width table, space 0.5 em next to Hangul and compressible to 0.25 em
+   between Latin words, Korean words may break at any syllable, hanging '.' and ','.
+5. `edits2.py` holds the chosen edits (copied into `build_rev1.py` section 10c as LINEFIT);
+   `cands2.py` + `opt2.py` were used to pick the smallest edit set per paragraph.
 
-Next step: calibrate `lay.py` on a PDF exported from the author's Word, then finish and move the edits into
-`build_rev1.py`.
+Targets: no Korean line with spaces at 1.5x normal or more, no English line at about 2.2x or more.
+The edits do not change any paragraph's line count, so the page breaks match the author's PDF.
+
+`lay.py`, `edits.py`, `cands.py` and the other files without a `2` are an earlier, uncalibrated attempt.
