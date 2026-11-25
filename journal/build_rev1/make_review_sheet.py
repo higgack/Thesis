@@ -44,7 +44,7 @@ ROWS = [
   [(S, '서론 첫 두 문단(No.1) 외에, 국문요지와 ABSTRACT의 첫 문장, 결론의 첫 문장에 연구의 중요성을 기술했습니다.'),
    (Q, '(국문요지) 반도체는 2024년 한국 전체 수출의 약 5분의 1을 차지한 핵심 산업이며, 미세화가 한계에 이르면서 성능 경쟁의 축은 여러 칩을 쌓고 연결하는 첨단 패키징으로 옮겨 가고 있다.'),
    (Q, '(결론) 반도체의 성능 경쟁이 첨단 패키징으로 옮겨 가는 가운데, 본 연구는 그 중심 기술인 하이브리드 본딩에서 전공정과 후공정의 경계가 어떻게 융합되어 왔는지를 밝히고, 이를 근거로 기업이 앞으로 어디에 역량을 집중해야 하는지를 제시하고자 하였다.'),
-   (Q, '(ABSTRACT) Semiconductors accounted for about one-fifth of Korea’s exports in 2024, and as transistor scaling slows, competition is shifting toward advanced packaging that stacks and connects chips.')],
+   (Q, '(ABSTRACT) Semiconductors accounted for about one-fifth of Korea\'s exports in 2024, and as transistor scaling slows, competition is shifting toward advanced packaging that stacks and connects chips.')],
   ['국문요지 (iv p)', '제7장 결론 (47p)', 'ABSTRACT (57p)']),
 
  ('4', 'IV. 미래 전망과 실무 가이드라인 제시',

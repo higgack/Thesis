@@ -502,6 +502,27 @@ LINEFIT = [
      'bonding shifted away from wafer fabrication'),
     ('principle than in peripheral processes and',
      'principle than in the peripheral processes and'),
+    # --- 2차 PDF(2026-11-25 17:56) 확인 후 추가: 줄 안에서만 늘려 줄바꿈 위치가 바뀌지 않는 수정 ---
+    ('2014년 이전 출원에서 핵심 기술의 승산비는 exp',
+     '2014년 이전의 출원에서 핵심 기술의 승산비는 exp'),
+    ('웨이퍼 단위에서 다이 단위 접합으로 확대되고',
+     '웨이퍼 단위에서 다이 단위의 접합으로 확대되고'),
+    ('(사선 뒤의 세부 번호까지',
+     '(사선 다음의 세부 번호까지'),
+    ('그와 연관된 다른 요소도 함께 변경될',
+     '그와 연관된 다른 요소들도 함께 변경될'),
+    # 국문요지가 한 쪽에 들어가도록 둘째 문단을 한 줄 줄인다(주제어 둘째 줄만 다음 쪽에 넘어가던 문제).
+    ('출원일수록 통합형으로 분류될 가능성도 높았다',
+     '출원일수록 통합형일 가능성도 높았다'),
+    # 영문(ABSTRACT, 참고문헌)의 둥근 따옴표는 바탕체 전각 글리프로 찍혀 "Korea’ s"처럼 벌어지므로 곧은 따옴표로 바꾼다.
+    ('Korea’s exports', "Korea's exports"),
+    ('Office’s PATSTAT', "Office's PATSTAT"),
+    ('latecomers’ opportunities lie', 'opportunities for latecomers lie'),
+    ('inter-industry convergence to the process', 'inter-industry convergence toward the process'),
+    ('How firms’ production', "How firms' production"),
+    ('end of Moore’s law', "end of Moore's law"),
+    ('Don’t fence me in', "Don't fence me in"),
+    ('“More-than-Moore”', '"More-than-Moore"'),
 ]
 def fit_edit(p_el, old, new):
     """문단에서 old를 new로 바꾼다. 달라지는 최소 구간만 고쳐 주변 런의 서식(빨간 표시 포함)을 그대로 둔다."""
@@ -532,6 +553,22 @@ for old, new in LINEFIT:
     assert new in ''.join(t.text or '' for t in hits[0].iter(W('t'))), new
     n_fit += 1
 print('line-fit edits:', n_fit)
+
+# 표·그림 제목이 두 줄일 때 쪽 끝에서 첫 줄만 남고 나머지가 표와 함께 다음 쪽으로 넘어가던 문제(표 15, 16)를 막는다.
+# 표 제목에는 이미 '다음 문단과 함께'(keepNext)가 있으므로 '줄 나누지 않음'(keepLines)을 더한다. 보이는 서식은 바뀌지 않는다.
+CAP = re.compile(r'^(표|그림) [A-Z]?\d+\. ')
+n_cap = 0
+for p_el in d.element.body.iter(W('p')):
+    pPr = p_el.find(W('pPr'))
+    if pPr is None or pPr.find(W('pStyle')) is None or pPr.find(W('pStyle')).get(W('val')) != '1': continue
+    if not CAP.match(''.join(t.text or '' for t in p_el.iter(W('t')))): continue
+    if pPr.find(W('keepLines')) is None:
+        kl = OxmlElement('w:keepLines')
+        kn = pPr.find(W('keepNext'))
+        if kn is not None: kn.addnext(kl)
+        else: pPr.find(W('pStyle')).addnext(kl)
+    n_cap += 1
+print('captions kept together:', n_cap)
 
 # ---------- 11. 서식: 본문 스타일 통일·줄간격 확대 ----------
 fp = d.styles['First Paragraph']

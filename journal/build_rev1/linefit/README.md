@@ -18,3 +18,12 @@ Targets: no Korean line with spaces at 1.5x normal or more, no English line at a
 The edits do not change any paragraph's line count, so the page breaks match the author's PDF.
 
 `lay.py`, `edits.py`, `cands.py` and the other files without a `2` are an earlier, uncalibrated attempt.
+
+## Round 2 (second PDF from the author's Word, 2026-11-25 17:56)
+- Measured result of round 1: lines with an average space of 8 pt or more fell from 49 to 2 (normal space 5.5 pt).
+- Four more edits that only lengthen a line within its measured leftover space (no reflow), and two English edits.
+- 국문요지: shortened its second paragraph by one line so the keywords no longer spill onto page v.
+- English ABSTRACT and references: curly ’ “ ” were set in BatangChe full-width glyphs ("Korea’ s"); now straight quotes.
+- Table/figure captions get keepLines: captions of 표 15 and 표 16 were split across pages with their first line
+  left behind. Captions already had keepNext.
+- TOC cache now equals the page numbers Word printed in the author's PDF (57/57).
